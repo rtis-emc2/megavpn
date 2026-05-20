@@ -39,4 +39,3 @@ func TestHasCSRFHeader(t *testing.T) {
 		t.Fatal("csrf header value false should not pass")
 	}
 }
-

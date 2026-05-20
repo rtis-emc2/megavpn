@@ -52,4 +52,3 @@ func TestWithRateLimitRejectsExcessRequests(t *testing.T) {
 		t.Fatal("expected Retry-After header")
 	}
 }
-

@@ -26,4 +26,3 @@ func TestHashPasswordAndVerifyPassword(t *testing.T) {
 		t.Fatal("expected wrong password verification to fail")
 	}
 }
-

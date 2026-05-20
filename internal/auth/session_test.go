@@ -20,4 +20,3 @@ func TestNewSessionTokenReturnsTokenAndHash(t *testing.T) {
 		t.Fatalf("hash mismatch: got %q want %q", got, tokenHash)
 	}
 }
-
