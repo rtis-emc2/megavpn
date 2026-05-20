@@ -1,0 +1,17 @@
+[Unit]
+Description=RTIS MegaVPN API Control Plane
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/megavpn
+EnvironmentFile=/etc/megavpn/megavpn.env
+ExecStart=/opt/megavpn/bin/megavpn-api
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

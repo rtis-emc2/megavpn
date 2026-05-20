@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>RTIS MegaVPN Control Plane</title>
+  <link rel="stylesheet" href="./assets/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">
+          <img src="./assets/rtis-logo.svg" alt="RTIS" class="brand-logo" />
+        </div>
+        <div>
+          <div class="brand-title">RTIS</div>
+          <div class="brand-subtitle">MegaVPN Control Plane</div>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav"></nav>
+
+      <div class="sidebar-footer">
+        <div class="mini-label">API</div>
+        <div class="api-base" id="apiBaseLabel">same-origin</div>
+        <button class="ghost-btn" id="openSettingsBtn" type="button">Settings</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Distributed VPN & Edge Platform</div>
+          <h1 id="pageTitle">Dashboard</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-pill" id="readyPill"><span class="dot unknown"></span>checking</div>
+          <div id="authSlot"></div>
+          <button class="secondary-btn" id="refreshBtn" type="button">Refresh</button>
+          <button class="primary-btn" id="createActionBtn" type="button">Create</button>
+        </div>
+      </header>
+
+      <section class="notice" id="notice">
+        <strong>Control plane online.</strong> Панель работает поверх backend API напрямую и показывает только активные operational domains текущего релиза.
+      </section>
+
+      <section class="content" id="content"></section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow" id="modalEyebrow">Dialog</div>
+          <h2 id="modalTitle">Action</h2>
+        </div>
+        <button class="icon-btn" id="closeModalBtn" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <script src="./assets/app.js" defer></script>
+</body>
+</html>

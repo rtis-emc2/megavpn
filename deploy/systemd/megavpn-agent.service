@@ -1,0 +1,20 @@
+[Unit]
+Description=RTIS MegaVPN Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/megavpn
+EnvironmentFile=-/etc/megavpn/agent.env
+ExecStart=/opt/megavpn/bin/megavpn-agent
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/megavpn/agent
+StateDirectory=megavpn/agent
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

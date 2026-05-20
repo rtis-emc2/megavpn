@@ -1,0 +1,15 @@
+.env
+.env.*
+*.log
+tmp/
+bin/
+dist/
+build/
+docs/
+node_modules/
+.DS_Store
+coverage/
+*.key
+*.pem
+*.crt
+*.zip
