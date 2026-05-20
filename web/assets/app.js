@@ -2812,9 +2812,8 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
   }
 
   function instanceServiceOptions() {
-    return (state.servicesCatalog || [])
-      .filter((service) => service.supports_instances !== false && service.enabled !== false)
-      .map((service) => `<option value="${escapeHTML(service.code)}">${escapeHTML(service.name || service.code)} · ${escapeHTML(service.code)}</option>`)
+    return availableInstanceServices()
+      .map((service) => `<option value="${escapeHTML(service.code)}">${escapeHTML(service.display_name || service.name || service.code)} · ${escapeHTML(service.code)}</option>`)
       .join('');
   }
 
@@ -2861,12 +2860,449 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     return normalized || fallback;
   }
 
-  function buildInstanceSpecDraft(serviceCode, instance = null) {
+  const INSTANCE_SERVICE_ORDER = [
+    'xray-core',
+    'openvpn',
+    'wireguard',
+    'ipsec',
+    'xl2tpd',
+    'http_proxy',
+    'mtproto',
+    'shadowsocks',
+    'nginx',
+  ];
+
+  const INSTANCE_SERVICE_BLUEPRINTS = {
+    'xray-core': {
+      label: 'Xray VLESS / Reality',
+      runtime: 'xray-core runtime',
+      description: 'Основной modern-transport сервис для персональных VPN/anti-censorship профилей. Это продуктовый сервис, работающий поверх runtime xray-core.',
+      unitPattern: 'xray',
+      pathPattern: '/usr/local/etc/xray/config.json',
+      recommendations: [
+        'Для первого production-среза держать порт 443 и валидный SNI/Server Name.',
+        'Использовать Reality c коротким short-id и chrome fingerprint как безопасный baseline.',
+        'Оставлять manual JSON override только для нестандартных transport-экспериментов.',
+      ],
+      presets: [
+        {
+          key: 'reality_tcp',
+          label: 'Reality TCP',
+          description: 'Рекомендуемый baseline для большинства egress-нод.',
+          recommended: true,
+          draft: {
+            endpoint_port: 443,
+            xray_network: 'tcp',
+            xray_dest: 'www.cloudflare.com:443',
+            xray_fingerprint: 'chrome',
+            config_mode: '0640',
+          },
+        },
+        {
+          key: 'reality_grpc',
+          label: 'Reality gRPC',
+          description: 'Подходит, если нужен более “app-like” transport profile.',
+          draft: {
+            endpoint_port: 443,
+            xray_network: 'grpc',
+            xray_dest: 'www.cloudflare.com:443',
+            xray_fingerprint: 'chrome',
+            config_mode: '0640',
+          },
+        },
+      ],
+    },
+    openvpn: {
+      label: 'OpenVPN',
+      runtime: 'openvpn server runtime',
+      description: 'Классический VPN-сервис для широкой клиентской совместимости и управляемого PKI lifecycle.',
+      unitPattern: 'openvpn-server@<slug>',
+      pathPattern: '/etc/openvpn/server/<slug>.conf',
+      recommendations: [
+        'Для массовых клиентов безопасный baseline: TCP/443, platform PKI, AES-GCM.',
+        'UDP имеет смысл только там, где сеть стабильна и нет жестких ограничений firewall.',
+        'Не смешивать ручной PKI и platform-managed PKI в одном instance.',
+      ],
+      presets: [
+        {
+          key: 'tcp_443',
+          label: 'TCP 443',
+          description: 'Рекомендуемый baseline для совместимости и обхода простых сетевых ограничений.',
+          recommended: true,
+          draft: {
+            endpoint_port: 443,
+            ovpn_proto: 'tcp',
+            ovpn_dev: 'tun',
+            ovpn_server_network: '10.8.0.0',
+            ovpn_server_netmask: '255.255.255.0',
+            config_mode: '0644',
+            ovpn_pki_profile: 'default',
+          },
+        },
+        {
+          key: 'udp_1194',
+          label: 'UDP 1194',
+          description: 'Более классический профиль там, где throughput важнее camouflage.',
+          draft: {
+            endpoint_port: 1194,
+            ovpn_proto: 'udp',
+            ovpn_dev: 'tun',
+            ovpn_server_network: '10.8.0.0',
+            ovpn_server_netmask: '255.255.255.0',
+            config_mode: '0644',
+            ovpn_pki_profile: 'default',
+          },
+        },
+      ],
+    },
+    wireguard: {
+      label: 'WireGuard',
+      runtime: 'wg-quick / wireguard-tools',
+      description: 'Высокопроизводительный VPN для современных клиентов и минимальной конфигурационной поверхности.',
+      unitPattern: 'wg-quick@<slug>',
+      pathPattern: '/etc/wireguard/<slug>.conf',
+      recommendations: [
+        'Держать отдельную /24 сеть на каждый instance и не переиспользовать address pool.',
+        'Для удаленных клиентов рекомендуемый keepalive 25 секунд.',
+        'Endpoint port обычно 51820, если нет требований camouflage.',
+      ],
+      presets: [
+        {
+          key: 'roadwarrior',
+          label: 'Road Warrior',
+          description: 'Рекомендуемый full-tunnel профиль для клиентов.',
+          recommended: true,
+          draft: {
+            endpoint_port: 51820,
+            wg_network_cidr: '10.66.0.0/24',
+            wg_server_address: '10.66.0.1/24',
+            wg_client_allowed_ips: '0.0.0.0/0, ::/0',
+            wg_client_dns: '1.1.1.1, 1.0.0.1',
+            wg_keepalive: 25,
+            config_mode: '0600',
+          },
+        },
+        {
+          key: 'split_tunnel',
+          label: 'Split Tunnel',
+          description: 'Профиль для корпоративных и частичных маршрутов.',
+          draft: {
+            endpoint_port: 51820,
+            wg_network_cidr: '10.66.10.0/24',
+            wg_server_address: '10.66.10.1/24',
+            wg_client_allowed_ips: '10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16',
+            wg_client_dns: '1.1.1.1, 1.0.0.1',
+            wg_keepalive: 25,
+            config_mode: '0600',
+          },
+        },
+      ],
+    },
+    ipsec: {
+      label: 'IPsec / IKEv2',
+      runtime: 'strongSwan / ipsec',
+      description: 'Базовый IPsec/IKE слой. Используется как отдельный managed service и как база для L2TP companion flow.',
+      unitPattern: 'strongswan-starter',
+      pathPattern: '/etc/ipsec.conf',
+      recommendations: [
+        'Использовать как transport/security layer, а L2TP держать отдельным companion instance.',
+        'PSK-профиль оставить только как bootstrap baseline; дальше переводить в более строгие схемы.',
+        'Секреты хранить отдельно и не дублировать руками в нескольких инстансах.',
+      ],
+      presets: [
+        {
+          key: 'ikev2_psk',
+          label: 'IKEv2 PSK',
+          description: 'Рекомендуемый baseline, пока в продукте нет сертификатного IKEv2 flow.',
+          recommended: true,
+          draft: {
+            endpoint_port: 1701,
+            ipsec_left: '%defaultroute',
+            ipsec_right: '%any',
+            ipsec_ike: 'aes256-sha1-modp1024',
+            ipsec_esp: 'aes256-sha1',
+            config_mode: '0644',
+            ipsec_secrets_mode: '0600',
+          },
+        },
+      ],
+    },
+    xl2tpd: {
+      label: 'L2TP Access',
+      runtime: 'xl2tpd + pppd',
+      description: 'Companion-сервис к IPsec для L2TP remote-access профиля. Сам по себе не должен восприниматься как отдельный secure transport.',
+      unitPattern: 'xl2tpd',
+      pathPattern: '/etc/xl2tpd/xl2tpd.conf',
+      recommendations: [
+        'Деплоить вместе с companion IPsec instance.',
+        'Явно задавать pool, DNS и default credentials bootstrap-пути.',
+        'Не использовать без сопутствующего IPsec transport.',
+      ],
+      presets: [
+        {
+          key: 'remote_access',
+          label: 'Remote Access',
+          description: 'Рекомендуемый baseline для L2TP поверх IPsec.',
+          recommended: true,
+          draft: {
+            endpoint_port: 1701,
+            xl2tpd_local_ip: '10.20.0.1',
+            xl2tpd_ip_range_start: '10.20.0.10',
+            xl2tpd_ip_range_end: '10.20.0.200',
+            xl2tpd_dns_primary: '1.1.1.1',
+            xl2tpd_dns_secondary: '1.0.0.1',
+            config_mode: '0644',
+          },
+        },
+      ],
+    },
+    http_proxy: {
+      label: 'HTTP Proxy / Squid',
+      runtime: 'squid runtime',
+      description: 'Классический authenticated HTTP proxy. Должен быть отдельным изолированным instance на своем config/unit.',
+      unitPattern: 'megavpn-http-proxy-<slug>',
+      pathPattern: '/etc/squid/<slug>.conf',
+      recommendations: [
+        'По умолчанию только authenticated profile; open proxy не делать preset-ом.',
+        'Для каждого instance держать отдельные config, passwd, pid и log paths.',
+        'Visible hostname и auth realm задавать осмысленно, чтобы упростить поддержку.',
+      ],
+      presets: [
+        {
+          key: 'authenticated_edge',
+          label: 'Authenticated Edge',
+          description: 'Рекомендуемый production baseline с обязательной аутентификацией.',
+          recommended: true,
+          draft: {
+            endpoint_port: 3128,
+            proxy_auth_realm: 'RTIS MegaVPN HTTP Proxy',
+            proxy_auth_helper_path: '/usr/lib/squid/basic_ncsa_auth',
+            config_mode: '0644',
+          },
+        },
+        {
+          key: 'authenticated_alt_8080',
+          label: 'Authenticated 8080',
+          description: 'Альтернативный профиль для окружений, где 3128 конфликтует.',
+          draft: {
+            endpoint_port: 8080,
+            proxy_auth_realm: 'RTIS MegaVPN HTTP Proxy',
+            proxy_auth_helper_path: '/usr/lib/squid/basic_ncsa_auth',
+            config_mode: '0644',
+          },
+        },
+      ],
+    },
+    mtproto: {
+      label: 'MTProto',
+      runtime: 'xray-core runtime',
+      description: 'Telegram-oriented proxy profile. Это отдельный продуктовый сервис, но его runtime движок тоже xray-core.',
+      unitPattern: 'megavpn-mtproto-<slug>',
+      pathPattern: '/usr/local/etc/xray/<slug>.json',
+      recommendations: [
+        'Держать отдельный unit/config на каждый instance, не смешивать с VLESS instance.',
+        'Стандартный production baseline: port 443, отдельный secret per access rotation.',
+        'Использовать только как специализированный transport для Telegram-кейса.',
+      ],
+      presets: [
+        {
+          key: 'telegram_443',
+          label: 'Telegram 443',
+          description: 'Рекомендуемый baseline для основного MTProto traffic.',
+          recommended: true,
+          draft: {
+            endpoint_port: 443,
+            mtproto_listen: '0.0.0.0',
+            config_mode: '0640',
+          },
+        },
+        {
+          key: 'telegram_8443',
+          label: 'Telegram 8443',
+          description: 'Альтернативный профиль для нод, где 443 уже занят.',
+          draft: {
+            endpoint_port: 8443,
+            mtproto_listen: '0.0.0.0',
+            config_mode: '0640',
+          },
+        },
+      ],
+    },
+    shadowsocks: {
+      label: 'Shadowsocks',
+      runtime: 'shadowsocks-libev runtime',
+      description: 'Легковесный proxy/VPN-like сервис для клиентских приложений и быстрых персональных доступов.',
+      unitPattern: 'shadowsocks-libev',
+      pathPattern: '/etc/shadowsocks-libev/config.json',
+      recommendations: [
+        'Стартовый baseline: chacha20-ietf-poly1305 и tcp_and_udp.',
+        'Держать отдельные server/access secrets и не переиспользовать их между профилями.',
+        'Port base планировать так, чтобы access rotation не конфликтовал с соседними сервисами.',
+      ],
+      presets: [
+        {
+          key: 'chacha_full',
+          label: 'Chacha Full',
+          description: 'Рекомендуемый universal baseline.',
+          recommended: true,
+          draft: {
+            endpoint_port: 8388,
+            ss_method: 'chacha20-ietf-poly1305',
+            ss_mode: 'tcp_and_udp',
+            ss_timeout: 300,
+            config_mode: '0640',
+          },
+        },
+        {
+          key: 'aes_tcp',
+          label: 'AES TCP Only',
+          description: 'Консервативный профиль для TCP-only клиентов.',
+          draft: {
+            endpoint_port: 8388,
+            ss_method: 'aes-256-gcm',
+            ss_mode: 'tcp_only',
+            ss_timeout: 300,
+            config_mode: '0640',
+          },
+        },
+      ],
+    },
+    nginx: {
+      label: 'Nginx Edge',
+      runtime: 'nginx runtime',
+      description: 'Edge/service front для reverse-proxy и static publishing. Это не VPN transport, а обслуживающий ingress layer.',
+      unitPattern: 'nginx',
+      pathPattern: '/etc/nginx/conf.d/megavpn-<slug>.conf',
+      recommendations: [
+        'Использовать как reverse-proxy front для UI/API или как static edge.',
+        'TLS-сертификаты и upstream path держать явными, без магических defaults.',
+        'Отдельный ingress слой не должен смешиваться с транспортными сервисами.',
+      ],
+      presets: [
+        {
+          key: 'reverse_proxy',
+          label: 'Reverse Proxy',
+          description: 'Рекомендуемый edge profile для API/UI.',
+          recommended: true,
+          draft: {
+            endpoint_port: 8080,
+            nginx_mode: 'reverse_proxy',
+            nginx_index_files: 'index.html index.htm',
+            config_mode: '0644',
+          },
+        },
+        {
+          key: 'static_site',
+          label: 'Static Site',
+          description: 'Профиль для статической публикации контента.',
+          draft: {
+            endpoint_port: 8080,
+            nginx_mode: 'static',
+            nginx_index_files: 'index.html index.htm',
+            config_mode: '0644',
+          },
+        },
+      ],
+    },
+  };
+
+  function instanceServiceBlueprint(serviceCode) {
+    return INSTANCE_SERVICE_BLUEPRINTS[normalizeInstanceServiceCode(serviceCode)] || null;
+  }
+
+  function availableInstanceServices() {
+    const ranked = new Map();
+    const fallbackOrderBase = INSTANCE_SERVICE_ORDER.length;
+    for (const service of (state.servicesCatalog || [])) {
+      if (service.supports_instances === false || service.enabled === false) continue;
+      const normalized = normalizeInstanceServiceCode(service.code);
+      const blueprint = instanceServiceBlueprint(normalized);
+      const candidate = {
+        ...service,
+        code: normalized,
+        display_name: blueprint?.label || service.name || normalized,
+      };
+      const current = ranked.get(normalized);
+      const score = service.code === normalized ? 2 : 1;
+      if (!current || score > current.score) {
+        ranked.set(normalized, { score, service: candidate });
+      }
+    }
+    return Array.from(ranked.values())
+      .map((entry) => entry.service)
+      .sort((left, right) => {
+        const leftIndex = INSTANCE_SERVICE_ORDER.indexOf(left.code);
+        const rightIndex = INSTANCE_SERVICE_ORDER.indexOf(right.code);
+        const leftOrder = leftIndex === -1 ? fallbackOrderBase : leftIndex;
+        const rightOrder = rightIndex === -1 ? fallbackOrderBase : rightIndex;
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+        return String(left.display_name).localeCompare(String(right.display_name), 'en');
+      });
+  }
+
+  function defaultInstancePreset(serviceCode) {
+    const presets = instanceServiceBlueprint(serviceCode)?.presets || [];
+    return presets.find((preset) => preset.recommended) || presets[0] || null;
+  }
+
+  function resolveInstancePreset(serviceCode, presetKey) {
+    const presets = instanceServiceBlueprint(serviceCode)?.presets || [];
+    if (!presets.length) return null;
+    return presets.find((preset) => preset.key === presetKey) || defaultInstancePreset(serviceCode);
+  }
+
+  function applyInstancePresetDraft(serviceCode, draft, presetKey) {
+    const preset = resolveInstancePreset(serviceCode, presetKey);
+    if (!preset) return { ...(draft || {}) };
+    return {
+      ...(draft || {}),
+      ...(preset.draft || {}),
+      service_profile: preset.key,
+    };
+  }
+
+  function finalizeInstanceDraft(serviceCode, instance, spec, draft, presetKey = '') {
+    const normalized = normalizeInstanceServiceCode(serviceCode);
+    const defaultPreset = defaultInstancePreset(normalized);
+    const persistedPreset = stringValue(presetKey, draft?.service_profile, spec?.service_profile, defaultPreset?.key);
+    let out = { ...(draft || {}), service_profile: persistedPreset };
+    if (!instance || presetKey) {
+      out = applyInstancePresetDraft(normalized, out, persistedPreset);
+    }
+    return out;
+  }
+
+  function renderInstanceServiceProfilePanel(serviceCode, draft = {}) {
+    const blueprint = instanceServiceBlueprint(serviceCode);
+    if (!blueprint) return '';
+    const preset = resolveInstancePreset(serviceCode, draft.service_profile);
+    const presets = blueprint.presets || [];
+    const recommendations = blueprint.recommendations || [];
+    return `
+      <div class="field full">
+        <div class="code-block">
+          <div><strong>${escapeHTML(blueprint.label)}</strong> · ${escapeHTML(blueprint.runtime || 'runtime n/a')}</div>
+          <div class="metric-caption" style="margin-top:6px">${escapeHTML(blueprint.description || '')}</div>
+          <div class="metric-caption" style="margin-top:8px">Default unit: <code>${escapeHTML(blueprint.unitPattern || 'n/a')}</code> · Config path: <code>${escapeHTML(blueprint.pathPattern || 'n/a')}</code></div>
+          ${presets.length ? `
+            <div style="margin-top:12px">
+              <label>Preset</label>
+              <select name="service_profile">
+                ${presets.map((item) => `<option value="${escapeHTML(item.key)}"${item.key === preset?.key ? ' selected' : ''}>${escapeHTML(item.label)}${item.recommended ? ' (recommended)' : ''}</option>`).join('')}
+              </select>
+              <div class="metric-caption" style="margin-top:6px">${escapeHTML(preset?.description || '')}</div>
+            </div>` : ''}
+          ${recommendations.length ? `<div class="metric-caption" style="margin-top:10px">${recommendations.map((line) => `• ${escapeHTML(line)}`).join('<br>')}</div>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function buildInstanceSpecDraft(serviceCode, instance = null, presetKey = '') {
     const spec = instance?.spec || {};
     const normalized = normalizeInstanceServiceCode(serviceCode || instance?.service_code);
     switch (normalized) {
       case 'xray-core':
-        return {
+        return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.server_port, 443),
           config_path: stringValue(spec.config_path, '/usr/local/etc/xray/config.json'),
           config_mode: stringValue(spec.config_mode, '0640'),
@@ -2877,10 +3313,10 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           xray_network: stringValue(spec.network, spec.type, spec.transport, 'tcp'),
           xray_flow: stringValue(spec.flow),
           config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
-        };
+        }, presetKey);
       case 'openvpn':
         const ovpnSlug = slugPathPart(instance?.slug, 'server');
-        return {
+        return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.server_port, 1194),
           config_path: stringValue(spec.config_path, `/etc/openvpn/server/${ovpnSlug}.conf`),
           config_mode: stringValue(spec.config_mode, '0644'),
@@ -2894,10 +3330,10 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           ovpn_pki_profile: stringValue(spec.pki_profile, 'default'),
           ovpn_server_extra_lines: Array.isArray(spec.server_extra_lines) ? spec.server_extra_lines.join('\n') : stringValue(spec.server_extra_lines),
           config_body: stringValue(spec.config_content),
-        };
+        }, presetKey);
       case 'wireguard':
         const wgSlug = slugPathPart(instance?.slug, 'wg0');
-        return {
+        return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.listen_port, spec.server_port, 51820),
           config_path: stringValue(spec.config_path, `/etc/wireguard/${wgSlug}.conf`),
           config_mode: stringValue(spec.config_mode, '0600'),
@@ -2910,18 +3346,18 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           wg_mtu: numberValue(spec.mtu),
           wg_interface_extra_lines: Array.isArray(spec.interface_extra_lines) ? spec.interface_extra_lines.join('\n') : stringValue(spec.interface_extra_lines),
           config_body: stringValue(spec.config_content),
-        };
+        }, presetKey);
       case 'mtproto':
         const mtprotoSlug = slugPathPart(instance?.slug, 'mtproto');
-        return {
+        return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.server_port, 443),
           config_path: stringValue(spec.config_path, `/usr/local/etc/xray/${mtprotoSlug}.json`),
           config_mode: stringValue(spec.config_mode, '0640'),
           mtproto_listen: stringValue(spec.listen, '0.0.0.0'),
           config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
-        };
+        }, presetKey);
       case 'nginx':
-        return {
+        return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.listen_port, spec.server_port, 8080),
           config_path: stringValue(spec.config_path, '/etc/nginx/conf.d/megavpn-edge.conf'),
           config_mode: stringValue(spec.config_mode, '0644'),
@@ -2939,9 +3375,9 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           nginx_location_extra_lines: Array.isArray(spec.location_extra_lines) ? spec.location_extra_lines.join('\n') : stringValue(spec.location_extra_lines),
           nginx_server_extra_lines: Array.isArray(spec.server_extra_lines) ? spec.server_extra_lines.join('\n') : stringValue(spec.server_extra_lines),
           config_body: stringValue(spec.config_content),
-        };
+        }, presetKey);
       case 'ipsec':
-        return {
+        return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.listen_port, spec.server_port, 1701),
           config_path: stringValue(spec.config_path, '/etc/ipsec.conf'),
           config_mode: stringValue(spec.config_mode, '0644'),
@@ -2956,10 +3392,10 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           ipsec_config_extra_lines: Array.isArray(spec.config_extra_lines) ? spec.config_extra_lines.join('\n') : stringValue(spec.config_extra_lines),
           ipsec_secrets_body: stringValue(spec.secrets_content),
           config_body: stringValue(spec.config_content),
-        };
+        }, presetKey);
       case 'http_proxy':
         const proxySlug = slugPathPart(instance?.slug, 'proxy');
-        return {
+        return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.listen_port, spec.server_port, 3128),
           config_path: stringValue(spec.config_path, `/etc/squid/${proxySlug}.conf`),
           config_mode: stringValue(spec.config_mode, '0644'),
@@ -2968,9 +3404,9 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           proxy_auth_helper_path: stringValue(spec.auth_helper_path, '/usr/lib/squid/basic_ncsa_auth'),
           proxy_config_extra_lines: Array.isArray(spec.config_extra_lines) ? spec.config_extra_lines.join('\n') : stringValue(spec.config_extra_lines),
           config_body: stringValue(spec.config_content),
-        };
+        }, presetKey);
       case 'xl2tpd':
-        return {
+        return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.listen_port, spec.server_port, 1701),
           config_path: stringValue(spec.config_path, '/etc/xl2tpd/xl2tpd.conf'),
           config_mode: stringValue(spec.config_mode, '0644'),
@@ -2988,9 +3424,9 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           xl2tpd_config_extra_lines: Array.isArray(spec.config_extra_lines) ? spec.config_extra_lines.join('\n') : stringValue(spec.config_extra_lines),
           xl2tpd_options_body: stringValue(spec.options_content),
           config_body: stringValue(spec.config_content),
-        };
+        }, presetKey);
       case 'shadowsocks':
-        return {
+        return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.server_port, spec.access_port_base, 8388),
           config_path: stringValue(spec.config_path, '/etc/shadowsocks-libev/config.json'),
           config_mode: stringValue(spec.config_mode, '0640'),
@@ -3000,22 +3436,23 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           ss_password: stringValue(spec.password, spec.server_password),
           ss_access_port_base: numberValue(spec.access_port_base, spec.server_port, instance?.endpoint_port, 8388),
           config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
-        };
+        }, presetKey);
       default:
-        return {
+        return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port),
           config_path: stringValue(spec.config_path),
           config_mode: stringValue(spec.config_mode, '0640'),
           config_type: spec.config_json ? 'json' : 'text',
           config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
-        };
+        }, presetKey);
     }
   }
 
   function renderInstanceServiceFields(serviceCode, draft = {}) {
+    const intro = renderInstanceServiceProfilePanel(serviceCode, draft);
     switch (normalizeInstanceServiceCode(serviceCode)) {
       case 'xray-core':
-        return `
+        return `${intro}
           <div class="field"><label>Server name / SNI</label><input name="xray_server_name" value="${escapeHTML(draft.xray_server_name || '')}" placeholder="vpn.example.com" /></div>
           <div class="field"><label>Short ID</label><input name="xray_short_id" value="${escapeHTML(draft.xray_short_id || '')}" placeholder="0123abcd4567ef89" /></div>
           <div class="field"><label>Reality dest</label><input name="xray_dest" value="${escapeHTML(draft.xray_dest || 'www.cloudflare.com:443')}" /></div>
@@ -3030,7 +3467,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
           <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"inbounds":[...],"outbounds":[...]}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'openvpn':
-        return `
+        return `${intro}
           <div class="field"><label>Protocol</label><select name="ovpn_proto">
             <option value="tcp"${draft.ovpn_proto !== 'udp' ? ' selected' : ''}>tcp</option>
             <option value="udp"${draft.ovpn_proto === 'udp' ? ' selected' : ''}>udp</option>
@@ -3047,7 +3484,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field full"><label>Server extra lines</label><textarea name="ovpn_server_extra_lines" rows="5" placeholder="push &quot;redirect-gateway def1&quot;&#10;push &quot;dhcp-option DNS 1.1.1.1&quot;">${escapeHTML(draft.ovpn_server_extra_lines || '')}</textarea></div>
           <div class="field full"><label>Advanced server config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated OpenVPN server config.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'wireguard':
-        return `
+        return `${intro}
           <div class="field"><label>Network CIDR</label><input name="wg_network_cidr" value="${escapeHTML(draft.wg_network_cidr || '10.66.0.0/24')}" placeholder="10.66.0.0/24" /></div>
           <div class="field"><label>Server address</label><input name="wg_server_address" value="${escapeHTML(draft.wg_server_address || '10.66.0.1/24')}" placeholder="10.66.0.1/24" /></div>
           <div class="field"><label>Client address start</label><input name="wg_client_address_start" type="number" min="2" max="250" value="${escapeHTML(draft.wg_client_address_start || 10)}" /></div>
@@ -3060,13 +3497,13 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field full"><label>Interface extra lines</label><textarea name="wg_interface_extra_lines" rows="5" placeholder="PostUp = nft add rule inet filter input udp dport 51820 accept&#10;PostDown = nft delete rule inet filter input udp dport 51820 accept">${escapeHTML(draft.wg_interface_extra_lines || '')}</textarea></div>
           <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated WireGuard config.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'mtproto':
-        return `
+        return `${intro}
           <div class="field"><label>Listen address</label><input name="mtproto_listen" value="${escapeHTML(draft.mtproto_listen || '0.0.0.0')}" placeholder="0.0.0.0" /></div>
           <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/usr/local/etc/xray/mtproto.json')}" /></div>
           <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
           <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"inbounds":[...],"outbounds":[...]}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'nginx':
-        return `
+        return `${intro}
           <div class="field"><label>Mode</label><select name="nginx_mode">
             <option value="reverse_proxy"${draft.nginx_mode !== 'static' ? ' selected' : ''}>reverse_proxy</option>
             <option value="static"${draft.nginx_mode === 'static' ? ' selected' : ''}>static</option>
@@ -3090,7 +3527,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field full"><label>Server extra lines</label><textarea name="nginx_server_extra_lines" rows="5" placeholder="add_header X-MegaVPN edge always;">${escapeHTML(draft.nginx_server_extra_lines || '')}</textarea></div>
           <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated nginx server block.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'ipsec':
-        return `
+        return `${intro}
           <div class="field"><label>Left</label><input name="ipsec_left" value="${escapeHTML(draft.ipsec_left || '%defaultroute')}" placeholder="%defaultroute" /></div>
           <div class="field"><label>Left ID</label><input name="ipsec_leftid" value="${escapeHTML(draft.ipsec_leftid || '')}" placeholder="vpn.example.com" /></div>
           <div class="field"><label>Right</label><input name="ipsec_right" value="${escapeHTML(draft.ipsec_right || '%any')}" placeholder="%any" /></div>
@@ -3105,7 +3542,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field full"><label>Secrets override</label><textarea name="ipsec_secrets_body" rows="4" placeholder="%any %any : PSK &quot;shared-secret&quot;">${escapeHTML(draft.ipsec_secrets_body || '')}</textarea></div>
           <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated ipsec.conf.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'http_proxy':
-        return `
+        return `${intro}
           <div class="field"><label>Auth realm</label><input name="proxy_auth_realm" value="${escapeHTML(draft.proxy_auth_realm || 'RTIS MegaVPN HTTP Proxy')}" /></div>
           <div class="field"><label>Visible hostname</label><input name="proxy_visible_hostname" value="${escapeHTML(draft.proxy_visible_hostname || '')}" placeholder="proxy.example.com" /></div>
           <div class="field"><label>Auth helper path</label><input name="proxy_auth_helper_path" value="${escapeHTML(draft.proxy_auth_helper_path || '/usr/lib/squid/basic_ncsa_auth')}" /></div>
@@ -3114,7 +3551,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field full"><label>Config extra lines</label><textarea name="proxy_config_extra_lines" rows="6" placeholder="cache_mem 64 MB&#10;maximum_object_size_in_memory 512 KB">${escapeHTML(draft.proxy_config_extra_lines || '')}</textarea></div>
           <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated squid.conf.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'xl2tpd':
-        return `
+        return `${intro}
           <div class="field"><label>Local IP</label><input name="xl2tpd_local_ip" value="${escapeHTML(draft.xl2tpd_local_ip || '10.20.0.1')}" /></div>
           <div class="field"><label>Range start</label><input name="xl2tpd_ip_range_start" value="${escapeHTML(draft.xl2tpd_ip_range_start || '10.20.0.10')}" /></div>
           <div class="field"><label>Range end</label><input name="xl2tpd_ip_range_end" value="${escapeHTML(draft.xl2tpd_ip_range_end || '10.20.0.200')}" /></div>
@@ -3131,7 +3568,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field full"><label>Options override</label><textarea name="xl2tpd_options_body" rows="8" placeholder="Leave empty to use generated PPP options.">${escapeHTML(draft.xl2tpd_options_body || '')}</textarea></div>
           <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated xl2tpd.conf.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'shadowsocks':
-        return `
+        return `${intro}
           <div class="field"><label>Method</label><input name="ss_method" value="${escapeHTML(draft.ss_method || 'chacha20-ietf-poly1305')}" placeholder="chacha20-ietf-poly1305" /></div>
           <div class="field"><label>Mode</label><select name="ss_mode">
             <option value="tcp_only"${draft.ss_mode === 'tcp_only' ? ' selected' : ''}>tcp_only</option>
@@ -3145,7 +3582,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
           <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"server":"0.0.0.0","method":"chacha20-ietf-poly1305"}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
       default:
-        return `
+        return `${intro}
           <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '')}" placeholder="/etc/service/config.conf" /></div>
           <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
           <div class="field"><label>Config type</label><select name="config_type">
@@ -3156,17 +3593,23 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     }
   }
 
-  function syncInstanceServiceFields(formID, serviceCode, draft = null) {
+  function syncInstanceServiceFields(formID, serviceCode, draft = null, options = {}) {
     const form = document.getElementById(formID);
     if (!form) return;
-    const resolvedDraft = draft || buildInstanceSpecDraft(serviceCode);
+    const resolvedDraft = draft || buildInstanceSpecDraft(serviceCode, null, options.presetKey || '');
     const container = form.querySelector('.service-fields');
     if (container) container.innerHTML = renderInstanceServiceFields(serviceCode, resolvedDraft);
     const portInput = form.querySelector('input[name="endpoint_port"]');
     if (portInput && resolvedDraft.endpoint_port) {
-      if (formID === 'editInstanceForm' || !portInput.value || Number(portInput.value) === 0) {
+      if (options.forceDefaults || formID === 'editInstanceForm' || !portInput.value || Number(portInput.value) === 0) {
         portInput.value = String(resolvedDraft.endpoint_port);
       }
+    }
+    const presetSelect = form.querySelector('select[name="service_profile"]');
+    if (presetSelect) {
+      presetSelect.addEventListener('change', () => {
+        syncInstanceServiceFields(formID, serviceCode, null, { forceDefaults: true, presetKey: presetSelect.value });
+      }, { once: true });
     }
   }
 
@@ -3174,6 +3617,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     const normalized = normalizeInstanceServiceCode(serviceCode);
     const spec = cloneJSON(baseSpec || {});
     const configBody = String(form.get('config_body') || '').trim();
+    spec.service_profile = String(form.get('service_profile') || '').trim();
     spec.config_path = String(form.get('config_path') || '').trim();
     spec.config_mode = String(form.get('config_mode') || '').trim();
     if (normalized === 'xray-core') {
@@ -3396,8 +3840,8 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       <div id="createInstanceResult" class="form-result"></div>`);
     const form = document.getElementById('createInstanceForm');
     const serviceSelect = form.querySelector('select[name="service_code"]');
-    syncInstanceServiceFields('createInstanceForm', serviceSelect.value);
-    serviceSelect.addEventListener('change', () => syncInstanceServiceFields('createInstanceForm', serviceSelect.value));
+    syncInstanceServiceFields('createInstanceForm', serviceSelect.value, null, { forceDefaults: true });
+    serviceSelect.addEventListener('change', () => syncInstanceServiceFields('createInstanceForm', serviceSelect.value, null, { forceDefaults: true }));
     form.addEventListener('submit', createInstance);
   }
 

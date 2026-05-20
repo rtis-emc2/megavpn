@@ -573,15 +573,42 @@ func (s *Store) ListServiceDefinitions(ctx context.Context) ([]domain.ServiceDef
 		return nil, err
 	}
 	defer rows.Close()
-	var out []domain.ServiceDefinition
+	type rankedServiceDefinition struct {
+		def   domain.ServiceDefinition
+		score int
+	}
+	ranked := map[string]rankedServiceDefinition{}
+	order := []string{}
 	for rows.Next() {
 		var x domain.ServiceDefinition
 		if err := rows.Scan(&x.ID, &x.Code, &x.Name, &x.Category, &x.Tier, &x.SupportsAccounts, &x.SupportsArtifacts, &x.SupportsInstall, &x.SupportsInstances, &x.Enabled, &x.CreatedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, x)
+		originalCode := x.Code
+		canonicalCode := normalizeInstanceRuntimeCode(originalCode)
+		score := 1
+		if originalCode == canonicalCode {
+			score = 2
+		}
+		x.Code = canonicalCode
+		current, exists := ranked[canonicalCode]
+		if !exists {
+			order = append(order, canonicalCode)
+			ranked[canonicalCode] = rankedServiceDefinition{def: x, score: score}
+			continue
+		}
+		if score > current.score {
+			ranked[canonicalCode] = rankedServiceDefinition{def: x, score: score}
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]domain.ServiceDefinition, 0, len(order))
+	for _, code := range order {
+		out = append(out, ranked[code].def)
+	}
+	return out, nil
 }
 
 func (s *Store) ListInstances(ctx context.Context) ([]domain.Instance, error) {
