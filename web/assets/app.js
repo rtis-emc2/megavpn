@@ -2912,9 +2912,10 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           config_body: stringValue(spec.config_content),
         };
       case 'mtproto':
+        const mtprotoSlug = slugPathPart(instance?.slug, 'mtproto');
         return {
           endpoint_port: numberValue(instance?.endpoint_port, spec.server_port, 443),
-          config_path: stringValue(spec.config_path, '/usr/local/etc/xray/config.json'),
+          config_path: stringValue(spec.config_path, `/usr/local/etc/xray/${mtprotoSlug}.json`),
           config_mode: stringValue(spec.config_mode, '0640'),
           mtproto_listen: stringValue(spec.listen, '0.0.0.0'),
           config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
@@ -2957,9 +2958,10 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           config_body: stringValue(spec.config_content),
         };
       case 'http_proxy':
+        const proxySlug = slugPathPart(instance?.slug, 'proxy');
         return {
           endpoint_port: numberValue(instance?.endpoint_port, spec.listen_port, spec.server_port, 3128),
-          config_path: stringValue(spec.config_path, '/etc/squid/squid.conf'),
+          config_path: stringValue(spec.config_path, `/etc/squid/${proxySlug}.conf`),
           config_mode: stringValue(spec.config_mode, '0644'),
           proxy_auth_realm: stringValue(spec.auth_realm, 'RTIS MegaVPN HTTP Proxy'),
           proxy_visible_hostname: stringValue(spec.visible_hostname, instance?.endpoint_host, instance?.name),
@@ -3060,7 +3062,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       case 'mtproto':
         return `
           <div class="field"><label>Listen address</label><input name="mtproto_listen" value="${escapeHTML(draft.mtproto_listen || '0.0.0.0')}" placeholder="0.0.0.0" /></div>
-          <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/usr/local/etc/xray/config.json')}" /></div>
+          <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/usr/local/etc/xray/mtproto.json')}" /></div>
           <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
           <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"inbounds":[...],"outbounds":[...]}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'nginx':
@@ -3107,7 +3109,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field"><label>Auth realm</label><input name="proxy_auth_realm" value="${escapeHTML(draft.proxy_auth_realm || 'RTIS MegaVPN HTTP Proxy')}" /></div>
           <div class="field"><label>Visible hostname</label><input name="proxy_visible_hostname" value="${escapeHTML(draft.proxy_visible_hostname || '')}" placeholder="proxy.example.com" /></div>
           <div class="field"><label>Auth helper path</label><input name="proxy_auth_helper_path" value="${escapeHTML(draft.proxy_auth_helper_path || '/usr/lib/squid/basic_ncsa_auth')}" /></div>
-          <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/etc/squid/squid.conf')}" /></div>
+          <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/etc/squid/proxy.conf')}" /></div>
           <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0644')}" /></div>
           <div class="field full"><label>Config extra lines</label><textarea name="proxy_config_extra_lines" rows="6" placeholder="cache_mem 64 MB&#10;maximum_object_size_in_memory 512 KB">${escapeHTML(draft.proxy_config_extra_lines || '')}</textarea></div>
           <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated squid.conf.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
@@ -3240,6 +3242,11 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       return spec;
     }
     if (normalized === 'mtproto') {
+      const slug = slugPathPart(form.get('slug'), 'mtproto');
+      const expectedConfigPath = `/usr/local/etc/xray/${slug}.json`;
+      if (!spec.config_path || spec.config_path === '/usr/local/etc/xray/config.json') {
+        spec.config_path = expectedConfigPath;
+      }
       spec.server_port = Number(form.get('endpoint_port') || endpointPort || 443) || 443;
       spec.listen = String(form.get('mtproto_listen') || '0.0.0.0').trim();
       if (configBody) {
@@ -3298,6 +3305,11 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       return spec;
     }
     if (normalized === 'http_proxy') {
+      const slug = slugPathPart(form.get('slug'), 'proxy');
+      const expectedConfigPath = `/etc/squid/${slug}.conf`;
+      if (!spec.config_path || spec.config_path === '/etc/squid/squid.conf') {
+        spec.config_path = expectedConfigPath;
+      }
       spec.listen_port = Number(form.get('endpoint_port') || endpointPort || 3128) || 3128;
       spec.server_port = spec.listen_port;
       spec.auth_realm = String(form.get('proxy_auth_realm') || 'RTIS MegaVPN HTTP Proxy').trim();

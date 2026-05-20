@@ -1855,9 +1855,15 @@ func serviceDefaultSystemdUnit(serviceCode, slug string) string {
 		}
 		return "openvpn-server@server"
 	case "mtproto":
-		return "xray"
+		if slug == "" {
+			slug = "mtproto"
+		}
+		return "megavpn-mtproto-" + slug
 	case "http_proxy":
-		return "squid"
+		if slug == "" {
+			slug = "proxy"
+		}
+		return "megavpn-http-proxy-" + slug
 	case "wireguard":
 		if slug != "" {
 			return "wg-quick@" + slug

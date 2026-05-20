@@ -327,7 +327,7 @@ func validateRenderedConfig(ctx context.Context, payload instanceJobPayload, fil
 			return fmt.Errorf("nginx config validation failed: %s", truncate(out, 3000))
 		}
 	case "http_proxy":
-		configPath := firstConfigPath(files, defaultConfigPath(payload))
+		configPath := firstConfigPath(filterConfigFiles(files), defaultConfigPath(payload))
 		if configPath != "" {
 			code, out := runInstallCommand(ctx, "squid", "-k", "parse", "-f", configPath)
 			if code != 0 {
@@ -335,7 +335,7 @@ func validateRenderedConfig(ctx context.Context, payload instanceJobPayload, fil
 			}
 		}
 	case "wireguard":
-		configPath := firstConfigPath(files, defaultConfigPath(payload))
+		configPath := firstConfigPath(filterConfigFiles(files), defaultConfigPath(payload))
 		if configPath != "" {
 			code, out := runInstallCommand(ctx, "wg-quick", "strip", configPath)
 			if code != 0 {
@@ -343,7 +343,7 @@ func validateRenderedConfig(ctx context.Context, payload instanceJobPayload, fil
 			}
 		}
 	case "xray-core":
-		configPath := firstConfigPath(files, defaultConfigPath(payload))
+		configPath := firstConfigPath(filterConfigFiles(files), defaultConfigPath(payload))
 		if configPath != "" {
 			code, out := runInstallCommand(ctx, "xray", "run", "-test", "-config", configPath)
 			if code != 0 {
@@ -354,7 +354,7 @@ func validateRenderedConfig(ctx context.Context, payload instanceJobPayload, fil
 			}
 		}
 	case "mtproto":
-		configPath := firstConfigPath(files, defaultConfigPath(payload))
+		configPath := firstConfigPath(filterConfigFiles(files), defaultConfigPath(payload))
 		if configPath != "" {
 			code, out := runInstallCommand(ctx, "xray", "run", "-test", "-config", configPath)
 			if code != 0 {
@@ -377,6 +377,17 @@ func firstConfigPath(files []managedFileSpec, fallback string) string {
 	return fallback
 }
 
+func filterConfigFiles(files []managedFileSpec) []managedFileSpec {
+	out := make([]managedFileSpec, 0, len(files))
+	for _, file := range files {
+		if strings.HasSuffix(file.Path, ".service") {
+			continue
+		}
+		out = append(out, file)
+	}
+	return out
+}
+
 func currentUnitState(unit string) string {
 	if strings.TrimSpace(unit) == "" {
 		return "unknown"
@@ -391,9 +402,15 @@ func defaultInstanceSystemdUnit(payload instanceJobPayload) string {
 	case "nginx":
 		return "nginx"
 	case "mtproto":
-		return "xray"
+		if payload.Slug != "" {
+			return "megavpn-mtproto-" + payload.Slug
+		}
+		return "megavpn-mtproto-instance"
 	case "http_proxy":
-		return "squid"
+		if payload.Slug != "" {
+			return "megavpn-http-proxy-" + payload.Slug
+		}
+		return "megavpn-http-proxy-instance"
 	case "openvpn":
 		if payload.Slug != "" {
 			return "openvpn-server@" + payload.Slug
@@ -420,11 +437,13 @@ func defaultConfigPath(payload instanceJobPayload) string {
 	case "xray-core":
 		return "/usr/local/etc/xray/config.json"
 	case "mtproto":
-		return "/usr/local/etc/xray/config.json"
+		slug := first(payload.Slug, "mtproto")
+		return "/usr/local/etc/xray/" + slug + ".json"
 	case "nginx":
 		return "/etc/nginx/nginx.conf"
 	case "http_proxy":
-		return "/etc/squid/squid.conf"
+		slug := first(payload.Slug, "proxy")
+		return "/etc/squid/" + slug + ".conf"
 	case "openvpn":
 		slug := first(payload.Slug, "server")
 		return "/etc/openvpn/server/" + slug + ".conf"

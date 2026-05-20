@@ -184,17 +184,25 @@ func (s *Store) renderXrayPayloadSpec(ctx context.Context, instance domain.Insta
 
 func (s *Store) renderMTProtoPayloadSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
 	spec = cloneMap(spec)
-	configPath := firstString(spec["config_path"], "/usr/local/etc/xray/config.json")
+	unitName := firstString(spec["systemd_unit"], instance.SystemdUnit, serviceDefaultSystemdUnit("mtproto", instance.Slug))
+	configPath := firstString(spec["config_path"], mtprotoConfigPath(instance, spec))
 	configMode := firstString(spec["config_mode"], "0640")
 	config, err := buildMTProtoServerConfig(instance, spec)
 	if err != nil {
 		return nil, err
 	}
-	spec["files"] = []map[string]any{{
-		"path": configPath,
-		"json": config,
-		"mode": configMode,
-	}}
+	spec["files"] = []map[string]any{
+		{
+			"path": configPath,
+			"json": config,
+			"mode": configMode,
+		},
+		{
+			"path":    "/etc/systemd/system/" + unitName + ".service",
+			"content": buildMTProtoUnitFile(unitName, configPath, instance),
+			"mode":    "0644",
+		},
+	}
 	return spec, nil
 }
 
@@ -216,9 +224,10 @@ func (s *Store) renderNginxPayloadSpec(ctx context.Context, instance domain.Inst
 
 func (s *Store) renderHTTPProxyPayloadSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
 	spec = cloneMap(spec)
-	configPath := firstString(spec["config_path"], "/etc/squid/squid.conf")
+	unitName := firstString(spec["systemd_unit"], instance.SystemdUnit, serviceDefaultSystemdUnit("http_proxy", instance.Slug))
+	configPath := firstString(spec["config_path"], httpProxyConfigPath(instance, spec))
 	configMode := firstString(spec["config_mode"], "0644")
-	passwdPath := firstString(spec["passwd_path"], "/etc/squid/megavpn.passwd")
+	passwdPath := firstString(spec["passwd_path"], httpProxyPasswdPath(instance, spec))
 	passwdMode := firstString(spec["passwd_mode"], "0600")
 	config, passwdBody, err := buildHTTPProxyServerConfig(instance, spec, passwdPath)
 	if err != nil {
@@ -228,6 +237,10 @@ func (s *Store) renderHTTPProxyPayloadSpec(ctx context.Context, instance domain.
 		"path":    configPath,
 		"content": config,
 		"mode":    configMode,
+	}, {
+		"path":    "/etc/systemd/system/" + unitName + ".service",
+		"content": buildHTTPProxyUnitFile(unitName, configPath, instance),
+		"mode":    "0644",
 	}}
 	if passwdBody != "" {
 		files = append(files, map[string]any{
@@ -643,9 +656,9 @@ func buildHTTPProxyServerConfig(instance domain.Instance, spec map[string]any, p
 	lines := []string{
 		"http_port " + strconv.Itoa(port),
 		"visible_hostname " + firstString(spec["visible_hostname"], instance.EndpointHost, instance.Name, "megavpn-proxy"),
-		"access_log " + firstString(spec["access_log"], "stdio:/var/log/squid/access.log"),
-		"cache_log " + firstString(spec["cache_log"], "/var/log/squid/cache.log"),
-		"pid_filename " + firstString(spec["pid_filename"], "/run/squid.pid"),
+		"access_log " + firstString(spec["access_log"], httpProxyAccessLogPath(instance, spec)),
+		"cache_log " + firstString(spec["cache_log"], httpProxyCacheLogPath(instance, spec)),
+		"pid_filename " + firstString(spec["pid_filename"], httpProxyPIDPath(instance, spec)),
 	}
 	passwdLines := []string{}
 	if len(managedAccounts) > 0 {
@@ -1114,6 +1127,77 @@ func mtprotoManagedUsers(raw any) []any {
 func httpProxyPasswordHash(password string) string {
 	sum := sha1.Sum([]byte(password))
 	return "{SHA}" + base64.StdEncoding.EncodeToString(sum[:])
+}
+
+func mtprotoConfigPath(instance domain.Instance, spec map[string]any) string {
+	slug := firstString(spec["slug"], instance.Slug, "mtproto")
+	return "/usr/local/etc/xray/" + slug + ".json"
+}
+
+func httpProxyConfigPath(instance domain.Instance, spec map[string]any) string {
+	slug := firstString(spec["slug"], instance.Slug, "proxy")
+	return "/etc/squid/" + slug + ".conf"
+}
+
+func httpProxyPasswdPath(instance domain.Instance, spec map[string]any) string {
+	slug := firstString(spec["slug"], instance.Slug, "proxy")
+	return "/etc/squid/" + slug + ".passwd"
+}
+
+func httpProxyAccessLogPath(instance domain.Instance, spec map[string]any) string {
+	slug := firstString(spec["slug"], instance.Slug, "proxy")
+	return "stdio:/var/log/squid/" + slug + "-access.log"
+}
+
+func httpProxyCacheLogPath(instance domain.Instance, spec map[string]any) string {
+	slug := firstString(spec["slug"], instance.Slug, "proxy")
+	return "/var/log/squid/" + slug + "-cache.log"
+}
+
+func httpProxyPIDPath(instance domain.Instance, spec map[string]any) string {
+	slug := firstString(spec["slug"], instance.Slug, "proxy")
+	return "/run/" + slug + ".pid"
+}
+
+func buildMTProtoUnitFile(unitName, configPath string, instance domain.Instance) string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=RTIS MegaVPN MTProto instance (" + firstString(instance.Name, instance.Slug, unitName) + ")",
+		"After=network-online.target",
+		"Wants=network-online.target",
+		"",
+		"[Service]",
+		"Type=simple",
+		"ExecStart=/bin/sh -c 'exec xray run -config " + configPath + "'",
+		"Restart=on-failure",
+		"RestartSec=2s",
+		"LimitNOFILE=1048576",
+		"",
+		"[Install]",
+		"WantedBy=multi-user.target",
+		"",
+	}, "\n")
+}
+
+func buildHTTPProxyUnitFile(unitName, configPath string, instance domain.Instance) string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=RTIS MegaVPN HTTP Proxy instance (" + firstString(instance.Name, instance.Slug, unitName) + ")",
+		"After=network-online.target",
+		"Wants=network-online.target",
+		"",
+		"[Service]",
+		"Type=simple",
+		"ExecStart=/bin/sh -c 'exec squid -f " + configPath + " -N'",
+		"ExecReload=/bin/sh -c 'exec squid -k reconfigure -f " + configPath + "'",
+		"ExecStop=/bin/sh -c 'exec squid -k shutdown -f " + configPath + "'",
+		"Restart=on-failure",
+		"RestartSec=2s",
+		"",
+		"[Install]",
+		"WantedBy=multi-user.target",
+		"",
+	}, "\n")
 }
 
 func cloneMap(src map[string]any) map[string]any {
