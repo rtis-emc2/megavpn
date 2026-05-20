@@ -267,7 +267,9 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/clients/{id}/accesses/{access_id}/rotate-openvpn", "client.provision", s.rotateClientAccess("openvpn"))
 	protected("POST /api/v1/clients/{id}/accesses/{access_id}/rotate-xray", "client.provision", s.rotateClientAccess("xray-core"))
 	protected("POST /api/v1/clients/{id}/accesses/{access_id}/rotate-wireguard", "client.provision", s.rotateClientAccess("wireguard"))
+	protected("POST /api/v1/clients/{id}/accesses/{access_id}/rotate-mtproto", "client.provision", s.rotateClientAccess("mtproto"))
 	protected("POST /api/v1/clients/{id}/accesses/{access_id}/rotate-ipsec", "client.provision", s.rotateClientAccess("ipsec"))
+	protected("POST /api/v1/clients/{id}/accesses/{access_id}/rotate-http-proxy", "client.provision", s.rotateClientAccess("http_proxy"))
 	protected("POST /api/v1/clients/{id}/accesses/{access_id}/rotate-shadowsocks", "client.provision", s.rotateClientAccess("shadowsocks"))
 	protected("GET /api/v1/clients/{id}/artifacts", "artifact.read", s.clientArtifacts)
 	protected("POST /api/v1/clients/{id}/artifacts", "artifact.export", s.createArtifact)
@@ -991,7 +993,7 @@ func (s *Server) createArtifact(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	req.Type = strings.TrimSpace(strings.ToLower(req.Type))
 	switch req.Type {
-	case "", "all", "zip_bundle", "ovpn", "vless_url", "wg_conf", "ss_url", "ipsec_bundle":
+	case "", "all", "zip_bundle", "ovpn", "vless_url", "wg_conf", "mtproto_url", "http_proxy_bundle", "ss_url", "ipsec_bundle":
 	default:
 		writeErr(w, 400, "unsupported artifact type")
 		return
@@ -1004,7 +1006,7 @@ func (s *Server) createArtifact(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, 202, response{
 		"job":            jobRecord,
 		"requested_type": req.Type,
-		"message":        "artifact export queues client.provision; the worker will build the supported artifacts for the selected instances, including ovpn, vless_url, wg_conf, ss_url and ipsec_bundle for the current service drivers",
+		"message":        "artifact export queues client.provision; the worker will build the supported artifacts for the selected instances, including ovpn, vless_url, wg_conf, mtproto_url, http_proxy_bundle, ss_url and ipsec_bundle for the current service drivers",
 	})
 }
 func (s *Server) clientShareLinks(w nethttp.ResponseWriter, r *nethttp.Request) {

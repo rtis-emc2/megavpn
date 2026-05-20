@@ -1,7 +1,7 @@
 # RTIS MegaVPN Platform v1.0 Roadmap and Technical Specification
 
 Дата анализа: 2026-05-15  
-Базовая версия кода: RTIS MegaVPN 0.6.7.1-alpha  
+Базовая версия кода: RTIS MegaVPN 0.6.7.2-alpha  
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 

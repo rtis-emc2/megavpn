@@ -89,6 +89,25 @@ func handleClientProvisionJob(ctx context.Context, store *postgres.Store, job do
 				files, err = buildWireGuardArtifacts(ctx, store, *record)
 			}
 			applyTargets[record.Instance.ID] = serviceCode
+		case "mtproto":
+			if ensureErr := ensureMTProtoInstanceDriverState(ctx, store, record.Instance.ID); ensureErr != nil {
+				err = ensureErr
+			}
+			if err == nil {
+				if refreshed, refreshErr := store.GetInstanceWithSpec(ctx, record.Instance.ID); refreshErr == nil {
+					record.Instance = refreshed
+				}
+				if refreshedAccesses, listErr := store.ListProvisioningAccesses(ctx, clientID); listErr == nil {
+					for _, refreshed := range refreshedAccesses {
+						if refreshed.Access.ID == record.Access.ID {
+							record.Access = refreshed.Access
+							break
+						}
+					}
+				}
+				files, err = buildMTProtoArtifacts(*record)
+			}
+			applyTargets[record.Instance.ID] = serviceCode
 		case "xray-core":
 			if xrayUUID := strings.TrimSpace(stringify(record.Access.Metadata["xray_uuid"])); xrayUUID == "" {
 				record.Access.Metadata["xray_uuid"] = id.New()
@@ -147,6 +166,25 @@ func handleClientProvisionJob(ctx context.Context, store *postgres.Store, job do
 				files, err = buildShadowsocksArtifacts(*record)
 			}
 			applyTargets[record.Instance.ID] = serviceCode
+		case "http_proxy":
+			if ensureErr := ensureHTTPProxyInstanceDriverState(ctx, store, record.Instance.ID); ensureErr != nil {
+				err = ensureErr
+			}
+			if err == nil {
+				if refreshed, refreshErr := store.GetInstanceWithSpec(ctx, record.Instance.ID); refreshErr == nil {
+					record.Instance = refreshed
+				}
+				if refreshedAccesses, listErr := store.ListProvisioningAccesses(ctx, clientID); listErr == nil {
+					for _, refreshed := range refreshedAccesses {
+						if refreshed.Access.ID == record.Access.ID {
+							record.Access = refreshed.Access
+							break
+						}
+					}
+				}
+				files, err = buildHTTPProxyArtifacts(*record)
+			}
+			applyTargets[record.Instance.ID] = serviceCode
 		default:
 			err = fmt.Errorf("provisioning driver is not implemented for %s", serviceCode)
 		}
@@ -171,6 +209,14 @@ func handleClientProvisionJob(ctx context.Context, store *postgres.Store, job do
 	queuedApplies := make([]map[string]any, 0, len(applyTargets))
 	for instanceID, serviceCode := range applyTargets {
 		switch serviceCode {
+		case "mtproto":
+			if err := ensureMTProtoInstanceDriverState(ctx, store, instanceID); err != nil {
+				return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
+			}
+		case "http_proxy":
+			if err := ensureHTTPProxyInstanceDriverState(ctx, store, instanceID); err != nil {
+				return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
+			}
 		case "wireguard":
 			if err := ensureWireGuardInstanceDriverState(ctx, store, instanceID); err != nil {
 				return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
@@ -403,6 +449,38 @@ func buildWireGuardArtifacts(ctx context.Context, store *postgres.Store, record 
 	}}, nil
 }
 
+func buildMTProtoArtifacts(record domain.ProvisioningAccess) ([]generatedArtifactFile, error) {
+	spec := record.Instance.Spec
+	meta := record.Access.Metadata
+	if spec == nil {
+		spec = map[string]any{}
+	}
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	secret := firstNonEmpty(stringify(meta["mtproto_secret"]), stringify(meta["secret"]))
+	if secret == "" {
+		return nil, fmt.Errorf("mtproto secret is required")
+	}
+	host := firstNonEmpty(stringify(meta["server_host"]), stringify(spec["server_host"]), stringify(spec["public_host"]), record.Instance.EndpointHost)
+	if host == "" {
+		return nil, fmt.Errorf("mtproto server host is required")
+	}
+	port := firstInt(meta["server_port"], spec["server_port"], spec["listen_port"], record.Instance.EndpointPort)
+	if port <= 0 {
+		port = 443
+	}
+	mtprotoURL := fmt.Sprintf("tg://proxy?server=%s&port=%d&secret=%s", host, port, secret)
+	accessID := record.Access.ID
+	filename := sanitizeLocalFilename(firstNonEmpty(record.Client.Username, record.Client.DisplayName, "client")) + "--" + sanitizeLocalFilename(firstNonEmpty(record.Instance.Slug, record.Instance.Name, "mtproto")) + ".mtproto.txt"
+	return []generatedArtifactFile{{
+		ArtifactType:    "mtproto_url",
+		ServiceAccessID: &accessID,
+		Filename:        filename,
+		Content:         []byte(mtprotoURL + "\n"),
+	}}, nil
+}
+
 func buildXrayArtifacts(record domain.ProvisioningAccess) ([]generatedArtifactFile, error) {
 	spec := record.Instance.Spec
 	meta := record.Access.Metadata
@@ -506,6 +584,50 @@ func buildShadowsocksArtifacts(record domain.ProvisioningAccess) ([]generatedArt
 		ServiceAccessID: &accessID,
 		Filename:        filename,
 		Content:         []byte(ssURL + "\n"),
+	}}, nil
+}
+
+func buildHTTPProxyArtifacts(record domain.ProvisioningAccess) ([]generatedArtifactFile, error) {
+	spec := record.Instance.Spec
+	meta := record.Access.Metadata
+	if spec == nil {
+		spec = map[string]any{}
+	}
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	username := firstNonEmpty(stringify(meta["username"]), stringify(meta["proxy_username"]), stringify(meta["http_proxy_username"]))
+	password := firstNonEmpty(stringify(meta["password"]), stringify(meta["proxy_password"]), stringify(meta["http_proxy_password"]))
+	host := firstNonEmpty(stringify(meta["server_host"]), stringify(spec["server_host"]), stringify(spec["public_host"]), record.Instance.EndpointHost)
+	port := firstInt(meta["server_port"], spec["listen_port"], spec["server_port"], record.Instance.EndpointPort)
+	if username == "" || password == "" {
+		return nil, fmt.Errorf("http proxy credentials are incomplete")
+	}
+	if host == "" {
+		return nil, fmt.Errorf("http proxy server host is required")
+	}
+	if port <= 0 {
+		port = 3128
+	}
+	scheme := firstNonEmpty(stringify(meta["scheme"]), stringify(spec["scheme"]), "http")
+	lines := []string{
+		"RTIS MegaVPN HTTP Proxy access",
+		"",
+		"Server: " + host,
+		fmt.Sprintf("Port: %d", port),
+		"Scheme: " + scheme,
+		"Username: " + username,
+		"Password: " + password,
+		"",
+		fmt.Sprintf("Proxy URL: %s://%s:%s@%s:%d", scheme, username, password, host, port),
+	}
+	accessID := record.Access.ID
+	filename := sanitizeLocalFilename(firstNonEmpty(record.Client.Username, record.Client.DisplayName, "client")) + "--" + sanitizeLocalFilename(firstNonEmpty(record.Instance.Slug, record.Instance.Name, "http-proxy")) + ".proxy.txt"
+	return []generatedArtifactFile{{
+		ArtifactType:    "http_proxy_bundle",
+		ServiceAccessID: &accessID,
+		Filename:        filename,
+		Content:         []byte(strings.Join(lines, "\n") + "\n"),
 	}}, nil
 }
 
@@ -687,8 +809,12 @@ func normalizeServiceCode(code string) string {
 		return "ipsec"
 	case "wireguard", "wg", "wg-quick":
 		return "wireguard"
+	case "mtproto", "telegram-mtproto":
+		return "mtproto"
 	case "l2tp", "l2tpd", "xl2tpd":
 		return "xl2tpd"
+	case "http_proxy", "http-proxy", "squid":
+		return "http_proxy"
 	case "shadowsocks", "shadowsocks-libev", "ss-server":
 		return "shadowsocks"
 	default:

@@ -373,7 +373,7 @@
   }
 
   function provisionableArtifactServiceCodes() {
-    return new Set(['openvpn', 'xray-core', 'wireguard', 'ipsec', 'shadowsocks']);
+    return new Set(['openvpn', 'xray-core', 'wireguard', 'mtproto', 'ipsec', 'http_proxy', 'shadowsocks']);
   }
 
   function artifactRowsForClient(clientID) {
@@ -405,6 +405,10 @@
         return 'VLESS URL';
       case 'wg_conf':
         return 'WireGuard config';
+      case 'mtproto_url':
+        return 'MTProto URL';
+      case 'http_proxy_bundle':
+        return 'HTTP proxy bundle';
       case 'ss_url':
         return 'Shadowsocks URL';
       case 'zip_bundle':
@@ -770,7 +774,7 @@
         { title: 'Status', key: 'status', render: (r) => statusTag(r.status) },
         { title: 'Actions', key: 'id', render: (r) => `<div class="inline-actions"><button class="secondary-btn client-provision-btn" type="button" data-client-id="${escapeHTML(r.id)}">Provision</button><button class="secondary-btn client-accesses-btn" type="button" data-client-id="${escapeHTML(r.id)}">Accesses</button><button class="secondary-btn client-email-btn" type="button" data-client-id="${escapeHTML(r.id)}">Send access email</button></div>` },
       ], '<button class="secondary-btn" type="button" id="clientCreateBtn">Create client</button>')}
-      <section class="card"><h2>Provisioning flow</h2><p>Create ClientAccount → Resolve instances → Create ServiceAccess → Generate <code>ovpn</code> / <code>vless_url</code> / <code>wg_conf</code> / <code>ipsec_bundle</code> / <code>ss_url</code> / <code>zip_bundle</code> → Publish ShareLink → Audit. Для текущего backend-среза поддержаны <code>OpenVPN</code>, <code>Xray</code>, <code>WireGuard</code>, <code>IPsec/L2TP</code> и <code>Shadowsocks</code>.</p></section>`;
+      <section class="card"><h2>Provisioning flow</h2><p>Create ClientAccount → Resolve instances → Create ServiceAccess → Generate <code>ovpn</code> / <code>vless_url</code> / <code>wg_conf</code> / <code>mtproto_url</code> / <code>http_proxy_bundle</code> / <code>ipsec_bundle</code> / <code>ss_url</code> / <code>zip_bundle</code> → Publish ShareLink → Audit. Для текущего backend-среза поддержаны <code>OpenVPN</code>, <code>Xray</code>, <code>WireGuard</code>, <code>MTProto</code>, <code>HTTP Proxy</code>, <code>IPsec/L2TP</code> и <code>Shadowsocks</code>.</p></section>`;
     const btn = document.getElementById('clientCreateBtn');
     if (btn) btn.addEventListener('click', openCreateClientModal);
     document.querySelectorAll('.client-provision-btn').forEach((button) => {
@@ -829,7 +833,7 @@
         { title: 'Created', key: 'created', render: (r) => formatDate(r.created) },
         { title: 'Actions', key: 'id', render: (r) => `<div class="inline-actions compact-actions"><button class="secondary-btn artifact-publish-btn" type="button" data-client-id="${escapeHTML(r.client_id)}" data-artifact-id="${escapeHTML(r.id)}">Publish link</button></div>` },
       ], '<button class="secondary-btn" type="button" id="artifactExportBtn">Queue export</button>')}
-      <section class="card"><h2>Generated outputs</h2><p>Export flow ставит в очередь <code>client.provision</code> и собирает реальные client-facing artifacts для <code>OpenVPN</code>, <code>Xray</code>, <code>WireGuard</code>, <code>IPsec/L2TP</code> и <code>Shadowsocks</code>: <code>.ovpn</code>, <code>vless_url</code>, <code>wg_conf</code>, <code>ipsec_bundle</code>, <code>ss_url</code> и общий <code>zip_bundle</code>.</p></section>`;
+      <section class="card"><h2>Generated outputs</h2><p>Export flow ставит в очередь <code>client.provision</code> и собирает реальные client-facing artifacts для <code>OpenVPN</code>, <code>Xray</code>, <code>WireGuard</code>, <code>MTProto</code>, <code>HTTP Proxy</code>, <code>IPsec/L2TP</code> и <code>Shadowsocks</code>: <code>.ovpn</code>, <code>vless_url</code>, <code>wg_conf</code>, <code>mtproto_url</code>, <code>http_proxy_bundle</code>, <code>ipsec_bundle</code>, <code>ss_url</code> и общий <code>zip_bundle</code>.</p></section>`;
     const exportBtn = document.getElementById('artifactExportBtn');
     if (exportBtn) exportBtn.addEventListener('click', openArtifactExportModal);
     document.querySelectorAll('.artifact-publish-btn').forEach((button) => {
@@ -1101,7 +1105,7 @@
   }
 
   function renderCapabilityMatrix(nodes, capabilityMap) {
-    const columns = ['nginx', 'xray-core', 'openvpn', 'wireguard', 'ipsec', 'http_proxy', 'xl2tpd', 'shadowsocks'];
+    const columns = ['nginx', 'xray-core', 'openvpn', 'wireguard', 'mtproto', 'ipsec', 'http_proxy', 'xl2tpd', 'shadowsocks'];
     const header = columns.map((code) => `<th>${escapeHTML(code)}</th>`).join('');
     const rows = nodes.length
       ? nodes.map((node) => {
@@ -2582,11 +2586,13 @@ path = ${escapeHTML(selectedArtifact.storage_path || 'n/a')}</div>`
           <option value="ovpn">ovpn</option>
           <option value="vless_url">vless_url</option>
           <option value="wg_conf">wg_conf</option>
+          <option value="mtproto_url">mtproto_url</option>
+          <option value="http_proxy_bundle">http_proxy_bundle</option>
           <option value="ipsec_bundle">ipsec_bundle</option>
           <option value="ss_url">ss_url</option>
         </select></div>
         <div class="field full"><label>Instances</label><select name="instance_ids" id="artifactExportInstances" multiple size="8">${instanceOptionsForArtifactExport(defaultInstances)}</select></div>
-        <div class="field full"><div class="metric-caption">Current export path is implemented for <code>OpenVPN</code>, <code>Xray</code>, <code>WireGuard</code>, <code>IPsec/L2TP</code> and <code>Shadowsocks</code>. Leave all selected to queue the full supported bundle.</div></div>
+        <div class="field full"><div class="metric-caption">Current export path is implemented for <code>OpenVPN</code>, <code>Xray</code>, <code>WireGuard</code>, <code>MTProto</code>, <code>HTTP Proxy</code>, <code>IPsec/L2TP</code> and <code>Shadowsocks</code>. Leave all selected to queue the full supported bundle.</div></div>
         <div class="field full inline-actions"><button class="primary-btn" type="submit">Queue export job</button></div>
       </form>
       <div id="artifactExportResult" class="form-result"></div>`);
@@ -2694,8 +2700,8 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
   async function queueClientProvision(clientID) {
     const client = (state.clients || []).find((item) => item.id === clientID);
     if (!client) return;
-    openModal(`Provision client: ${client.username}`, 'Generate OpenVPN / Xray / IPsec / Shadowsocks artifacts', `
-      <div class="code-block">This action will queue client.provision for all active compatible instances bound to the client. Supported in this release: OpenVPN, Xray, IPsec/L2TP and Shadowsocks.</div>
+    openModal(`Provision client: ${client.username}`, 'Generate OpenVPN / Xray / WireGuard / MTProto / HTTP Proxy / IPsec / Shadowsocks artifacts', `
+      <div class="code-block">This action will queue client.provision for all active compatible instances bound to the client. Supported in this release: OpenVPN, Xray, WireGuard, MTProto, HTTP Proxy, IPsec/L2TP and Shadowsocks.</div>
       <div class="modal-actions">
         <button class="secondary-btn" id="cancelProvisionBtn" type="button">Cancel</button>
         <button class="primary-btn" id="confirmProvisionBtn" type="button">Queue provision job</button>
@@ -2728,7 +2734,9 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         const canRotateOpenVPN = serviceCode === 'openvpn';
         const canRotateXray = serviceCode === 'xray-core' || serviceCode === 'xray';
         const canRotateWireGuard = serviceCode === 'wireguard';
+        const canRotateMTProto = serviceCode === 'mtproto';
         const canRotateIPSec = serviceCode === 'ipsec';
+        const canRotateHTTPProxy = serviceCode === 'http_proxy';
         const canRotateShadowsocks = serviceCode === 'shadowsocks';
         return `
           <tr>
@@ -2741,7 +2749,9 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
                 ${canRotateOpenVPN ? `<button class="secondary-btn rotate-access-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-access-id="${escapeHTML(access.id)}" data-driver="openvpn">Rotate OpenVPN</button>` : ''}
                 ${canRotateXray ? `<button class="secondary-btn rotate-access-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-access-id="${escapeHTML(access.id)}" data-driver="xray-core">Rotate Xray UUID</button>` : ''}
                 ${canRotateWireGuard ? `<button class="secondary-btn rotate-access-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-access-id="${escapeHTML(access.id)}" data-driver="wireguard">Rotate WireGuard Keys</button>` : ''}
+                ${canRotateMTProto ? `<button class="secondary-btn rotate-access-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-access-id="${escapeHTML(access.id)}" data-driver="mtproto">Rotate MTProto Secret</button>` : ''}
                 ${canRotateIPSec ? `<button class="secondary-btn rotate-access-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-access-id="${escapeHTML(access.id)}" data-driver="ipsec">Rotate L2TP Access</button>` : ''}
+                ${canRotateHTTPProxy ? `<button class="secondary-btn rotate-access-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-access-id="${escapeHTML(access.id)}" data-driver="http_proxy">Rotate Proxy Access</button>` : ''}
                 ${canRotateShadowsocks ? `<button class="secondary-btn rotate-access-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-access-id="${escapeHTML(access.id)}" data-driver="shadowsocks">Rotate SS Access</button>` : ''}
               </div>
             </td>
@@ -2770,8 +2780,12 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       ? 'rotate-openvpn'
       : driver === 'wireguard'
         ? 'rotate-wireguard'
+      : driver === 'mtproto'
+        ? 'rotate-mtproto'
       : driver === 'ipsec'
         ? 'rotate-ipsec'
+      : driver === 'http_proxy'
+        ? 'rotate-http-proxy'
       : driver === 'shadowsocks'
         ? 'rotate-shadowsocks'
         : 'rotate-xray';
@@ -2814,6 +2828,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     const normalized = String(serviceCode || '').trim().toLowerCase();
     if (normalized === 'xray') return 'xray-core';
     if (normalized === 'wg' || normalized === 'wg-quick') return 'wireguard';
+    if (normalized === 'squid' || normalized === 'http-proxy') return 'http_proxy';
     if (normalized === 'shadowsocks-libev' || normalized === 'ss-server') return 'shadowsocks';
     return normalized;
   }
@@ -2896,6 +2911,14 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           wg_interface_extra_lines: Array.isArray(spec.interface_extra_lines) ? spec.interface_extra_lines.join('\n') : stringValue(spec.interface_extra_lines),
           config_body: stringValue(spec.config_content),
         };
+      case 'mtproto':
+        return {
+          endpoint_port: numberValue(instance?.endpoint_port, spec.server_port, 443),
+          config_path: stringValue(spec.config_path, '/usr/local/etc/xray/config.json'),
+          config_mode: stringValue(spec.config_mode, '0640'),
+          mtproto_listen: stringValue(spec.listen, '0.0.0.0'),
+          config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
+        };
       case 'nginx':
         return {
           endpoint_port: numberValue(instance?.endpoint_port, spec.listen_port, spec.server_port, 8080),
@@ -2931,6 +2954,17 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           ipsec_esp: stringValue(spec.esp, 'aes256-sha1'),
           ipsec_config_extra_lines: Array.isArray(spec.config_extra_lines) ? spec.config_extra_lines.join('\n') : stringValue(spec.config_extra_lines),
           ipsec_secrets_body: stringValue(spec.secrets_content),
+          config_body: stringValue(spec.config_content),
+        };
+      case 'http_proxy':
+        return {
+          endpoint_port: numberValue(instance?.endpoint_port, spec.listen_port, spec.server_port, 3128),
+          config_path: stringValue(spec.config_path, '/etc/squid/squid.conf'),
+          config_mode: stringValue(spec.config_mode, '0644'),
+          proxy_auth_realm: stringValue(spec.auth_realm, 'RTIS MegaVPN HTTP Proxy'),
+          proxy_visible_hostname: stringValue(spec.visible_hostname, instance?.endpoint_host, instance?.name),
+          proxy_auth_helper_path: stringValue(spec.auth_helper_path, '/usr/lib/squid/basic_ncsa_auth'),
+          proxy_config_extra_lines: Array.isArray(spec.config_extra_lines) ? spec.config_extra_lines.join('\n') : stringValue(spec.config_extra_lines),
           config_body: stringValue(spec.config_content),
         };
       case 'xl2tpd':
@@ -3023,6 +3057,12 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0600')}" /></div>
           <div class="field full"><label>Interface extra lines</label><textarea name="wg_interface_extra_lines" rows="5" placeholder="PostUp = nft add rule inet filter input udp dport 51820 accept&#10;PostDown = nft delete rule inet filter input udp dport 51820 accept">${escapeHTML(draft.wg_interface_extra_lines || '')}</textarea></div>
           <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated WireGuard config.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
+      case 'mtproto':
+        return `
+          <div class="field"><label>Listen address</label><input name="mtproto_listen" value="${escapeHTML(draft.mtproto_listen || '0.0.0.0')}" placeholder="0.0.0.0" /></div>
+          <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/usr/local/etc/xray/config.json')}" /></div>
+          <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
+          <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"inbounds":[...],"outbounds":[...]}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'nginx':
         return `
           <div class="field"><label>Mode</label><select name="nginx_mode">
@@ -3062,6 +3102,15 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field full"><label>Config extra lines</label><textarea name="ipsec_config_extra_lines" rows="5" placeholder="ikelifetime=8h&#10;keylife=1h">${escapeHTML(draft.ipsec_config_extra_lines || '')}</textarea></div>
           <div class="field full"><label>Secrets override</label><textarea name="ipsec_secrets_body" rows="4" placeholder="%any %any : PSK &quot;shared-secret&quot;">${escapeHTML(draft.ipsec_secrets_body || '')}</textarea></div>
           <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated ipsec.conf.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
+      case 'http_proxy':
+        return `
+          <div class="field"><label>Auth realm</label><input name="proxy_auth_realm" value="${escapeHTML(draft.proxy_auth_realm || 'RTIS MegaVPN HTTP Proxy')}" /></div>
+          <div class="field"><label>Visible hostname</label><input name="proxy_visible_hostname" value="${escapeHTML(draft.proxy_visible_hostname || '')}" placeholder="proxy.example.com" /></div>
+          <div class="field"><label>Auth helper path</label><input name="proxy_auth_helper_path" value="${escapeHTML(draft.proxy_auth_helper_path || '/usr/lib/squid/basic_ncsa_auth')}" /></div>
+          <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/etc/squid/squid.conf')}" /></div>
+          <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0644')}" /></div>
+          <div class="field full"><label>Config extra lines</label><textarea name="proxy_config_extra_lines" rows="6" placeholder="cache_mem 64 MB&#10;maximum_object_size_in_memory 512 KB">${escapeHTML(draft.proxy_config_extra_lines || '')}</textarea></div>
+          <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated squid.conf.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'xl2tpd':
         return `
           <div class="field"><label>Local IP</label><input name="xl2tpd_local_ip" value="${escapeHTML(draft.xl2tpd_local_ip || '10.20.0.1')}" /></div>
@@ -3190,6 +3239,18 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       delete spec.config_json;
       return spec;
     }
+    if (normalized === 'mtproto') {
+      spec.server_port = Number(form.get('endpoint_port') || endpointPort || 443) || 443;
+      spec.listen = String(form.get('mtproto_listen') || '0.0.0.0').trim();
+      if (configBody) {
+        spec.config_json = JSON.parse(configBody);
+        delete spec.config_content;
+      } else {
+        delete spec.config_json;
+        delete spec.config_content;
+      }
+      return spec;
+    }
     if (normalized === 'nginx') {
       spec.listen_port = Number(form.get('endpoint_port') || endpointPort || 8080) || 8080;
       spec.server_port = spec.listen_port;
@@ -3228,6 +3289,21 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       spec.secrets_mode = String(form.get('ipsec_secrets_mode') || '').trim();
       spec.config_extra_lines = String(form.get('ipsec_config_extra_lines') || '').trim();
       spec.secrets_content = String(form.get('ipsec_secrets_body') || '').trim();
+      if (configBody) {
+        spec.config_content = configBody;
+      } else {
+        delete spec.config_content;
+      }
+      delete spec.config_json;
+      return spec;
+    }
+    if (normalized === 'http_proxy') {
+      spec.listen_port = Number(form.get('endpoint_port') || endpointPort || 3128) || 3128;
+      spec.server_port = spec.listen_port;
+      spec.auth_realm = String(form.get('proxy_auth_realm') || 'RTIS MegaVPN HTTP Proxy').trim();
+      spec.visible_hostname = String(form.get('proxy_visible_hostname') || '').trim();
+      spec.auth_helper_path = String(form.get('proxy_auth_helper_path') || '/usr/lib/squid/basic_ncsa_auth').trim();
+      spec.config_extra_lines = String(form.get('proxy_config_extra_lines') || '').trim();
       if (configBody) {
         spec.config_content = configBody;
       } else {

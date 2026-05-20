@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -138,8 +140,12 @@ func (s *Store) renderInstancePayloadSpec(ctx context.Context, instance domain.I
 	switch normalizeInstanceRuntimeCode(instance.ServiceCode) {
 	case "xray-core":
 		return s.renderXrayPayloadSpec(ctx, instance, spec)
+	case "mtproto":
+		return s.renderMTProtoPayloadSpec(ctx, instance, spec)
 	case "nginx":
 		return s.renderNginxPayloadSpec(ctx, instance, spec)
+	case "http_proxy":
+		return s.renderHTTPProxyPayloadSpec(ctx, instance, spec)
 	case "openvpn":
 		return s.renderOpenVPNPayloadSpec(ctx, instance, spec)
 	case "wireguard":
@@ -176,6 +182,22 @@ func (s *Store) renderXrayPayloadSpec(ctx context.Context, instance domain.Insta
 	return spec, nil
 }
 
+func (s *Store) renderMTProtoPayloadSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
+	spec = cloneMap(spec)
+	configPath := firstString(spec["config_path"], "/usr/local/etc/xray/config.json")
+	configMode := firstString(spec["config_mode"], "0640")
+	config, err := buildMTProtoServerConfig(instance, spec)
+	if err != nil {
+		return nil, err
+	}
+	spec["files"] = []map[string]any{{
+		"path": configPath,
+		"json": config,
+		"mode": configMode,
+	}}
+	return spec, nil
+}
+
 func (s *Store) renderNginxPayloadSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
 	spec = cloneMap(spec)
 	configPath := firstString(spec["config_path"], "/etc/nginx/conf.d/megavpn-"+firstString(spec["slug"], instance.Slug, "edge")+".conf")
@@ -189,6 +211,32 @@ func (s *Store) renderNginxPayloadSpec(ctx context.Context, instance domain.Inst
 		"content": config,
 		"mode":    configMode,
 	}}
+	return spec, nil
+}
+
+func (s *Store) renderHTTPProxyPayloadSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
+	spec = cloneMap(spec)
+	configPath := firstString(spec["config_path"], "/etc/squid/squid.conf")
+	configMode := firstString(spec["config_mode"], "0644")
+	passwdPath := firstString(spec["passwd_path"], "/etc/squid/megavpn.passwd")
+	passwdMode := firstString(spec["passwd_mode"], "0600")
+	config, passwdBody, err := buildHTTPProxyServerConfig(instance, spec, passwdPath)
+	if err != nil {
+		return nil, err
+	}
+	files := []map[string]any{{
+		"path":    configPath,
+		"content": config,
+		"mode":    configMode,
+	}}
+	if passwdBody != "" {
+		files = append(files, map[string]any{
+			"path":    passwdPath,
+			"content": passwdBody,
+			"mode":    passwdMode,
+		})
+	}
+	spec["files"] = files
 	return spec, nil
 }
 
@@ -506,6 +554,122 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 		cfg["inbounds"] = inbounds
 	}
 	return cfg, nil
+}
+
+func buildMTProtoServerConfig(instance domain.Instance, spec map[string]any) (map[string]any, error) {
+	if spec["config_json"] == nil {
+		if rawText := firstString(spec["config_content"]); rawText != "" {
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(rawText), &parsed); err == nil && parsed != nil {
+				spec["config_json"] = parsed
+			}
+		}
+	}
+	if raw := spec["config_json"]; raw != nil {
+		cfg, ok := cloneAny(raw).(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("mtproto config_json must be an object")
+		}
+		users := mtprotoManagedUsers(spec["managed_users"])
+		inbounds, _ := cfg["inbounds"].([]any)
+		if len(inbounds) == 0 {
+			return nil, fmt.Errorf("mtproto config_json must contain at least one inbound")
+		}
+		inbound, _ := inbounds[0].(map[string]any)
+		if inbound == nil {
+			return nil, fmt.Errorf("mtproto config_json inbound is invalid")
+		}
+		settings, _ := inbound["settings"].(map[string]any)
+		if settings == nil {
+			settings = map[string]any{}
+		}
+		settings["users"] = users
+		inbound["settings"] = settings
+		if strings.TrimSpace(stringify(inbound["listen"])) == "" {
+			inbound["listen"] = firstString(spec["listen"], "0.0.0.0")
+		}
+		if port := firstIntValue(spec["server_port"], spec["port"], instance.EndpointPort); port > 0 && inbound["port"] == nil {
+			inbound["port"] = port
+		}
+		inbounds[0] = inbound
+		cfg["inbounds"] = inbounds
+		return cfg, nil
+	}
+
+	users := mtprotoManagedUsers(spec["managed_users"])
+	if len(users) == 0 {
+		return nil, fmt.Errorf("mtproto managed_users are empty")
+	}
+	port := firstIntValue(spec["server_port"], spec["port"], instance.EndpointPort)
+	if port <= 0 {
+		port = 443
+	}
+	cfg := map[string]any{
+		"log": map[string]any{
+			"loglevel": firstString(spec["loglevel"], "warning"),
+		},
+		"inbounds": []any{
+			map[string]any{
+				"tag":      firstString(spec["managed_inbound_tag"], "mtproto-in"),
+				"listen":   firstString(spec["listen"], "0.0.0.0"),
+				"port":     port,
+				"protocol": "mtproto",
+				"settings": map[string]any{
+					"users": users,
+				},
+			},
+		},
+		"outbounds": []any{
+			map[string]any{"protocol": "freedom", "tag": "direct"},
+			map[string]any{"protocol": "blackhole", "tag": "block"},
+		},
+	}
+	return cfg, nil
+}
+
+func buildHTTPProxyServerConfig(instance domain.Instance, spec map[string]any, passwdPath string) (string, string, error) {
+	if raw := firstString(spec["config_content"]); raw != "" {
+		if !strings.HasSuffix(raw, "\n") {
+			raw += "\n"
+		}
+		return raw, firstString(spec["passwd_body"]), nil
+	}
+	port := firstIntValue(spec["listen_port"], spec["server_port"], spec["port"], instance.EndpointPort)
+	if port <= 0 {
+		port = 3128
+	}
+	managedAccounts := httpProxyManagedAccounts(spec["managed_accounts"])
+	httpAccessRule := firstString(spec["http_access_rule"], "allow authenticated_users")
+	lines := []string{
+		"http_port " + strconv.Itoa(port),
+		"visible_hostname " + firstString(spec["visible_hostname"], instance.EndpointHost, instance.Name, "megavpn-proxy"),
+		"access_log " + firstString(spec["access_log"], "stdio:/var/log/squid/access.log"),
+		"cache_log " + firstString(spec["cache_log"], "/var/log/squid/cache.log"),
+		"pid_filename " + firstString(spec["pid_filename"], "/run/squid.pid"),
+	}
+	passwdLines := []string{}
+	if len(managedAccounts) > 0 {
+		authHelperPath := firstString(spec["auth_helper_path"], "/usr/lib/squid/basic_ncsa_auth")
+		lines = append(lines,
+			"auth_param basic program "+authHelperPath+" "+passwdPath,
+			"auth_param basic realm "+firstString(spec["auth_realm"], "RTIS MegaVPN HTTP Proxy"),
+			"acl authenticated_users proxy_auth REQUIRED",
+			"http_access "+httpAccessRule,
+			"http_access deny all",
+		)
+		for _, account := range managedAccounts {
+			passwdLines = append(passwdLines, account.Username+":"+account.PasswordHash)
+		}
+	} else {
+		lines = append(lines, "http_access allow all")
+	}
+	lines = append(lines,
+		"request_header_access X-Forwarded-For deny all",
+		"via off",
+		"forwarded_for delete",
+	)
+	lines = append(lines, extraServerLines(spec["config_extra_lines"])...)
+	return strings.Join(lines, "\n") + "\n", strings.Join(passwdLines, "\n"), nil
 }
 
 func buildOpenVPNServerConfig(instance domain.Instance, spec map[string]any, baseDir string) string {
@@ -906,6 +1070,50 @@ func shadowsocksManagedAccounts(raw any) []map[string]any {
 		out = append(out, account)
 	}
 	return out
+}
+
+type httpProxyManagedAccount struct {
+	Username     string
+	PasswordHash string
+}
+
+func httpProxyManagedAccounts(raw any) []httpProxyManagedAccount {
+	list, _ := raw.([]any)
+	out := make([]httpProxyManagedAccount, 0, len(list))
+	for _, item := range list {
+		account, _ := cloneAny(item).(map[string]any)
+		if account == nil {
+			continue
+		}
+		username := firstString(account["username"])
+		passwordHash := firstString(account["password_hash"])
+		if username == "" || passwordHash == "" {
+			continue
+		}
+		out = append(out, httpProxyManagedAccount{Username: username, PasswordHash: passwordHash})
+	}
+	return out
+}
+
+func mtprotoManagedUsers(raw any) []any {
+	list, _ := raw.([]any)
+	out := make([]any, 0, len(list))
+	for _, item := range list {
+		user, _ := cloneAny(item).(map[string]any)
+		if user == nil {
+			continue
+		}
+		if firstString(user["secret"]) == "" {
+			continue
+		}
+		out = append(out, map[string]any{"secret": firstString(user["secret"])})
+	}
+	return out
+}
+
+func httpProxyPasswordHash(password string) string {
+	sum := sha1.Sum([]byte(password))
+	return "{SHA}" + base64.StdEncoding.EncodeToString(sum[:])
 }
 
 func cloneMap(src map[string]any) map[string]any {

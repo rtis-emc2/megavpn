@@ -629,6 +629,8 @@ func normalizeCapabilityCode(code string) string {
 		return "xray-core"
 	case "wireguard", "wg", "wg-quick":
 		return "wireguard"
+	case "mtproto", "telegram-mtproto":
+		return "mtproto"
 	case "strongswan", "ipsec":
 		return "ipsec"
 	case "http_proxy", "http-proxy", "squid":

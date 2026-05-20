@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**RTIS MegaVPN 0.6.7.1-alpha**
+**RTIS MegaVPN 0.6.7.2-alpha**
 
 RTIS MegaVPN — self-hosted distributed VPN orchestration platform.
 
@@ -35,16 +35,16 @@ VPN / Proxy Services
 
 # Current Status
 
-Release: `0.6.7.1-alpha`
+Release: `0.6.7.2-alpha`
 
-Current branch status: Agent Communication Diagnostics, secure bootstrap hardening, remote-test deployment workflow, CI baseline and HTTP security header hardening.
+Current branch status: WireGuard runtime lifecycle, HTTP Proxy / Squid runtime lifecycle, MTProto direction via Xray runtime, secure bootstrap hardening and deployment baseline stabilization.
 
 Immediate program priorities:
 
 - stabilize clean GitHub baseline under `rtis-emc2/megavpn`
-- complete `0.6.7.2` CI/build/deploy verification
-- start RTIS branding migration on the Web UI and operator-facing surfaces
-- continue OpenVPN production path hardening
+- complete `0.6.7.2-alpha` CI/build/deploy verification
+- production-smoke OpenVPN / WireGuard / HTTP Proxy / MTProto paths on the test server
+- continue driver hardening, integration tests and release gates
 
 Реализовано:
 
@@ -73,6 +73,8 @@ Immediate program priorities:
 - xl2tpd installer via Ubuntu repository
 - shadowsocks-libev installer via Ubuntu repository
 - wireguard instance driver with managed peer generation and client config export
+- squid HTTP proxy instance driver with managed credentials and client bundle export
+- mtproto runtime driver with managed secrets and Telegram proxy URL export
 - live Services WUI with node capability matrix and install/verify actions
 - PostgreSQL-backed SMTP settings
 - Operator invite flow with one-time password setup link

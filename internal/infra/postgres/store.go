@@ -1787,6 +1787,8 @@ func normalizeCapabilityCode(code string) string {
 		return "openvpn"
 	case "wireguard", "wg", "wg-quick":
 		return "wireguard"
+	case "mtproto", "telegram-mtproto":
+		return "mtproto"
 	case "nginx":
 		return "nginx"
 	case "ipsec", "strongswan":
@@ -1824,6 +1826,8 @@ func normalizeInstanceRuntimeCode(serviceCode string) string {
 		return "openvpn"
 	case "wireguard", "wg", "wg-quick":
 		return "wireguard"
+	case "mtproto", "telegram-mtproto":
+		return "mtproto"
 	case "nginx":
 		return "nginx"
 	case "ipsec", "strongswan":
@@ -1850,6 +1854,10 @@ func serviceDefaultSystemdUnit(serviceCode, slug string) string {
 			return "openvpn-server@" + slug
 		}
 		return "openvpn-server@server"
+	case "mtproto":
+		return "xray"
+	case "http_proxy":
+		return "squid"
 	case "wireguard":
 		if slug != "" {
 			return "wg-quick@" + slug

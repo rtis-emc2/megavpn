@@ -14,7 +14,7 @@ func (s *Store) RotateServiceAccess(ctx context.Context, clientID, accessID, dri
 	if clientID == "" || accessID == "" {
 		return domain.Job{}, fmt.Errorf("client id and access id are required")
 	}
-	if driver != "openvpn" && driver != "xray-core" && driver != "xray" && driver != "wireguard" && driver != "ipsec" && driver != "shadowsocks" {
+	if driver != "openvpn" && driver != "xray-core" && driver != "xray" && driver != "wireguard" && driver != "mtproto" && driver != "ipsec" && driver != "http_proxy" && driver != "shadowsocks" {
 		return domain.Job{}, fmt.Errorf("unsupported rotation driver %q", driver)
 	}
 
@@ -73,6 +73,13 @@ func (s *Store) RotateServiceAccess(ctx context.Context, clientID, accessID, dri
 		delete(access.Metadata, "wireguard_client_private_key")
 		delete(access.Metadata, "wireguard_client_public_key")
 		delete(access.Metadata, "wireguard_client_address")
+	case "mtproto":
+		if normalizeInstanceRuntimeCode(serviceCode) != "mtproto" {
+			return domain.Job{}, fmt.Errorf("service access driver mismatch: %s", serviceCode)
+		}
+		access.Metadata["rotate_credentials"] = true
+		delete(access.Metadata, "mtproto_secret")
+		delete(access.Metadata, "secret")
 	case "shadowsocks":
 		if normalizeInstanceRuntimeCode(serviceCode) != "shadowsocks" {
 			return domain.Job{}, fmt.Errorf("service access driver mismatch: %s", serviceCode)
@@ -80,6 +87,17 @@ func (s *Store) RotateServiceAccess(ctx context.Context, clientID, accessID, dri
 		access.Metadata["rotate_credentials"] = true
 		delete(access.Metadata, "password")
 		delete(access.Metadata, "shadowsocks_password")
+	case "http_proxy":
+		if normalizeInstanceRuntimeCode(serviceCode) != "http_proxy" {
+			return domain.Job{}, fmt.Errorf("service access driver mismatch: %s", serviceCode)
+		}
+		access.Metadata["rotate_credentials"] = true
+		delete(access.Metadata, "username")
+		delete(access.Metadata, "proxy_username")
+		delete(access.Metadata, "http_proxy_username")
+		delete(access.Metadata, "password")
+		delete(access.Metadata, "proxy_password")
+		delete(access.Metadata, "http_proxy_password")
 	case "ipsec":
 		if normalizeInstanceRuntimeCode(serviceCode) != "ipsec" {
 			return domain.Job{}, fmt.Errorf("service access driver mismatch: %s", serviceCode)

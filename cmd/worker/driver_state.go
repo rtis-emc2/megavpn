@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -374,6 +375,182 @@ func ensureShadowsocksInstanceDriverState(ctx context.Context, store *postgres.S
 	changed = true
 	if _, err := store.ReplaceInstanceSpec(ctx, instanceID, "worker:shadowsocks-driver", spec); err != nil {
 		return err
+	}
+	return nil
+}
+
+func ensureHTTPProxyInstanceDriverState(ctx context.Context, store *postgres.Store, instanceID string) error {
+	instance, err := store.GetInstanceWithSpec(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	spec := cloneMapLocal(instance.Spec)
+	changed := false
+
+	if firstInt(spec["listen_port"], spec["server_port"]) <= 0 {
+		spec["listen_port"] = firstInt(instance.EndpointPort, 3128)
+		changed = true
+	}
+	if firstNonEmpty(stringify(spec["auth_realm"])) == "" {
+		spec["auth_realm"] = "RTIS MegaVPN HTTP Proxy"
+		changed = true
+	}
+	if firstNonEmpty(stringify(spec["auth_helper_path"])) == "" {
+		spec["auth_helper_path"] = "/usr/lib/squid/basic_ncsa_auth"
+		changed = true
+	}
+	if firstNonEmpty(stringify(spec["visible_hostname"])) == "" && instance.EndpointHost != "" {
+		spec["visible_hostname"] = instance.EndpointHost
+		changed = true
+	}
+
+	accesses, err := store.ListProvisioningAccessesByInstance(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	if len(accesses) == 0 {
+		if changed {
+			if _, err := store.ReplaceInstanceSpec(ctx, instanceID, "worker:http-proxy-driver", spec); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	managedAccounts := make([]any, 0, len(accesses))
+	for _, access := range accesses {
+		meta := access.Access.Metadata
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		metaChanged := false
+		rotate := truthyLocal(meta["rotate_credentials"]) || truthyLocal(access.Access.Policy["rotate_credentials"])
+
+		username := firstNonEmpty(stringify(meta["username"]), stringify(meta["proxy_username"]), stringify(meta["http_proxy_username"]))
+		if rotate || username == "" {
+			username = sanitizeCommonName(firstNonEmpty(access.Client.Username, access.Client.DisplayName, access.Access.ID))
+			meta["username"] = username
+			meta["proxy_username"] = username
+			meta["http_proxy_username"] = username
+			metaChanged = true
+		}
+
+		password := firstNonEmpty(stringify(meta["password"]), stringify(meta["proxy_password"]), stringify(meta["http_proxy_password"]))
+		if rotate || password == "" {
+			password = randomHexString(12)
+			meta["password"] = password
+			meta["proxy_password"] = password
+			meta["http_proxy_password"] = password
+			metaChanged = true
+		}
+
+		if host := firstNonEmpty(instance.EndpointHost); host != "" && firstNonEmpty(stringify(meta["server_host"])) == "" {
+			meta["server_host"] = host
+			metaChanged = true
+		}
+		if firstInt(meta["server_port"]) <= 0 {
+			port := firstInt(spec["listen_port"], spec["server_port"], instance.EndpointPort, 3128)
+			meta["server_port"] = port
+			metaChanged = true
+		}
+
+		delete(meta, "rotate_credentials")
+		if metaChanged {
+			if err := store.UpdateServiceAccessMetadata(ctx, access.Access.ID, meta); err != nil {
+				return err
+			}
+		}
+
+		managedAccounts = append(managedAccounts, map[string]any{
+			"service_access_id": access.Access.ID,
+			"username":          username,
+			"password_hash":     httpProxyPasswordHash(password),
+		})
+	}
+	spec["managed_accounts"] = managedAccounts
+	changed = true
+	if changed {
+		if _, err := store.ReplaceInstanceSpec(ctx, instanceID, "worker:http-proxy-driver", spec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureMTProtoInstanceDriverState(ctx context.Context, store *postgres.Store, instanceID string) error {
+	instance, err := store.GetInstanceWithSpec(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	spec := cloneMapLocal(instance.Spec)
+	changed := false
+
+	if firstInt(spec["server_port"], spec["listen_port"]) <= 0 {
+		spec["server_port"] = firstInt(instance.EndpointPort, 443)
+		changed = true
+	}
+	if firstNonEmpty(stringify(spec["listen"])) == "" {
+		spec["listen"] = "0.0.0.0"
+		changed = true
+	}
+
+	accesses, err := store.ListProvisioningAccessesByInstance(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	if len(accesses) == 0 {
+		if changed {
+			if _, err := store.ReplaceInstanceSpec(ctx, instanceID, "worker:mtproto-driver", spec); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	managedUsers := make([]any, 0, len(accesses))
+	for _, access := range accesses {
+		meta := access.Access.Metadata
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		metaChanged := false
+		rotate := truthyLocal(meta["rotate_credentials"]) || truthyLocal(access.Access.Policy["rotate_credentials"])
+
+		secret := firstNonEmpty(stringify(meta["mtproto_secret"]), stringify(meta["secret"]))
+		if rotate || secret == "" {
+			secret = randomHexString(16)
+			meta["mtproto_secret"] = secret
+			meta["secret"] = secret
+			metaChanged = true
+		}
+		if host := firstNonEmpty(instance.EndpointHost); host != "" && firstNonEmpty(stringify(meta["server_host"])) == "" {
+			meta["server_host"] = host
+			metaChanged = true
+		}
+		if firstInt(meta["server_port"]) <= 0 {
+			meta["server_port"] = firstInt(spec["server_port"], instance.EndpointPort, 443)
+			metaChanged = true
+		}
+
+		delete(meta, "rotate_credentials")
+		if metaChanged {
+			if err := store.UpdateServiceAccessMetadata(ctx, access.Access.ID, meta); err != nil {
+				return err
+			}
+		}
+		managedUsers = append(managedUsers, map[string]any{
+			"service_access_id": access.Access.ID,
+			"username":          firstNonEmpty(access.Client.Username, access.Client.DisplayName, access.Access.ID),
+			"secret":            secret,
+		})
+	}
+
+	spec["managed_users"] = managedUsers
+	changed = true
+	if changed {
+		if _, err := store.ReplaceInstanceSpec(ctx, instanceID, "worker:mtproto-driver", spec); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -865,6 +1042,11 @@ func nextAvailablePort(used map[int]bool, start int) int {
 		port++
 	}
 	return port
+}
+
+func httpProxyPasswordHash(password string) string {
+	sum := sha1.Sum([]byte(password))
+	return "{SHA}" + base64.StdEncoding.EncodeToString(sum[:])
 }
 
 func wireGuardHostCIDR(prefix netip.Prefix, host int) (string, error) {

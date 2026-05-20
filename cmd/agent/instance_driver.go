@@ -326,6 +326,14 @@ func validateRenderedConfig(ctx context.Context, payload instanceJobPayload, fil
 		if code != 0 {
 			return fmt.Errorf("nginx config validation failed: %s", truncate(out, 3000))
 		}
+	case "http_proxy":
+		configPath := firstConfigPath(files, defaultConfigPath(payload))
+		if configPath != "" {
+			code, out := runInstallCommand(ctx, "squid", "-k", "parse", "-f", configPath)
+			if code != 0 {
+				return fmt.Errorf("http proxy config validation failed: %s", truncate(out, 3000))
+			}
+		}
 	case "wireguard":
 		configPath := firstConfigPath(files, defaultConfigPath(payload))
 		if configPath != "" {
@@ -335,6 +343,17 @@ func validateRenderedConfig(ctx context.Context, payload instanceJobPayload, fil
 			}
 		}
 	case "xray-core":
+		configPath := firstConfigPath(files, defaultConfigPath(payload))
+		if configPath != "" {
+			code, out := runInstallCommand(ctx, "xray", "run", "-test", "-config", configPath)
+			if code != 0 {
+				code, out = runInstallCommand(ctx, "xray", "-test", "-config", configPath)
+			}
+			if code != 0 {
+				return fmt.Errorf("xray config validation failed: %s", truncate(out, 3000))
+			}
+		}
+	case "mtproto":
 		configPath := firstConfigPath(files, defaultConfigPath(payload))
 		if configPath != "" {
 			code, out := runInstallCommand(ctx, "xray", "run", "-test", "-config", configPath)
@@ -371,6 +390,10 @@ func defaultInstanceSystemdUnit(payload instanceJobPayload) string {
 		return "xray"
 	case "nginx":
 		return "nginx"
+	case "mtproto":
+		return "xray"
+	case "http_proxy":
+		return "squid"
 	case "openvpn":
 		if payload.Slug != "" {
 			return "openvpn-server@" + payload.Slug
@@ -396,8 +419,12 @@ func defaultConfigPath(payload instanceJobPayload) string {
 	switch payload.ServiceCode {
 	case "xray-core":
 		return "/usr/local/etc/xray/config.json"
+	case "mtproto":
+		return "/usr/local/etc/xray/config.json"
 	case "nginx":
 		return "/etc/nginx/nginx.conf"
+	case "http_proxy":
+		return "/etc/squid/squid.conf"
 	case "openvpn":
 		slug := first(payload.Slug, "server")
 		return "/etc/openvpn/server/" + slug + ".conf"
@@ -417,7 +444,7 @@ func defaultConfigPath(payload instanceJobPayload) string {
 
 func defaultConfigMode(payload instanceJobPayload) string {
 	switch payload.ServiceCode {
-	case "xray-core", "shadowsocks":
+	case "xray-core", "mtproto", "shadowsocks":
 		return "0640"
 	case "wireguard":
 		return "0600"
