@@ -4235,7 +4235,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         <div class="field full"><label><input type="radio" name="certificate_action" value="managed_ca" /> Create managed CA</label><div class="metric-caption">Create an internal certificate authority for future issuance.</div></div>
         <div class="field full"><label><input type="radio" name="certificate_action" value="issue_from_ca" /> Issue certificate from managed CA</label><div class="metric-caption">Issue a server certificate from an existing managed CA.</div></div>
         <div class="field full"><label><input type="radio" name="certificate_action" value="service_ca_root" /> Create service CA root</label><div class="metric-caption">Managed service-specific CA root, currently relevant for OpenVPN platform PKI.</div></div>
-        <div class="field full"><label><input type="radio" name="certificate_action" value="letsencrypt" /> Get certificate from Let's Encrypt</label><div class="metric-caption">UI slot is ready, but backend issuance still depends on the ACME challenge strategy.</div></div>
+        <div class="field full"><label><input type="radio" name="certificate_action" value="letsencrypt" /> Get certificate from Let's Encrypt <span class="tag">paused</span></label><div class="metric-caption">UI slot stays visible, but backend issuance is intentionally paused until the ACME challenge strategy is approved.</div></div>
         <div class="field full inline-actions"><button class="primary-btn" type="submit">Next</button></div>
       </form>`, { wide: true });
     document.getElementById('certificateWizardForm').addEventListener('submit', (event) => {
@@ -4315,8 +4315,8 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       case 'letsencrypt':
         openModal('Let\'s Encrypt', 'Certificates / ACME', `
           <div class="card">
-            <h3>ACME challenge policy is still required</h3>
-            <p>UI slot is reserved, but backend issuance is intentionally blocked until we choose the canonical challenge strategy for this product: HTTP-01, DNS-01, or delegated external ACME.</p>
+            <h3>ACME is paused for this release line</h3>
+            <p>The operator flow stays visible, but backend issuance is intentionally blocked until we resume ACME work and approve the canonical challenge strategy for this product: HTTP-01, DNS-01, or delegated external ACME.</p>
           </div>`, { wide: true });
         return;
       default:

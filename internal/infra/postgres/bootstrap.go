@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/rtis-emc2/megavpn/internal/domain"
+	"github.com/rtis-emc2/megavpn/internal/jobschema"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
 )
 
@@ -157,6 +158,10 @@ func (s *Store) CreateNodeBootstrapJob(ctx context.Context, nodeID, bootstrapMod
 	}
 	for key, value := range options {
 		payload[key] = value
+	}
+	payload, err = jobschema.Normalize("node.bootstrap", payload)
+	if err != nil {
+		return domain.Job{}, domain.NodeBootstrapRun{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

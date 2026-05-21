@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rtis-emc2/megavpn/internal/domain"
+	"github.com/rtis-emc2/megavpn/internal/jobschema"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
 	secretstore "github.com/rtis-emc2/megavpn/internal/secrets"
 )
@@ -968,7 +969,8 @@ func (s *Store) RevokeShareLink(ctx context.Context, clientID, linkID string) (d
 }
 
 func (s *Store) CreateJob(ctx context.Context, j domain.Job) (domain.Job, error) {
-	if strings.TrimSpace(j.Type) == "" {
+	j.Type = strings.TrimSpace(j.Type)
+	if j.Type == "" {
 		return j, errors.New("job type is required")
 	}
 	if j.ID == "" {
@@ -986,13 +988,18 @@ func (s *Store) CreateJob(ctx context.Context, j domain.Job) (domain.Job, error)
 	if j.Payload == nil {
 		j.Payload = map[string]any{}
 	}
+	normalizedPayload, err := jobschema.Normalize(j.Type, j.Payload)
+	if err != nil {
+		return j, err
+	}
+	j.Payload = normalizedPayload
 	if !in(j.Status, "queued", "running", "succeeded", "failed", "cancelled", "retrying") {
 		return j, fmt.Errorf("unsupported job status %q", j.Status)
 	}
 	b, _ := json.Marshal(j.Payload)
 	now := time.Now().UTC()
 	j.CreatedAt = now
-	_, err := s.db.Exec(ctx, `insert into jobs(id,type,scope_type,scope_id,node_id,instance_id,status,priority,payload_json,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, j.ID, j.Type, j.ScopeType, j.ScopeID, j.NodeID, j.InstanceID, j.Status, j.Priority, b, now)
+	_, err = s.db.Exec(ctx, `insert into jobs(id,type,scope_type,scope_id,node_id,instance_id,status,priority,payload_json,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, j.ID, j.Type, j.ScopeType, j.ScopeID, j.NodeID, j.InstanceID, j.Status, j.Priority, b, now)
 	if err != nil {
 		return j, err
 	}

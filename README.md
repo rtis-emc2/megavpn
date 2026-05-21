@@ -252,7 +252,7 @@ The control plane also keeps a managed `Certificates` inventory for leaf certifi
 
 Managed certificates can now be selected directly in the instance editor for `nginx` and `xray` TLS-backed scenarios, and in `Xray + Nginx` service-pack creation. Runtime files are materialized on the node from `certificate_id`; operators no longer need to hand-enter `fullchain.pem` / `privkey.pem` paths for the common path.
 
-`Let's Encrypt` is exposed in the UI as a planned certificate source, but automated ACME issuance is intentionally held until the product chooses the canonical challenge strategy.
+`Let's Encrypt / ACME` is exposed in the UI as a paused certificate source. The slot stays visible to operators, but backend issuance is intentionally blocked until the product resumes this track and chooses the canonical challenge strategy.
 
 For operator workflow, the Instances UI now exposes service packs for the canonical production baselines:
 

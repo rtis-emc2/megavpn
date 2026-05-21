@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
+	"github.com/rtis-emc2/megavpn/internal/jobschema"
 )
 
 type Store interface {
@@ -1093,6 +1094,10 @@ func (s *Server) createJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	x, err := s.store.CreateJob(r.Context(), j)
 	if err != nil {
+		if jobschema.IsValidationError(err) {
+			writeErr(w, 400, err.Error())
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}

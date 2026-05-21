@@ -8,7 +8,7 @@
 1. Зафиксировать CI green после последних branding/module path изменений: `go test`, `go vet`, `go build`.
 2. Довести удаленный deployment baseline на тестовом сервере: проверить `MEGAVPN_DEPLOY_SYNC_MODE=auto`, backup branch flow и повторный deploy после rewritten history.
 3. Проверить service-pack и runtime paths на тестовом сервере: IPsec+XL2TPD, Xray Reality, Xray+Nginx gRPC, Xray HTTP/WebSocket, OpenVPN TCP/UDP, WireGuard, HTTP Proxy, MTProto, Shadowsocks.
-4. Выбрать canonical ACME challenge strategy для Let's Encrypt: `HTTP-01`, `DNS-01` или delegated external ACME.
+4. `Paused`: ACME / Let's Encrypt automation пока сознательно не внедряем. Перед возобновлением нужно выбрать canonical challenge strategy: `HTTP-01`, `DNS-01` или delegated external ACME.
 5. Запускать API только с явно заданными bootstrap credentials:
    - `MEGAVPN_BOOTSTRAP_ADMIN_USERNAME`
    - `MEGAVPN_BOOTSTRAP_ADMIN_PASSWORD`
