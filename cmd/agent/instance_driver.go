@@ -398,7 +398,10 @@ func currentUnitState(unit string) string {
 func defaultInstanceSystemdUnit(payload instanceJobPayload) string {
 	switch payload.ServiceCode {
 	case "xray-core":
-		return "xray"
+		if payload.Slug != "" {
+			return "megavpn-xray-" + payload.Slug
+		}
+		return "megavpn-xray-instance"
 	case "nginx":
 		return "nginx"
 	case "mtproto":
@@ -426,7 +429,10 @@ func defaultInstanceSystemdUnit(payload instanceJobPayload) string {
 	case "xl2tpd":
 		return "xl2tpd"
 	case "shadowsocks":
-		return "shadowsocks-libev"
+		if payload.Slug != "" {
+			return "megavpn-shadowsocks-" + payload.Slug
+		}
+		return "megavpn-shadowsocks-instance"
 	default:
 		return ""
 	}
@@ -435,7 +441,8 @@ func defaultInstanceSystemdUnit(payload instanceJobPayload) string {
 func defaultConfigPath(payload instanceJobPayload) string {
 	switch payload.ServiceCode {
 	case "xray-core":
-		return "/usr/local/etc/xray/config.json"
+		slug := first(payload.Slug, "xray")
+		return "/usr/local/etc/xray/" + slug + ".json"
 	case "mtproto":
 		slug := first(payload.Slug, "mtproto")
 		return "/usr/local/etc/xray/" + slug + ".json"
@@ -455,7 +462,8 @@ func defaultConfigPath(payload instanceJobPayload) string {
 	case "xl2tpd":
 		return "/etc/xl2tpd/xl2tpd.conf"
 	case "shadowsocks":
-		return "/etc/shadowsocks-libev/config.json"
+		slug := first(payload.Slug, "shadowsocks")
+		return "/etc/shadowsocks-libev/" + slug + ".json"
 	default:
 		return ""
 	}

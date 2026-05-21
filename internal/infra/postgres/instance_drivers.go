@@ -168,17 +168,25 @@ func (s *Store) renderXrayPayloadSpec(ctx context.Context, instance domain.Insta
 	} else if privateKey != "" {
 		spec["reality_private_key"] = privateKey
 	}
-	configPath := firstString(spec["config_path"], "/usr/local/etc/xray/config.json")
+	unitName := firstString(spec["systemd_unit"], instance.SystemdUnit, serviceDefaultSystemdUnit("xray-core", instance.Slug))
+	configPath := firstString(spec["config_path"], xrayConfigPath(instance, spec))
 	configMode := firstString(spec["config_mode"], "0640")
 	config, err := buildXrayServerConfig(instance, spec)
 	if err != nil {
 		return nil, err
 	}
-	spec["files"] = []map[string]any{{
-		"path": configPath,
-		"json": config,
-		"mode": configMode,
-	}}
+	spec["files"] = []map[string]any{
+		{
+			"path": configPath,
+			"json": config,
+			"mode": configMode,
+		},
+		{
+			"path":    "/etc/systemd/system/" + unitName + ".service",
+			"content": buildXrayUnitFile(unitName, configPath, instance),
+			"mode":    "0644",
+		},
+	}
 	return spec, nil
 }
 
@@ -421,18 +429,46 @@ func (s *Store) renderXL2TPDPayloadSpec(ctx context.Context, instance domain.Ins
 
 func (s *Store) renderShadowsocksPayloadSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
 	spec = cloneMap(spec)
-	configPath := firstString(spec["config_path"], "/etc/shadowsocks-libev/config.json")
+	unitName := firstString(spec["systemd_unit"], instance.SystemdUnit, serviceDefaultSystemdUnit("shadowsocks", instance.Slug))
+	configPath := firstString(spec["config_path"], shadowsocksConfigPath(instance, spec))
 	configMode := firstString(spec["config_mode"], "0640")
 	config, err := buildShadowsocksServerConfig(instance, spec)
 	if err != nil {
 		return nil, err
 	}
-	spec["files"] = []map[string]any{{
-		"path": configPath,
-		"json": config,
-		"mode": configMode,
-	}}
+	spec["files"] = []map[string]any{
+		{
+			"path": configPath,
+			"json": config,
+			"mode": configMode,
+		},
+		{
+			"path":    "/etc/systemd/system/" + unitName + ".service",
+			"content": buildShadowsocksUnitFile(unitName, configPath, instance),
+			"mode":    "0644",
+		},
+	}
 	return spec, nil
+}
+
+func xrayConfigPath(instance domain.Instance, spec map[string]any) string {
+	slug := firstString(spec["slug"], instance.Slug, "xray")
+	defaultPath := "/usr/local/etc/xray/" + slug + ".json"
+	configPath := firstString(spec["config_path"])
+	if configPath == "" || configPath == "/usr/local/etc/xray/config.json" {
+		return defaultPath
+	}
+	return configPath
+}
+
+func shadowsocksConfigPath(instance domain.Instance, spec map[string]any) string {
+	slug := firstString(spec["slug"], instance.Slug, "shadowsocks")
+	defaultPath := "/etc/shadowsocks-libev/" + slug + ".json"
+	configPath := firstString(spec["config_path"])
+	if configPath == "" || configPath == "/etc/shadowsocks-libev/config.json" {
+		return defaultPath
+	}
+	return configPath
 }
 
 func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[string]any, error) {
@@ -484,34 +520,64 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 		return cfg, nil
 	}
 
-	privateKey := firstString(spec["reality_private_key"])
-	if privateKey == "" {
-		return nil, fmt.Errorf("xray reality_private_key is required")
-	}
-	shortIDs := stringList(spec["short_ids"])
-	if len(shortIDs) == 0 {
-		if shortID := firstString(spec["short_id"]); shortID != "" {
-			shortIDs = []string{shortID}
-		}
-	}
-	if len(shortIDs) == 0 {
-		return nil, fmt.Errorf("xray short_id is required")
-	}
-	serverNames := stringList(spec["server_names"])
-	if len(serverNames) == 0 {
-		if serverName := firstString(spec["server_name"], spec["sni"], instance.EndpointHost); serverName != "" {
-			serverNames = []string{serverName}
-		}
-	}
-	if len(serverNames) == 0 {
-		return nil, fmt.Errorf("xray server_name is required")
-	}
 	port := firstIntValue(spec["server_port"], spec["port"], instance.EndpointPort)
 	if port <= 0 {
 		port = 443
 	}
 	clients := xrayManagedClients(spec["managed_clients"])
 	network := firstString(spec["network"], spec["type"], spec["transport"], "tcp")
+	security := firstString(spec["security"], "reality")
+	streamSettings := map[string]any{
+		"network":  network,
+		"security": security,
+	}
+	if security == "reality" {
+		privateKey := firstString(spec["reality_private_key"])
+		if privateKey == "" {
+			return nil, fmt.Errorf("xray reality_private_key is required")
+		}
+		shortIDs := stringList(spec["short_ids"])
+		if len(shortIDs) == 0 {
+			if shortID := firstString(spec["short_id"]); shortID != "" {
+				shortIDs = []string{shortID}
+			}
+		}
+		if len(shortIDs) == 0 {
+			return nil, fmt.Errorf("xray short_id is required")
+		}
+		serverNames := stringList(spec["server_names"])
+		if len(serverNames) == 0 {
+			if serverName := firstString(spec["server_name"], spec["sni"], instance.EndpointHost); serverName != "" {
+				serverNames = []string{serverName}
+			}
+		}
+		if len(serverNames) == 0 {
+			return nil, fmt.Errorf("xray server_name is required")
+		}
+		streamSettings["realitySettings"] = map[string]any{
+			"show":        false,
+			"dest":        firstString(spec["dest"], "www.cloudflare.com:443"),
+			"xver":        0,
+			"serverNames": serverNames,
+			"privateKey":  privateKey,
+			"shortIds":    shortIDs,
+		}
+	}
+	switch network {
+	case "grpc":
+		streamSettings["grpcSettings"] = map[string]any{
+			"serviceName": firstString(spec["service_name"], "vless-grpc"),
+		}
+	case "ws", "http", "httpupgrade":
+		streamSettings["network"] = "ws"
+		wsPath := firstString(spec["path"], "/ws")
+		streamSettings["wsSettings"] = map[string]any{
+			"path": wsPath,
+			"headers": map[string]any{
+				"Host": firstString(spec["server_name"], spec["sni"], instance.EndpointHost),
+			},
+		}
+	}
 	cfg := map[string]any{
 		"log": map[string]any{
 			"loglevel": firstString(spec["loglevel"], "warning"),
@@ -526,18 +592,7 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 					"clients":    clients,
 					"decryption": "none",
 				},
-				"streamSettings": map[string]any{
-					"network":  network,
-					"security": firstString(spec["security"], "reality"),
-					"realitySettings": map[string]any{
-						"show":        false,
-						"dest":        firstString(spec["dest"], "www.cloudflare.com:443"),
-						"xver":        0,
-						"serverNames": serverNames,
-						"privateKey":  privateKey,
-						"shortIds":    shortIDs,
-					},
-				},
+				"streamSettings": streamSettings,
 			},
 		},
 		"outbounds": []any{
@@ -559,9 +614,10 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 		inbounds := cfg["inbounds"].([]any)
 		inbound := inbounds[0].(map[string]any)
 		streamSettings, _ := inbound["streamSettings"].(map[string]any)
-		realitySettings, _ := streamSettings["realitySettings"].(map[string]any)
-		realitySettings["alpn"] = alpn
-		streamSettings["realitySettings"] = realitySettings
+		if realitySettings, _ := streamSettings["realitySettings"].(map[string]any); realitySettings != nil {
+			realitySettings["alpn"] = alpn
+			streamSettings["realitySettings"] = realitySettings
+		}
 		inbound["streamSettings"] = streamSettings
 		inbounds[0] = inbound
 		cfg["inbounds"] = inbounds
@@ -905,7 +961,11 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 		if certPath == "" || keyPath == "" {
 			return "", fmt.Errorf("nginx tls_cert_path and tls_key_path are required when tls_enabled=true")
 		}
-		lines = append(lines, "    listen "+strconv.Itoa(listenPort)+" ssl;")
+		listenLine := "    listen " + strconv.Itoa(listenPort) + " ssl"
+		if mode == "grpc_proxy" || truthy(spec["http2_enabled"]) {
+			listenLine += " http2"
+		}
+		lines = append(lines, listenLine+";")
 		lines = append(lines, "    ssl_certificate "+certPath+";")
 		lines = append(lines, "    ssl_certificate_key "+keyPath+";")
 	} else {
@@ -940,6 +1000,28 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 				"        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
 				"        proxy_set_header X-Forwarded-Proto $scheme;",
 			)
+		}
+		lines = append(lines, extraIndentedLines(spec["location_extra_lines"], "        ")...)
+		lines = append(lines, "    }")
+	case "grpc_proxy":
+		upstreamURL := firstString(spec["upstream_url"], spec["grpc_pass"])
+		if upstreamURL == "" {
+			return "", fmt.Errorf("nginx upstream_url is required for grpc_proxy mode")
+		}
+		locationPath := firstString(spec["location_path"], "/")
+		lines = append(lines, "    location "+locationPath+" {")
+		lines = append(lines, "        grpc_pass "+upstreamURL+";")
+		lines = append(lines,
+			"        grpc_set_header Host $host;",
+			"        grpc_set_header X-Real-IP $remote_addr;",
+			"        grpc_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+			"        grpc_set_header X-Forwarded-Proto $scheme;",
+		)
+		if timeout := firstString(spec["grpc_read_timeout"]); timeout != "" {
+			lines = append(lines, "        grpc_read_timeout "+timeout+";")
+		}
+		if timeout := firstString(spec["grpc_send_timeout"]); timeout != "" {
+			lines = append(lines, "        grpc_send_timeout "+timeout+";")
 		}
 		lines = append(lines, extraIndentedLines(spec["location_extra_lines"], "        ")...)
 		lines = append(lines, "    }")
@@ -1179,6 +1261,26 @@ func buildMTProtoUnitFile(unitName, configPath string, instance domain.Instance)
 	}, "\n")
 }
 
+func buildXrayUnitFile(unitName, configPath string, instance domain.Instance) string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=RTIS MegaVPN Xray instance (" + firstString(instance.Name, instance.Slug, unitName) + ")",
+		"After=network-online.target",
+		"Wants=network-online.target",
+		"",
+		"[Service]",
+		"Type=simple",
+		"ExecStart=/bin/sh -c 'exec xray run -config " + configPath + "'",
+		"Restart=on-failure",
+		"RestartSec=2s",
+		"LimitNOFILE=1048576",
+		"",
+		"[Install]",
+		"WantedBy=multi-user.target",
+		"",
+	}, "\n")
+}
+
 func buildHTTPProxyUnitFile(unitName, configPath string, instance domain.Instance) string {
 	return strings.Join([]string{
 		"[Unit]",
@@ -1191,6 +1293,25 @@ func buildHTTPProxyUnitFile(unitName, configPath string, instance domain.Instanc
 		"ExecStart=/bin/sh -c 'exec squid -f " + configPath + " -N'",
 		"ExecReload=/bin/sh -c 'exec squid -k reconfigure -f " + configPath + "'",
 		"ExecStop=/bin/sh -c 'exec squid -k shutdown -f " + configPath + "'",
+		"Restart=on-failure",
+		"RestartSec=2s",
+		"",
+		"[Install]",
+		"WantedBy=multi-user.target",
+		"",
+	}, "\n")
+}
+
+func buildShadowsocksUnitFile(unitName, configPath string, instance domain.Instance) string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=RTIS MegaVPN Shadowsocks instance (" + firstString(instance.Name, instance.Slug, unitName) + ")",
+		"After=network-online.target",
+		"Wants=network-online.target",
+		"",
+		"[Service]",
+		"Type=simple",
+		"ExecStart=/bin/sh -c 'exec ss-server -c " + configPath + "'",
 		"Restart=on-failure",
 		"RestartSec=2s",
 		"",

@@ -1873,7 +1873,10 @@ func normalizeInstanceRuntimeCode(serviceCode string) string {
 func serviceDefaultSystemdUnit(serviceCode, slug string) string {
 	switch normalizeInstanceRuntimeCode(serviceCode) {
 	case "xray-core":
-		return "xray"
+		if slug == "" {
+			slug = "xray"
+		}
+		return "megavpn-xray-" + slug
 	case "nginx":
 		return "nginx"
 	case "openvpn":
@@ -1901,7 +1904,10 @@ func serviceDefaultSystemdUnit(serviceCode, slug string) string {
 	case "xl2tpd":
 		return "xl2tpd"
 	case "shadowsocks":
-		return "shadowsocks-libev"
+		if slug == "" {
+			slug = "shadowsocks"
+		}
+		return "megavpn-shadowsocks-" + slug
 	default:
 		if slug == "" {
 			slug = "instance"

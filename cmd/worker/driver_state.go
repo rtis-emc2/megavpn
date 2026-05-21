@@ -25,28 +25,31 @@ func ensureXrayInstanceDriverState(ctx context.Context, store *postgres.Store, i
 	spec := cloneMapLocal(instance.Spec)
 	changed := false
 
-	if firstNonEmpty(stringify(spec["reality_private_key_secret_ref_id"])) == "" || firstNonEmpty(stringify(spec["reality_public_key"])) == "" {
-		privateKey := firstNonEmpty(stringify(spec["reality_private_key"]))
-		publicKey := firstNonEmpty(stringify(spec["reality_public_key"]))
-		if privateKey == "" || publicKey == "" {
-			var genErr error
-			privateKey, publicKey, genErr = generateRealityKeyPair()
-			if genErr != nil {
-				return genErr
+	security := strings.ToLower(firstNonEmpty(stringify(spec["security"]), "reality"))
+	if security == "reality" {
+		if firstNonEmpty(stringify(spec["reality_private_key_secret_ref_id"])) == "" || firstNonEmpty(stringify(spec["reality_public_key"])) == "" {
+			privateKey := firstNonEmpty(stringify(spec["reality_private_key"]))
+			publicKey := firstNonEmpty(stringify(spec["reality_public_key"]))
+			if privateKey == "" || publicKey == "" {
+				var genErr error
+				privateKey, publicKey, genErr = generateRealityKeyPair()
+				if genErr != nil {
+					return genErr
+				}
 			}
+			privateKeyRef, err := store.CreateSecretRef(ctx, "private_key", []byte(privateKey), map[string]any{"scope": "instance", "instance_id": instanceID, "material": "xray_reality_private_key"})
+			if err != nil {
+				return err
+			}
+			spec["reality_private_key_secret_ref_id"] = privateKeyRef.ID
+			spec["reality_public_key"] = publicKey
+			delete(spec, "reality_private_key")
+			changed = true
 		}
-		privateKeyRef, err := store.CreateSecretRef(ctx, "private_key", []byte(privateKey), map[string]any{"scope": "instance", "instance_id": instanceID, "material": "xray_reality_private_key"})
-		if err != nil {
-			return err
+		if firstNonEmpty(stringify(spec["short_id"])) == "" && len(stringListLocal(spec["short_ids"])) == 0 {
+			spec["short_id"] = randomHexString(4)
+			changed = true
 		}
-		spec["reality_private_key_secret_ref_id"] = privateKeyRef.ID
-		spec["reality_public_key"] = publicKey
-		delete(spec, "reality_private_key")
-		changed = true
-	}
-	if firstNonEmpty(stringify(spec["short_id"])) == "" && len(stringListLocal(spec["short_ids"])) == 0 {
-		spec["short_id"] = randomHexString(4)
-		changed = true
 	}
 	if firstNonEmpty(stringify(spec["server_name"]), stringify(spec["sni"])) == "" && len(stringListLocal(spec["server_names"])) == 0 {
 		if host := firstNonEmpty(instance.EndpointHost); host != "" {

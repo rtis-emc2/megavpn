@@ -497,42 +497,48 @@ func buildXrayArtifacts(record domain.ProvisioningAccess) ([]generatedArtifactFi
 		xrayUUID = id.New()
 		meta["xray_uuid"] = xrayUUID
 	}
-	host := firstNonEmpty(stringify(meta["server_host"]), stringify(spec["server_host"]), stringify(spec["public_host"]), record.Instance.EndpointHost)
+	host := firstNonEmpty(stringify(meta["public_host"]), stringify(meta["server_host"]), stringify(spec["public_host"]), stringify(spec["server_host"]), record.Instance.EndpointHost)
 	if host == "" {
 		return nil, fmt.Errorf("xray server host is required")
 	}
-	port := firstInt(meta["server_port"], spec["server_port"], spec["port"], record.Instance.EndpointPort)
+	port := firstInt(meta["public_port"], meta["server_port"], spec["public_port"], spec["server_port"], spec["port"], record.Instance.EndpointPort)
 	if port <= 0 {
 		port = 443
 	}
-	security := firstNonEmpty(stringify(meta["security"]), stringify(spec["security"]), "reality")
+	security := firstNonEmpty(stringify(meta["public_security"]), stringify(meta["security"]), stringify(spec["public_security"]), stringify(spec["security"]), "reality")
 	query := url.Values{}
 	query.Set("encryption", "none")
 	query.Set("security", security)
-	if flow := firstNonEmpty(stringify(meta["flow"]), stringify(spec["flow"])); flow != "" {
+	if flow := firstNonEmpty(stringify(meta["public_flow"]), stringify(meta["flow"]), stringify(spec["public_flow"]), stringify(spec["flow"])); flow != "" {
 		query.Set("flow", flow)
 	}
-	if sni := firstNonEmpty(stringify(meta["sni"]), stringify(spec["sni"]), stringify(spec["server_name"])); sni != "" {
+	if sni := firstNonEmpty(stringify(meta["public_sni"]), stringify(meta["sni"]), stringify(spec["public_sni"]), stringify(spec["sni"]), stringify(spec["public_server_name"]), stringify(spec["server_name"]), host); sni != "" {
 		query.Set("sni", sni)
 	}
-	if fp := firstNonEmpty(stringify(meta["fingerprint"]), stringify(spec["fingerprint"]), "chrome"); fp != "" {
+	if fp := firstNonEmpty(stringify(meta["public_fingerprint"]), stringify(meta["fingerprint"]), stringify(spec["public_fingerprint"]), stringify(spec["fingerprint"])); fp != "" || security == "reality" {
+		if fp == "" {
+			fp = "chrome"
+		}
 		query.Set("fp", fp)
 	}
-	if pbk := firstNonEmpty(stringify(meta["reality_public_key"]), stringify(spec["reality_public_key"]), stringify(spec["public_key"]), stringify(spec["pbk"])); pbk != "" {
+	if pbk := firstNonEmpty(stringify(meta["reality_public_key"]), stringify(spec["reality_public_key"]), stringify(spec["public_key"]), stringify(spec["pbk"])); pbk != "" && security == "reality" {
 		query.Set("pbk", pbk)
 	}
-	if sid := firstNonEmpty(stringify(meta["short_id"]), stringify(spec["short_id"]), stringify(spec["sid"])); sid != "" {
+	if sid := firstNonEmpty(stringify(meta["short_id"]), stringify(spec["short_id"]), stringify(spec["sid"])); sid != "" && security == "reality" {
 		query.Set("sid", sid)
 	}
-	network := firstNonEmpty(stringify(meta["type"]), stringify(spec["type"]), stringify(spec["transport"]), stringify(spec["network"]), "tcp")
+	network := firstNonEmpty(stringify(meta["public_network"]), stringify(meta["type"]), stringify(spec["public_network"]), stringify(spec["type"]), stringify(spec["transport"]), stringify(spec["network"]), "tcp")
 	query.Set("type", network)
-	if path := firstNonEmpty(stringify(meta["path"]), stringify(spec["path"])); path != "" {
+	if path := firstNonEmpty(stringify(meta["public_path"]), stringify(meta["path"]), stringify(spec["public_path"]), stringify(spec["path"])); path != "" {
 		query.Set("path", path)
 	}
-	if serviceName := firstNonEmpty(stringify(meta["service_name"]), stringify(spec["service_name"])); serviceName != "" {
+	if serviceName := firstNonEmpty(stringify(meta["public_service_name"]), stringify(meta["service_name"]), stringify(spec["public_service_name"]), stringify(spec["service_name"])); serviceName != "" {
 		query.Set("serviceName", serviceName)
 	}
-	if alpn := firstNonEmpty(stringify(meta["alpn"]), stringify(spec["alpn"])); alpn != "" {
+	if hostHeader := firstNonEmpty(stringify(meta["public_host_header"]), stringify(spec["public_host_header"])); hostHeader != "" {
+		query.Set("host", hostHeader)
+	}
+	if alpn := firstNonEmpty(stringify(meta["public_alpn"]), stringify(meta["alpn"]), stringify(spec["public_alpn"]), stringify(spec["alpn"])); alpn != "" {
 		query.Set("alpn", alpn)
 	}
 	label := url.QueryEscape(firstNonEmpty(stringify(spec["client_label_prefix"]), record.Instance.Name, record.Instance.Slug, "xray") + "-" + firstNonEmpty(record.Client.Username, record.Access.ID))

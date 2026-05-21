@@ -24,6 +24,7 @@ type serviceCatalogProfile struct {
 	NameTemplate    string                 `json:"name_template"`
 	SlugTemplate    string                 `json:"slug_template"`
 	EndpointHint    string                 `json:"endpoint_hint"`
+	PlatformNotes   []string               `json:"platform_notes,omitempty"`
 	Recommendations []string               `json:"recommendations"`
 	Presets         []serviceCatalogPreset `json:"presets"`
 }
@@ -37,19 +38,21 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			Runtime:      "xray-core runtime",
 			ServiceKind:  "transport",
 			Description:  "Основной modern-transport сервис для персональных VPN/anti-censorship профилей. Это продуктовый сервис, работающий поверх runtime xray-core.",
-			UnitPattern:  "xray",
-			PathPattern:  "/usr/local/etc/xray/config.json",
+			UnitPattern:  "megavpn-xray-<slug>",
+			PathPattern:  "/usr/local/etc/xray/<slug>.json",
 			NameTemplate: "edge-xray-reality",
 			SlugTemplate: "edge-xray-reality",
 			EndpointHint: "vpn.example.com",
 			Recommendations: []string{
 				"Для первого production-среза держать порт 443 и валидный SNI/Server Name.",
-				"Использовать Reality c коротким short-id и chrome fingerprint как безопасный baseline.",
+				"Для прямого client-facing профиля использовать Reality c short-id и chrome fingerprint.",
+				"Nginx/gRPC и HTTP edge-сценарии делать отдельным backend-profile без Reality на runtime-порту.",
 				"Оставлять manual JSON override только для нестандартных transport-экспериментов.",
 			},
 			Presets: []serviceCatalogPreset{
 				{Key: "reality_tcp", Label: "Reality TCP", Description: "Рекомендуемый baseline для большинства egress-нод.", Recommended: true, Draft: map[string]any{"endpoint_port": 443, "xray_network": "tcp", "xray_dest": "www.cloudflare.com:443", "xray_fingerprint": "chrome", "config_mode": "0640"}},
-				{Key: "reality_grpc", Label: "Reality gRPC", Description: "Подходит, если нужен более \"app-like\" transport profile.", Draft: map[string]any{"endpoint_port": 443, "xray_network": "grpc", "xray_dest": "www.cloudflare.com:443", "xray_fingerprint": "chrome", "config_mode": "0640"}},
+				{Key: "nginx_grpc_backend", Label: "Nginx gRPC Backend", Description: "Backend-профиль для связки Xray + Nginx gRPC edge. Публичный TLS терминируется на Nginx.", Draft: map[string]any{"endpoint_port": 7443, "xray_security": "none", "xray_network": "grpc", "xray_service_name": "vless-grpc", "config_mode": "0640"}},
+				{Key: "nginx_ws_backend", Label: "Nginx HTTP/WebSocket Backend", Description: "Backend-профиль для связки Xray + Nginx HTTP/WebSocket edge.", Draft: map[string]any{"endpoint_port": 7080, "xray_security": "none", "xray_network": "ws", "xray_path": "/ws", "config_mode": "0640"}},
 			},
 		},
 		"openvpn": {
@@ -64,13 +67,16 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			NameTemplate: "edge-openvpn",
 			SlugTemplate: "edge-openvpn",
 			EndpointHint: "ovpn.example.com",
+			PlatformNotes: []string{
+				"Control Plane выступает CA center для OpenVPN platform PKI и показывает active roots в Settings.",
+			},
 			Recommendations: []string{
-				"Для массовых клиентов безопасный baseline: TCP/443, platform PKI, AES-GCM.",
+				"Для массовых клиентов безопасный baseline: TCP/11994, platform PKI, AES-GCM.",
 				"UDP имеет смысл только там, где сеть стабильна и нет жестких ограничений firewall.",
 				"Не смешивать ручной PKI и platform-managed PKI в одном instance.",
 			},
 			Presets: []serviceCatalogPreset{
-				{Key: "tcp_443", Label: "TCP 443", Description: "Рекомендуемый baseline для совместимости и обхода простых сетевых ограничений.", Recommended: true, Draft: map[string]any{"endpoint_port": 443, "ovpn_proto": "tcp", "ovpn_dev": "tun", "ovpn_server_network": "10.8.0.0", "ovpn_server_netmask": "255.255.255.0", "config_mode": "0644", "ovpn_pki_profile": "default"}},
+				{Key: "tcp_11994", Label: "TCP 11994", Description: "Рекомендуемый baseline для совместимости и отдельного TCP-порта под OpenVPN.", Recommended: true, Draft: map[string]any{"endpoint_port": 11994, "ovpn_proto": "tcp", "ovpn_dev": "tun", "ovpn_server_network": "10.8.0.0", "ovpn_server_netmask": "255.255.255.0", "config_mode": "0644", "ovpn_pki_profile": "default"}},
 				{Key: "udp_1194", Label: "UDP 1194", Description: "Более классический профиль там, где throughput важнее camouflage.", Draft: map[string]any{"endpoint_port": 1194, "ovpn_proto": "udp", "ovpn_dev": "tun", "ovpn_server_network": "10.8.0.0", "ovpn_server_netmask": "255.255.255.0", "config_mode": "0644", "ovpn_pki_profile": "default"}},
 			},
 		},
@@ -193,8 +199,8 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			Runtime:      "shadowsocks-libev runtime",
 			ServiceKind:  "proxy",
 			Description:  "Легковесный proxy/VPN-like сервис для клиентских приложений и быстрых персональных доступов.",
-			UnitPattern:  "shadowsocks-libev",
-			PathPattern:  "/etc/shadowsocks-libev/config.json",
+			UnitPattern:  "megavpn-shadowsocks-<slug>",
+			PathPattern:  "/etc/shadowsocks-libev/<slug>.json",
 			NameTemplate: "edge-shadowsocks",
 			SlugTemplate: "edge-shadowsocks",
 			EndpointHint: "ss.example.com",
@@ -222,11 +228,14 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			EndpointHint: "edge.example.com",
 			Recommendations: []string{
 				"Использовать как reverse-proxy front для UI/API или как static edge.",
+				"Для Xray gRPC/HTTP edge держать отдельный Nginx ingress и отдельный backend-port Xray.",
 				"TLS-сертификаты и upstream path держать явными, без магических defaults.",
 				"Отдельный ingress слой не должен смешиваться с транспортными сервисами.",
 			},
 			Presets: []serviceCatalogPreset{
 				{Key: "reverse_proxy", Label: "Reverse Proxy", Description: "Рекомендуемый edge profile для API/UI.", Recommended: true, Draft: map[string]any{"endpoint_port": 8080, "nginx_mode": "reverse_proxy", "nginx_index_files": "index.html index.htm", "config_mode": "0644"}},
+				{Key: "grpc_edge", Label: "Xray gRPC Edge", Description: "TLS edge для backend Xray gRPC. Требует cert/key и grpc upstream.", Draft: map[string]any{"endpoint_port": 443, "nginx_mode": "grpc_proxy", "nginx_location_path": "/vless-grpc", "nginx_upstream_url": "grpc://127.0.0.1:7443", "nginx_tls_enabled": "true", "config_mode": "0644"}},
+				{Key: "ws_edge", Label: "Xray HTTP/WebSocket Edge", Description: "TLS reverse-proxy для backend Xray HTTP/WebSocket transport.", Draft: map[string]any{"endpoint_port": 443, "nginx_mode": "reverse_proxy", "nginx_upstream_url": "http://127.0.0.1:7080", "nginx_tls_enabled": "true", "config_mode": "0644"}},
 				{Key: "static_site", Label: "Static Site", Description: "Профиль для статической публикации контента.", Draft: map[string]any{"endpoint_port": 8080, "nginx_mode": "static", "nginx_index_files": "index.html index.htm", "config_mode": "0644"}},
 			},
 		},
@@ -262,6 +271,7 @@ func enrichServiceDefinitions(defs []domain.ServiceDefinition) []response {
 			item["name_template"] = profile.NameTemplate
 			item["slug_template"] = profile.SlugTemplate
 			item["endpoint_hint"] = profile.EndpointHint
+			item["platform_notes"] = profile.PlatformNotes
 			item["recommendations"] = profile.Recommendations
 			item["presets"] = profile.Presets
 			if len(profile.CompanionTo) > 0 {

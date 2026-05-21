@@ -241,7 +241,18 @@ Agent runtime authorization should use per-node enrollment and persistent agent 
 
 OpenVPN instances use a platform-scoped PKI root by default. The first provisioning/apply path creates one active `openvpn/default` CA in `platform_service_pki_roots`, stores CA material in encrypted `secret_refs`, signs per-instance server certificates from that CA, and signs client certificates from the same root. Instance config paths are slug-scoped (`/etc/openvpn/server/<slug>.conf`) to match `openvpn-server@<slug>`. Moving an OpenVPN instance to another ingress node therefore requires reapplying the instance/server config, not replacing every client CA.
 
-The current PKI roots are visible to operators with `instance.read` through the Settings UI and the `GET /api/v1/platform/pki-roots` endpoint. The API response intentionally exposes the public CA certificate secret reference only; the CA private key reference remains server-side.
+The current PKI roots are visible to operators with `instance.read` through the `Platform CA Center` block in Settings and the `GET /api/v1/platform/pki-roots` endpoint. The API response intentionally exposes the public CA certificate secret reference only; the CA private key reference remains server-side.
+
+For operator workflow, the Instances UI now exposes service packs for the canonical production baselines:
+
+- `IPsec + XL2TPD Access`
+- `Xray VLESS / Reality`
+- `Xray + Nginx gRPC Edge`
+- `Xray HTTP/WebSocket Edge`
+- `OpenVPN TCP 11994`
+- `OpenVPN UDP 1194`
+
+These packs are meant to be the primary entrypoint for standard deployments; the raw single-instance form remains available for advanced/manual cases.
 
 ---
 

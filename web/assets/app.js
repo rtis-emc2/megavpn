@@ -17,6 +17,7 @@
     artifacts: [],
     shareLinks: [],
     servicesCatalog: [],
+    servicePacks: [],
     serviceInstallers: [],
     serviceCapabilitiesByNode: {},
     serviceInstallEventsByNode: {},
@@ -552,11 +553,13 @@
       state.artifacts = [];
       state.shareLinks = [];
       state.servicesCatalog = [];
+      state.servicePacks = [];
       state.serviceInstallers = [];
       state.serviceCapabilitiesByNode = {};
       state.serviceInstallEventsByNode = {};
       state.mailSettings = null;
       state.platformInvites = [];
+      state.platformPKIRoots = [];
       updateReadyPill();
       renderNotice();
       return;
@@ -569,6 +572,7 @@
     const artifacts = await fetchJSON('/api/v1/artifacts', []);
     const shareLinks = await fetchJSON('/api/v1/share-links', []);
     const servicesCatalog = await fetchJSON('/api/v1/services', []);
+    const servicePacks = await fetchJSON('/api/v1/service-packs', []);
     const serviceInstallers = await fetchJSON('/api/v1/services/installers', []);
     state.nodes = Array.isArray(nodes) ? nodes : [];
     state.instances = Array.isArray(instances) ? instances : [];
@@ -577,6 +581,7 @@
     state.artifacts = Array.isArray(artifacts) ? artifacts : [];
     state.shareLinks = Array.isArray(shareLinks) ? shareLinks : [];
     state.servicesCatalog = Array.isArray(servicesCatalog) ? servicesCatalog : [];
+    state.servicePacks = Array.isArray(servicePacks) ? servicePacks : [];
     state.serviceInstallers = Array.isArray(serviceInstallers) ? serviceInstallers : [];
     if (!state.servicesNodeID || !state.nodes.some((node) => node.id === state.servicesNodeID)) {
       state.servicesNodeID = state.nodes[0]?.id || '';
@@ -675,14 +680,17 @@
             <button class="secondary-btn instance-action-btn" type="button" data-action="start" data-instance-id="${escapeHTML(r.id)}">Start</button>
             <button class="secondary-btn instance-action-btn" type="button" data-action="stop" data-instance-id="${escapeHTML(r.id)}">Stop</button>
           </div>` },
-      ], '<button class="secondary-btn" id="createInstanceBtn" type="button">Create instance</button>')}
+      ], '<div class="inline-actions"><button class="secondary-btn" id="createServicePackBtn" type="button">Create service pack</button><button class="secondary-btn" id="createInstanceBtn" type="button">Create instance</button></div>')}
+      
       <div class="grid cols-3">
-        <div class="card"><h3>Xray</h3><p>Driver уже принимает desired spec и пишет runtime config через agent apply path. Сейчас UI поддерживает JSON/text config payload для первого рабочего цикла.</p></div>
-        <div class="card"><h3>OpenVPN</h3><p>Instance-centric apply path уже уходит через agent job. Следующий шаг: отдельный schema-driven editor вместо raw config textarea.</p></div>
-        <div class="card"><h3>Nginx / IPsec / L2TP</h3><p>Для MVP backend уже умеет создать instance job payload и передать его агенту. Управление дальше идет через systemd action pipeline.</p></div>
+        <div class="card"><h3>Service Packs</h3><p>Для production-сценариев используй готовые bundles: IPsec+XL2TPD, Xray Reality, Xray+Nginx gRPC/HTTP, OpenVPN TCP/UDP. Это безопаснее, чем собирать edge руками.</p></div>
+        <div class="card"><h3>Xray Runtime</h3><p>Xray теперь разведен на direct Reality и backend edge-профили. xray-core это runtime, а публичная топология зависит от пресета или pack-а.</p></div>
+        <div class="card"><h3>CA Center</h3><p>OpenVPN platform PKI живет на control plane. Активные CA roots видны в Settings → Platform CA Center.</p></div>
       </div>`;
     const createBtn = document.getElementById('createInstanceBtn');
     if (createBtn) createBtn.addEventListener('click', openCreateInstanceModal);
+    const createPackBtn = document.getElementById('createServicePackBtn');
+    if (createPackBtn) createPackBtn.addEventListener('click', openCreateServicePackModal);
     document.querySelectorAll('.instance-manage-btn').forEach((button) => {
       button.addEventListener('click', () => openInstanceManageModal(button.dataset.instanceId));
     });
@@ -1337,7 +1345,7 @@
         <div class="card-body" id="mailSettingsMount"><div class="empty">Loading mail settings...</div></div>
       </section>
       <section class="table-card">
-        <div class="table-head"><h2>Platform PKI Roots</h2><div class="table-tools"><span class="tag">${hasPermission('instance.read') ? 'instance.read' : 'read-only'}</span></div></div>
+        <div class="table-head"><h2>Platform CA Center</h2><div class="table-tools"><span class="tag">${hasPermission('instance.read') ? 'instance.read' : 'read-only'}</span></div></div>
         <div class="card-body" id="platformPKIRootsMount"><div class="empty">Loading PKI roots...</div></div>
       </section>
       <section class="table-card">
@@ -1373,7 +1381,7 @@
       if (state.page !== 'settings') return;
       document.getElementById('platformUsersMount').innerHTML = `<div class="empty">Failed to load admin data: ${escapeHTML(err.message)}</div>`;
       document.getElementById('mailSettingsMount').innerHTML = `<div class="empty">Failed to load mail settings: ${escapeHTML(err.message)}</div>`;
-      document.getElementById('platformPKIRootsMount').innerHTML = `<div class="empty">Failed to load PKI roots: ${escapeHTML(err.message)}</div>`;
+      document.getElementById('platformPKIRootsMount').innerHTML = `<div class="empty">Failed to load CA center inventory: ${escapeHTML(err.message)}</div>`;
       document.getElementById('platformInvitesMount').innerHTML = `<div class="empty">Failed to load invites: ${escapeHTML(err.message)}</div>`;
       document.getElementById('platformSessionsMount').innerHTML = `<div class="empty">Failed to load sessions: ${escapeHTML(err.message)}</div>`;
     }
@@ -1390,7 +1398,7 @@
     const mount = document.getElementById('platformPKIRootsMount');
     if (!mount) return;
     if (!canRead) {
-      mount.innerHTML = '<div class="empty">Platform PKI roots require instance.read permission.</div>';
+      mount.innerHTML = '<div class="empty">Platform CA Center requires instance.read permission.</div>';
       return;
     }
     const list = Array.isArray(roots) ? roots : [];
@@ -1406,8 +1414,9 @@
           <td>${formatDate(root.rotated_at)}</td>
         </tr>`)
         .join('')
-      : '<tr><td colspan="7"><div class="empty">No platform PKI roots yet. The OpenVPN default CA is created on first OpenVPN apply or client provisioning.</div></td></tr>';
+      : '<tr><td colspan="7"><div class="empty">No platform CA roots yet. The OpenVPN default CA is created on first OpenVPN apply or client provisioning.</div></td></tr>';
     mount.innerHTML = `
+      <div class="metric-caption" style="margin-bottom:12px">Control plane хранит platform PKI inventory для сервисов, где CA lifecycle должен быть централизован. Сейчас production path активен для OpenVPN.</div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Service</th><th>Profile</th><th>Status</th><th>Common Name</th><th>CA Cert Ref</th><th>Created</th><th>Rotated</th></tr></thead>
@@ -2817,6 +2826,26 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       .join('');
   }
 
+  function availableServicePacks() {
+    return (state.servicePacks || [])
+      .filter((pack) => Array.isArray(pack.components) && pack.components.length)
+      .sort((left, right) => String(left.label || left.key).localeCompare(String(right.label || right.key), 'en'));
+  }
+
+  function servicePackByKey(packKey) {
+    return availableServicePacks().find((pack) => pack.key === packKey) || null;
+  }
+
+  function defaultServicePack() {
+    return availableServicePacks()[0] || null;
+  }
+
+  function servicePackOptions(selectedKey = '') {
+    return availableServicePacks()
+      .map((pack) => `<option value="${escapeHTML(pack.key)}"${pack.key === selectedKey ? ' selected' : ''}>${escapeHTML(pack.label || pack.key)}</option>`)
+      .join('');
+  }
+
   function nodeOptions() {
     return (state.nodes || [])
       .map((node) => `<option value="${escapeHTML(node.id)}">${escapeHTML(node.name)} · ${escapeHTML(node.address || 'n/a')} · ${escapeHTML(node.agent_status || 'unknown')}</option>`)
@@ -2877,11 +2906,12 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       label: 'Xray VLESS / Reality',
       runtime: 'xray-core runtime',
       description: 'Основной modern-transport сервис для персональных VPN/anti-censorship профилей. Это продуктовый сервис, работающий поверх runtime xray-core.',
-      unitPattern: 'xray',
-      pathPattern: '/usr/local/etc/xray/config.json',
+      unitPattern: 'megavpn-xray-<slug>',
+      pathPattern: '/usr/local/etc/xray/<slug>.json',
       recommendations: [
         'Для первого production-среза держать порт 443 и валидный SNI/Server Name.',
-        'Использовать Reality c коротким short-id и chrome fingerprint как безопасный baseline.',
+        'Для прямого client-facing профиля использовать Reality c short-id и chrome fingerprint.',
+        'Nginx/gRPC и HTTP edge-сценарии делать отдельным backend-profile без Reality на runtime-порту.',
         'Оставлять manual JSON override только для нестандартных transport-экспериментов.',
       ],
       presets: [
@@ -2899,14 +2929,26 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           },
         },
         {
-          key: 'reality_grpc',
-          label: 'Reality gRPC',
-          description: 'Подходит, если нужен более “app-like” transport profile.',
+          key: 'nginx_grpc_backend',
+          label: 'Nginx gRPC Backend',
+          description: 'Backend-профиль для связки Xray + Nginx gRPC edge. Публичный TLS терминируется на Nginx.',
           draft: {
-            endpoint_port: 443,
+            endpoint_port: 7443,
+            xray_security: 'none',
             xray_network: 'grpc',
-            xray_dest: 'www.cloudflare.com:443',
-            xray_fingerprint: 'chrome',
+            xray_service_name: 'vless-grpc',
+            config_mode: '0640',
+          },
+        },
+        {
+          key: 'nginx_ws_backend',
+          label: 'Nginx HTTP/WebSocket Backend',
+          description: 'Backend-профиль для связки Xray + Nginx HTTP/WebSocket edge.',
+          draft: {
+            endpoint_port: 7080,
+            xray_security: 'none',
+            xray_network: 'ws',
+            xray_path: '/ws',
             config_mode: '0640',
           },
         },
@@ -2919,18 +2961,18 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       unitPattern: 'openvpn-server@<slug>',
       pathPattern: '/etc/openvpn/server/<slug>.conf',
       recommendations: [
-        'Для массовых клиентов безопасный baseline: TCP/443, platform PKI, AES-GCM.',
+        'Для массовых клиентов безопасный baseline: TCP/11994, platform PKI, AES-GCM.',
         'UDP имеет смысл только там, где сеть стабильна и нет жестких ограничений firewall.',
         'Не смешивать ручной PKI и platform-managed PKI в одном instance.',
       ],
       presets: [
         {
-          key: 'tcp_443',
-          label: 'TCP 443',
-          description: 'Рекомендуемый baseline для совместимости и обхода простых сетевых ограничений.',
+          key: 'tcp_11994',
+          label: 'TCP 11994',
+          description: 'Рекомендуемый baseline для совместимости и отдельного TCP-порта под OpenVPN.',
           recommended: true,
           draft: {
-            endpoint_port: 443,
+            endpoint_port: 11994,
             ovpn_proto: 'tcp',
             ovpn_dev: 'tun',
             ovpn_server_network: '10.8.0.0',
@@ -3132,8 +3174,8 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       label: 'Shadowsocks',
       runtime: 'shadowsocks-libev runtime',
       description: 'Легковесный proxy/VPN-like сервис для клиентских приложений и быстрых персональных доступов.',
-      unitPattern: 'shadowsocks-libev',
-      pathPattern: '/etc/shadowsocks-libev/config.json',
+      unitPattern: 'megavpn-shadowsocks-<slug>',
+      pathPattern: '/etc/shadowsocks-libev/<slug>.json',
       recommendations: [
         'Стартовый baseline: chacha20-ietf-poly1305 и tcp_and_udp.',
         'Держать отдельные server/access secrets и не переиспользовать их между профилями.',
@@ -3175,6 +3217,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       pathPattern: '/etc/nginx/conf.d/megavpn-<slug>.conf',
       recommendations: [
         'Использовать как reverse-proxy front для UI/API или как static edge.',
+        'Для Xray gRPC/HTTP edge держать отдельный Nginx ingress и отдельный backend-port Xray.',
         'TLS-сертификаты и upstream path держать явными, без магических defaults.',
         'Отдельный ingress слой не должен смешиваться с транспортными сервисами.',
       ],
@@ -3188,6 +3231,31 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
             endpoint_port: 8080,
             nginx_mode: 'reverse_proxy',
             nginx_index_files: 'index.html index.htm',
+            config_mode: '0644',
+          },
+        },
+        {
+          key: 'grpc_edge',
+          label: 'Xray gRPC Edge',
+          description: 'TLS edge для backend Xray gRPC. Требует cert/key и grpc upstream.',
+          draft: {
+            endpoint_port: 443,
+            nginx_mode: 'grpc_proxy',
+            nginx_location_path: '/vless-grpc',
+            nginx_upstream_url: 'grpc://127.0.0.1:7443',
+            nginx_tls_enabled: 'true',
+            config_mode: '0644',
+          },
+        },
+        {
+          key: 'ws_edge',
+          label: 'Xray HTTP/WebSocket Edge',
+          description: 'TLS reverse-proxy для backend Xray HTTP/WebSocket transport.',
+          draft: {
+            endpoint_port: 443,
+            nginx_mode: 'reverse_proxy',
+            nginx_upstream_url: 'http://127.0.0.1:7080',
+            nginx_tls_enabled: 'true',
             config_mode: '0644',
           },
         },
@@ -3224,6 +3292,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       nameTemplate: service.name_template || fallback?.nameTemplate || '',
       slugTemplate: service.slug_template || fallback?.slugTemplate || '',
       endpointHint: service.endpoint_hint || fallback?.endpointHint || '',
+      platformNotes: Array.isArray(service.platform_notes) ? service.platform_notes : (fallback?.platformNotes || []),
       recommendations: Array.isArray(service.recommendations) ? service.recommendations : (fallback?.recommendations || []),
       presets: Array.isArray(service.presets) && service.presets.length ? service.presets : (fallback?.presets || []),
     };
@@ -3296,6 +3365,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     if (!blueprint) return '';
     const preset = resolveInstancePreset(serviceCode, draft.service_profile);
     const presets = blueprint.presets || [];
+    const platformNotes = blueprint.platformNotes || [];
     const recommendations = blueprint.recommendations || [];
     return `
       <div class="field full">
@@ -3314,6 +3384,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
               </select>
               <div class="metric-caption" style="margin-top:6px">${escapeHTML(preset?.description || '')}</div>
             </div>` : ''}
+          ${platformNotes.length ? `<div class="metric-caption" style="margin-top:10px">${platformNotes.map((line) => `CA / platform: ${escapeHTML(line)}`).join('<br>')}</div>` : ''}
           ${recommendations.length ? `<div class="metric-caption" style="margin-top:10px">${recommendations.map((line) => `• ${escapeHTML(line)}`).join('<br>')}</div>` : ''}
         </div>
       </div>`;
@@ -3381,15 +3452,19 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     const normalized = normalizeInstanceServiceCode(serviceCode || instance?.service_code);
     switch (normalized) {
       case 'xray-core':
+        const xraySlug = slugPathPart(instance?.slug, 'xray');
         return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.server_port, 443),
-          config_path: stringValue(spec.config_path, '/usr/local/etc/xray/config.json'),
+          config_path: stringValue(spec.config_path, `/usr/local/etc/xray/${xraySlug}.json`),
           config_mode: stringValue(spec.config_mode, '0640'),
+          xray_security: stringValue(spec.security, 'reality'),
           xray_server_name: stringValue(spec.server_name, spec.sni, instance?.endpoint_host),
           xray_short_id: stringValue(spec.short_id),
           xray_dest: stringValue(spec.dest, 'www.cloudflare.com:443'),
           xray_fingerprint: stringValue(spec.fingerprint, 'chrome'),
           xray_network: stringValue(spec.network, spec.type, spec.transport, 'tcp'),
+          xray_path: stringValue(spec.path, '/ws'),
+          xray_service_name: stringValue(spec.service_name, 'vless-grpc'),
           xray_flow: stringValue(spec.flow),
           config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
         }, presetKey);
@@ -3441,6 +3516,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           config_path: stringValue(spec.config_path, '/etc/nginx/conf.d/megavpn-edge.conf'),
           config_mode: stringValue(spec.config_mode, '0644'),
           nginx_mode: stringValue(spec.mode, 'reverse_proxy'),
+          nginx_location_path: stringValue(spec.location_path, '/'),
           nginx_server_name: stringValue(spec.server_name, instance?.endpoint_host, '_'),
           nginx_upstream_url: stringValue(spec.upstream_url, spec.proxy_pass),
           nginx_root_dir: stringValue(spec.root_dir),
@@ -3505,9 +3581,10 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           config_body: stringValue(spec.config_content),
         }, presetKey);
       case 'shadowsocks':
+        const ssSlug = slugPathPart(instance?.slug, 'shadowsocks');
         return finalizeInstanceDraft(normalized, instance, spec, {
           endpoint_port: numberValue(instance?.endpoint_port, spec.server_port, spec.access_port_base, 8388),
-          config_path: stringValue(spec.config_path, '/etc/shadowsocks-libev/config.json'),
+          config_path: stringValue(spec.config_path, `/etc/shadowsocks-libev/${ssSlug}.json`),
           config_mode: stringValue(spec.config_mode, '0640'),
           ss_method: stringValue(spec.method, 'chacha20-ietf-poly1305'),
           ss_mode: stringValue(spec.mode, 'tcp_and_udp'),
@@ -3532,6 +3609,10 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     switch (normalizeInstanceServiceCode(serviceCode)) {
       case 'xray-core':
         return `${intro}
+          <div class="field"><label>Security</label><select name="xray_security">
+            <option value="reality"${draft.xray_security !== 'none' ? ' selected' : ''}>reality</option>
+            <option value="none"${draft.xray_security === 'none' ? ' selected' : ''}>none (backend)</option>
+          </select></div>
           <div class="field"><label>Server name / SNI</label><input name="xray_server_name" value="${escapeHTML(draft.xray_server_name || '')}" placeholder="vpn.example.com" /></div>
           <div class="field"><label>Short ID</label><input name="xray_short_id" value="${escapeHTML(draft.xray_short_id || '')}" placeholder="0123abcd4567ef89" /></div>
           <div class="field"><label>Reality dest</label><input name="xray_dest" value="${escapeHTML(draft.xray_dest || 'www.cloudflare.com:443')}" /></div>
@@ -3541,8 +3622,10 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
             <option value="grpc"${draft.xray_network === 'grpc' ? ' selected' : ''}>grpc</option>
             <option value="ws"${draft.xray_network === 'ws' ? ' selected' : ''}>ws</option>
           </select></div>
+          <div class="field"><label>HTTP path</label><input name="xray_path" value="${escapeHTML(draft.xray_path || '/ws')}" placeholder="/ws" /></div>
+          <div class="field"><label>gRPC service name</label><input name="xray_service_name" value="${escapeHTML(draft.xray_service_name || 'vless-grpc')}" placeholder="vless-grpc" /></div>
           <div class="field"><label>Flow</label><input name="xray_flow" value="${escapeHTML(draft.xray_flow || '')}" placeholder="optional" /></div>
-          <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/usr/local/etc/xray/config.json')}" /></div>
+          <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/usr/local/etc/xray/xray.json')}" /></div>
           <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
           <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"inbounds":[...],"outbounds":[...]}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
       case 'openvpn':
@@ -3584,11 +3667,13 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       case 'nginx':
         return `${intro}
           <div class="field"><label>Mode</label><select name="nginx_mode">
-            <option value="reverse_proxy"${draft.nginx_mode !== 'static' ? ' selected' : ''}>reverse_proxy</option>
+            <option value="reverse_proxy"${draft.nginx_mode !== 'static' && draft.nginx_mode !== 'grpc_proxy' ? ' selected' : ''}>reverse_proxy</option>
+            <option value="grpc_proxy"${draft.nginx_mode === 'grpc_proxy' ? ' selected' : ''}>grpc_proxy</option>
             <option value="static"${draft.nginx_mode === 'static' ? ' selected' : ''}>static</option>
           </select></div>
+          <div class="field"><label>Location path</label><input name="nginx_location_path" value="${escapeHTML(draft.nginx_location_path || '/')}" placeholder="/vless-grpc or /" /></div>
           <div class="field"><label>Server name</label><input name="nginx_server_name" value="${escapeHTML(draft.nginx_server_name || '_')}" placeholder="edge.example.com" /></div>
-          <div class="field"><label>Upstream URL</label><input name="nginx_upstream_url" value="${escapeHTML(draft.nginx_upstream_url || '')}" placeholder="http://127.0.0.1:9000" /></div>
+          <div class="field"><label>Upstream URL</label><input name="nginx_upstream_url" value="${escapeHTML(draft.nginx_upstream_url || '')}" placeholder="http://127.0.0.1:9000 or grpc://127.0.0.1:7443" /></div>
           <div class="field"><label>Static root</label><input name="nginx_root_dir" value="${escapeHTML(draft.nginx_root_dir || '')}" placeholder="/var/www/html" /></div>
           <div class="field"><label>Index files</label><input name="nginx_index_files" value="${escapeHTML(draft.nginx_index_files || 'index.html index.htm')}" /></div>
           <div class="field"><label>TLS</label><select name="nginx_tls_enabled">
@@ -3657,7 +3742,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="field"><label>Timeout</label><input name="ss_timeout" type="number" min="30" max="3600" value="${escapeHTML(draft.ss_timeout || 300)}" /></div>
           <div class="field"><label>Bootstrap password</label><input name="ss_password" value="${escapeHTML(draft.ss_password || '')}" placeholder="required before first apply" /></div>
           <div class="field"><label>Access port base</label><input name="ss_access_port_base" type="number" min="1" max="65535" value="${escapeHTML(draft.ss_access_port_base || draft.endpoint_port || 8388)}" /></div>
-          <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/etc/shadowsocks-libev/config.json')}" /></div>
+          <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/etc/shadowsocks-libev/shadowsocks.json')}" /></div>
           <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
           <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"server":"0.0.0.0","method":"chacha20-ietf-poly1305"}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
       default:
@@ -3701,7 +3786,12 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     spec.config_path = String(form.get('config_path') || '').trim();
     spec.config_mode = String(form.get('config_mode') || '').trim();
     if (normalized === 'xray-core') {
-      spec.security = 'reality';
+      const slug = slugPathPart(form.get('slug'), 'xray');
+      const expectedConfigPath = `/usr/local/etc/xray/${slug}.json`;
+      if (!spec.config_path || spec.config_path === '/usr/local/etc/xray/config.json') {
+        spec.config_path = expectedConfigPath;
+      }
+      spec.security = String(form.get('xray_security') || 'reality').trim() || 'reality';
       spec.server_port = Number(form.get('endpoint_port') || endpointPort || 443) || 443;
       spec.server_name = String(form.get('xray_server_name') || '').trim();
       spec.sni = spec.server_name;
@@ -3709,6 +3799,8 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       spec.dest = String(form.get('xray_dest') || '').trim();
       spec.fingerprint = String(form.get('xray_fingerprint') || '').trim();
       spec.network = String(form.get('xray_network') || 'tcp').trim();
+      spec.path = String(form.get('xray_path') || '').trim();
+      spec.service_name = String(form.get('xray_service_name') || '').trim();
       spec.flow = String(form.get('xray_flow') || '').trim();
       if (configBody) {
         spec.config_json = JSON.parse(configBody);
@@ -3786,6 +3878,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       spec.listen_port = Number(form.get('endpoint_port') || endpointPort || 8080) || 8080;
       spec.server_port = spec.listen_port;
       spec.mode = String(form.get('nginx_mode') || 'reverse_proxy').trim();
+      spec.location_path = String(form.get('nginx_location_path') || '/').trim() || '/';
       spec.server_name = String(form.get('nginx_server_name') || '').trim();
       spec.upstream_url = String(form.get('nginx_upstream_url') || '').trim();
       spec.root_dir = String(form.get('nginx_root_dir') || '').trim();
@@ -3873,6 +3966,11 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       return spec;
     }
     if (normalized === 'shadowsocks') {
+      const slug = slugPathPart(form.get('slug'), 'shadowsocks');
+      const expectedConfigPath = `/etc/shadowsocks-libev/${slug}.json`;
+      if (!spec.config_path || spec.config_path === '/etc/shadowsocks-libev/config.json') {
+        spec.config_path = expectedConfigPath;
+      }
       spec.server_port = Number(form.get('endpoint_port') || endpointPort || 8388) || 8388;
       spec.access_port_base = Number(form.get('ss_access_port_base') || spec.server_port || 8388) || 8388;
       spec.method = String(form.get('ss_method') || 'chacha20-ietf-poly1305').trim();
@@ -3902,6 +4000,94 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       delete spec.config_content;
     }
     return spec;
+  }
+
+  function renderServicePackProfilePanel(packKey) {
+    const pack = servicePackByKey(packKey);
+    if (!pack) return '<div class="field full"><div class="empty">No service pack definition available.</div></div>';
+    const platformNotes = Array.isArray(pack.platform_notes) ? pack.platform_notes : [];
+    const recommendations = Array.isArray(pack.recommendations) ? pack.recommendations : [];
+    const components = Array.isArray(pack.components) ? pack.components : [];
+    return `
+      <div class="field full">
+        <div class="code-block">
+          <div><strong>${escapeHTML(pack.label || pack.key)}</strong> · <code>${escapeHTML(pack.key)}</code></div>
+          <div class="metric-caption" style="margin-top:6px">${escapeHTML(pack.description || '')}</div>
+          ${platformNotes.length ? `<div class="metric-caption" style="margin-top:10px">${platformNotes.map((line) => `Platform: ${escapeHTML(line)}`).join('<br>')}</div>` : ''}
+          ${recommendations.length ? `<div class="metric-caption" style="margin-top:10px">${recommendations.map((line) => `• ${escapeHTML(line)}`).join('<br>')}</div>` : ''}
+          <div class="metric-caption" style="margin-top:12px">Components:</div>
+          <div class="timeline" style="margin-top:8px">
+            ${components.map((component) => `
+              <div class="timeline-item">
+                <strong>${escapeHTML(component.label || component.service_code || 'component')}</strong>
+                <div class="timeline-meta">${escapeHTML(component.description || '')}</div>
+                <div class="metric-caption">service <code>${escapeHTML(component.service_code || 'n/a')}</code> · preset <code>${escapeHTML(component.preset_key || 'n/a')}</code> · port ${escapeHTML(String(component.endpoint_port || 0))}</div>
+              </div>`).join('')}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function syncCreateServicePackDefaults(form, packKey) {
+    if (!form) return;
+    const pack = servicePackByKey(packKey);
+    const panel = form.querySelector('#servicePackFields');
+    if (panel) panel.innerHTML = renderServicePackProfilePanel(packKey);
+    if (!pack) return;
+    const baseNameInput = form.querySelector('input[name="base_name"]');
+    const hostInput = form.querySelector('input[name="endpoint_host"]');
+    if (baseNameInput) {
+      const template = String(pack.base_name_template || '').trim();
+      if (template) {
+        baseNameInput.placeholder = template;
+        applyAutoFieldValue(baseNameInput, template, true);
+      }
+    }
+    if (hostInput) {
+      const hint = String(pack.endpoint_hint || '').trim() || 'edge.example.com';
+      hostInput.placeholder = hint;
+      hostInput.required = Boolean(pack.requires_endpoint_host);
+    }
+  }
+
+  function openCreateServicePackModal() {
+    const initialPack = defaultServicePack();
+    openModal('Create service pack', 'POST /api/v1/service-packs/{key}/instances', `
+      <form id="createServicePackForm" class="form-grid">
+        <div class="field"><label>Node</label><select name="node_id" required>${nodeOptions()}</select></div>
+        <div class="field"><label>Service pack</label><select name="service_pack_key" required>${servicePackOptions(initialPack?.key || '')}</select></div>
+        <div class="field"><label>Base name</label><input name="base_name" required placeholder="${escapeHTML(initialPack?.base_name_template || 'edge-service-pack')}" /></div>
+        <div class="field"><label>Endpoint host</label><input name="endpoint_host" placeholder="${escapeHTML(initialPack?.endpoint_hint || 'edge.example.com')}" /></div>
+        <div id="servicePackFields" class="form-grid full"></div>
+        <div class="field full inline-actions"><button class="primary-btn" type="submit">Create service pack</button></div>
+      </form>
+      <div id="createServicePackResult" class="form-result"></div>`, { wide: true });
+    const form = document.getElementById('createServicePackForm');
+    const packSelect = form.querySelector('select[name="service_pack_key"]');
+    syncCreateServicePackDefaults(form, packSelect.value);
+    packSelect.addEventListener('change', () => syncCreateServicePackDefaults(form, packSelect.value));
+    form.addEventListener('submit', createServicePack);
+  }
+
+  async function createServicePack(event) {
+    event.preventDefault();
+    const target = document.getElementById('createServicePackResult');
+    target.innerHTML = '<span class="tag warn">creating</span>';
+    try {
+      const form = new FormData(event.currentTarget);
+      const packKey = String(form.get('service_pack_key') || '').trim();
+      const payload = {
+        node_id: String(form.get('node_id') || '').trim(),
+        base_name: String(form.get('base_name') || '').trim(),
+        endpoint_host: String(form.get('endpoint_host') || '').trim(),
+      };
+      const data = await sendJSON(`/api/v1/service-packs/${encodeURIComponent(packKey)}/instances`, 'POST', payload);
+      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
+      await refresh();
+      setTimeout(closeModal, 500);
+    } catch (err) {
+      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+    }
   }
 
   function openCreateInstanceModal() {
