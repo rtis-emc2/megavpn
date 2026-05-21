@@ -474,7 +474,7 @@ func (s *Server) listServices(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 500, "list services failed")
 		return
 	}
-	writeJSON(w, 200, x)
+	writeJSON(w, 200, enrichServiceDefinitions(x))
 }
 func (s *Server) listServiceInstallers(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, 200, []response{

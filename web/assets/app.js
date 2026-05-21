@@ -3207,7 +3207,22 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
   };
 
   function instanceServiceBlueprint(serviceCode) {
-    return INSTANCE_SERVICE_BLUEPRINTS[normalizeInstanceServiceCode(serviceCode)] || null;
+    const normalized = normalizeInstanceServiceCode(serviceCode);
+    const service = (state.servicesCatalog || []).find((entry) => normalizeInstanceServiceCode(entry.code) === normalized);
+    const fallback = INSTANCE_SERVICE_BLUEPRINTS[normalized] || null;
+    if (!service) return fallback;
+    return {
+      label: service.label || service.display_name || fallback?.label || service.name || normalized,
+      runtimeCode: service.runtime_code || fallback?.runtimeCode || normalized,
+      runtime: service.runtime || fallback?.runtime || 'runtime n/a',
+      serviceKind: service.service_kind || fallback?.serviceKind || 'service',
+      companionTo: Array.isArray(service.companion_to) ? service.companion_to : (fallback?.companionTo || []),
+      description: service.description || fallback?.description || '',
+      unitPattern: service.unit_pattern || fallback?.unitPattern || 'n/a',
+      pathPattern: service.path_pattern || fallback?.pathPattern || 'n/a',
+      recommendations: Array.isArray(service.recommendations) ? service.recommendations : (fallback?.recommendations || []),
+      presets: Array.isArray(service.presets) && service.presets.length ? service.presets : (fallback?.presets || []),
+    };
   }
 
   function availableInstanceServices() {
@@ -3283,7 +3298,9 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         <div class="code-block">
           <div><strong>${escapeHTML(blueprint.label)}</strong> · ${escapeHTML(blueprint.runtime || 'runtime n/a')}</div>
           <div class="metric-caption" style="margin-top:6px">${escapeHTML(blueprint.description || '')}</div>
+          <div class="metric-caption" style="margin-top:6px">Service code: <code>${escapeHTML(normalizeInstanceServiceCode(serviceCode))}</code> · Runtime code: <code>${escapeHTML(blueprint.runtimeCode || normalizeInstanceServiceCode(serviceCode))}</code></div>
           <div class="metric-caption" style="margin-top:8px">Default unit: <code>${escapeHTML(blueprint.unitPattern || 'n/a')}</code> · Config path: <code>${escapeHTML(blueprint.pathPattern || 'n/a')}</code></div>
+          ${Array.isArray(blueprint.companionTo) && blueprint.companionTo.length ? `<div class="metric-caption" style="margin-top:6px">Companion services: <code>${escapeHTML(blueprint.companionTo.join(', '))}</code></div>` : ''}
           ${presets.length ? `
             <div style="margin-top:12px">
               <label>Preset</label>
