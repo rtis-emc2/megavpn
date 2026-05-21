@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**RTIS MegaVPN 0.6.7.2-alpha**
+**RTIS MegaVPN 0.6.8.1-alpha**
 
 RTIS MegaVPN — self-hosted distributed VPN orchestration platform.
 
@@ -35,16 +35,23 @@ VPN / Proxy Services
 
 # Current Status
 
-Release: `0.6.7.2-alpha`
+Release: `0.6.8.1-alpha`
 
-Current branch status: WireGuard runtime lifecycle, HTTP Proxy / Squid runtime lifecycle, MTProto direction via Xray runtime, secure bootstrap hardening and deployment baseline stabilization.
+Current branch status: service-pack smoke baseline for the test server, certificate lifecycle hardening, job payload validation and deployment baseline stabilization.
 
 Immediate program priorities:
 
 - stabilize clean GitHub baseline under `rtis-emc2/megavpn`
-- complete `0.6.7.2-alpha` CI/build/deploy verification
+- complete `0.6.8.1-alpha` CI/build/deploy verification
 - production-smoke OpenVPN / WireGuard / HTTP Proxy / MTProto paths on the test server
 - continue driver hardening, integration tests and release gates
+
+For repeatable service-pack smoke on the test server, use:
+
+```bash
+scripts/service-pack-smoke.sh --list
+scripts/service-pack-smoke.sh <node-id> <pack-key> <endpoint-host> [base-name] [certificate-id]
+```
 
 Реализовано:
 
