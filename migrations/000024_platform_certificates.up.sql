@@ -26,6 +26,6 @@ on platform_certificates(kind,status,created_at desc);
 create index if not exists idx_platform_certificates_default
 on platform_certificates(is_default,kind,status);
 
-insert into audit_events(id,actor,action,resource_type,message,payload_json,created_at)
+insert into audit_events(id,actor_type,action,resource_type,summary,payload_json,created_at)
 values(gen_random_uuid(),'system','migration.platform_certificates','platform','platform certificates installed','{}'::jsonb,now())
 on conflict do nothing;
