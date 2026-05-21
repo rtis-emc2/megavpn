@@ -146,6 +146,66 @@ func servicePackDefinitions() []servicePackDefinition {
 				{Label: "OpenVPN UDP", Description: "OpenVPN instance с platform-managed PKI.", ServiceCode: "openvpn", PresetKey: "udp_1194", NameSuffix: "openvpn-udp", SlugSuffix: "openvpn-udp", EndpointPort: 1194, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "udp_1194", "pki_scope": "platform", "pki_profile": "default", "proto": "udp", "dev": "tun", "server_network": "10.8.0.0", "server_netmask": "255.255.255.0", "config_mode": "0644"}},
 			},
 		},
+		{
+			Key:                  "wireguard_roadwarrior",
+			Label:                "WireGuard Road Warrior",
+			Description:          "Создает standalone WireGuard instance для road-warrior клиентов с full-tunnel baseline.",
+			BaseNameTemplate:     "edge-wireguard",
+			EndpointHint:         "wg.example.com",
+			RequiresEndpointHost: true,
+			Recommendations: []string{
+				"Это канонический стартовый пакет для modern full-tunnel VPN-клиентов.",
+				"Проверяй network CIDR и не переиспользуй address pool между разными инстансами.",
+			},
+			Components: []servicePackComponent{
+				{Label: "WireGuard Road Warrior", Description: "Standalone WireGuard instance с managed peers.", ServiceCode: "wireguard", PresetKey: "roadwarrior", NameSuffix: "wireguard", SlugSuffix: "wireguard", EndpointPort: 51820, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "roadwarrior", "network_cidr": "10.66.0.0/24", "server_address": "10.66.0.1/24", "client_allowed_ips": "0.0.0.0/0, ::/0", "client_dns": "1.1.1.1, 1.0.0.1", "persistent_keepalive": 25, "config_mode": "0600"}},
+			},
+		},
+		{
+			Key:                  "http_proxy_authenticated",
+			Label:                "HTTP Proxy Authenticated Edge",
+			Description:          "Создает standalone authenticated HTTP proxy / Squid instance.",
+			BaseNameTemplate:     "edge-http-proxy",
+			EndpointHint:         "proxy.example.com",
+			RequiresEndpointHost: true,
+			Recommendations: []string{
+				"Рекомендуемый baseline для managed authenticated HTTP proxy.",
+				"Используй отдельный endpoint и не смешивай его runtime paths с соседними proxy/VPN сервисами.",
+			},
+			Components: []servicePackComponent{
+				{Label: "HTTP Proxy Edge", Description: "Standalone authenticated HTTP proxy instance.", ServiceCode: "http_proxy", PresetKey: "authenticated_edge", NameSuffix: "http-proxy", SlugSuffix: "http-proxy", EndpointPort: 3128, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "authenticated_edge", "auth_realm": "RTIS MegaVPN HTTP Proxy", "auth_helper_path": "/usr/lib/squid/basic_ncsa_auth", "config_mode": "0644"}},
+			},
+		},
+		{
+			Key:                  "mtproto_telegram_443",
+			Label:                "MTProto Telegram 443",
+			Description:          "Создает standalone MTProto instance для Telegram-oriented proxy traffic.",
+			BaseNameTemplate:     "edge-mtproto",
+			EndpointHint:         "tg.example.com",
+			RequiresEndpointHost: true,
+			Recommendations: []string{
+				"Рекомендуемый baseline для отдельного MTProto endpoint на 443.",
+				"Не смешивай этот runtime instance с VLESS/Reality instance на том же slug/config path.",
+			},
+			Components: []servicePackComponent{
+				{Label: "MTProto 443", Description: "Standalone MTProto instance на xray-core runtime.", ServiceCode: "mtproto", PresetKey: "telegram_443", NameSuffix: "mtproto", SlugSuffix: "mtproto", EndpointPort: 443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "telegram_443", "mtproto_listen": "0.0.0.0", "config_mode": "0640"}},
+			},
+		},
+		{
+			Key:                  "shadowsocks_chacha",
+			Label:                "Shadowsocks Chacha Full",
+			Description:          "Создает standalone Shadowsocks instance с рекомендуемым chacha20 full baseline.",
+			BaseNameTemplate:     "edge-shadowsocks",
+			EndpointHint:         "ss.example.com",
+			RequiresEndpointHost: true,
+			Recommendations: []string{
+				"Рекомендуемый universal baseline для персонального Shadowsocks-доступа.",
+				"При необходимости later можешь перевести порт или cipher через revision/spec.",
+			},
+			Components: []servicePackComponent{
+				{Label: "Shadowsocks Chacha", Description: "Standalone Shadowsocks instance с managed access secrets.", ServiceCode: "shadowsocks", PresetKey: "chacha_full", NameSuffix: "shadowsocks", SlugSuffix: "shadowsocks", EndpointPort: 8388, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "chacha_full", "method": "chacha20-ietf-poly1305", "mode": "tcp_and_udp", "timeout": 300, "config_mode": "0640"}},
+			},
+		},
 	}
 }
 

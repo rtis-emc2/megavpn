@@ -37,7 +37,7 @@ VPN / Proxy Services
 
 Release: `0.6.8.1-alpha`
 
-Current branch status: service-pack smoke baseline for the test server, certificate lifecycle hardening, job payload validation and deployment baseline stabilization.
+Current branch status: expanded service-pack matrix for standalone services, provisioning/artifact/share-link smoke runner for the test server, certificate lifecycle hardening, job payload validation and deployment baseline stabilization.
 
 Immediate program priorities:
 
@@ -46,11 +46,13 @@ Immediate program priorities:
 - production-smoke OpenVPN / WireGuard / HTTP Proxy / MTProto paths on the test server
 - continue driver hardening, integration tests and release gates
 
-For repeatable service-pack smoke on the test server, use:
+For repeatable service-pack and operational-truth smoke on the test server, use:
 
 ```bash
 scripts/service-pack-smoke.sh --list
+scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain> [certificate-id]
 scripts/service-pack-smoke.sh <node-id> <pack-key> <endpoint-host> [base-name] [certificate-id]
+scripts/service-pack-smoke.sh --with-share-links <node-id> <pack-key> <endpoint-host> [base-name] [certificate-id]
 ```
 
 Реализовано:
