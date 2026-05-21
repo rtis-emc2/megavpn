@@ -225,8 +225,8 @@ func (s *Store) CreateSelfSignedPlatformCertificate(ctx context.Context, name, d
 	})
 }
 
-func (s *Store) CreateManagedPlatformCertificateAuthority(ctx context.Context, name, description, commonName string) (domain.PlatformCertificate, error) {
-	certPEM, keyPEM, err := pki.GenerateCertificateAuthority(commonName)
+func (s *Store) CreateManagedPlatformCertificateAuthority(ctx context.Context, name, description, commonName string, validDays int) (domain.PlatformCertificate, error) {
+	certPEM, keyPEM, err := pki.GenerateCertificateAuthorityWithOptions(commonName, validDays)
 	if err != nil {
 		return domain.PlatformCertificate{}, err
 	}
@@ -257,7 +257,7 @@ func (s *Store) CreateManagedPlatformCertificateAuthority(ctx context.Context, n
 		KeySecretRefID:  &keyRefID,
 		NotBefore:       &desc.NotBefore,
 		NotAfter:        &desc.NotAfter,
-		Meta:            map[string]any{"provider": "managed_ca"},
+		Meta:            map[string]any{"provider": "managed_ca", "valid_days": validDays},
 	})
 }
 

@@ -22,7 +22,11 @@ where service_code=$1 and pki_profile=$2 and status='active'
 order by created_at desc
 limit 1`, serviceCode, profile).
 		Scan(&root.ID, &root.ServiceCode, &root.PKIProfile, &root.Status, &root.CACertSecretRefID, &root.CAKeySecretRefID, &root.CommonName, &root.CreatedAt, &root.RotatedAt)
-	return root, err
+	if err != nil {
+		return root, err
+	}
+	s.populatePlatformServicePKIRootDates(ctx, &root)
+	return root, nil
 }
 
 func (s *Store) ListPlatformServicePKIRoots(ctx context.Context) ([]domain.PlatformServicePKIRoot, error) {
@@ -39,6 +43,7 @@ order by service_code,pki_profile,created_at desc`)
 		if err := rows.Scan(&root.ID, &root.ServiceCode, &root.PKIProfile, &root.Status, &root.CACertSecretRefID, &root.CAKeySecretRefID, &root.CommonName, &root.CreatedAt, &root.RotatedAt); err != nil {
 			return nil, err
 		}
+		s.populatePlatformServicePKIRootDates(ctx, &root)
 		out = append(out, root)
 	}
 	return out, rows.Err()
@@ -88,7 +93,7 @@ func (s *Store) EnsureOpenVPNPlatformPKIRoot(ctx context.Context, profile string
 	if profile != "default" {
 		commonName += " " + profile
 	}
-	caCertPEM, caKeyPEM, err := pki.GenerateCertificateAuthority(commonName)
+	caCertPEM, caKeyPEM, err := pki.GenerateCertificateAuthorityWithOptions(commonName, 365*30)
 	if err != nil {
 		return domain.PlatformServicePKIRoot{}, err
 	}
@@ -111,7 +116,7 @@ func (s *Store) EnsureOpenVPNPlatformPKIRoot(ctx context.Context, profile string
 	return domain.PlatformServicePKIRoot{}, err
 }
 
-func (s *Store) CreateManagedPlatformServicePKIRoot(ctx context.Context, serviceCode, profile, commonName string) (domain.PlatformServicePKIRoot, error) {
+func (s *Store) CreateManagedPlatformServicePKIRoot(ctx context.Context, serviceCode, profile, commonName string, validDays int) (domain.PlatformServicePKIRoot, error) {
 	serviceCode = normalizeServicePKIValue(serviceCode, "")
 	profile = normalizeServicePKIValue(profile, "default")
 	if serviceCode == "" {
@@ -129,7 +134,7 @@ func (s *Store) CreateManagedPlatformServicePKIRoot(ctx context.Context, service
 			commonName += " " + profile
 		}
 	}
-	caCertPEM, caKeyPEM, err := pki.GenerateCertificateAuthority(commonName)
+	caCertPEM, caKeyPEM, err := pki.GenerateCertificateAuthorityWithOptions(commonName, validDays)
 	if err != nil {
 		return domain.PlatformServicePKIRoot{}, err
 	}
@@ -142,6 +147,22 @@ func (s *Store) CreateManagedPlatformServicePKIRoot(ctx context.Context, service
 		return domain.PlatformServicePKIRoot{}, err
 	}
 	return s.CreatePlatformServicePKIRoot(ctx, serviceCode, profile, commonName, caCertRef.ID, caKeyRef.ID)
+}
+
+func (s *Store) populatePlatformServicePKIRootDates(ctx context.Context, root *domain.PlatformServicePKIRoot) {
+	if s == nil || root == nil || strings.TrimSpace(root.CACertSecretRefID) == "" {
+		return
+	}
+	_, certPEM, err := s.ResolveSecretValue(ctx, root.CACertSecretRefID)
+	if err != nil {
+		return
+	}
+	desc, err := pki.DescribeCertificatePEM(certPEM)
+	if err != nil {
+		return
+	}
+	root.NotBefore = &desc.NotBefore
+	root.NotAfter = &desc.NotAfter
 }
 
 func normalizeServicePKIValue(value, fallback string) string {

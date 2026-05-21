@@ -23,6 +23,10 @@ type CertificateDescription struct {
 }
 
 func GenerateCertificateAuthority(commonName string) ([]byte, []byte, error) {
+	return GenerateCertificateAuthorityWithOptions(commonName, 365*30)
+}
+
+func GenerateCertificateAuthorityWithOptions(commonName string, validDays int) ([]byte, []byte, error) {
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, err
@@ -31,13 +35,16 @@ func GenerateCertificateAuthority(commonName string) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if validDays <= 0 {
+		validDays = 365 * 30
+	}
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			CommonName: commonName,
 		},
 		NotBefore:             time.Now().Add(-1 * time.Hour),
-		NotAfter:              time.Now().AddDate(30, 0, 0),
+		NotAfter:              time.Now().Add(time.Duration(validDays) * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		IsCA:                  true,

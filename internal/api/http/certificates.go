@@ -29,6 +29,7 @@ type managedPlatformCertificateAuthorityRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	CommonName  string `json:"common_name"`
+	ValidDays   int    `json:"valid_days"`
 }
 
 type issuePlatformCertificateFromAuthorityRequest struct {
@@ -45,6 +46,7 @@ type managedPlatformServicePKIRootRequest struct {
 	ServiceCode string `json:"service_code"`
 	PKIProfile  string `json:"pki_profile"`
 	CommonName  string `json:"common_name"`
+	ValidDays   int    `json:"valid_days"`
 }
 
 func (s *Server) listPlatformCertificates(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +103,7 @@ func (s *Server) createManagedPlatformCertificateAuthority(w http.ResponseWriter
 		writeErr(w, 400, "invalid managed ca payload")
 		return
 	}
-	item, err := s.store.CreateManagedPlatformCertificateAuthority(r.Context(), req.Name, req.Description, req.CommonName)
+	item, err := s.store.CreateManagedPlatformCertificateAuthority(r.Context(), req.Name, req.Description, req.CommonName, req.ValidDays)
 	if err != nil {
 		writeErr(w, classifyCertificateErrStatus(err), err.Error())
 		return
@@ -138,7 +140,7 @@ func (s *Server) createManagedPlatformServicePKIRoot(w http.ResponseWriter, r *h
 		writeErr(w, 400, "invalid platform pki root payload")
 		return
 	}
-	root, err := s.store.CreateManagedPlatformServicePKIRoot(r.Context(), req.ServiceCode, req.PKIProfile, req.CommonName)
+	root, err := s.store.CreateManagedPlatformServicePKIRoot(r.Context(), req.ServiceCode, req.PKIProfile, req.CommonName, req.ValidDays)
 	if err != nil {
 		writeErr(w, classifyCertificateErrStatus(err), err.Error())
 		return

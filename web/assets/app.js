@@ -75,7 +75,7 @@
     if (['ok', 'ready', 'active', 'healthy', 'succeeded', 'online', 'configured', 'enabled', 'sent', 'delivered'].includes(normalized)) return 'ok';
     if (['stub', 'planned', 'draft', 'pending', 'unknown', 'maintenance'].includes(normalized)) return 'stub';
     if (['degraded', 'warning', 'retrying', 'queued', 'running', 'bootstrapping', 'provisioning', 'inactive'].includes(normalized)) return 'warn';
-    if (['failed', 'offline', 'error', 'disabled', 'cancelled', 'revoked', 'missing', 'delivery_failed'].includes(normalized)) return 'danger';
+    if (['failed', 'offline', 'error', 'disabled', 'cancelled', 'revoked', 'missing', 'delivery_failed', 'expired', 'invalid'].includes(normalized)) return 'danger';
     return 'stub';
   }
 
@@ -1394,8 +1394,8 @@
         commonName: item.common_name || 'n/a',
         dnsNames: Array.isArray(item.sans) && item.sans.length ? item.sans.join(', ') : 'n/a',
         issuer: item.issuer_name || 'self',
-        expires: item.not_after ? formatDate(item.not_after) : 'n/a',
-        status: item.status || 'unknown',
+        expires: certificateExpiryCaption(item),
+        status: certificateDisplayStatus(item),
         defaultTag: item.is_default ? 'default' : '',
       })), [
         { title: 'Name', key: 'name', render: (r) => `${escapeHTML(r.name)}${r.defaultTag ? ' <span class="tag ok">default</span>' : ''}` },
@@ -1418,8 +1418,8 @@
                   <tr>
                     <td>${escapeHTML(item.name || item.id)}</td>
                     <td>${escapeHTML(item.common_name || 'n/a')}</td>
-                    <td>${escapeHTML(item.not_after ? formatDate(item.not_after) : 'n/a')}</td>
-                    <td>${statusTag(item.status || 'unknown')}</td>
+                    <td>${escapeHTML(certificateExpiryCaption(item))}</td>
+                    <td>${statusTag(certificateDisplayStatus(item))}</td>
                   </tr>`).join('') : '<tr><td colspan="4"><div class="empty">No managed certificate authorities yet.</div></td></tr>'}
               </tbody>
             </table>
@@ -1429,16 +1429,17 @@
           <div class="table-head"><h2>Service CA Center</h2><div class="table-tools"><span class="tag">${escapeHTML(String(rootRows.length))} roots</span></div></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Service</th><th>Profile</th><th>Common Name</th><th>Status</th><th>Created</th></tr></thead>
+              <thead><tr><th>Service</th><th>Profile</th><th>Common Name</th><th>Expires</th><th>Status</th><th>Created</th></tr></thead>
               <tbody>
                 ${rootRows.length ? rootRows.map((root) => `
                   <tr>
                     <td>${escapeHTML(root.service_code || 'n/a')}</td>
                     <td>${escapeHTML(root.pki_profile || 'default')}</td>
                     <td>${escapeHTML(root.common_name || 'n/a')}</td>
-                    <td>${statusTag(root.status || 'unknown')}</td>
+                    <td>${escapeHTML(certificateExpiryCaption(root))}</td>
+                    <td>${statusTag(certificateDisplayStatus(root))}</td>
                     <td>${formatDate(root.created_at)}</td>
-                  </tr>`).join('') : '<tr><td colspan="5"><div class="empty">No service CA roots yet.</div></td></tr>'}
+                  </tr>`).join('') : '<tr><td colspan="6"><div class="empty">No service CA roots yet.</div></td></tr>'}
               </tbody>
             </table>
           </div>
@@ -1494,19 +1495,20 @@
         <tr>
           <td>${escapeHTML(root.service_code || 'n/a')}</td>
           <td>${escapeHTML(root.pki_profile || 'default')}</td>
-          <td>${statusTag(root.status || 'unknown')}</td>
+          <td>${statusTag(certificateDisplayStatus(root))}</td>
           <td>${escapeHTML(root.common_name || 'n/a')}</td>
           <td><code title="${escapeHTML(root.ca_cert_secret_ref_id || '')}">${escapeHTML(compactID(root.ca_cert_secret_ref_id))}</code></td>
+          <td>${escapeHTML(certificateExpiryCaption(root))}</td>
           <td>${formatDate(root.created_at)}</td>
           <td>${formatDate(root.rotated_at)}</td>
         </tr>`)
         .join('')
-      : '<tr><td colspan="7"><div class="empty">No platform CA roots yet. The OpenVPN default CA is created on first OpenVPN apply or client provisioning.</div></td></tr>';
+      : '<tr><td colspan="8"><div class="empty">No platform CA roots yet. The OpenVPN default CA is created on first OpenVPN apply or client provisioning.</div></td></tr>';
     mount.innerHTML = `
       <div class="metric-caption" style="margin-bottom:12px">Control plane хранит platform PKI inventory для сервисов, где CA lifecycle должен быть централизован. Сейчас production path активен для OpenVPN.</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Service</th><th>Profile</th><th>Status</th><th>Common Name</th><th>CA Cert Ref</th><th>Created</th><th>Rotated</th></tr></thead>
+          <thead><tr><th>Service</th><th>Profile</th><th>Status</th><th>Common Name</th><th>CA Cert Ref</th><th>Expires</th><th>Created</th><th>Rotated</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
@@ -2935,7 +2937,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
 
   function activeLeafCertificates() {
     return (state.platformCertificates || [])
-      .filter((item) => item.kind === 'leaf' && String(item.status || '').toLowerCase() === 'active' && item.key_secret_ref_id)
+      .filter((item) => item.kind === 'leaf' && certificateDisplayStatus(item) === 'active' && item.key_secret_ref_id)
       .sort((left, right) => {
         if (Boolean(left.is_default) !== Boolean(right.is_default)) return left.is_default ? -1 : 1;
         return String(left.name || left.common_name || left.id).localeCompare(String(right.name || right.common_name || right.id), 'en');
@@ -2944,8 +2946,31 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
 
   function activeManagedAuthorities() {
     return (state.platformCertificates || [])
-      .filter((item) => item.kind === 'ca' && String(item.status || '').toLowerCase() === 'active')
+      .filter((item) => item.kind === 'ca' && certificateDisplayStatus(item) === 'active')
       .sort((left, right) => String(left.name || left.common_name || left.id).localeCompare(String(right.name || right.common_name || right.id), 'en'));
+  }
+
+  function certificateIsExpired(item) {
+    if (!item?.not_after) return false;
+    const expiresAt = new Date(item.not_after);
+    if (Number.isNaN(expiresAt.getTime())) return false;
+    return expiresAt.getTime() <= Date.now();
+  }
+
+  function certificateDisplayStatus(item) {
+    const raw = String(item?.status || 'unknown').toLowerCase();
+    if (certificateIsExpired(item) && raw !== 'revoked') return 'expired';
+    return raw || 'unknown';
+  }
+
+  function certificateExpiryCaption(item) {
+    if (!item?.not_after) return 'n/a';
+    const expiresAt = new Date(item.not_after);
+    if (Number.isNaN(expiresAt.getTime())) return formatDate(item.not_after);
+    if (expiresAt.getTime() <= Date.now()) return `${formatDate(item.not_after)} · expired`;
+    const daysLeft = Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+    if (daysLeft <= 30) return `${formatDate(item.not_after)} · ${daysLeft}d left`;
+    return formatDate(item.not_after);
   }
 
   function certificateOptions(selectedID = '', includeEmpty = true) {
@@ -2955,7 +2980,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       parts.push('<option value="">No managed certificate</option>');
     }
     for (const item of items) {
-      const expires = item.not_after ? formatDate(item.not_after) : 'n/a';
+      const expires = certificateExpiryCaption(item);
       const label = `${item.is_default ? '[default] ' : ''}${item.name || item.common_name || item.id} · ${item.source || 'certificate'} · ${expires}`;
       parts.push(`<option value="${escapeHTML(item.id)}"${item.id === selectedID ? ' selected' : ''}>${escapeHTML(label)}</option>`);
     }
@@ -4280,7 +4305,8 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <form id="managedCAForm" class="form-grid">
             <div class="field"><label>Name</label><input name="name" required placeholder="RTIS Internal Edge CA" /></div>
             <div class="field"><label>Description</label><input name="description" placeholder="Managed internal CA for edge certificates" /></div>
-            <div class="field full"><label>Common Name</label><input name="common_name" required placeholder="RTIS Internal Edge CA" /></div>
+            <div class="field"><label>Common Name</label><input name="common_name" required placeholder="RTIS Internal Edge CA" /></div>
+            <div class="field"><label>Valid days</label><input name="valid_days" type="number" min="1" max="10950" value="3650" /></div>
             <div class="field full inline-actions"><button class="primary-btn" type="submit">Create managed CA</button></div>
           </form>
           <div id="certificateActionResult" class="form-result"></div>`, { wide: true });
@@ -4306,7 +4332,8 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <form id="serviceCARootForm" class="form-grid">
             <div class="field"><label>Service code</label><input name="service_code" value="openvpn" required placeholder="openvpn" /></div>
             <div class="field"><label>PKI profile</label><input name="pki_profile" value="default" placeholder="default" /></div>
-            <div class="field full"><label>Common Name</label><input name="common_name" required placeholder="RTIS OpenVPN Platform CA" /></div>
+            <div class="field"><label>Common Name</label><input name="common_name" required placeholder="RTIS OpenVPN Platform CA" /></div>
+            <div class="field"><label>Valid days</label><input name="valid_days" type="number" min="1" max="10950" value="3650" /></div>
             <div class="field full inline-actions"><button class="primary-btn" type="submit">Create service CA root</button></div>
           </form>
           <div id="certificateActionResult" class="form-result"></div>`, { wide: true });
@@ -4385,6 +4412,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         name: String(form.get('name') || '').trim(),
         description: String(form.get('description') || '').trim(),
         common_name: String(form.get('common_name') || '').trim(),
+        valid_days: Number(form.get('valid_days') || 3650),
       };
       const data = await sendJSON('/api/v1/platform/certificates/authorities', 'POST', payload);
       target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
@@ -4427,6 +4455,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         service_code: String(form.get('service_code') || '').trim(),
         pki_profile: String(form.get('pki_profile') || '').trim(),
         common_name: String(form.get('common_name') || '').trim(),
+        valid_days: Number(form.get('valid_days') || 3650),
       };
       const data = await sendJSON('/api/v1/platform/pki-roots', 'POST', payload);
       target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
