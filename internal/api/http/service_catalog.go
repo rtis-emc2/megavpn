@@ -17,9 +17,13 @@ type serviceCatalogProfile struct {
 	Runtime         string                 `json:"runtime"`
 	ServiceKind     string                 `json:"service_kind"`
 	CompanionTo     []string               `json:"companion_to,omitempty"`
+	CompanionNote   string                 `json:"companion_note,omitempty"`
 	Description     string                 `json:"description"`
 	UnitPattern     string                 `json:"unit_pattern"`
 	PathPattern     string                 `json:"path_pattern"`
+	NameTemplate    string                 `json:"name_template"`
+	SlugTemplate    string                 `json:"slug_template"`
+	EndpointHint    string                 `json:"endpoint_hint"`
 	Recommendations []string               `json:"recommendations"`
 	Presets         []serviceCatalogPreset `json:"presets"`
 }
@@ -27,14 +31,17 @@ type serviceCatalogProfile struct {
 func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 	return map[string]serviceCatalogProfile{
 		"xray-core": {
-			DisplayName: "Xray VLESS / Reality",
-			Label:       "Xray VLESS / Reality",
-			RuntimeCode: "xray-core",
-			Runtime:     "xray-core runtime",
-			ServiceKind: "transport",
-			Description: "Основной modern-transport сервис для персональных VPN/anti-censorship профилей. Это продуктовый сервис, работающий поверх runtime xray-core.",
-			UnitPattern: "xray",
-			PathPattern: "/usr/local/etc/xray/config.json",
+			DisplayName:  "Xray VLESS / Reality",
+			Label:        "Xray VLESS / Reality",
+			RuntimeCode:  "xray-core",
+			Runtime:      "xray-core runtime",
+			ServiceKind:  "transport",
+			Description:  "Основной modern-transport сервис для персональных VPN/anti-censorship профилей. Это продуктовый сервис, работающий поверх runtime xray-core.",
+			UnitPattern:  "xray",
+			PathPattern:  "/usr/local/etc/xray/config.json",
+			NameTemplate: "edge-xray-reality",
+			SlugTemplate: "edge-xray-reality",
+			EndpointHint: "vpn.example.com",
 			Recommendations: []string{
 				"Для первого production-среза держать порт 443 и валидный SNI/Server Name.",
 				"Использовать Reality c коротким short-id и chrome fingerprint как безопасный baseline.",
@@ -46,14 +53,17 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			},
 		},
 		"openvpn": {
-			DisplayName: "OpenVPN",
-			Label:       "OpenVPN",
-			RuntimeCode: "openvpn",
-			Runtime:     "openvpn server runtime",
-			ServiceKind: "transport",
-			Description: "Классический VPN-сервис для широкой клиентской совместимости и управляемого PKI lifecycle.",
-			UnitPattern: "openvpn-server@<slug>",
-			PathPattern: "/etc/openvpn/server/<slug>.conf",
+			DisplayName:  "OpenVPN",
+			Label:        "OpenVPN",
+			RuntimeCode:  "openvpn",
+			Runtime:      "openvpn server runtime",
+			ServiceKind:  "transport",
+			Description:  "Классический VPN-сервис для широкой клиентской совместимости и управляемого PKI lifecycle.",
+			UnitPattern:  "openvpn-server@<slug>",
+			PathPattern:  "/etc/openvpn/server/<slug>.conf",
+			NameTemplate: "edge-openvpn",
+			SlugTemplate: "edge-openvpn",
+			EndpointHint: "ovpn.example.com",
 			Recommendations: []string{
 				"Для массовых клиентов безопасный baseline: TCP/443, platform PKI, AES-GCM.",
 				"UDP имеет смысл только там, где сеть стабильна и нет жестких ограничений firewall.",
@@ -65,14 +75,17 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			},
 		},
 		"wireguard": {
-			DisplayName: "WireGuard",
-			Label:       "WireGuard",
-			RuntimeCode: "wireguard",
-			Runtime:     "wg-quick / wireguard-tools",
-			ServiceKind: "transport",
-			Description: "Высокопроизводительный VPN для современных клиентов и минимальной конфигурационной поверхности.",
-			UnitPattern: "wg-quick@<slug>",
-			PathPattern: "/etc/wireguard/<slug>.conf",
+			DisplayName:  "WireGuard",
+			Label:        "WireGuard",
+			RuntimeCode:  "wireguard",
+			Runtime:      "wg-quick / wireguard-tools",
+			ServiceKind:  "transport",
+			Description:  "Высокопроизводительный VPN для современных клиентов и минимальной конфигурационной поверхности.",
+			UnitPattern:  "wg-quick@<slug>",
+			PathPattern:  "/etc/wireguard/<slug>.conf",
+			NameTemplate: "edge-wireguard",
+			SlugTemplate: "edge-wireguard",
+			EndpointHint: "wg.example.com",
 			Recommendations: []string{
 				"Держать отдельную /24 сеть на каждый instance и не переиспользовать address pool.",
 				"Для удаленных клиентов рекомендуемый keepalive 25 секунд.",
@@ -84,15 +97,19 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			},
 		},
 		"ipsec": {
-			DisplayName: "IPsec / IKEv2",
-			Label:       "IPsec / IKEv2",
-			RuntimeCode: "ipsec",
-			Runtime:     "strongSwan / ipsec",
-			ServiceKind: "transport",
-			CompanionTo: []string{"xl2tpd"},
-			Description: "Базовый IPsec/IKE слой. Используется как отдельный managed service и как база для L2TP companion flow.",
-			UnitPattern: "strongswan-starter",
-			PathPattern: "/etc/ipsec.conf",
+			DisplayName:   "IPsec / IKEv2",
+			Label:         "IPsec / IKEv2",
+			RuntimeCode:   "ipsec",
+			Runtime:       "strongSwan / ipsec",
+			ServiceKind:   "transport",
+			CompanionTo:   []string{"xl2tpd"},
+			CompanionNote: "Если нужен L2TP remote-access, сразу после IPsec создавай companion instance XL2TPD с тем же endpoint host.",
+			Description:   "Базовый IPsec/IKE слой. Используется как отдельный managed service и как база для L2TP companion flow.",
+			UnitPattern:   "strongswan-starter",
+			PathPattern:   "/etc/ipsec.conf",
+			NameTemplate:  "edge-ipsec",
+			SlugTemplate:  "edge-ipsec",
+			EndpointHint:  "ipsec.example.com",
 			Recommendations: []string{
 				"Использовать как transport/security layer, а L2TP держать отдельным companion instance.",
 				"PSK-профиль оставить только как bootstrap baseline; дальше переводить в более строгие схемы.",
@@ -103,15 +120,19 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			},
 		},
 		"xl2tpd": {
-			DisplayName: "L2TP Access",
-			Label:       "L2TP Access",
-			RuntimeCode: "xl2tpd",
-			Runtime:     "xl2tpd + pppd",
-			ServiceKind: "companion",
-			CompanionTo: []string{"ipsec"},
-			Description: "Companion-сервис к IPsec для L2TP remote-access профиля. Сам по себе не должен восприниматься как отдельный secure transport.",
-			UnitPattern: "xl2tpd",
-			PathPattern: "/etc/xl2tpd/xl2tpd.conf",
+			DisplayName:   "L2TP Access",
+			Label:         "L2TP Access",
+			RuntimeCode:   "xl2tpd",
+			Runtime:       "xl2tpd + pppd",
+			ServiceKind:   "companion",
+			CompanionTo:   []string{"ipsec"},
+			CompanionNote: "Используй вместе с companion instance IPsec / IKEv2 на том же endpoint host.",
+			Description:   "Companion-сервис к IPsec для L2TP remote-access профиля. Сам по себе не должен восприниматься как отдельный secure transport.",
+			UnitPattern:   "xl2tpd",
+			PathPattern:   "/etc/xl2tpd/xl2tpd.conf",
+			NameTemplate:  "edge-l2tp-access",
+			SlugTemplate:  "edge-l2tp-access",
+			EndpointHint:  "l2tp.example.com",
 			Recommendations: []string{
 				"Деплоить вместе с companion IPsec instance.",
 				"Явно задавать pool, DNS и default credentials bootstrap-пути.",
@@ -122,14 +143,17 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			},
 		},
 		"http_proxy": {
-			DisplayName: "HTTP Proxy / Squid",
-			Label:       "HTTP Proxy / Squid",
-			RuntimeCode: "http_proxy",
-			Runtime:     "squid runtime",
-			ServiceKind: "proxy",
-			Description: "Классический authenticated HTTP proxy. Должен быть отдельным изолированным instance на своем config/unit.",
-			UnitPattern: "megavpn-http-proxy-<slug>",
-			PathPattern: "/etc/squid/<slug>.conf",
+			DisplayName:  "HTTP Proxy / Squid",
+			Label:        "HTTP Proxy / Squid",
+			RuntimeCode:  "http_proxy",
+			Runtime:      "squid runtime",
+			ServiceKind:  "proxy",
+			Description:  "Классический authenticated HTTP proxy. Должен быть отдельным изолированным instance на своем config/unit.",
+			UnitPattern:  "megavpn-http-proxy-<slug>",
+			PathPattern:  "/etc/squid/<slug>.conf",
+			NameTemplate: "edge-http-proxy",
+			SlugTemplate: "edge-http-proxy",
+			EndpointHint: "proxy.example.com",
 			Recommendations: []string{
 				"По умолчанию только authenticated profile; open proxy не делать preset-ом.",
 				"Для каждого instance держать отдельные config, passwd, pid и log paths.",
@@ -141,14 +165,17 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			},
 		},
 		"mtproto": {
-			DisplayName: "MTProto",
-			Label:       "MTProto",
-			RuntimeCode: "xray-core",
-			Runtime:     "xray-core runtime",
-			ServiceKind: "proxy",
-			Description: "Telegram-oriented proxy profile. Это отдельный продуктовый сервис, но его runtime движок тоже xray-core.",
-			UnitPattern: "megavpn-mtproto-<slug>",
-			PathPattern: "/usr/local/etc/xray/<slug>.json",
+			DisplayName:  "MTProto",
+			Label:        "MTProto",
+			RuntimeCode:  "xray-core",
+			Runtime:      "xray-core runtime",
+			ServiceKind:  "proxy",
+			Description:  "Telegram-oriented proxy profile. Это отдельный продуктовый сервис, но его runtime движок тоже xray-core.",
+			UnitPattern:  "megavpn-mtproto-<slug>",
+			PathPattern:  "/usr/local/etc/xray/<slug>.json",
+			NameTemplate: "edge-mtproto",
+			SlugTemplate: "edge-mtproto",
+			EndpointHint: "tg.example.com",
 			Recommendations: []string{
 				"Держать отдельный unit/config на каждый instance, не смешивать с VLESS instance.",
 				"Стандартный production baseline: port 443, отдельный secret per access rotation.",
@@ -160,14 +187,17 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			},
 		},
 		"shadowsocks": {
-			DisplayName: "Shadowsocks",
-			Label:       "Shadowsocks",
-			RuntimeCode: "shadowsocks",
-			Runtime:     "shadowsocks-libev runtime",
-			ServiceKind: "proxy",
-			Description: "Легковесный proxy/VPN-like сервис для клиентских приложений и быстрых персональных доступов.",
-			UnitPattern: "shadowsocks-libev",
-			PathPattern: "/etc/shadowsocks-libev/config.json",
+			DisplayName:  "Shadowsocks",
+			Label:        "Shadowsocks",
+			RuntimeCode:  "shadowsocks",
+			Runtime:      "shadowsocks-libev runtime",
+			ServiceKind:  "proxy",
+			Description:  "Легковесный proxy/VPN-like сервис для клиентских приложений и быстрых персональных доступов.",
+			UnitPattern:  "shadowsocks-libev",
+			PathPattern:  "/etc/shadowsocks-libev/config.json",
+			NameTemplate: "edge-shadowsocks",
+			SlugTemplate: "edge-shadowsocks",
+			EndpointHint: "ss.example.com",
 			Recommendations: []string{
 				"Стартовый baseline: chacha20-ietf-poly1305 и tcp_and_udp.",
 				"Держать отдельные server/access secrets и не переиспользовать их между профилями.",
@@ -179,14 +209,17 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			},
 		},
 		"nginx": {
-			DisplayName: "Nginx Edge",
-			Label:       "Nginx Edge",
-			RuntimeCode: "nginx",
-			Runtime:     "nginx runtime",
-			ServiceKind: "edge",
-			Description: "Edge/service front для reverse-proxy и static publishing. Это не VPN transport, а обслуживающий ingress layer.",
-			UnitPattern: "nginx",
-			PathPattern: "/etc/nginx/conf.d/megavpn-<slug>.conf",
+			DisplayName:  "Nginx Edge",
+			Label:        "Nginx Edge",
+			RuntimeCode:  "nginx",
+			Runtime:      "nginx runtime",
+			ServiceKind:  "edge",
+			Description:  "Edge/service front для reverse-proxy и static publishing. Это не VPN transport, а обслуживающий ingress layer.",
+			UnitPattern:  "nginx",
+			PathPattern:  "/etc/nginx/conf.d/megavpn-<slug>.conf",
+			NameTemplate: "edge-nginx",
+			SlugTemplate: "edge-nginx",
+			EndpointHint: "edge.example.com",
 			Recommendations: []string{
 				"Использовать как reverse-proxy front для UI/API или как static edge.",
 				"TLS-сертификаты и upstream path держать явными, без магических defaults.",
@@ -226,10 +259,16 @@ func enrichServiceDefinitions(defs []domain.ServiceDefinition) []response {
 			item["description"] = profile.Description
 			item["unit_pattern"] = profile.UnitPattern
 			item["path_pattern"] = profile.PathPattern
+			item["name_template"] = profile.NameTemplate
+			item["slug_template"] = profile.SlugTemplate
+			item["endpoint_hint"] = profile.EndpointHint
 			item["recommendations"] = profile.Recommendations
 			item["presets"] = profile.Presets
 			if len(profile.CompanionTo) > 0 {
 				item["companion_to"] = profile.CompanionTo
+			}
+			if profile.CompanionNote != "" {
+				item["companion_note"] = profile.CompanionNote
 			}
 		}
 		out = append(out, item)

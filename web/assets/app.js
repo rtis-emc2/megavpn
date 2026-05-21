@@ -3217,9 +3217,13 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       runtime: service.runtime || fallback?.runtime || 'runtime n/a',
       serviceKind: service.service_kind || fallback?.serviceKind || 'service',
       companionTo: Array.isArray(service.companion_to) ? service.companion_to : (fallback?.companionTo || []),
+      companionNote: service.companion_note || fallback?.companionNote || '',
       description: service.description || fallback?.description || '',
       unitPattern: service.unit_pattern || fallback?.unitPattern || 'n/a',
       pathPattern: service.path_pattern || fallback?.pathPattern || 'n/a',
+      nameTemplate: service.name_template || fallback?.nameTemplate || '',
+      slugTemplate: service.slug_template || fallback?.slugTemplate || '',
+      endpointHint: service.endpoint_hint || fallback?.endpointHint || '',
       recommendations: Array.isArray(service.recommendations) ? service.recommendations : (fallback?.recommendations || []),
       presets: Array.isArray(service.presets) && service.presets.length ? service.presets : (fallback?.presets || []),
     };
@@ -3301,6 +3305,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           <div class="metric-caption" style="margin-top:6px">Service code: <code>${escapeHTML(normalizeInstanceServiceCode(serviceCode))}</code> · Runtime code: <code>${escapeHTML(blueprint.runtimeCode || normalizeInstanceServiceCode(serviceCode))}</code></div>
           <div class="metric-caption" style="margin-top:8px">Default unit: <code>${escapeHTML(blueprint.unitPattern || 'n/a')}</code> · Config path: <code>${escapeHTML(blueprint.pathPattern || 'n/a')}</code></div>
           ${Array.isArray(blueprint.companionTo) && blueprint.companionTo.length ? `<div class="metric-caption" style="margin-top:6px">Companion services: <code>${escapeHTML(blueprint.companionTo.join(', '))}</code></div>` : ''}
+          ${blueprint.companionNote ? `<div class="metric-caption" style="margin-top:6px">${escapeHTML(blueprint.companionNote)}</div>` : ''}
           ${presets.length ? `
             <div style="margin-top:12px">
               <label>Preset</label>
@@ -3312,6 +3317,63 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           ${recommendations.length ? `<div class="metric-caption" style="margin-top:10px">${recommendations.map((line) => `• ${escapeHTML(line)}`).join('<br>')}</div>` : ''}
         </div>
       </div>`;
+  }
+
+  function applyAutoFieldValue(input, nextValue, forceDefaults = false) {
+    if (!input || !nextValue) return;
+    const current = String(input.value || '').trim();
+    const previousAuto = String(input.dataset.autoValue || '').trim();
+    if (!current || current === previousAuto) {
+      input.value = nextValue;
+      input.dataset.autoValue = nextValue;
+    }
+  }
+
+  function applyCreateInstanceDefaults(form, serviceCode, draft, options = {}) {
+    if (!form) return;
+    const blueprint = instanceServiceBlueprint(serviceCode);
+    if (!blueprint) return;
+    const nameInput = form.querySelector('input[name="name"]');
+    const slugInput = form.querySelector('input[name="slug"]');
+    const hostInput = form.querySelector('input[name="endpoint_host"]');
+    const unitInput = form.querySelector('input[name="systemd_unit"]');
+    if (nameInput) {
+      if (blueprint.nameTemplate) {
+        nameInput.placeholder = blueprint.nameTemplate;
+        applyAutoFieldValue(nameInput, blueprint.nameTemplate, options.forceDefaults);
+      }
+    }
+    if (slugInput) {
+      if (blueprint.slugTemplate) {
+        slugInput.placeholder = blueprint.slugTemplate;
+        applyAutoFieldValue(slugInput, blueprint.slugTemplate, options.forceDefaults);
+      }
+    }
+    if (hostInput) {
+      hostInput.placeholder = blueprint.endpointHint || 'vpn.example.com';
+    }
+    if (unitInput) {
+      unitInput.placeholder = blueprint.unitPattern || 'optional override';
+    }
+    if (serviceCode === 'ipsec' && hostInput && !String(hostInput.value || '').trim() && blueprint.endpointHint) {
+      hostInput.placeholder = blueprint.endpointHint;
+    }
+    if (serviceCode === 'xl2tpd' && hostInput) {
+      hostInput.placeholder = blueprint.endpointHint || 'l2tp.example.com';
+    }
+    if (draft?.service_profile) {
+      const note = form.querySelector('.service-profile-inline-note');
+      if (note) note.remove();
+      if (blueprint.companionNote) {
+        const noteBlock = document.createElement('div');
+        noteBlock.className = 'field full service-profile-inline-note';
+        noteBlock.innerHTML = `<div class="code-block"><div class="metric-caption">${escapeHTML(blueprint.companionNote)}</div></div>`;
+        const target = form.querySelector('.inline-actions');
+        if (target?.parentElement) {
+          target.parentElement.parentElement.insertBefore(noteBlock, target.parentElement);
+        }
+      }
+    }
   }
 
   function buildInstanceSpecDraft(serviceCode, instance = null, presetKey = '') {
@@ -3618,15 +3680,16 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     if (container) container.innerHTML = renderInstanceServiceFields(serviceCode, resolvedDraft);
     const portInput = form.querySelector('input[name="endpoint_port"]');
     if (portInput && resolvedDraft.endpoint_port) {
-      if (options.forceDefaults || formID === 'editInstanceForm' || !portInput.value || Number(portInput.value) === 0) {
-        portInput.value = String(resolvedDraft.endpoint_port);
-      }
+      applyAutoFieldValue(portInput, String(resolvedDraft.endpoint_port), options.forceDefaults);
+    }
+    if (formID === 'createInstanceForm') {
+      applyCreateInstanceDefaults(form, serviceCode, resolvedDraft, options);
     }
     const presetSelect = form.querySelector('select[name="service_profile"]');
     if (presetSelect) {
       presetSelect.addEventListener('change', () => {
         syncInstanceServiceFields(formID, serviceCode, null, { forceDefaults: true, presetKey: presetSelect.value });
-      }, { once: true });
+        }, { once: true });
     }
   }
 
