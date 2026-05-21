@@ -12,6 +12,8 @@ type platformServicePKIRootResponse struct {
 	Status            string     `json:"status"`
 	CACertSecretRefID string     `json:"ca_cert_secret_ref_id"`
 	CommonName        string     `json:"common_name"`
+	NotBefore         *time.Time `json:"not_before,omitempty"`
+	NotAfter          *time.Time `json:"not_after,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	RotatedAt         *time.Time `json:"rotated_at,omitempty"`
 }
@@ -31,6 +33,8 @@ func (s *Server) listPlatformServicePKIRoots(w http.ResponseWriter, r *http.Requ
 			Status:            root.Status,
 			CACertSecretRefID: root.CACertSecretRefID,
 			CommonName:        root.CommonName,
+			NotBefore:         root.NotBefore,
+			NotAfter:          root.NotAfter,
 			CreatedAt:         root.CreatedAt,
 			RotatedAt:         root.RotatedAt,
 		})

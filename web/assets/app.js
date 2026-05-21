@@ -1910,6 +1910,51 @@
     el('modalBackdrop').hidden = true;
   }
 
+  function setSubmitBusy(form, busy, pendingLabel = 'Working...') {
+    if (!form) return;
+    const submit = form.querySelector('button[type="submit"]');
+    if (!submit) return;
+    if (!submit.dataset.originalLabel) {
+      submit.dataset.originalLabel = submit.textContent || '';
+    }
+    submit.disabled = Boolean(busy);
+    submit.textContent = busy ? pendingLabel : submit.dataset.originalLabel;
+  }
+
+  function openActionOutcomeModal(title, eyebrow, status, message, details = []) {
+    const items = Array.isArray(details) ? details.filter((item) => item && item.label) : [];
+    openModal(title, eyebrow, `
+      <div class="form-grid">
+        <div class="field full">
+          <div class="code-block">
+            <div style="margin-bottom:8px">${statusTag(status)}</div>
+            <div><strong>${escapeHTML(message || 'Operation finished')}</strong></div>
+          </div>
+        </div>
+        ${items.map((item) => `
+          <div class="field">
+            <label>${escapeHTML(item.label)}</label>
+            <div class="code-block">${escapeHTML(String(item.value || 'n/a'))}</div>
+          </div>`).join('')}
+        <div class="field full inline-actions"><button class="primary-btn" id="actionOutcomeCloseBtn" type="button">Close</button></div>
+      </div>`, { wide: true });
+    const btn = document.getElementById('actionOutcomeCloseBtn');
+    if (btn) btn.addEventListener('click', closeModal);
+  }
+
+  async function finishCertificateAction(form, data, config) {
+    await refresh();
+    closeModal();
+    openActionOutcomeModal(config.title, config.eyebrow, 'succeeded', config.message(data), config.details(data));
+    setSubmitBusy(form, false);
+  }
+
+  function failCertificateAction(form, err, config) {
+    closeModal();
+    openActionOutcomeModal(config.title, config.eyebrow, 'failed', err.message || 'Operation failed', config.errorDetails ? config.errorDetails(err) : []);
+    setSubmitBusy(form, false);
+  }
+
   function openSettings() {
     openModal('Interface Settings', 'Local browser settings', `
       <div class="form-grid">
@@ -4360,10 +4405,10 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
 
   async function importCertificateSubmit(event) {
     event.preventDefault();
-    const target = document.getElementById('certificateActionResult');
-    target.innerHTML = '<span class="tag warn">importing</span>';
+    const formEl = event.currentTarget;
+    setSubmitBusy(formEl, true, 'Importing...');
     try {
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(formEl);
       const payload = {
         name: String(form.get('name') || '').trim(),
         description: String(form.get('description') || '').trim(),
@@ -4373,19 +4418,33 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         is_default: String(form.get('is_default') || '') === '1',
       };
       const data = await sendJSON('/api/v1/platform/certificates/import', 'POST', payload);
-      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
-      await refresh();
+      await finishCertificateAction(formEl, data, {
+        title: 'Certificate imported',
+        eyebrow: 'Certificates / Success',
+        message: (item) => `Certificate ${item.name || item.common_name || item.id} was imported successfully.`,
+        details: (item) => [
+          { label: 'Name', value: item.name || item.common_name || item.id },
+          { label: 'Common Name', value: item.common_name || 'n/a' },
+          { label: 'Source', value: item.source || 'imported' },
+          { label: 'Expires', value: certificateExpiryCaption(item) },
+        ],
+        errorDetails: () => [{ label: 'Action', value: 'Import certificate' }],
+      });
     } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      failCertificateAction(formEl, err, {
+        title: 'Certificate import failed',
+        eyebrow: 'Certificates / Error',
+        errorDetails: () => [{ label: 'Action', value: 'Import certificate' }],
+      });
     }
   }
 
   async function createSelfSignedCertificateSubmit(event) {
     event.preventDefault();
-    const target = document.getElementById('certificateActionResult');
-    target.innerHTML = '<span class="tag warn">creating</span>';
+    const formEl = event.currentTarget;
+    setSubmitBusy(formEl, true, 'Creating...');
     try {
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(formEl);
       const payload = {
         name: String(form.get('name') || '').trim(),
         description: String(form.get('description') || '').trim(),
@@ -4395,19 +4454,32 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         is_default: String(form.get('is_default') || '') === '1',
       };
       const data = await sendJSON('/api/v1/platform/certificates/self-signed', 'POST', payload);
-      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
-      await refresh();
+      await finishCertificateAction(formEl, data, {
+        title: 'Self-signed certificate created',
+        eyebrow: 'Certificates / Success',
+        message: (item) => `Certificate ${item.name || item.common_name || item.id} was created successfully.`,
+        details: (item) => [
+          { label: 'Name', value: item.name || item.common_name || item.id },
+          { label: 'Common Name', value: item.common_name || 'n/a' },
+          { label: 'Valid until', value: certificateExpiryCaption(item) },
+          { label: 'Default', value: item.is_default ? 'yes' : 'no' },
+        ],
+      });
     } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      failCertificateAction(formEl, err, {
+        title: 'Certificate creation failed',
+        eyebrow: 'Certificates / Error',
+        errorDetails: () => [{ label: 'Action', value: 'Create self-signed certificate' }],
+      });
     }
   }
 
   async function createManagedCASubmit(event) {
     event.preventDefault();
-    const target = document.getElementById('certificateActionResult');
-    target.innerHTML = '<span class="tag warn">creating CA</span>';
+    const formEl = event.currentTarget;
+    setSubmitBusy(formEl, true, 'Creating CA...');
     try {
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(formEl);
       const payload = {
         name: String(form.get('name') || '').trim(),
         description: String(form.get('description') || '').trim(),
@@ -4415,19 +4487,32 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         valid_days: Number(form.get('valid_days') || 3650),
       };
       const data = await sendJSON('/api/v1/platform/certificates/authorities', 'POST', payload);
-      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
-      await refresh();
+      await finishCertificateAction(formEl, data, {
+        title: 'Managed CA created',
+        eyebrow: 'Certificates / Success',
+        message: (item) => `Managed certificate authority ${item.name || item.common_name || item.id} was created successfully.`,
+        details: (item) => [
+          { label: 'Name', value: item.name || item.common_name || item.id },
+          { label: 'Common Name', value: item.common_name || 'n/a' },
+          { label: 'Kind', value: item.kind || 'ca' },
+          { label: 'Valid until', value: certificateExpiryCaption(item) },
+        ],
+      });
     } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      failCertificateAction(formEl, err, {
+        title: 'Managed CA creation failed',
+        eyebrow: 'Certificates / Error',
+        errorDetails: () => [{ label: 'Action', value: 'Create managed CA' }],
+      });
     }
   }
 
   async function issueCertificateFromCASubmit(event) {
     event.preventDefault();
-    const target = document.getElementById('certificateActionResult');
-    target.innerHTML = '<span class="tag warn">issuing</span>';
+    const formEl = event.currentTarget;
+    setSubmitBusy(formEl, true, 'Issuing...');
     try {
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(formEl);
       const payload = {
         authority_certificate_id: String(form.get('authority_certificate_id') || '').trim(),
         name: String(form.get('name') || '').trim(),
@@ -4438,19 +4523,32 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         is_default: String(form.get('is_default') || '') === '1',
       };
       const data = await sendJSON('/api/v1/platform/certificates/issue-from-ca', 'POST', payload);
-      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
-      await refresh();
+      await finishCertificateAction(formEl, data, {
+        title: 'Certificate issued',
+        eyebrow: 'Certificates / Success',
+        message: (item) => `Certificate ${item.name || item.common_name || item.id} was issued successfully.`,
+        details: (item) => [
+          { label: 'Name', value: item.name || item.common_name || item.id },
+          { label: 'Common Name', value: item.common_name || 'n/a' },
+          { label: 'Issuer', value: item.issuer_name || 'managed CA' },
+          { label: 'Valid until', value: certificateExpiryCaption(item) },
+        ],
+      });
     } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      failCertificateAction(formEl, err, {
+        title: 'Certificate issue failed',
+        eyebrow: 'Certificates / Error',
+        errorDetails: () => [{ label: 'Action', value: 'Issue certificate from managed CA' }],
+      });
     }
   }
 
   async function createServiceCARootSubmit(event) {
     event.preventDefault();
-    const target = document.getElementById('certificateActionResult');
-    target.innerHTML = '<span class="tag warn">creating service CA</span>';
+    const formEl = event.currentTarget;
+    setSubmitBusy(formEl, true, 'Creating service CA...');
     try {
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(formEl);
       const payload = {
         service_code: String(form.get('service_code') || '').trim(),
         pki_profile: String(form.get('pki_profile') || '').trim(),
@@ -4458,10 +4556,23 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         valid_days: Number(form.get('valid_days') || 3650),
       };
       const data = await sendJSON('/api/v1/platform/pki-roots', 'POST', payload);
-      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
-      await refresh();
+      await finishCertificateAction(formEl, data, {
+        title: 'Service CA root created',
+        eyebrow: 'Certificates / Success',
+        message: (item) => `Service CA root for ${item.service_code || 'service'} / ${item.pki_profile || 'default'} was created successfully.`,
+        details: (item) => [
+          { label: 'Service', value: item.service_code || 'n/a' },
+          { label: 'Profile', value: item.pki_profile || 'default' },
+          { label: 'Common Name', value: item.common_name || 'n/a' },
+          { label: 'Valid until', value: certificateExpiryCaption(item) },
+        ],
+      });
     } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      failCertificateAction(formEl, err, {
+        title: 'Service CA root creation failed',
+        eyebrow: 'Certificates / Error',
+        errorDetails: () => [{ label: 'Action', value: 'Create service CA root' }],
+      });
     }
   }
 
