@@ -23,3 +23,11 @@ type PlatformCertificate struct {
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`
 }
+
+type PlatformCertificateActionResult struct {
+	CertificateID string   `json:"certificate_id"`
+	Action        string   `json:"action"`
+	Status        string   `json:"status"`
+	CascadeIDs    []string `json:"cascade_ids,omitempty"`
+	CascadeCount  int      `json:"cascade_count"`
+}

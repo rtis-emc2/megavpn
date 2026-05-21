@@ -148,6 +148,24 @@ func (s *Server) createManagedPlatformServicePKIRoot(w http.ResponseWriter, r *h
 	writeJSON(w, 201, root)
 }
 
+func (s *Server) revokePlatformCertificate(w http.ResponseWriter, r *http.Request) {
+	result, err := s.store.RevokePlatformCertificate(r.Context(), strings.TrimSpace(r.PathValue("id")))
+	if err != nil {
+		writeErr(w, classifyCertificateErrStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, result)
+}
+
+func (s *Server) deletePlatformCertificate(w http.ResponseWriter, r *http.Request) {
+	result, err := s.store.DeletePlatformCertificateCascade(r.Context(), strings.TrimSpace(r.PathValue("id")))
+	if err != nil {
+		writeErr(w, classifyCertificateErrStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, result)
+}
+
 func classifyCertificateErrStatus(err error) int {
 	switch {
 	case err == nil:
@@ -156,7 +174,12 @@ func classifyCertificateErrStatus(err error) int {
 		strings.Contains(err.Error(), "invalid"),
 		strings.Contains(err.Error(), "unsupported"),
 		strings.Contains(err.Error(), "must not"),
-		strings.Contains(err.Error(), "not a CA"):
+		strings.Contains(err.Error(), "not a CA"),
+		strings.Contains(err.Error(), "only leaf"),
+		strings.Contains(err.Error(), "only CA"),
+		strings.Contains(err.Error(), "cannot be revoked"),
+		strings.Contains(err.Error(), "not active"),
+		strings.Contains(err.Error(), "expired"):
 		return 400
 	case strings.Contains(err.Error(), "already exists"):
 		return 409

@@ -80,6 +80,88 @@ func (s *Store) ListPlatformCertificates(ctx context.Context) ([]domain.Platform
 	return out, rows.Err()
 }
 
+func (s *Store) RevokePlatformCertificate(ctx context.Context, certificateID string) (domain.PlatformCertificateActionResult, error) {
+	item, err := s.GetPlatformCertificate(ctx, certificateID)
+	if err != nil {
+		return domain.PlatformCertificateActionResult{}, err
+	}
+	if item.Kind != "leaf" {
+		return domain.PlatformCertificateActionResult{}, errors.New("only leaf certificates can be revoked")
+	}
+	if item.Status == "deleted" {
+		return domain.PlatformCertificateActionResult{}, errors.New("deleted certificate cannot be revoked")
+	}
+	now := time.Now().UTC()
+	if _, err := s.db.Exec(ctx, `update platform_certificates set status='revoked', is_default=false, updated_at=$2 where id=$1`, item.ID, now); err != nil {
+		return domain.PlatformCertificateActionResult{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "platform_certificate.revoke", "platform_certificate", &item.ID, "platform certificate revoked")
+	return domain.PlatformCertificateActionResult{
+		CertificateID: item.ID,
+		Action:        "revoke",
+		Status:        "revoked",
+	}, nil
+}
+
+func (s *Store) DeletePlatformCertificateCascade(ctx context.Context, certificateID string) (domain.PlatformCertificateActionResult, error) {
+	item, err := s.GetPlatformCertificate(ctx, certificateID)
+	if err != nil {
+		return domain.PlatformCertificateActionResult{}, err
+	}
+	if item.Kind != "ca" {
+		return domain.PlatformCertificateActionResult{}, errors.New("only CA certificates can be deleted")
+	}
+	now := time.Now().UTC()
+	rows, err := s.db.Query(ctx, `with recursive certificate_tree as (
+		select id from platform_certificates where id=$1
+		union all
+		select child.id
+		from platform_certificates child
+		join certificate_tree tree on child.parent_certificate_id = tree.id
+	)
+	select id from certificate_tree`, item.ID)
+	if err != nil {
+		return domain.PlatformCertificateActionResult{}, err
+	}
+	defer rows.Close()
+	cascadeIDs := []string{}
+	for rows.Next() {
+		var idv string
+		if err := rows.Scan(&idv); err != nil {
+			return domain.PlatformCertificateActionResult{}, err
+		}
+		cascadeIDs = append(cascadeIDs, idv)
+	}
+	if err := rows.Err(); err != nil {
+		return domain.PlatformCertificateActionResult{}, err
+	}
+	if len(cascadeIDs) == 0 {
+		return domain.PlatformCertificateActionResult{}, errors.New("certificate tree is empty")
+	}
+	if _, err := s.db.Exec(ctx, `with recursive certificate_tree as (
+		select id from platform_certificates where id=$1
+		union all
+		select child.id
+		from platform_certificates child
+		join certificate_tree tree on child.parent_certificate_id = tree.id
+	)
+	update platform_certificates
+	set status='deleted',
+	    is_default=false,
+	    updated_at=$2
+	where id in (select id from certificate_tree)`, item.ID, now); err != nil {
+		return domain.PlatformCertificateActionResult{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "platform_certificate.delete_ca", "platform_certificate", &item.ID, "platform CA deleted with cascade")
+	return domain.PlatformCertificateActionResult{
+		CertificateID: item.ID,
+		Action:        "delete",
+		Status:        "deleted",
+		CascadeIDs:    cascadeIDs,
+		CascadeCount:  len(cascadeIDs),
+	}, nil
+}
+
 func (s *Store) GetPlatformCertificate(ctx context.Context, certificateID string) (domain.PlatformCertificate, error) {
 	var item domain.PlatformCertificate
 	var sansRaw, metaRaw []byte
@@ -314,6 +396,12 @@ func (s *Store) ResolvePlatformCertificateMaterial(ctx context.Context, certific
 	item, err := s.GetPlatformCertificate(ctx, certificateID)
 	if err != nil {
 		return domain.PlatformCertificate{}, nil, nil, nil, err
+	}
+	if item.Status != "active" {
+		return domain.PlatformCertificate{}, nil, nil, nil, errors.New("certificate is not active")
+	}
+	if item.NotAfter != nil && item.NotAfter.Before(time.Now().UTC()) {
+		return domain.PlatformCertificate{}, nil, nil, nil, errors.New("certificate is expired")
 	}
 	_, certPEM, err := s.ResolveSecretValue(ctx, item.CertSecretRefID)
 	if err != nil {

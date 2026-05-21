@@ -75,7 +75,7 @@
     if (['ok', 'ready', 'active', 'healthy', 'succeeded', 'online', 'configured', 'enabled', 'sent', 'delivered'].includes(normalized)) return 'ok';
     if (['stub', 'planned', 'draft', 'pending', 'unknown', 'maintenance'].includes(normalized)) return 'stub';
     if (['degraded', 'warning', 'retrying', 'queued', 'running', 'bootstrapping', 'provisioning', 'inactive'].includes(normalized)) return 'warn';
-    if (['failed', 'offline', 'error', 'disabled', 'cancelled', 'revoked', 'missing', 'delivery_failed', 'expired', 'invalid'].includes(normalized)) return 'danger';
+    if (['failed', 'offline', 'error', 'disabled', 'cancelled', 'revoked', 'missing', 'delivery_failed', 'expired', 'invalid', 'deleted'].includes(normalized)) return 'danger';
     return 'stub';
   }
 
@@ -1370,7 +1370,7 @@
 
   function renderCertificates() {
     setTitle('Certificates');
-    const certRows = Array.isArray(state.platformCertificates) ? state.platformCertificates : [];
+    const certRows = (Array.isArray(state.platformCertificates) ? state.platformCertificates : []).filter((item) => item.kind === 'leaf');
     const rootRows = Array.isArray(state.platformPKIRoots) ? state.platformPKIRoots : [];
     const activeLeafs = activeLeafCertificates();
     const managedCAs = activeManagedAuthorities();
@@ -1397,6 +1397,9 @@
         expires: certificateExpiryCaption(item),
         status: certificateDisplayStatus(item),
         defaultTag: item.is_default ? 'default' : '',
+        actions: certificateDisplayStatus(item) === 'active'
+          ? `<button class="danger-btn certificate-revoke-btn" type="button" data-certificate-id="${escapeHTML(item.id)}" data-certificate-name="${escapeHTML(item.name || item.common_name || item.id)}">Revoke</button>`
+          : '<span class="metric-caption">No actions</span>',
       })), [
         { title: 'Name', key: 'name', render: (r) => `${escapeHTML(r.name)}${r.defaultTag ? ' <span class="tag ok">default</span>' : ''}` },
         { title: 'Kind', key: 'kind', render: (r) => `<span class="tag">${escapeHTML(r.kind)}</span>` },
@@ -1406,13 +1409,14 @@
         { title: 'Issuer', key: 'issuer' },
         { title: 'Expires', key: 'expires' },
         { title: 'Status', key: 'status', render: (r) => statusTag(r.status) },
+        { title: 'Actions', key: 'actions', render: (r) => r.actions },
       ], '<button class="secondary-btn" id="createCertificateBtn" type="button">Add certificate</button>')}
       <div class="grid cols-2">
         <section class="table-card">
           <div class="table-head"><h2>Managed CA Inventory</h2><div class="table-tools"><span class="tag">${escapeHTML(String(managedCAs.length))} generic CAs</span></div></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Name</th><th>Common Name</th><th>Expires</th><th>Status</th></tr></thead>
+              <thead><tr><th>Name</th><th>Common Name</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
                 ${managedCAs.length ? managedCAs.map((item) => `
                   <tr>
@@ -1420,7 +1424,8 @@
                     <td>${escapeHTML(item.common_name || 'n/a')}</td>
                     <td>${escapeHTML(certificateExpiryCaption(item))}</td>
                     <td>${statusTag(certificateDisplayStatus(item))}</td>
-                  </tr>`).join('') : '<tr><td colspan="4"><div class="empty">No managed certificate authorities yet.</div></td></tr>'}
+                    <td>${certificateDisplayStatus(item) === 'active' ? `<button class="danger-btn certificate-delete-ca-btn" type="button" data-certificate-id="${escapeHTML(item.id)}" data-certificate-name="${escapeHTML(item.name || item.common_name || item.id)}">Delete CA</button>` : '<span class="metric-caption">No actions</span>'}</td>
+                  </tr>`).join('') : '<tr><td colspan="5"><div class="empty">No managed certificate authorities yet.</div></td></tr>'}
               </tbody>
             </table>
           </div>
@@ -1447,6 +1452,12 @@
       </div>`;
     const btn = document.getElementById('createCertificateBtn');
     if (btn) btn.addEventListener('click', openCreateCertificateWizard);
+    document.querySelectorAll('.certificate-revoke-btn').forEach((button) => {
+      button.addEventListener('click', () => openRevokeCertificateModal(button.dataset.certificateId, button.dataset.certificateName));
+    });
+    document.querySelectorAll('.certificate-delete-ca-btn').forEach((button) => {
+      button.addEventListener('click', () => openDeleteCAModal(button.dataset.certificateId, button.dataset.certificateName));
+    });
   }
 
   async function loadAdminSettings(canManageAuth, canDeleteUsers = hasRole('superadmin')) {
@@ -1934,7 +1945,7 @@
         ${items.map((item) => `
           <div class="field">
             <label>${escapeHTML(item.label)}</label>
-            <div class="code-block">${escapeHTML(String(item.value || 'n/a'))}</div>
+            <div class="code-block">${escapeHTML(String(item.value ?? 'n/a'))}</div>
           </div>`).join('')}
         <div class="field full inline-actions"><button class="primary-btn" id="actionOutcomeCloseBtn" type="button">Close</button></div>
       </div>`, { wide: true });
@@ -4401,6 +4412,91 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean);
+  }
+
+  function openRevokeCertificateModal(certificateID, certificateName) {
+    openModal('Revoke certificate', 'Certificates / Leaf revoke', `
+      <div class="form-grid">
+        <div class="field full">
+          <div class="code-block">
+            <div><strong>${escapeHTML(certificateName || certificateID || 'certificate')}</strong></div>
+            <div class="metric-caption" style="margin-top:6px">После revoke сертификат станет неактивным, исчезнет из выбора и больше не сможет использоваться в новых apply / materialize операциях.</div>
+          </div>
+        </div>
+        <div class="field full inline-actions">
+          <button class="secondary-btn" id="cancelRevokeCertificateBtn" type="button">Cancel</button>
+          <button class="danger-btn" id="confirmRevokeCertificateBtn" type="button">Revoke certificate</button>
+        </div>
+      </div>`);
+    const cancelBtn = document.getElementById('cancelRevokeCertificateBtn');
+    const confirmBtn = document.getElementById('confirmRevokeCertificateBtn');
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    if (confirmBtn) confirmBtn.addEventListener('click', () => submitRevokePlatformCertificate(certificateID, certificateName, confirmBtn));
+  }
+
+  function openDeleteCAModal(certificateID, certificateName) {
+    openModal('Delete managed CA', 'Certificates / CA delete', `
+      <div class="form-grid">
+        <div class="field full">
+          <div class="code-block">
+            <div><strong>${escapeHTML(certificateName || certificateID || 'managed CA')}</strong></div>
+            <div class="metric-caption" style="margin-top:6px">Удаление CA каскадно пометит как deleted все сертификаты, которые были ею подписаны. После этого такие сертификаты больше нельзя будет использовать.</div>
+          </div>
+        </div>
+        <div class="field full inline-actions">
+          <button class="secondary-btn" id="cancelDeleteCABtn" type="button">Cancel</button>
+          <button class="danger-btn" id="confirmDeleteCABtn" type="button">Delete CA</button>
+        </div>
+      </div>`);
+    const cancelBtn = document.getElementById('cancelDeleteCABtn');
+    const confirmBtn = document.getElementById('confirmDeleteCABtn');
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    if (confirmBtn) confirmBtn.addEventListener('click', () => submitDeletePlatformCA(certificateID, certificateName, confirmBtn));
+  }
+
+  async function submitRevokePlatformCertificate(certificateID, certificateName, button) {
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Revoking...';
+    }
+    try {
+      const data = await sendJSON(`/api/v1/platform/certificates/${encodeURIComponent(certificateID)}/revoke`, 'POST', {});
+      await refresh();
+      closeModal();
+      openActionOutcomeModal('Certificate revoked', 'Certificates / Success', 'succeeded', `Certificate ${certificateName || certificateID} was revoked successfully.`, [
+        { label: 'Certificate', value: certificateName || certificateID },
+        { label: 'Status', value: data.status || 'revoked' },
+      ]);
+    } catch (err) {
+      closeModal();
+      openActionOutcomeModal('Certificate revoke failed', 'Certificates / Error', 'failed', err.message || 'Certificate revoke failed', [
+        { label: 'Certificate', value: certificateName || certificateID },
+        { label: 'Action', value: 'Revoke leaf certificate' },
+      ]);
+    }
+  }
+
+  async function submitDeletePlatformCA(certificateID, certificateName, button) {
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Deleting...';
+    }
+    try {
+      const data = await requestJSON(`/api/v1/platform/certificates/${encodeURIComponent(certificateID)}`, { method: 'DELETE' });
+      await refresh();
+      closeModal();
+      openActionOutcomeModal('Managed CA deleted', 'Certificates / Success', 'succeeded', `Managed CA ${certificateName || certificateID} was deleted with cascade.`, [
+        { label: 'CA', value: certificateName || certificateID },
+        { label: 'Status', value: data.status || 'deleted' },
+        { label: 'Cascade count', value: data.cascade_count || 0 },
+      ]);
+    } catch (err) {
+      closeModal();
+      openActionOutcomeModal('Managed CA delete failed', 'Certificates / Error', 'failed', err.message || 'Managed CA delete failed', [
+        { label: 'CA', value: certificateName || certificateID },
+        { label: 'Action', value: 'Delete CA with cascade' },
+      ]);
+    }
   }
 
   async function importCertificateSubmit(event) {
