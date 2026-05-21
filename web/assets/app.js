@@ -22,6 +22,7 @@
     serviceCapabilitiesByNode: {},
     serviceInstallEventsByNode: {},
     mailSettings: null,
+    platformCertificates: [],
     platformInvites: [],
     platformPKIRoots: [],
     servicesNodeID: localStorage.getItem('megavpn.servicesNodeID') || '',
@@ -45,6 +46,7 @@
     ]],
     ['Control', [
       ['services', 'Services', '⚙'],
+      ['certificates', 'Certificates', '◈'],
       ['revisions', 'Revisions', '≣'],
       ['telemetry', 'Telemetry', '≋'],
       ['audit', 'Audit', '◇'],
@@ -558,6 +560,7 @@
       state.serviceCapabilitiesByNode = {};
       state.serviceInstallEventsByNode = {};
       state.mailSettings = null;
+      state.platformCertificates = [];
       state.platformInvites = [];
       state.platformPKIRoots = [];
       updateReadyPill();
@@ -574,6 +577,8 @@
     const servicesCatalog = await fetchJSON('/api/v1/services', []);
     const servicePacks = await fetchJSON('/api/v1/service-packs', []);
     const serviceInstallers = await fetchJSON('/api/v1/services/installers', []);
+    const platformCertificates = hasPermission('instance.read') ? await fetchJSON('/api/v1/platform/certificates', []) : [];
+    const platformPKIRoots = hasPermission('instance.read') ? await fetchJSON('/api/v1/platform/pki-roots', []) : [];
     state.nodes = Array.isArray(nodes) ? nodes : [];
     state.instances = Array.isArray(instances) ? instances : [];
     state.clients = Array.isArray(clients) ? clients : [];
@@ -583,6 +588,8 @@
     state.servicesCatalog = Array.isArray(servicesCatalog) ? servicesCatalog : [];
     state.servicePacks = Array.isArray(servicePacks) ? servicePacks : [];
     state.serviceInstallers = Array.isArray(serviceInstallers) ? serviceInstallers : [];
+    state.platformCertificates = Array.isArray(platformCertificates) ? platformCertificates : [];
+    state.platformPKIRoots = Array.isArray(platformPKIRoots) ? platformPKIRoots : [];
     if (!state.servicesNodeID || !state.nodes.some((node) => node.id === state.servicesNodeID)) {
       state.servicesNodeID = state.nodes[0]?.id || '';
       if (state.servicesNodeID) {
@@ -1359,6 +1366,86 @@
     document.getElementById('openSettingsInlineBtn').addEventListener('click', openSettings);
     document.getElementById('changePasswordForm').addEventListener('submit', changeOwnPassword);
     void loadAdminSettings(canManageAuth, canDeleteUsers);
+  }
+
+  function renderCertificates() {
+    setTitle('Certificates');
+    const certRows = Array.isArray(state.platformCertificates) ? state.platformCertificates : [];
+    const rootRows = Array.isArray(state.platformPKIRoots) ? state.platformPKIRoots : [];
+    const activeLeafs = activeLeafCertificates();
+    const managedCAs = activeManagedAuthorities();
+    el('content').innerHTML = `
+      <section class="panel-banner">
+        <div>
+          <div class="eyebrow">TLS & PKI</div>
+          <h2>Certificates</h2>
+          <p>Управление leaf-сертификатами, внутренними managed CA и service-specific CA roots. Leaf certificates можно назначать на Nginx edge и Xray TLS instances, а OpenVPN продолжает использовать platform CA center.</p>
+        </div>
+        <div class="panel-banner-side">
+          <div class="tag ok">${escapeHTML(String(activeLeafs.length))} leaf certificates</div>
+          <div class="metric-caption">${escapeHTML(String(managedCAs.length))} managed CAs · ${escapeHTML(String(rootRows.length))} service CA roots</div>
+        </div>
+      </section>
+      ${tableCard('Certificate Inventory', certRows.map((item) => ({
+        id: item.id,
+        name: item.name || item.common_name || item.id,
+        kind: item.kind || 'leaf',
+        source: item.source || 'unknown',
+        commonName: item.common_name || 'n/a',
+        dnsNames: Array.isArray(item.sans) && item.sans.length ? item.sans.join(', ') : 'n/a',
+        issuer: item.issuer_name || 'self',
+        expires: item.not_after ? formatDate(item.not_after) : 'n/a',
+        status: item.status || 'unknown',
+        defaultTag: item.is_default ? 'default' : '',
+      })), [
+        { title: 'Name', key: 'name', render: (r) => `${escapeHTML(r.name)}${r.defaultTag ? ' <span class="tag ok">default</span>' : ''}` },
+        { title: 'Kind', key: 'kind', render: (r) => `<span class="tag">${escapeHTML(r.kind)}</span>` },
+        { title: 'Source', key: 'source', render: (r) => `<span class="tag">${escapeHTML(r.source)}</span>` },
+        { title: 'Common Name', key: 'commonName' },
+        { title: 'SAN / DNS', key: 'dnsNames' },
+        { title: 'Issuer', key: 'issuer' },
+        { title: 'Expires', key: 'expires' },
+        { title: 'Status', key: 'status', render: (r) => statusTag(r.status) },
+      ], '<button class="secondary-btn" id="createCertificateBtn" type="button">Add certificate</button>')}
+      <div class="grid cols-2">
+        <section class="table-card">
+          <div class="table-head"><h2>Managed CA Inventory</h2><div class="table-tools"><span class="tag">${escapeHTML(String(managedCAs.length))} generic CAs</span></div></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Name</th><th>Common Name</th><th>Expires</th><th>Status</th></tr></thead>
+              <tbody>
+                ${managedCAs.length ? managedCAs.map((item) => `
+                  <tr>
+                    <td>${escapeHTML(item.name || item.id)}</td>
+                    <td>${escapeHTML(item.common_name || 'n/a')}</td>
+                    <td>${escapeHTML(item.not_after ? formatDate(item.not_after) : 'n/a')}</td>
+                    <td>${statusTag(item.status || 'unknown')}</td>
+                  </tr>`).join('') : '<tr><td colspan="4"><div class="empty">No managed certificate authorities yet.</div></td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section class="table-card">
+          <div class="table-head"><h2>Service CA Center</h2><div class="table-tools"><span class="tag">${escapeHTML(String(rootRows.length))} roots</span></div></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Service</th><th>Profile</th><th>Common Name</th><th>Status</th><th>Created</th></tr></thead>
+              <tbody>
+                ${rootRows.length ? rootRows.map((root) => `
+                  <tr>
+                    <td>${escapeHTML(root.service_code || 'n/a')}</td>
+                    <td>${escapeHTML(root.pki_profile || 'default')}</td>
+                    <td>${escapeHTML(root.common_name || 'n/a')}</td>
+                    <td>${statusTag(root.status || 'unknown')}</td>
+                    <td>${formatDate(root.created_at)}</td>
+                  </tr>`).join('') : '<tr><td colspan="5"><div class="empty">No service CA roots yet.</div></td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>`;
+    const btn = document.getElementById('createCertificateBtn');
+    if (btn) btn.addEventListener('click', openCreateCertificateWizard);
   }
 
   async function loadAdminSettings(canManageAuth, canDeleteUsers = hasRole('superadmin')) {
@@ -2846,6 +2933,41 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       .join('');
   }
 
+  function activeLeafCertificates() {
+    return (state.platformCertificates || [])
+      .filter((item) => item.kind === 'leaf' && String(item.status || '').toLowerCase() === 'active' && item.key_secret_ref_id)
+      .sort((left, right) => {
+        if (Boolean(left.is_default) !== Boolean(right.is_default)) return left.is_default ? -1 : 1;
+        return String(left.name || left.common_name || left.id).localeCompare(String(right.name || right.common_name || right.id), 'en');
+      });
+  }
+
+  function activeManagedAuthorities() {
+    return (state.platformCertificates || [])
+      .filter((item) => item.kind === 'ca' && String(item.status || '').toLowerCase() === 'active')
+      .sort((left, right) => String(left.name || left.common_name || left.id).localeCompare(String(right.name || right.common_name || right.id), 'en'));
+  }
+
+  function certificateOptions(selectedID = '', includeEmpty = true) {
+    const items = activeLeafCertificates();
+    const parts = [];
+    if (includeEmpty) {
+      parts.push('<option value="">No managed certificate</option>');
+    }
+    for (const item of items) {
+      const expires = item.not_after ? formatDate(item.not_after) : 'n/a';
+      const label = `${item.is_default ? '[default] ' : ''}${item.name || item.common_name || item.id} · ${item.source || 'certificate'} · ${expires}`;
+      parts.push(`<option value="${escapeHTML(item.id)}"${item.id === selectedID ? ' selected' : ''}>${escapeHTML(label)}</option>`);
+    }
+    return parts.join('');
+  }
+
+  function authorityCertificateOptions(selectedID = '') {
+    return activeManagedAuthorities()
+      .map((item) => `<option value="${escapeHTML(item.id)}"${item.id === selectedID ? ' selected' : ''}>${escapeHTML(item.name || item.common_name || item.id)} · ${escapeHTML(item.common_name || 'CA')}</option>`)
+      .join('');
+  }
+
   function nodeOptions() {
     return (state.nodes || [])
       .map((node) => `<option value="${escapeHTML(node.id)}">${escapeHTML(node.name)} · ${escapeHTML(node.address || 'n/a')} · ${escapeHTML(node.agent_status || 'unknown')}</option>`)
@@ -3458,6 +3580,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           config_path: stringValue(spec.config_path, `/usr/local/etc/xray/${xraySlug}.json`),
           config_mode: stringValue(spec.config_mode, '0640'),
           xray_security: stringValue(spec.security, 'reality'),
+          certificate_id: stringValue(spec.certificate_id),
           xray_server_name: stringValue(spec.server_name, spec.sni, instance?.endpoint_host),
           xray_short_id: stringValue(spec.short_id),
           xray_dest: stringValue(spec.dest, 'www.cloudflare.com:443'),
@@ -3517,6 +3640,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
           config_mode: stringValue(spec.config_mode, '0644'),
           nginx_mode: stringValue(spec.mode, 'reverse_proxy'),
           nginx_location_path: stringValue(spec.location_path, '/'),
+          certificate_id: stringValue(spec.certificate_id),
           nginx_server_name: stringValue(spec.server_name, instance?.endpoint_host, '_'),
           nginx_upstream_url: stringValue(spec.upstream_url, spec.proxy_pass),
           nginx_root_dir: stringValue(spec.root_dir),
@@ -3610,9 +3734,11 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       case 'xray-core':
         return `${intro}
           <div class="field"><label>Security</label><select name="xray_security">
-            <option value="reality"${draft.xray_security !== 'none' ? ' selected' : ''}>reality</option>
+            <option value="reality"${draft.xray_security !== 'none' && draft.xray_security !== 'tls' ? ' selected' : ''}>reality</option>
+            <option value="tls"${draft.xray_security === 'tls' ? ' selected' : ''}>tls</option>
             <option value="none"${draft.xray_security === 'none' ? ' selected' : ''}>none (backend)</option>
           </select></div>
+          <div class="field"><label>Managed certificate</label><select name="certificate_id">${certificateOptions(draft.certificate_id || '')}</select></div>
           <div class="field"><label>Server name / SNI</label><input name="xray_server_name" value="${escapeHTML(draft.xray_server_name || '')}" placeholder="vpn.example.com" /></div>
           <div class="field"><label>Short ID</label><input name="xray_short_id" value="${escapeHTML(draft.xray_short_id || '')}" placeholder="0123abcd4567ef89" /></div>
           <div class="field"><label>Reality dest</label><input name="xray_dest" value="${escapeHTML(draft.xray_dest || 'www.cloudflare.com:443')}" /></div>
@@ -3671,6 +3797,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
             <option value="grpc_proxy"${draft.nginx_mode === 'grpc_proxy' ? ' selected' : ''}>grpc_proxy</option>
             <option value="static"${draft.nginx_mode === 'static' ? ' selected' : ''}>static</option>
           </select></div>
+          <div class="field"><label>Managed certificate</label><select name="certificate_id">${certificateOptions(draft.certificate_id || '')}</select></div>
           <div class="field"><label>Location path</label><input name="nginx_location_path" value="${escapeHTML(draft.nginx_location_path || '/')}" placeholder="/vless-grpc or /" /></div>
           <div class="field"><label>Server name</label><input name="nginx_server_name" value="${escapeHTML(draft.nginx_server_name || '_')}" placeholder="edge.example.com" /></div>
           <div class="field"><label>Upstream URL</label><input name="nginx_upstream_url" value="${escapeHTML(draft.nginx_upstream_url || '')}" placeholder="http://127.0.0.1:9000 or grpc://127.0.0.1:7443" /></div>
@@ -3792,6 +3919,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         spec.config_path = expectedConfigPath;
       }
       spec.security = String(form.get('xray_security') || 'reality').trim() || 'reality';
+      spec.certificate_id = String(form.get('certificate_id') || '').trim();
       spec.server_port = Number(form.get('endpoint_port') || endpointPort || 443) || 443;
       spec.server_name = String(form.get('xray_server_name') || '').trim();
       spec.sni = spec.server_name;
@@ -3879,6 +4007,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
       spec.server_port = spec.listen_port;
       spec.mode = String(form.get('nginx_mode') || 'reverse_proxy').trim();
       spec.location_path = String(form.get('nginx_location_path') || '/').trim() || '/';
+      spec.certificate_id = String(form.get('certificate_id') || '').trim();
       spec.server_name = String(form.get('nginx_server_name') || '').trim();
       spec.upstream_url = String(form.get('nginx_upstream_url') || '').trim();
       spec.root_dir = String(form.get('nginx_root_dir') || '').trim();
@@ -4058,6 +4187,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         <div class="field"><label>Service pack</label><select name="service_pack_key" required>${servicePackOptions(initialPack?.key || '')}</select></div>
         <div class="field"><label>Base name</label><input name="base_name" required placeholder="${escapeHTML(initialPack?.base_name_template || 'edge-service-pack')}" /></div>
         <div class="field"><label>Endpoint host</label><input name="endpoint_host" placeholder="${escapeHTML(initialPack?.endpoint_hint || 'edge.example.com')}" /></div>
+        <div class="field"><label>Managed certificate</label><select name="certificate_id">${certificateOptions('', true)}</select></div>
         <div id="servicePackFields" class="form-grid full"></div>
         <div class="field full inline-actions"><button class="primary-btn" type="submit">Create service pack</button></div>
       </form>
@@ -4080,11 +4210,227 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
         node_id: String(form.get('node_id') || '').trim(),
         base_name: String(form.get('base_name') || '').trim(),
         endpoint_host: String(form.get('endpoint_host') || '').trim(),
+        certificate_id: String(form.get('certificate_id') || '').trim(),
       };
       const data = await sendJSON(`/api/v1/service-packs/${encodeURIComponent(packKey)}/instances`, 'POST', payload);
       target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
       await refresh();
       setTimeout(closeModal, 500);
+    } catch (err) {
+      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+    }
+  }
+
+  function openCreateCertificateWizard() {
+    openModal('Create certificate', 'Certificate Manager', `
+      <form id="certificateWizardForm" class="form-grid">
+        <div class="field full">
+          <div class="code-block">
+            <div><strong>Please choose an action</strong></div>
+            <div class="metric-caption" style="margin-top:6px">Это inventory-поток по образцу Synology: импорт, self-signed, managed CA, issue from CA и service CA для OpenVPN.</div>
+          </div>
+        </div>
+        <div class="field full"><label><input type="radio" name="certificate_action" value="import" checked /> Import certificate</label><div class="metric-caption">Import private key, certificate and optional intermediate chain.</div></div>
+        <div class="field full"><label><input type="radio" name="certificate_action" value="self_signed" /> Create self-signed certificate</label><div class="metric-caption">Useful for internal edge and test deployments.</div></div>
+        <div class="field full"><label><input type="radio" name="certificate_action" value="managed_ca" /> Create managed CA</label><div class="metric-caption">Create an internal certificate authority for future issuance.</div></div>
+        <div class="field full"><label><input type="radio" name="certificate_action" value="issue_from_ca" /> Issue certificate from managed CA</label><div class="metric-caption">Issue a server certificate from an existing managed CA.</div></div>
+        <div class="field full"><label><input type="radio" name="certificate_action" value="service_ca_root" /> Create service CA root</label><div class="metric-caption">Managed service-specific CA root, currently relevant for OpenVPN platform PKI.</div></div>
+        <div class="field full"><label><input type="radio" name="certificate_action" value="letsencrypt" /> Get certificate from Let's Encrypt</label><div class="metric-caption">UI slot is ready, but backend issuance still depends on the ACME challenge strategy.</div></div>
+        <div class="field full inline-actions"><button class="primary-btn" type="submit">Next</button></div>
+      </form>`, { wide: true });
+    document.getElementById('certificateWizardForm').addEventListener('submit', (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      openCertificateActionForm(String(form.get('certificate_action') || 'import'));
+    });
+  }
+
+  function openCertificateActionForm(action) {
+    switch (action) {
+      case 'import':
+        openModal('Import certificate', 'Certificates / Import', `
+          <form id="importCertificateForm" class="form-grid">
+            <div class="field"><label>Name</label><input name="name" required placeholder="edge.example.com" /></div>
+            <div class="field"><label>Description</label><input name="description" placeholder="Commercial wildcard certificate" /></div>
+            <div class="field full"><label>Certificate PEM</label><textarea name="certificate" rows="8" required placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
+            <div class="field full"><label>Private key PEM</label><textarea name="private_key" rows="8" required placeholder="-----BEGIN EC PRIVATE KEY-----"></textarea></div>
+            <div class="field full"><label>Intermediate / chain PEM</label><textarea name="chain" rows="6" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
+            <div class="field full"><label><input name="is_default" type="checkbox" value="1" /> Set as default certificate</label></div>
+            <div class="field full inline-actions"><button class="primary-btn" type="submit">Import certificate</button></div>
+          </form>
+          <div id="certificateActionResult" class="form-result"></div>`, { wide: true });
+        document.getElementById('importCertificateForm').addEventListener('submit', importCertificateSubmit);
+        return;
+      case 'self_signed':
+        openModal('Create self-signed certificate', 'Certificates / Self-signed', `
+          <form id="selfSignedCertificateForm" class="form-grid">
+            <div class="field"><label>Name</label><input name="name" required placeholder="edge-selfsigned" /></div>
+            <div class="field"><label>Description</label><input name="description" placeholder="Internal edge certificate" /></div>
+            <div class="field"><label>Common Name</label><input name="common_name" required placeholder="edge.example.com" /></div>
+            <div class="field"><label>Valid days</label><input name="valid_days" type="number" min="1" max="3650" value="365" /></div>
+            <div class="field full"><label>DNS names / SAN</label><input name="dns_names" placeholder="edge.example.com, *.example.com" /></div>
+            <div class="field full"><label><input name="is_default" type="checkbox" value="1" /> Set as default certificate</label></div>
+            <div class="field full inline-actions"><button class="primary-btn" type="submit">Create self-signed certificate</button></div>
+          </form>
+          <div id="certificateActionResult" class="form-result"></div>`, { wide: true });
+        document.getElementById('selfSignedCertificateForm').addEventListener('submit', createSelfSignedCertificateSubmit);
+        return;
+      case 'managed_ca':
+        openModal('Create managed CA', 'Certificates / Managed CA', `
+          <form id="managedCAForm" class="form-grid">
+            <div class="field"><label>Name</label><input name="name" required placeholder="RTIS Internal Edge CA" /></div>
+            <div class="field"><label>Description</label><input name="description" placeholder="Managed internal CA for edge certificates" /></div>
+            <div class="field full"><label>Common Name</label><input name="common_name" required placeholder="RTIS Internal Edge CA" /></div>
+            <div class="field full inline-actions"><button class="primary-btn" type="submit">Create managed CA</button></div>
+          </form>
+          <div id="certificateActionResult" class="form-result"></div>`, { wide: true });
+        document.getElementById('managedCAForm').addEventListener('submit', createManagedCASubmit);
+        return;
+      case 'issue_from_ca':
+        openModal('Issue certificate from managed CA', 'Certificates / Issue from CA', `
+          <form id="issueFromCAForm" class="form-grid">
+            <div class="field"><label>Authority</label><select name="authority_certificate_id" required>${authorityCertificateOptions()}</select></div>
+            <div class="field"><label>Name</label><input name="name" required placeholder="edge-issued" /></div>
+            <div class="field"><label>Description</label><input name="description" placeholder="Issued from managed CA" /></div>
+            <div class="field"><label>Common Name</label><input name="common_name" required placeholder="edge.example.com" /></div>
+            <div class="field"><label>Valid days</label><input name="valid_days" type="number" min="1" max="3650" value="365" /></div>
+            <div class="field full"><label>DNS names / SAN</label><input name="dns_names" placeholder="edge.example.com, *.example.com" /></div>
+            <div class="field full"><label><input name="is_default" type="checkbox" value="1" /> Set as default certificate</label></div>
+            <div class="field full inline-actions"><button class="primary-btn" type="submit">Issue certificate</button></div>
+          </form>
+          <div id="certificateActionResult" class="form-result"></div>`, { wide: true });
+        document.getElementById('issueFromCAForm').addEventListener('submit', issueCertificateFromCASubmit);
+        return;
+      case 'service_ca_root':
+        openModal('Create service CA root', 'Certificates / Service CA', `
+          <form id="serviceCARootForm" class="form-grid">
+            <div class="field"><label>Service code</label><input name="service_code" value="openvpn" required placeholder="openvpn" /></div>
+            <div class="field"><label>PKI profile</label><input name="pki_profile" value="default" placeholder="default" /></div>
+            <div class="field full"><label>Common Name</label><input name="common_name" required placeholder="RTIS OpenVPN Platform CA" /></div>
+            <div class="field full inline-actions"><button class="primary-btn" type="submit">Create service CA root</button></div>
+          </form>
+          <div id="certificateActionResult" class="form-result"></div>`, { wide: true });
+        document.getElementById('serviceCARootForm').addEventListener('submit', createServiceCARootSubmit);
+        return;
+      case 'letsencrypt':
+        openModal('Let\'s Encrypt', 'Certificates / ACME', `
+          <div class="card">
+            <h3>ACME challenge policy is still required</h3>
+            <p>UI slot is reserved, but backend issuance is intentionally blocked until we choose the canonical challenge strategy for this product: HTTP-01, DNS-01, or delegated external ACME.</p>
+          </div>`, { wide: true });
+        return;
+      default:
+        openCreateCertificateWizard();
+    }
+  }
+
+  function parseCSVList(value) {
+    return String(value || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  async function importCertificateSubmit(event) {
+    event.preventDefault();
+    const target = document.getElementById('certificateActionResult');
+    target.innerHTML = '<span class="tag warn">importing</span>';
+    try {
+      const form = new FormData(event.currentTarget);
+      const payload = {
+        name: String(form.get('name') || '').trim(),
+        description: String(form.get('description') || '').trim(),
+        certificate: String(form.get('certificate') || '').trim(),
+        private_key: String(form.get('private_key') || '').trim(),
+        chain: String(form.get('chain') || '').trim(),
+        is_default: String(form.get('is_default') || '') === '1',
+      };
+      const data = await sendJSON('/api/v1/platform/certificates/import', 'POST', payload);
+      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
+      await refresh();
+    } catch (err) {
+      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+    }
+  }
+
+  async function createSelfSignedCertificateSubmit(event) {
+    event.preventDefault();
+    const target = document.getElementById('certificateActionResult');
+    target.innerHTML = '<span class="tag warn">creating</span>';
+    try {
+      const form = new FormData(event.currentTarget);
+      const payload = {
+        name: String(form.get('name') || '').trim(),
+        description: String(form.get('description') || '').trim(),
+        common_name: String(form.get('common_name') || '').trim(),
+        dns_names: parseCSVList(form.get('dns_names')),
+        valid_days: Number(form.get('valid_days') || 365),
+        is_default: String(form.get('is_default') || '') === '1',
+      };
+      const data = await sendJSON('/api/v1/platform/certificates/self-signed', 'POST', payload);
+      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
+      await refresh();
+    } catch (err) {
+      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+    }
+  }
+
+  async function createManagedCASubmit(event) {
+    event.preventDefault();
+    const target = document.getElementById('certificateActionResult');
+    target.innerHTML = '<span class="tag warn">creating CA</span>';
+    try {
+      const form = new FormData(event.currentTarget);
+      const payload = {
+        name: String(form.get('name') || '').trim(),
+        description: String(form.get('description') || '').trim(),
+        common_name: String(form.get('common_name') || '').trim(),
+      };
+      const data = await sendJSON('/api/v1/platform/certificates/authorities', 'POST', payload);
+      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
+      await refresh();
+    } catch (err) {
+      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+    }
+  }
+
+  async function issueCertificateFromCASubmit(event) {
+    event.preventDefault();
+    const target = document.getElementById('certificateActionResult');
+    target.innerHTML = '<span class="tag warn">issuing</span>';
+    try {
+      const form = new FormData(event.currentTarget);
+      const payload = {
+        authority_certificate_id: String(form.get('authority_certificate_id') || '').trim(),
+        name: String(form.get('name') || '').trim(),
+        description: String(form.get('description') || '').trim(),
+        common_name: String(form.get('common_name') || '').trim(),
+        dns_names: parseCSVList(form.get('dns_names')),
+        valid_days: Number(form.get('valid_days') || 365),
+        is_default: String(form.get('is_default') || '') === '1',
+      };
+      const data = await sendJSON('/api/v1/platform/certificates/issue-from-ca', 'POST', payload);
+      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
+      await refresh();
+    } catch (err) {
+      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+    }
+  }
+
+  async function createServiceCARootSubmit(event) {
+    event.preventDefault();
+    const target = document.getElementById('certificateActionResult');
+    target.innerHTML = '<span class="tag warn">creating service CA</span>';
+    try {
+      const form = new FormData(event.currentTarget);
+      const payload = {
+        service_code: String(form.get('service_code') || '').trim(),
+        pki_profile: String(form.get('pki_profile') || '').trim(),
+        common_name: String(form.get('common_name') || '').trim(),
+      };
+      const data = await sendJSON('/api/v1/platform/pki-roots', 'POST', payload);
+      target.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
+      await refresh();
     } catch (err) {
       target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
     }
@@ -4364,6 +4710,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     const handlers = {
       nodes: openCreateNodeModal,
       instances: openCreateInstanceModal,
+      certificates: openCreateCertificateWizard,
       clients: openCreateClientModal,
     };
     const handler = handlers[state.page];
@@ -4430,6 +4777,7 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     else if (state.page === 'jobs') renderJobs();
     else if (state.page === 'artifacts') renderArtifacts();
     else if (state.page === 'shareLinks') renderShareLinks();
+    else if (state.page === 'certificates') renderCertificates();
     else if (state.page === 'revisions') renderRevisions();
     else if (state.page === 'telemetry') renderTelemetry();
     else if (state.page === 'audit') renderAudit();

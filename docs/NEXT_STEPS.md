@@ -8,12 +8,13 @@
 1. Зафиксировать CI green после последних branding/module path изменений: `go test`, `go vet`, `go build`.
 2. Довести удаленный deployment baseline на тестовом сервере: проверить `MEGAVPN_DEPLOY_SYNC_MODE=auto`, backup branch flow и повторный deploy после rewritten history.
 3. Проверить service-pack и runtime paths на тестовом сервере: IPsec+XL2TPD, Xray Reality, Xray+Nginx gRPC, Xray HTTP/WebSocket, OpenVPN TCP/UDP, WireGuard, HTTP Proxy, MTProto, Shadowsocks.
-4. Запускать API только с явно заданными bootstrap credentials:
+4. Выбрать canonical ACME challenge strategy для Let's Encrypt: `HTTP-01`, `DNS-01` или delegated external ACME.
+5. Запускать API только с явно заданными bootstrap credentials:
    - `MEGAVPN_BOOTSTRAP_ADMIN_USERNAME`
    - `MEGAVPN_BOOTSTRAP_ADMIN_PASSWORD`
-5. Создать OpenAPI/public API contract и internal agent API contract.
-6. Формализовать typed job payload schemas.
-7. Спроектировать и реализовать mTLS или signed jobs/results для agent transport.
-8. Вынести service driver contracts для OpenVPN/Xray/WireGuard/Nginx/IPsec/Squid.
-9. Довести revision flow до `candidate -> validated -> applied -> rollback`.
-10. Добавить integration tests на PostgreSQL-backed jobs, locks, provisioning и agent loop.
+6. Создать OpenAPI/public API contract и internal agent API contract.
+7. Формализовать typed job payload schemas.
+8. Спроектировать и реализовать mTLS или signed jobs/results для agent transport.
+9. Вынести service driver contracts для OpenVPN/Xray/WireGuard/Nginx/IPsec/Squid.
+10. Довести revision flow до `candidate -> validated -> applied -> rollback`.
+11. Добавить integration tests на PostgreSQL-backed jobs, locks, provisioning и agent loop.

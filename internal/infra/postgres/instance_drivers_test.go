@@ -82,3 +82,45 @@ func TestBuildNginxServerConfigGRPCProxy(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildXrayServerConfigTLS(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-xray-tls",
+		Slug:         "edge-xray-tls",
+		EndpointHost: "edge.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":      "tls",
+		"network":       "ws",
+		"path":          "/ws",
+		"tls_cert_path": "/etc/megavpn/certs/edge/fullchain.pem",
+		"tls_key_path":  "/etc/megavpn/certs/edge/privkey.pem",
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	inbounds, ok := cfg["inbounds"].([]any)
+	if !ok || len(inbounds) != 1 {
+		t.Fatalf("expected one inbound, got %#v", cfg["inbounds"])
+	}
+	inbound, ok := inbounds[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected inbound object, got %#v", inbounds[0])
+	}
+	stream, ok := inbound["streamSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected streamSettings object, got %#v", inbound["streamSettings"])
+	}
+	if got := stringify(stream["security"]); got != "tls" {
+		t.Fatalf("expected security=tls, got %q", got)
+	}
+	tlsSettings, ok := stream["tlsSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tlsSettings object, got %#v", stream["tlsSettings"])
+	}
+	certs, ok := tlsSettings["certificates"].([]any)
+	if !ok || len(certs) != 1 {
+		t.Fatalf("expected one tls certificate entry, got %#v", tlsSettings["certificates"])
+	}
+}

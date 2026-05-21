@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"strings"
 
 	nethttp "net/http"
@@ -33,9 +34,10 @@ type servicePackDefinition struct {
 }
 
 type createServicePackRequest struct {
-	NodeID       string `json:"node_id"`
-	BaseName     string `json:"base_name"`
-	EndpointHost string `json:"endpoint_host"`
+	NodeID        string `json:"node_id"`
+	BaseName      string `json:"base_name"`
+	EndpointHost  string `json:"endpoint_host"`
+	CertificateID string `json:"certificate_id"`
 }
 
 func servicePackDefinitions() []servicePackDefinition {
@@ -174,6 +176,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 	}
 	req.BaseName = strings.TrimSpace(req.BaseName)
 	req.EndpointHost = strings.TrimSpace(req.EndpointHost)
+	req.CertificateID = strings.TrimSpace(req.CertificateID)
 	if req.BaseName == "" {
 		req.BaseName = pack.BaseNameTemplate
 	}
@@ -196,6 +199,16 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			"base_name":      req.BaseName,
 			"component_slug": slug,
 		})
+		if req.CertificateID != "" {
+			switch component.ServiceCode {
+			case "nginx":
+				spec["certificate_id"] = req.CertificateID
+			case "xray-core":
+				if strings.EqualFold(firstStringHTTP(spec["security"]), "tls") {
+					spec["certificate_id"] = req.CertificateID
+				}
+			}
+		}
 		instance := domain.Instance{
 			NodeID:       req.NodeID,
 			ServiceCode:  component.ServiceCode,
@@ -260,6 +273,30 @@ func cloneMapHTTP(src map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func firstStringHTTP(values ...any) string {
+	for _, value := range values {
+		text := strings.TrimSpace(stringifyHTTP(value))
+		if text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func stringifyHTTP(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []byte:
+		return string(typed)
+	default:
+		if value == nil {
+			return ""
+		}
+		return fmt.Sprint(value)
+	}
 }
 
 func interpolatePackSpec(value any, vars map[string]string) map[string]any {

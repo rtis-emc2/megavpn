@@ -171,22 +171,35 @@ func (s *Store) renderXrayPayloadSpec(ctx context.Context, instance domain.Insta
 	unitName := firstString(spec["systemd_unit"], instance.SystemdUnit, serviceDefaultSystemdUnit("xray-core", instance.Slug))
 	configPath := firstString(spec["config_path"], xrayConfigPath(instance, spec))
 	configMode := firstString(spec["config_mode"], "0640")
+	files := []map[string]any{}
+	if strings.EqualFold(firstString(spec["security"]), "tls") {
+		if certID := firstString(spec["certificate_id"]); certID != "" {
+			certFiles, certPath, keyPath, err := s.materializePlatformCertificateFiles(ctx, certID, "/etc/megavpn/certs/"+firstString(instance.Slug, "xray"))
+			if err != nil {
+				return nil, err
+			}
+			spec["tls_cert_path"] = certPath
+			spec["tls_key_path"] = keyPath
+			files = append(files, certFiles...)
+		}
+	}
 	config, err := buildXrayServerConfig(instance, spec)
 	if err != nil {
 		return nil, err
 	}
-	spec["files"] = []map[string]any{
-		{
+	files = append(files,
+		map[string]any{
 			"path": configPath,
 			"json": config,
 			"mode": configMode,
 		},
-		{
+		map[string]any{
 			"path":    "/etc/systemd/system/" + unitName + ".service",
 			"content": buildXrayUnitFile(unitName, configPath, instance),
 			"mode":    "0644",
 		},
-	}
+	)
+	spec["files"] = files
 	return spec, nil
 }
 
@@ -218,15 +231,27 @@ func (s *Store) renderNginxPayloadSpec(ctx context.Context, instance domain.Inst
 	spec = cloneMap(spec)
 	configPath := firstString(spec["config_path"], "/etc/nginx/conf.d/megavpn-"+firstString(spec["slug"], instance.Slug, "edge")+".conf")
 	configMode := firstString(spec["config_mode"], "0644")
+	files := []map[string]any{}
+	if certID := firstString(spec["certificate_id"]); certID != "" {
+		certFiles, certPath, keyPath, err := s.materializePlatformCertificateFiles(ctx, certID, "/etc/megavpn/certs/"+firstString(instance.Slug, "edge"))
+		if err != nil {
+			return nil, err
+		}
+		spec["tls_enabled"] = true
+		spec["tls_cert_path"] = certPath
+		spec["tls_key_path"] = keyPath
+		files = append(files, certFiles...)
+	}
 	config, err := buildNginxServerConfig(instance, spec)
 	if err != nil {
 		return nil, err
 	}
-	spec["files"] = []map[string]any{{
+	files = append(files, map[string]any{
 		"path":    configPath,
 		"content": config,
 		"mode":    configMode,
-	}}
+	})
+	spec["files"] = files
 	return spec, nil
 }
 
@@ -471,6 +496,52 @@ func shadowsocksConfigPath(instance domain.Instance, spec map[string]any) string
 	return configPath
 }
 
+func (s *Store) materializePlatformCertificateFiles(ctx context.Context, certificateID, baseDir string) ([]map[string]any, string, string, error) {
+	certificateID = strings.TrimSpace(certificateID)
+	if certificateID == "" {
+		return nil, "", "", fmt.Errorf("certificate_id is required")
+	}
+	item, certPEM, keyPEM, chainPEM, err := s.ResolvePlatformCertificateMaterial(ctx, certificateID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if item.Kind != "leaf" {
+		return nil, "", "", fmt.Errorf("certificate_id must reference a leaf certificate")
+	}
+	if len(keyPEM) == 0 {
+		return nil, "", "", fmt.Errorf("selected certificate does not include a private key")
+	}
+	fullchain := string(certPEM)
+	if len(chainPEM) > 0 {
+		if !strings.HasSuffix(fullchain, "\n") {
+			fullchain += "\n"
+		}
+		fullchain += string(chainPEM)
+	}
+	certPath := strings.TrimRight(baseDir, "/") + "/fullchain.pem"
+	keyPath := strings.TrimRight(baseDir, "/") + "/privkey.pem"
+	files := []map[string]any{
+		{
+			"path":    certPath,
+			"content": fullchain,
+			"mode":    "0644",
+		},
+		{
+			"path":    keyPath,
+			"content": string(keyPEM),
+			"mode":    "0600",
+		},
+	}
+	if len(chainPEM) > 0 {
+		files = append(files, map[string]any{
+			"path":    strings.TrimRight(baseDir, "/") + "/chain.pem",
+			"content": string(chainPEM),
+			"mode":    "0644",
+		})
+	}
+	return files, certPath, keyPath, nil
+}
+
 func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[string]any, error) {
 	if spec["config_json"] == nil {
 		if rawText := firstString(spec["config_content"]); rawText != "" {
@@ -531,7 +602,8 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 		"network":  network,
 		"security": security,
 	}
-	if security == "reality" {
+	switch security {
+	case "reality":
 		privateKey := firstString(spec["reality_private_key"])
 		if privateKey == "" {
 			return nil, fmt.Errorf("xray reality_private_key is required")
@@ -561,6 +633,20 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 			"serverNames": serverNames,
 			"privateKey":  privateKey,
 			"shortIds":    shortIDs,
+		}
+	case "tls":
+		certPath := firstString(spec["tls_cert_path"])
+		keyPath := firstString(spec["tls_key_path"])
+		if certPath == "" || keyPath == "" {
+			return nil, fmt.Errorf("xray tls_cert_path and tls_key_path are required when security=tls")
+		}
+		streamSettings["tlsSettings"] = map[string]any{
+			"certificates": []any{
+				map[string]any{
+					"certificateFile": certPath,
+					"keyFile":         keyPath,
+				},
+			},
 		}
 	}
 	switch network {
@@ -617,6 +703,9 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 		if realitySettings, _ := streamSettings["realitySettings"].(map[string]any); realitySettings != nil {
 			realitySettings["alpn"] = alpn
 			streamSettings["realitySettings"] = realitySettings
+		} else if tlsSettings, _ := streamSettings["tlsSettings"].(map[string]any); tlsSettings != nil {
+			tlsSettings["alpn"] = alpn
+			streamSettings["tlsSettings"] = tlsSettings
 		}
 		inbound["streamSettings"] = streamSettings
 		inbounds[0] = inbound

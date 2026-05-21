@@ -111,6 +111,39 @@ func (s *Store) EnsureOpenVPNPlatformPKIRoot(ctx context.Context, profile string
 	return domain.PlatformServicePKIRoot{}, err
 }
 
+func (s *Store) CreateManagedPlatformServicePKIRoot(ctx context.Context, serviceCode, profile, commonName string) (domain.PlatformServicePKIRoot, error) {
+	serviceCode = normalizeServicePKIValue(serviceCode, "")
+	profile = normalizeServicePKIValue(profile, "default")
+	if serviceCode == "" {
+		return domain.PlatformServicePKIRoot{}, errors.New("service_code is required")
+	}
+	if existing, err := s.GetActivePlatformServicePKIRoot(ctx, serviceCode, profile); err == nil && existing.ID != "" {
+		return domain.PlatformServicePKIRoot{}, errors.New("active platform pki root already exists for service/profile")
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return domain.PlatformServicePKIRoot{}, err
+	}
+	commonName = strings.TrimSpace(commonName)
+	if commonName == "" {
+		commonName = "MegaVPN " + strings.ToUpper(serviceCode) + " Platform CA"
+		if profile != "default" {
+			commonName += " " + profile
+		}
+	}
+	caCertPEM, caKeyPEM, err := pki.GenerateCertificateAuthority(commonName)
+	if err != nil {
+		return domain.PlatformServicePKIRoot{}, err
+	}
+	caCertRef, err := s.CreateSecretRef(ctx, "certificate", caCertPEM, map[string]any{"scope": "platform", "service_code": serviceCode, "pki_profile": profile, "material": serviceCode + "_ca_cert"})
+	if err != nil {
+		return domain.PlatformServicePKIRoot{}, err
+	}
+	caKeyRef, err := s.CreateSecretRef(ctx, "private_key", caKeyPEM, map[string]any{"scope": "platform", "service_code": serviceCode, "pki_profile": profile, "material": serviceCode + "_ca_key"})
+	if err != nil {
+		return domain.PlatformServicePKIRoot{}, err
+	}
+	return s.CreatePlatformServicePKIRoot(ctx, serviceCode, profile, commonName, caCertRef.ID, caKeyRef.ID)
+}
+
 func normalizeServicePKIValue(value, fallback string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
