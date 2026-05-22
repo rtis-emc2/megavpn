@@ -81,6 +81,7 @@ type Store interface {
 	ListInstanceRevisions(context.Context, string, int) ([]domain.InstanceRevision, error)
 	CreateInstance(context.Context, domain.Instance) (domain.Instance, error)
 	ReplaceInstanceSpec(context.Context, string, string, map[string]any) (domain.InstanceRevision, error)
+	RollbackInstanceRevision(context.Context, string, string, string) (domain.InstanceRevision, error)
 	UpdateInstanceStatus(context.Context, string, string) (domain.Job, error)
 	DeleteInstance(context.Context, string) (domain.Instance, error)
 	ListClients(context.Context) ([]domain.Client, error)
@@ -268,6 +269,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("GET /api/v1/instances/{id}", "instance.read", s.getInstance)
 	protected("GET /api/v1/instances/{id}/revisions", "instance.read", s.listInstanceRevisions)
 	protected("PUT /api/v1/instances/{id}/spec", "instance.write", s.replaceInstanceSpec)
+	protected("POST /api/v1/instances/{id}/rollback", "instance.write", s.rollbackInstanceRevision)
 	protected("DELETE /api/v1/instances/{id}", "instance.write", s.deleteInstance)
 	protected("POST /api/v1/instances/{id}/apply", "instance.apply", s.instanceAction("apply"))
 	protected("POST /api/v1/instances/{id}/restart", "instance.apply", s.instanceAction("restart"))
@@ -328,6 +330,9 @@ type artifactRequest struct {
 }
 type instanceSpecRequest struct {
 	Spec map[string]any `json:"spec"`
+}
+type rollbackRevisionRequest struct {
+	RevisionID string `json:"revision_id"`
 }
 type shareLinkRequest struct {
 	TargetID string `json:"target_id"`
@@ -881,6 +886,40 @@ func (s *Server) replaceInstanceSpec(w nethttp.ResponseWriter, r *nethttp.Reques
 	message := "instance revision saved as apply-ready"
 	if revision.Status != "validated" && revision.Status != "applied" {
 		message = "instance revision saved with validation issues"
+	}
+	writeJSON(w, 200, response{
+		"revision":    revision,
+		"can_apply":   revision.Status == "validated" || revision.Status == "applied",
+		"message":     message,
+		"issue_count": len(revision.ValidationErrors),
+	})
+}
+
+func (s *Server) rollbackInstanceRevision(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req rollbackRevisionRequest
+	if !decodeOptional(r, &req) {
+		writeErr(w, 400, "invalid rollback payload")
+		return
+	}
+	authCtx, ok := authFromRequest(r)
+	if !ok {
+		writeErr(w, 401, "authentication required")
+		return
+	}
+	source := strings.TrimSpace(authCtx.User.Username)
+	if source == "" {
+		source = strings.TrimSpace(authCtx.User.Email)
+	}
+	revision, err := s.store.RollbackInstanceRevision(r.Context(), idParam(r), strings.TrimSpace(req.RevisionID), source)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	instanceID := idParam(r)
+	_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "instance.revision.rollback", "instance", &instanceID, "instance revision rollback created")
+	message := "rollback revision created and is apply-ready"
+	if revision.Status != "validated" && revision.Status != "applied" {
+		message = "rollback revision created with validation issues"
 	}
 	writeJSON(w, 200, response{
 		"revision":    revision,

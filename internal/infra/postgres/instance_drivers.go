@@ -36,6 +36,44 @@ func (s *Store) ReplaceInstanceSpec(ctx context.Context, instanceID, source stri
 	return s.createInstanceRevision(ctx, instanceID, source, "validated", spec)
 }
 
+func (s *Store) RollbackInstanceRevision(ctx context.Context, instanceID, revisionID, source string) (domain.InstanceRevision, error) {
+	if strings.TrimSpace(instanceID) == "" {
+		return domain.InstanceRevision{}, fmt.Errorf("instance id is required")
+	}
+	if strings.TrimSpace(source) == "" {
+		source = "system"
+	}
+	instance, err := s.GetInstance(ctx, instanceID)
+	if err != nil {
+		return domain.InstanceRevision{}, err
+	}
+	revisionID = strings.TrimSpace(revisionID)
+	if revisionID == "" {
+		revisionID = derefString(instance.LastAppliedRevisionID)
+	}
+	if revisionID == "" {
+		return domain.InstanceRevision{}, fmt.Errorf("rollback target revision is required")
+	}
+	if instance.CurrentRevisionID != nil && strings.TrimSpace(*instance.CurrentRevisionID) == revisionID {
+		return domain.InstanceRevision{}, fmt.Errorf("selected revision is already current")
+	}
+	var specRaw []byte
+	var status string
+	err = s.db.QueryRow(ctx, `select spec_json,status from instance_revisions where id=$1 and instance_id=$2`, revisionID, instanceID).Scan(&specRaw, &status)
+	if err != nil {
+		return domain.InstanceRevision{}, err
+	}
+	if !in(strings.TrimSpace(status), "validated", "applied", "superseded") {
+		return domain.InstanceRevision{}, fmt.Errorf("selected revision is not rollback-ready; status=%s", strings.TrimSpace(status))
+	}
+	var spec map[string]any
+	_ = json.Unmarshal(specRaw, &spec)
+	if spec == nil {
+		spec = map[string]any{}
+	}
+	return s.createInstanceRevision(ctx, instanceID, "rollback:"+source, "validated", spec)
+}
+
 func (s *Store) validateInstanceRevisionSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (string, string, []any) {
 	rendered, err := s.renderInstancePayloadSpec(ctx, instance, spec)
 	if err != nil {
