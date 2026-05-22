@@ -16,5 +16,5 @@
 7. Формализовать typed job payload schemas.
 8. Спроектировать и реализовать mTLS или signed jobs/results для agent transport.
 9. Вынести service driver contracts для OpenVPN/Xray/WireGuard/Nginx/IPsec/Squid.
-10. Довести revision flow до `candidate -> validated -> applied -> rollback`.
+10. Довести revision flow от текущего `draft/validated/applied/failed` baseline до полного `candidate -> validated -> applied -> rollback` с diff visibility и rollback UX.
 11. Добавить integration tests на PostgreSQL-backed jobs, locks, provisioning и agent loop.

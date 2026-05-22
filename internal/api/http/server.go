@@ -878,7 +878,16 @@ func (s *Server) replaceInstanceSpec(w nethttp.ResponseWriter, r *nethttp.Reques
 	}
 	instanceID := idParam(r)
 	_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "instance.revision.replace", "instance", &instanceID, "instance spec revision replaced")
-	writeJSON(w, 200, response{"revision": revision})
+	message := "instance revision saved as apply-ready"
+	if revision.Status != "validated" && revision.Status != "applied" {
+		message = "instance revision saved with validation issues"
+	}
+	writeJSON(w, 200, response{
+		"revision":    revision,
+		"can_apply":   revision.Status == "validated" || revision.Status == "applied",
+		"message":     message,
+		"issue_count": len(revision.ValidationErrors),
+	})
 }
 func (s *Server) createInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var x domain.Instance

@@ -37,7 +37,7 @@ VPN / Proxy Services
 
 Release: `0.6.8.1-alpha`
 
-Current branch status: expanded service-pack matrix for standalone services, provisioning/artifact/share-link smoke runner for the test server, certificate lifecycle hardening, job payload validation and deployment baseline stabilization.
+Current branch status: expanded service-pack matrix for standalone services, provisioning/artifact/share-link smoke runner for the test server, stricter revision/apply lifecycle with validation markers, certificate lifecycle hardening, job payload validation and deployment baseline stabilization.
 
 Immediate program priorities:
 

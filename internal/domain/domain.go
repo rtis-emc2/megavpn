@@ -130,19 +130,21 @@ type ServiceDefinition struct {
 }
 
 type Instance struct {
-	ID           string         `json:"id"`
-	NodeID       string         `json:"node_id"`
-	ServiceCode  string         `json:"service_code"`
-	Name         string         `json:"name"`
-	Slug         string         `json:"slug"`
-	SystemdUnit  string         `json:"systemd_unit"`
-	Status       string         `json:"status"`
-	Enabled      bool           `json:"enabled"`
-	EndpointHost string         `json:"endpoint_host"`
-	EndpointPort int            `json:"endpoint_port"`
-	Spec         map[string]any `json:"spec,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	ID                    string         `json:"id"`
+	NodeID                string         `json:"node_id"`
+	ServiceCode           string         `json:"service_code"`
+	Name                  string         `json:"name"`
+	Slug                  string         `json:"slug"`
+	SystemdUnit           string         `json:"systemd_unit"`
+	Status                string         `json:"status"`
+	Enabled               bool           `json:"enabled"`
+	EndpointHost          string         `json:"endpoint_host"`
+	EndpointPort          int            `json:"endpoint_port"`
+	CurrentRevisionID     *string        `json:"current_revision_id,omitempty"`
+	LastAppliedRevisionID *string        `json:"last_applied_revision_id,omitempty"`
+	Spec                  map[string]any `json:"spec,omitempty"`
+	CreatedAt             time.Time      `json:"created_at"`
+	UpdatedAt             time.Time      `json:"updated_at"`
 }
 
 type InstanceRevision struct {
@@ -156,6 +158,8 @@ type InstanceRevision struct {
 	ValidationErrors []any          `json:"validation_errors"`
 	CreatedAt        time.Time      `json:"created_at"`
 	AppliedAt        *time.Time     `json:"applied_at"`
+	IsCurrent        bool           `json:"is_current"`
+	IsLastApplied    bool           `json:"is_last_applied"`
 }
 
 type Client struct {

@@ -613,7 +613,7 @@ func (s *Store) ListServiceDefinitions(ctx context.Context) ([]domain.ServiceDef
 }
 
 func (s *Store) ListInstances(ctx context.Context) ([]domain.Instance, error) {
-	rows, err := s.db.Query(ctx, `select i.id,i.node_id,sd.code,i.name,i.slug,coalesce(i.systemd_unit,''),i.status,i.enabled,coalesce(i.endpoint_host,''),coalesce(i.endpoint_port,0),i.created_at,i.updated_at from instances i join service_definitions sd on sd.id=i.service_definition_id where i.status <> 'deleted' order by i.created_at desc`)
+	rows, err := s.db.Query(ctx, `select i.id,i.node_id,sd.code,i.name,i.slug,coalesce(i.systemd_unit,''),i.status,i.enabled,coalesce(i.endpoint_host,''),coalesce(i.endpoint_port,0),i.current_revision_id,i.last_applied_revision_id,i.created_at,i.updated_at from instances i join service_definitions sd on sd.id=i.service_definition_id where i.status <> 'deleted' order by i.created_at desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +621,7 @@ func (s *Store) ListInstances(ctx context.Context) ([]domain.Instance, error) {
 	var out []domain.Instance
 	for rows.Next() {
 		var x domain.Instance
-		if err := rows.Scan(&x.ID, &x.NodeID, &x.ServiceCode, &x.Name, &x.Slug, &x.SystemdUnit, &x.Status, &x.Enabled, &x.EndpointHost, &x.EndpointPort, &x.CreatedAt, &x.UpdatedAt); err != nil {
+		if err := rows.Scan(&x.ID, &x.NodeID, &x.ServiceCode, &x.Name, &x.Slug, &x.SystemdUnit, &x.Status, &x.Enabled, &x.EndpointHost, &x.EndpointPort, &x.CurrentRevisionID, &x.LastAppliedRevisionID, &x.CreatedAt, &x.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, x)
@@ -631,20 +631,20 @@ func (s *Store) ListInstances(ctx context.Context) ([]domain.Instance, error) {
 
 func (s *Store) GetInstance(ctx context.Context, instanceID string) (domain.Instance, error) {
 	var x domain.Instance
-	err := s.db.QueryRow(ctx, `select i.id,i.node_id,sd.code,i.name,i.slug,coalesce(i.systemd_unit,''),i.status,i.enabled,coalesce(i.endpoint_host,''),coalesce(i.endpoint_port,0),i.created_at,i.updated_at from instances i join service_definitions sd on sd.id=i.service_definition_id where i.id=$1`, instanceID).Scan(&x.ID, &x.NodeID, &x.ServiceCode, &x.Name, &x.Slug, &x.SystemdUnit, &x.Status, &x.Enabled, &x.EndpointHost, &x.EndpointPort, &x.CreatedAt, &x.UpdatedAt)
+	err := s.db.QueryRow(ctx, `select i.id,i.node_id,sd.code,i.name,i.slug,coalesce(i.systemd_unit,''),i.status,i.enabled,coalesce(i.endpoint_host,''),coalesce(i.endpoint_port,0),i.current_revision_id,i.last_applied_revision_id,i.created_at,i.updated_at from instances i join service_definitions sd on sd.id=i.service_definition_id where i.id=$1`, instanceID).Scan(&x.ID, &x.NodeID, &x.ServiceCode, &x.Name, &x.Slug, &x.SystemdUnit, &x.Status, &x.Enabled, &x.EndpointHost, &x.EndpointPort, &x.CurrentRevisionID, &x.LastAppliedRevisionID, &x.CreatedAt, &x.UpdatedAt)
 	return x, err
 }
 
 func (s *Store) FindNodeInstanceByService(ctx context.Context, nodeID, serviceCode string) (domain.Instance, error) {
 	serviceCode = normalizeInstanceRuntimeCode(serviceCode)
 	var x domain.Instance
-	err := s.db.QueryRow(ctx, `select i.id,i.node_id,sd.code,i.name,i.slug,coalesce(i.systemd_unit,''),i.status,i.enabled,coalesce(i.endpoint_host,''),coalesce(i.endpoint_port,0),i.created_at,i.updated_at
+	err := s.db.QueryRow(ctx, `select i.id,i.node_id,sd.code,i.name,i.slug,coalesce(i.systemd_unit,''),i.status,i.enabled,coalesce(i.endpoint_host,''),coalesce(i.endpoint_port,0),i.current_revision_id,i.last_applied_revision_id,i.created_at,i.updated_at
 		from instances i
 		join service_definitions sd on sd.id=i.service_definition_id
 		where i.node_id=$1 and sd.code=$2 and i.status <> 'deleted'
 		order by i.enabled desc, i.created_at asc
 		limit 1`, nodeID, serviceCode).
-		Scan(&x.ID, &x.NodeID, &x.ServiceCode, &x.Name, &x.Slug, &x.SystemdUnit, &x.Status, &x.Enabled, &x.EndpointHost, &x.EndpointPort, &x.CreatedAt, &x.UpdatedAt)
+		Scan(&x.ID, &x.NodeID, &x.ServiceCode, &x.Name, &x.Slug, &x.SystemdUnit, &x.Status, &x.Enabled, &x.EndpointHost, &x.EndpointPort, &x.CurrentRevisionID, &x.LastAppliedRevisionID, &x.CreatedAt, &x.UpdatedAt)
 	return x, err
 }
 
@@ -715,6 +715,16 @@ func (s *Store) UpdateInstanceStatus(ctx context.Context, instanceID, action str
 	}
 	x.Status = status
 	x.Enabled = enabled
+	if action == "apply" {
+		currentRevisionStatus := "draft"
+		err = s.db.QueryRow(ctx, `select coalesce((select status from instance_revisions where id=i.current_revision_id), '') from instances i where i.id=$1`, instanceID).Scan(&currentRevisionStatus)
+		if err != nil {
+			return domain.Job{}, err
+		}
+		if !in(strings.TrimSpace(currentRevisionStatus), "validated", "applied") {
+			return domain.Job{}, fmt.Errorf("current revision is not apply-ready; status=%s", strings.TrimSpace(currentRevisionStatus))
+		}
+	}
 	payload, payloadErr := s.buildInstanceJobPayload(ctx, x, action)
 	if payloadErr != nil {
 		if action == "apply" {
@@ -1193,10 +1203,22 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 					_, _ = s.db.Exec(ctx, `update nodes set agent_status='online',updated_at=now() where id=$1`, *scopeID)
 				}
 			}
-		case "instance.apply", "instance.start", "instance.enable":
+		case "instance.apply":
 			if instanceID != nil {
+				_, _ = s.db.Exec(ctx, `update instance_revisions
+					set status='superseded'
+					where id=(select last_applied_revision_id from instances where id=$1)
+					  and id is distinct from (select current_revision_id from instances where id=$1)
+					  and status='applied'`, *instanceID)
+				_, _ = s.db.Exec(ctx, `update instance_revisions
+					set status='applied',applied_at=now(),validation_errors_json='[]'::jsonb
+					where id=(select current_revision_id from instances where id=$1)`, *instanceID)
 				_, _ = s.db.Exec(ctx, `update instances set status='active',enabled=true,last_applied_revision_id=current_revision_id,updated_at=now() where id=$1`, *instanceID)
 				_, _ = s.db.Exec(ctx, `update service_accesses set status='active',updated_at=now() where instance_id=$1 and status='pending'`, *instanceID)
+			}
+		case "instance.start", "instance.enable":
+			if instanceID != nil {
+				_, _ = s.db.Exec(ctx, `update instances set status='active',enabled=true,updated_at=now() where id=$1`, *instanceID)
 			}
 		case "instance.stop", "instance.disable":
 			if instanceID != nil {
@@ -1210,6 +1232,19 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 		}
 	} else if jobType == "node.bootstrap" && scopeID != nil {
 		_, _ = s.db.Exec(ctx, `update nodes set status='draft',updated_at=now() where id=$1 and status='bootstrapping'`, *scopeID)
+	} else if jobType == "instance.apply" && instanceID != nil {
+		validationErrors := []any{}
+		if errText := strings.TrimSpace(stringify(result["error"])); errText != "" {
+			validationErrors = append(validationErrors, map[string]any{"stage": "apply", "message": errText})
+		} else if errText := strings.TrimSpace(stringify(result["message"])); errText != "" {
+			validationErrors = append(validationErrors, map[string]any{"stage": "apply", "message": errText})
+		} else {
+			validationErrors = append(validationErrors, map[string]any{"stage": "apply", "message": "instance apply failed"})
+		}
+		_, _ = s.db.Exec(ctx, `update instance_revisions
+			set status='failed',applied_at=null,validation_errors_json=$2
+			where id=(select current_revision_id from instances where id=$1)`, *instanceID, mustJSON(validationErrors))
+		_, _ = s.db.Exec(ctx, `update instances set status='failed',updated_at=now() where id=$1`, *instanceID)
 	}
 
 	if jobType == "node.bootstrap" {
@@ -1804,6 +1839,13 @@ func nullIfEmpty(v string) any {
 	return v
 }
 
+func derefString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return strings.TrimSpace(*v)
+}
+
 func mustJSON(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -1944,9 +1986,12 @@ func (s *Store) ListInstanceRevisions(ctx context.Context, instanceID string, li
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	rows, err := s.db.Query(ctx, `select id,instance_id,source,status,coalesce(rendered_hash,''),revision_no,spec_json,coalesce(validation_errors_json,'[]'::jsonb),created_at,applied_at
-		from instance_revisions
-		where instance_id=$1
+	rows, err := s.db.Query(ctx, `select r.id,r.instance_id,r.source,r.status,coalesce(r.rendered_hash,''),r.revision_no,r.spec_json,coalesce(r.validation_errors_json,'[]'::jsonb),r.created_at,r.applied_at,
+			(r.id = i.current_revision_id) as is_current,
+			(r.id = i.last_applied_revision_id) as is_last_applied
+		from instance_revisions r
+		join instances i on i.id=r.instance_id
+		where r.instance_id=$1
 		order by revision_no desc
 		limit $2`, instanceID, limit)
 	if err != nil {
@@ -1959,7 +2004,7 @@ func (s *Store) ListInstanceRevisions(ctx context.Context, instanceID string, li
 		var rev domain.InstanceRevision
 		var specRaw []byte
 		var validationRaw []byte
-		if err := rows.Scan(&rev.ID, &rev.InstanceID, &rev.Source, &rev.Status, &rev.RenderedHash, &rev.RevisionNo, &specRaw, &validationRaw, &rev.CreatedAt, &rev.AppliedAt); err != nil {
+		if err := rows.Scan(&rev.ID, &rev.InstanceID, &rev.Source, &rev.Status, &rev.RenderedHash, &rev.RevisionNo, &specRaw, &validationRaw, &rev.CreatedAt, &rev.AppliedAt, &rev.IsCurrent, &rev.IsLastApplied); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(specRaw, &rev.Spec)
@@ -2024,14 +2069,33 @@ func (s *Store) createInstanceRevision(ctx context.Context, instanceID, source, 
 	if spec == nil {
 		spec = map[string]any{}
 	}
+	instance, err := s.GetInstance(ctx, instanceID)
+	if err != nil {
+		return domain.InstanceRevision{}, err
+	}
+	if status == "" {
+		status = "draft"
+	}
+	renderedHash := ""
+	validationErrors := []any{}
+	if status == "validated" || status == "draft" {
+		status, renderedHash, validationErrors = s.validateInstanceRevisionSpec(ctx, instance, spec)
+	}
 	var revisionNo int
 	_ = s.db.QueryRow(ctx, `select coalesce(max(revision_no),0)+1 from instance_revisions where instance_id=$1`, instanceID).Scan(&revisionNo)
 	b, _ := json.Marshal(spec)
-	rev := domain.InstanceRevision{ID: id.New(), InstanceID: instanceID, RevisionNo: revisionNo, Source: source, Status: status, Spec: spec, CreatedAt: time.Now().UTC()}
-	if _, err := s.db.Exec(ctx, `insert into instance_revisions(id,instance_id,revision_no,source,status,spec_json,created_at) values($1,$2,$3,$4,$5,$6,now())`, rev.ID, rev.InstanceID, rev.RevisionNo, rev.Source, rev.Status, b); err != nil {
+	rev := domain.InstanceRevision{ID: id.New(), InstanceID: instanceID, RevisionNo: revisionNo, Source: source, Status: status, RenderedHash: renderedHash, Spec: spec, ValidationErrors: validationErrors, CreatedAt: time.Now().UTC(), IsCurrent: true}
+	if instance.CurrentRevisionID != nil && strings.TrimSpace(*instance.CurrentRevisionID) != "" {
+		_, _ = s.db.Exec(ctx, `update instance_revisions
+			set status='superseded'
+			where id=$1
+			  and id is distinct from $2
+			  and status in ('draft','validated','failed')`, *instance.CurrentRevisionID, nullIfEmpty(derefString(instance.LastAppliedRevisionID)))
+	}
+	if _, err := s.db.Exec(ctx, `insert into instance_revisions(id,instance_id,revision_no,source,status,spec_json,rendered_hash,validation_errors_json,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,now())`, rev.ID, rev.InstanceID, rev.RevisionNo, rev.Source, rev.Status, b, nullIfEmpty(rev.RenderedHash), mustJSON(rev.ValidationErrors)); err != nil {
 		return rev, err
 	}
-	_, err := s.db.Exec(ctx, `update instances set current_revision_id=$2,updated_at=now() where id=$1`, instanceID, rev.ID)
+	_, err = s.db.Exec(ctx, `update instances set current_revision_id=$2,updated_at=now() where id=$1`, instanceID, rev.ID)
 	return rev, err
 }
 

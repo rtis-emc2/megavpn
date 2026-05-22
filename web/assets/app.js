@@ -1022,12 +1022,14 @@
         source: revision.source || 'n/a',
         created: revision.created_at,
         applied: revision.applied_at,
-        summary: `spec keys ${Object.keys(revision.spec || {}).length}`,
+        summary: `${Object.keys(revision.spec || {}).length} spec keys · ${Array.isArray(revision.validation_errors) ? revision.validation_errors.length : 0} issues`,
+        is_current: Boolean(revision.is_current),
+        is_last_applied: Boolean(revision.is_last_applied),
       }));
       const target = document.getElementById('revisionsResult');
       if (!target) return;
       target.innerHTML = tableCard('Revision Timeline', rows, [
-        { title: 'Revision', key: 'revision_no', render: (row) => `<strong>#${escapeHTML(row.revision_no)}</strong>` },
+        { title: 'Revision', key: 'revision_no', render: (row) => `<strong>#${escapeHTML(row.revision_no)}</strong>${row.is_current ? ' <span class="tag">current</span>' : ''}${row.is_last_applied ? ' <span class="tag ok">applied</span>' : ''}` },
         { title: 'Status', key: 'status', render: (row) => statusTag(row.status) },
         { title: 'Source', key: 'source', render: (row) => `<code>${escapeHTML(row.source)}</code>` },
         { title: 'Created', key: 'created', render: (row) => formatDate(row.created) },
@@ -4880,6 +4882,8 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
             <div class="inline-actions">
               ${statusTag(instance.status || 'unknown')}
               <span class="tag">${escapeHTML(instance.slug || 'no-slug')}</span>
+              ${instance.current_revision_id ? `<span class="tag">rev ${escapeHTML(instance.current_revision_id.slice(0, 8))}</span>` : ''}
+              ${instance.last_applied_revision_id ? `<span class="tag ok">applied ${escapeHTML(instance.last_applied_revision_id.slice(0, 8))}</span>` : ''}
             </div>
             <p>Сохранение ниже создает новую revision. Apply остается отдельным действием и будет показан с live job feedback и logs.</p>
           </div>
@@ -4918,20 +4922,44 @@ url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
     event.preventDefault();
     const revisionTarget = document.getElementById('instanceManageRevisionResult');
     const jobTarget = document.getElementById('instanceManageJobResult');
+    const formEl = document.getElementById('editInstanceForm');
     if (revisionTarget) revisionTarget.innerHTML = '<span class="tag warn">saving revision</span>';
     if (jobTarget) jobTarget.innerHTML = '';
+    setSubmitBusy(formEl, true, 'Saving...');
     try {
-      const form = new FormData(document.getElementById('editInstanceForm'));
+      const form = new FormData(formEl);
       const spec = buildInstanceSpecPayload(instance.service_code, form, instance.spec || {}, Number(form.get('endpoint_port') || instance.endpoint_port || 0));
       const data = await sendJSON(`/api/v1/instances/${instance.id}/spec`, 'PUT', { spec });
       instance.spec = spec;
-      if (revisionTarget) revisionTarget.innerHTML = `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
+      const revision = data?.revision || {};
+      const issueCount = Array.isArray(revision.validation_errors) ? revision.validation_errors.length : Number(data?.issue_count || 0);
+      if (revisionTarget) revisionTarget.innerHTML = `
+        <div class="card">
+          <div class="inline-actions" style="justify-content:space-between;align-items:flex-start">
+            <div>
+              <div class="mini-label">Revision saved</div>
+              <div class="metric-caption">${escapeHTML(String(data?.message || 'Desired state updated.'))}</div>
+            </div>
+            ${statusTag(revision.status || 'unknown')}
+          </div>
+          <div class="grid cols-2" style="margin-top:14px">
+            <div class="card"><div class="mini-label">Revision</div><div class="metric-caption">#${escapeHTML(revision.revision_no || 'n/a')}</div></div>
+            <div class="card"><div class="mini-label">Can apply</div><div class="metric-caption">${data?.can_apply ? 'yes' : 'no'}</div></div>
+            <div class="card"><div class="mini-label">Rendered hash</div><div class="metric-caption">${escapeHTML(revision.rendered_hash || 'n/a')}</div></div>
+            <div class="card"><div class="mini-label">Validation issues</div><div class="metric-caption">${escapeHTML(String(issueCount))}</div></div>
+          </div>
+          ${issueCount ? `<div class="code-block" style="margin-top:14px">${escapeHTML(JSON.stringify(revision.validation_errors || [], null, 2))}</div>` : ''}
+        </div>`;
       await refresh();
-      if (applyAfterSave && jobTarget) {
+      if (applyAfterSave && data?.can_apply && jobTarget) {
         await runInstanceAction(instance.id, 'apply', jobTarget);
+      } else if (applyAfterSave && jobTarget) {
+        jobTarget.innerHTML = '<span class="tag danger">apply blocked: revision is not validated</span>';
       }
     } catch (err) {
       if (revisionTarget) revisionTarget.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+    } finally {
+      setSubmitBusy(formEl, false);
     }
   }
 

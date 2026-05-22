@@ -36,6 +36,106 @@ func (s *Store) ReplaceInstanceSpec(ctx context.Context, instanceID, source stri
 	return s.createInstanceRevision(ctx, instanceID, source, "validated", spec)
 }
 
+func (s *Store) validateInstanceRevisionSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (string, string, []any) {
+	rendered, err := s.renderInstancePayloadSpec(ctx, instance, spec)
+	if err != nil {
+		return "draft", "", []any{map[string]any{"stage": "render", "message": err.Error()}}
+	}
+	errors := staticInstanceValidationErrors(rendered)
+	hash := renderedInstanceSpecHash(rendered)
+	if len(errors) > 0 {
+		return "draft", hash, errors
+	}
+	return "validated", hash, []any{}
+}
+
+func renderedInstanceSpecHash(spec map[string]any) string {
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return ""
+	}
+	sum := sha1.Sum(b)
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func staticInstanceValidationErrors(spec map[string]any) []any {
+	if spec == nil {
+		return []any{map[string]any{"stage": "static_validation", "message": "rendered spec is empty"}}
+	}
+	if filesRaw := spec["files"]; filesRaw != nil {
+		return staticManagedFileErrors(filesRaw)
+	}
+	if _, hasContent, err := staticSingleConfigContent(spec); err != nil {
+		return []any{map[string]any{"stage": "static_validation", "message": err.Error()}}
+	} else if !hasContent {
+		return []any{map[string]any{"stage": "static_validation", "message": "rendered spec does not contain config_content, config_json or spec.files"}}
+	}
+	return []any{}
+}
+
+func staticManagedFileErrors(raw any) []any {
+	list, ok := raw.([]any)
+	if !ok {
+		return []any{map[string]any{"stage": "static_validation", "message": "spec.files must be an array"}}
+	}
+	if len(list) == 0 {
+		return []any{map[string]any{"stage": "static_validation", "message": "spec.files must not be empty"}}
+	}
+	errors := make([]any, 0)
+	for idx, item := range list {
+		fileMap, ok := item.(map[string]any)
+		if !ok {
+			errors = append(errors, map[string]any{"stage": "static_validation", "message": fmt.Sprintf("spec.files[%d] must be an object", idx)})
+			continue
+		}
+		path := strings.TrimSpace(stringify(fileMap["path"]))
+		if path == "" {
+			errors = append(errors, map[string]any{"stage": "static_validation", "message": fmt.Sprintf("spec.files[%d].path is required", idx)})
+			continue
+		}
+		content := strings.TrimSpace(stringify(fileMap["content"]))
+		if content == "" && fileMap["json"] == nil {
+			errors = append(errors, map[string]any{"stage": "static_validation", "message": fmt.Sprintf("spec.files[%d] content/json is required for %s", idx, path)})
+		}
+	}
+	return errors
+}
+
+func staticSingleConfigContent(spec map[string]any) (string, bool, error) {
+	if content := stringify(spec["config_content"]); content != "" {
+		if !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		return content, true, nil
+	}
+	if rawJSON, ok := spec["config_json"]; ok {
+		b, err := json.MarshalIndent(rawJSON, "", "  ")
+		if err != nil {
+			return "", false, err
+		}
+		return string(b) + "\n", true, nil
+	}
+	if rawConfig, ok := spec["config"]; ok {
+		switch cfg := rawConfig.(type) {
+		case string:
+			if strings.TrimSpace(cfg) == "" {
+				return "", false, nil
+			}
+			if !strings.HasSuffix(cfg, "\n") {
+				cfg += "\n"
+			}
+			return cfg, true, nil
+		default:
+			b, err := json.MarshalIndent(cfg, "", "  ")
+			if err != nil {
+				return "", false, err
+			}
+			return string(b) + "\n", true, nil
+		}
+	}
+	return "", false, nil
+}
+
 func (s *Store) ListProvisioningAccessesByInstance(ctx context.Context, instanceID string) ([]domain.ProvisioningAccess, error) {
 	rows, err := s.db.Query(ctx, `select
 		sa.id,
