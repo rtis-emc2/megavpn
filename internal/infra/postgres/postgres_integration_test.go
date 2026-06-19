@@ -279,6 +279,62 @@ func TestPostgresIntegrationRecoverStaleJobLeases(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationAgentVersionProjection(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-agent-version-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "draft",
+		Address:       "10.50.2.10",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "unknown",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	token, err := store.CreateNodeEnrollmentToken(ctx, node.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("create enrollment token: %v", err)
+	}
+	if _, _, err := store.RegisterAgentWithEnrollmentVersion(ctx, node.ID, token.Token, node.Name, node.Address, "0.6.10.5-alpha", "v1"); err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+	registered, err := store.GetNode(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("get registered node: %v", err)
+	}
+	if registered.AgentVersion != "0.6.10.5-alpha" || registered.AgentProtocolVersion != "v1" || registered.AgentRegisteredAt == nil || registered.AgentLastSeenAt == nil {
+		t.Fatalf("registered node agent projection = version:%q protocol:%q registered:%v last_seen:%v", registered.AgentVersion, registered.AgentProtocolVersion, registered.AgentRegisteredAt, registered.AgentLastSeenAt)
+	}
+
+	if err := store.HeartbeatByNodeIDWithVersion(ctx, node.ID, "0.6.10.6-alpha", "v1"); err != nil {
+		t.Fatalf("heartbeat with version: %v", err)
+	}
+	nodes, err := store.ListNodes(ctx)
+	if err != nil {
+		t.Fatalf("list nodes: %v", err)
+	}
+	var projected *domain.Node
+	for idx := range nodes {
+		if nodes[idx].ID == node.ID {
+			projected = &nodes[idx]
+			break
+		}
+	}
+	if projected == nil {
+		t.Fatal("registered node missing from list nodes")
+	}
+	if projected.AgentVersion != "0.6.10.6-alpha" {
+		t.Fatalf("projected agent version = %q, want heartbeat version", projected.AgentVersion)
+	}
+}
+
 func setupPostgresIntegrationStore(t *testing.T) (*Store, context.Context) {
 	t.Helper()
 

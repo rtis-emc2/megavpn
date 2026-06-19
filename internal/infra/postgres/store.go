@@ -90,15 +90,21 @@ func (s *Store) Dashboard(ctx context.Context, version string) (domain.Dashboard
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
-	rows, err := s.db.Query(ctx, `select id,name,kind,role,status,address,os_family,os_version,architecture,execution_mode,agent_status,last_heartbeat_at,created_at,updated_at from nodes where status <> 'retired' order by created_at desc`)
+	rows, err := s.db.Query(ctx, `select
+		n.id,n.name,n.kind,n.role,n.status,n.address,n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
+		coalesce(na.agent_version,''),coalesce(na.protocol_version,''),na.registered_at,na.last_seen_at
+	from nodes n
+	left join node_agents na on na.node_id=n.id
+	where n.status <> 'retired'
+	order by n.created_at desc`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []domain.Node{}
 	for rows.Next() {
-		var n domain.Node
-		if err := rows.Scan(&n.ID, &n.Name, &n.Kind, &n.Role, &n.Status, &n.Address, &n.OSFamily, &n.OSVersion, &n.Architecture, &n.ExecutionMode, &n.AgentStatus, &n.LastHeartbeatAt, &n.CreatedAt, &n.UpdatedAt); err != nil {
+		n, err := scanNode(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -107,9 +113,40 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 }
 
 func (s *Store) GetNode(ctx context.Context, nodeID string) (domain.Node, error) {
+	row := s.db.QueryRow(ctx, `select
+		n.id,n.name,n.kind,n.role,n.status,n.address,n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
+		coalesce(na.agent_version,''),coalesce(na.protocol_version,''),na.registered_at,na.last_seen_at
+	from nodes n
+	left join node_agents na on na.node_id=n.id
+	where n.id=$1`, nodeID)
+	return scanNode(row)
+}
+
+func scanNode(row jobScanner) (domain.Node, error) {
 	var n domain.Node
-	err := s.db.QueryRow(ctx, `select id,name,kind,role,status,address,os_family,os_version,architecture,execution_mode,agent_status,last_heartbeat_at,created_at,updated_at from nodes where id=$1`, nodeID).Scan(&n.ID, &n.Name, &n.Kind, &n.Role, &n.Status, &n.Address, &n.OSFamily, &n.OSVersion, &n.Architecture, &n.ExecutionMode, &n.AgentStatus, &n.LastHeartbeatAt, &n.CreatedAt, &n.UpdatedAt)
-	return n, err
+	if err := row.Scan(
+		&n.ID,
+		&n.Name,
+		&n.Kind,
+		&n.Role,
+		&n.Status,
+		&n.Address,
+		&n.OSFamily,
+		&n.OSVersion,
+		&n.Architecture,
+		&n.ExecutionMode,
+		&n.AgentStatus,
+		&n.LastHeartbeatAt,
+		&n.CreatedAt,
+		&n.UpdatedAt,
+		&n.AgentVersion,
+		&n.AgentProtocolVersion,
+		&n.AgentRegisteredAt,
+		&n.AgentLastSeenAt,
+	); err != nil {
+		return domain.Node{}, err
+	}
+	return n, nil
 }
 
 func (s *Store) CreateNode(ctx context.Context, n domain.Node) (domain.Node, error) {
@@ -267,11 +304,20 @@ func (s *Store) SetNodeMaintenance(ctx context.Context, nodeID string, enabled b
 }
 
 func (s *Store) UpsertAgentNode(ctx context.Context, name, address, token string) (domain.Node, error) {
+	return s.UpsertAgentNodeWithVersion(ctx, name, address, token, "", "")
+}
+
+func (s *Store) UpsertAgentNodeWithVersion(ctx context.Context, name, address, token, agentVersion, protocolVersion string) (domain.Node, error) {
 	if name == "" {
 		return domain.Node{}, errors.New("agent node name is empty")
 	}
-	var n domain.Node
-	err := s.db.QueryRow(ctx, `select id,name,kind,role,status,address,os_family,os_version,architecture,execution_mode,agent_status,last_heartbeat_at,created_at,updated_at from nodes where name=$1`, name).Scan(&n.ID, &n.Name, &n.Kind, &n.Role, &n.Status, &n.Address, &n.OSFamily, &n.OSVersion, &n.Architecture, &n.ExecutionMode, &n.AgentStatus, &n.LastHeartbeatAt, &n.CreatedAt, &n.UpdatedAt)
+	row := s.db.QueryRow(ctx, `select
+		n.id,n.name,n.kind,n.role,n.status,n.address,n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
+		coalesce(na.agent_version,''),coalesce(na.protocol_version,''),na.registered_at,na.last_seen_at
+	from nodes n
+	left join node_agents na on na.node_id=n.id
+	where n.name=$1`, name)
+	n, err := scanNode(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		n = domain.Node{Name: name, Kind: "remote", Role: "egress", Status: "online", Address: address, OSFamily: "linux", OSVersion: "unknown", Architecture: "amd64", ExecutionMode: "agent_managed", AgentStatus: "online"}
 		n, err = s.CreateNode(ctx, n)
@@ -286,7 +332,16 @@ func (s *Store) UpsertAgentNode(ctx context.Context, name, address, token string
 	if fingerprint == "" {
 		fingerprint = "agent:" + name
 	}
-	_, err = s.db.Exec(ctx, `insert into node_agents(id,node_id,status,agent_version,protocol_version,fingerprint,registered_at,last_seen_at) values($1,$2,'active','dev','v1',$3,$4,$4) on conflict(node_id) do update set status='active', last_seen_at=excluded.last_seen_at, revoked_at=null`, id.New(), n.ID, fingerprint, now)
+	agentVersion = normalizeAgentRuntimeVersion(agentVersion, "dev")
+	protocolVersion = normalizeAgentRuntimeVersion(protocolVersion, "v1")
+	_, err = s.db.Exec(ctx, `insert into node_agents(id,node_id,status,agent_version,protocol_version,fingerprint,registered_at,last_seen_at)
+		values($1,$2,'active',$3,$4,$5,$6,$6)
+		on conflict(node_id) do update
+		set status='active',
+		    agent_version=excluded.agent_version,
+		    protocol_version=excluded.protocol_version,
+		    last_seen_at=excluded.last_seen_at,
+		    revoked_at=null`, id.New(), n.ID, agentVersion, protocolVersion, fingerprint, now)
 	if err != nil {
 		return n, err
 	}
@@ -298,6 +353,10 @@ func (s *Store) UpsertAgentNode(ctx context.Context, name, address, token string
 }
 
 func (s *Store) Heartbeat(ctx context.Context, nodeName string) error {
+	return s.HeartbeatWithVersion(ctx, nodeName, "", "")
+}
+
+func (s *Store) HeartbeatWithVersion(ctx context.Context, nodeName, agentVersion, protocolVersion string) error {
 	now := time.Now().UTC()
 	cmd, err := s.db.Exec(ctx, `update nodes set status='online',agent_status='online',last_heartbeat_at=$2,updated_at=$2 where name=$1 and status <> 'retired'`, nodeName, now)
 	if err != nil {
@@ -306,7 +365,12 @@ func (s *Store) Heartbeat(ctx context.Context, nodeName string) error {
 	if cmd.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
-	_, _ = s.db.Exec(ctx, `update node_agents set last_seen_at=$2,status='active' where node_id=(select id from nodes where name=$1)`, nodeName, now)
+	_, _ = s.db.Exec(ctx, `update node_agents
+		set last_seen_at=$2,
+		    status='active',
+		    agent_version=coalesce(nullif($3,''),agent_version),
+		    protocol_version=coalesce(nullif($4,''),protocol_version)
+		where node_id=(select id from nodes where name=$1)`, nodeName, now, strings.TrimSpace(agentVersion), strings.TrimSpace(protocolVersion))
 	return nil
 }
 
@@ -1774,6 +1838,10 @@ func (s *Store) ListNodeEnrollmentTokens(ctx context.Context, nodeID string) ([]
 }
 
 func (s *Store) RegisterAgentWithEnrollment(ctx context.Context, nodeID, token, name, address string) (domain.Node, string, error) {
+	return s.RegisterAgentWithEnrollmentVersion(ctx, nodeID, token, name, address, "", "")
+}
+
+func (s *Store) RegisterAgentWithEnrollmentVersion(ctx context.Context, nodeID, token, name, address, agentVersion, protocolVersion string) (domain.Node, string, error) {
 	if nodeID == "" || token == "" {
 		return domain.Node{}, "", errors.New("node_id and enrollment_token are required")
 	}
@@ -1814,7 +1882,19 @@ func (s *Store) RegisterAgentWithEnrollment(ctx context.Context, nodeID, token, 
 		return domain.Node{}, "", err
 	}
 	fingerprint := "sha256:" + hash[:32]
-	_, err = tx.Exec(ctx, `insert into node_agents(id,node_id,status,agent_version,protocol_version,fingerprint,registered_at,last_seen_at,agent_token_hash,token_hint) values($1,$2,'active','alpha','v1',$3,$4,$4,$5,$6) on conflict(node_id) do update set status='active', agent_version='alpha', protocol_version='v1', fingerprint=excluded.fingerprint, last_seen_at=excluded.last_seen_at, agent_token_hash=excluded.agent_token_hash, token_hint=excluded.token_hint, revoked_at=null`, id.New(), nodeID, fingerprint, now, agentHash, agentHint)
+	agentVersion = normalizeAgentRuntimeVersion(agentVersion, "alpha")
+	protocolVersion = normalizeAgentRuntimeVersion(protocolVersion, "v1")
+	_, err = tx.Exec(ctx, `insert into node_agents(id,node_id,status,agent_version,protocol_version,fingerprint,registered_at,last_seen_at,agent_token_hash,token_hint)
+		values($1,$2,'active',$3,$4,$5,$6,$6,$7,$8)
+		on conflict(node_id) do update
+		set status='active',
+		    agent_version=excluded.agent_version,
+		    protocol_version=excluded.protocol_version,
+		    fingerprint=excluded.fingerprint,
+		    last_seen_at=excluded.last_seen_at,
+		    agent_token_hash=excluded.agent_token_hash,
+		    token_hint=excluded.token_hint,
+		    revoked_at=null`, id.New(), nodeID, agentVersion, protocolVersion, fingerprint, now, agentHash, agentHint)
 	if err != nil {
 		return domain.Node{}, "", err
 	}
@@ -1827,6 +1907,10 @@ func (s *Store) RegisterAgentWithEnrollment(ctx context.Context, nodeID, token, 
 }
 
 func (s *Store) HeartbeatByNodeID(ctx context.Context, nodeID string) error {
+	return s.HeartbeatByNodeIDWithVersion(ctx, nodeID, "", "")
+}
+
+func (s *Store) HeartbeatByNodeIDWithVersion(ctx context.Context, nodeID, agentVersion, protocolVersion string) error {
 	now := time.Now().UTC()
 	cmd, err := s.db.Exec(ctx, `update nodes set status='online',agent_status='online',last_heartbeat_at=$2,updated_at=$2 where id=$1 and status <> 'retired'`, nodeID, now)
 	if err != nil {
@@ -1835,8 +1919,21 @@ func (s *Store) HeartbeatByNodeID(ctx context.Context, nodeID string) error {
 	if cmd.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
-	_, _ = s.db.Exec(ctx, `update node_agents set last_seen_at=$2,status='active' where node_id=$1`, nodeID, now)
+	_, _ = s.db.Exec(ctx, `update node_agents
+		set last_seen_at=$2,
+		    status='active',
+		    agent_version=coalesce(nullif($3,''),agent_version),
+		    protocol_version=coalesce(nullif($4,''),protocol_version)
+		where node_id=$1`, nodeID, now, strings.TrimSpace(agentVersion), strings.TrimSpace(protocolVersion))
 	return nil
+}
+
+func normalizeAgentRuntimeVersion(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value
+	}
+	return strings.TrimSpace(fallback)
 }
 
 type jobScanner interface {

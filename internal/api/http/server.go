@@ -144,8 +144,8 @@ type Store interface {
 	CreateManagedPlatformServicePKIRoot(context.Context, string, string, string, int) (domain.PlatformServicePKIRoot, error)
 	CreateNodeEnrollmentToken(context.Context, string, time.Duration) (domain.NodeEnrollmentToken, error)
 	ListNodeEnrollmentTokens(context.Context, string) ([]domain.NodeEnrollmentToken, error)
-	RegisterAgentWithEnrollment(context.Context, string, string, string, string) (domain.Node, string, error)
-	UpsertAgentNode(context.Context, string, string, string) (domain.Node, error)
+	RegisterAgentWithEnrollmentVersion(context.Context, string, string, string, string, string, string) (domain.Node, string, error)
+	UpsertAgentNodeWithVersion(context.Context, string, string, string, string, string) (domain.Node, error)
 	ValidateAgentToken(context.Context, string, string) bool
 	ValidateAgentTokenForJob(context.Context, string, string) bool
 	RecordAgentAuthFailure(context.Context, string, string) error
@@ -153,8 +153,8 @@ type Store interface {
 	RecordAgentJobClaim(context.Context, string, string, string) error
 	RecordAgentJobResult(context.Context, string, string, string, string) error
 	RecordAgentInventorySync(context.Context, string, string) error
-	HeartbeatByNodeID(context.Context, string) error
-	Heartbeat(context.Context, string) error
+	HeartbeatByNodeIDWithVersion(context.Context, string, string, string) error
+	HeartbeatWithVersion(context.Context, string, string, string) error
 	AgentNextJob(context.Context, string) (domain.Job, bool, error)
 	CompleteJob(context.Context, string, string, map[string]any) error
 	AddJobLog(context.Context, string, string, string, map[string]any) error
@@ -560,17 +560,19 @@ func (s *Server) ready(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 func (s *Server) versionHandler(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, 200, response{
-		"service":               "megavpn-api",
-		"version":               s.version,
-		"public_base_url":       s.publicBaseURL,
-		"agent_register_url":    joinPublicURL(s.publicBaseURL, "/agent/register"),
-		"agent_heartbeat_url":   joinPublicURL(s.publicBaseURL, "/agent/heartbeat"),
-		"agent_next_job_url":    joinPublicURL(s.publicBaseURL, "/agent/jobs/next"),
-		"agent_job_result_url":  joinPublicURL(s.publicBaseURL, "/agent/jobs/{id}/result"),
-		"agent_inventory_url":   joinPublicURL(s.publicBaseURL, "/agent/inventory"),
-		"agent_runtime_url":     joinPublicURL(s.publicBaseURL, "/agent/runtime/instances"),
-		"agent_public_url_note": "MEGAVPN_PUBLIC_BASE_URL must be reachable from every remote agent node, including custom ports.",
-		"time":                  time.Now().UTC().Format(time.RFC3339),
+		"service":                "megavpn-api",
+		"version":                s.version,
+		"agent_target_version":   s.version,
+		"agent_protocol_version": "v1",
+		"public_base_url":        s.publicBaseURL,
+		"agent_register_url":     joinPublicURL(s.publicBaseURL, "/agent/register"),
+		"agent_heartbeat_url":    joinPublicURL(s.publicBaseURL, "/agent/heartbeat"),
+		"agent_next_job_url":     joinPublicURL(s.publicBaseURL, "/agent/jobs/next"),
+		"agent_job_result_url":   joinPublicURL(s.publicBaseURL, "/agent/jobs/{id}/result"),
+		"agent_inventory_url":    joinPublicURL(s.publicBaseURL, "/agent/inventory"),
+		"agent_runtime_url":      joinPublicURL(s.publicBaseURL, "/agent/runtime/instances"),
+		"agent_public_url_note":  "MEGAVPN_PUBLIC_BASE_URL must be reachable from every remote agent node, including custom ports.",
+		"time":                   time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
@@ -1431,10 +1433,14 @@ type agentRegisterReq struct {
 	Address         string `json:"address"`
 	Token           string `json:"token"`
 	EnrollmentToken string `json:"enrollment_token"`
+	AgentVersion    string `json:"agent_version"`
+	ProtocolVersion string `json:"protocol_version"`
 }
 type agentHeartbeatReq struct {
-	NodeID string `json:"node_id"`
-	Name   string `json:"name"`
+	NodeID          string `json:"node_id"`
+	Name            string `json:"name"`
+	AgentVersion    string `json:"agent_version"`
+	ProtocolVersion string `json:"protocol_version"`
 }
 type agentInventoryReq struct {
 	NodeID    string         `json:"node_id"`
@@ -1500,9 +1506,9 @@ func (s *Server) agentRegister(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var agentToken string
 	var err error
 	if req.NodeID != "" && req.EnrollmentToken != "" {
-		n, agentToken, err = s.store.RegisterAgentWithEnrollment(r.Context(), req.NodeID, req.EnrollmentToken, req.Name, req.Address)
+		n, agentToken, err = s.store.RegisterAgentWithEnrollmentVersion(r.Context(), req.NodeID, req.EnrollmentToken, req.Name, req.Address, req.AgentVersion, req.ProtocolVersion)
 	} else if s.allowAutoRegister && s.authorizeAgentBootstrap(r, req.Token) {
-		n, err = s.store.UpsertAgentNode(r.Context(), req.Name, req.Address, req.Token)
+		n, err = s.store.UpsertAgentNodeWithVersion(r.Context(), req.Name, req.Address, req.Token, req.AgentVersion, req.ProtocolVersion)
 		agentToken = req.Token
 	} else {
 		writeErr(w, 401, "agent enrollment required: set MEGAVPN_AGENT_NODE_ID and MEGAVPN_AGENT_ENROLLMENT_TOKEN")
@@ -1527,9 +1533,9 @@ func (s *Server) agentHeartbeat(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	var err error
 	if req.NodeID != "" {
-		err = s.store.HeartbeatByNodeID(r.Context(), req.NodeID)
+		err = s.store.HeartbeatByNodeIDWithVersion(r.Context(), req.NodeID, req.AgentVersion, req.ProtocolVersion)
 	} else {
-		err = s.store.Heartbeat(r.Context(), req.Name)
+		err = s.store.HeartbeatWithVersion(r.Context(), req.Name, req.AgentVersion, req.ProtocolVersion)
 	}
 	if err != nil {
 		writeErr(w, 404, "node not registered")

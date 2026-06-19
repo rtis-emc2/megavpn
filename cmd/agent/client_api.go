@@ -33,6 +33,8 @@ func (c client) register(ctx context.Context, b bootstrapConfig) (*agentState, e
 		"address":          b.NodeAddress,
 		"token":            b.DevToken,
 		"enrollment_token": b.EnrollmentToken,
+		"agent_version":    appVersion,
+		"protocol_version": "v1",
 	}
 	var out registerResp
 	if err := c.post(ctx, "/agent/register", payload, &out); err != nil {
@@ -58,7 +60,12 @@ func (c client) register(ctx context.Context, b bootstrapConfig) (*agentState, e
 }
 
 func (c client) heartbeat(ctx context.Context, nodeID, name string) error {
-	return c.post(ctx, "/agent/heartbeat", map[string]any{"node_id": nodeID, "name": name}, nil)
+	return c.post(ctx, "/agent/heartbeat", map[string]any{
+		"node_id":          nodeID,
+		"name":             name,
+		"agent_version":    appVersion,
+		"protocol_version": "v1",
+	}, nil)
 }
 
 func (c client) submitInventory(ctx context.Context, nodeID, source string, inv map[string]any) error {

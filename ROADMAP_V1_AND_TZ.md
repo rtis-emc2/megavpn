@@ -1,7 +1,7 @@
 # RTIS MegaVPN Platform v1.0 Roadmap and Technical Specification
 
 Дата анализа: 2026-05-15  
-Базовая версия кода: RTIS MegaVPN 0.6.10.5-alpha
+Базовая версия кода: RTIS MegaVPN 0.6.10.6-alpha
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 
@@ -967,7 +967,26 @@ v1.0 can be released only when:
 - Отдельный операторский action `force detach` для ситуации, когда node потеряна навсегда и cleanup физически невозможен.
 - Автоматический health-based backhaul failover между несколькими transport profiles.
 
-## 13. Immediate Next Actions
+## 13. Release 0.6.10.6-alpha Closure
+
+Цель релиза `0.6.10.6-alpha`: сделать agent version drift видимым и управляемым из Nodes без ручного захода в диагностику каждой ноды.
+
+Зафиксировано в этом релизе:
+
+- Agent register/heartbeat передают `agent_version` и `protocol_version` в Control Plane.
+- `/api/v1/nodes` возвращает версию агента, protocol version, registered/last_seen timestamps из `node_agents`.
+- `/api/v1/version` публикует `agent_target_version`, используемую UI как целевую версию агентского runtime.
+- Nodes UI показывает версию агента и `Update` для remote nodes с устаревшей/legacy версией.
+- Nodes UI получил верхнюю bulk action `Update all agents`, которая ставит SSH-bootstrap reinstall jobs для всех outdated remote agents.
+- Обновление агента идет через существующий audited `node.bootstrap` path с `reinstall_agent=true`; без enabled SSH access method API откажет безопасной ошибкой.
+
+Что сознательно остается на `0.6.10.6-alpha+`:
+
+- Отдельный binary artifact registry для agent packages вместо copy-from-current-checkout bootstrap path.
+- Фоновый automatic agent rollout policy с maintenance windows и canary rollout.
+- Dedicated agent upgrade endpoint с dry-run/eligibility report вместо UI loop over node bootstrap endpoint.
+
+## 14. Immediate Next Actions
 
 1. Принять решения по open questions 1-4, потому что они влияют на scope, schema и frontend.
 2. Поднять Go toolchain/CI и зафиксировать build/test baseline.

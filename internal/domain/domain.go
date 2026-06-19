@@ -3,20 +3,24 @@ package domain
 import "time"
 
 type Node struct {
-	ID              string     `json:"id"`
-	Name            string     `json:"name"`
-	Kind            string     `json:"kind"`
-	Role            string     `json:"role"`
-	Status          string     `json:"status"`
-	Address         string     `json:"address"`
-	OSFamily        string     `json:"os_family"`
-	OSVersion       string     `json:"os_version"`
-	Architecture    string     `json:"architecture"`
-	ExecutionMode   string     `json:"execution_mode"`
-	AgentStatus     string     `json:"agent_status"`
-	LastHeartbeatAt *time.Time `json:"last_heartbeat_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID                   string     `json:"id"`
+	Name                 string     `json:"name"`
+	Kind                 string     `json:"kind"`
+	Role                 string     `json:"role"`
+	Status               string     `json:"status"`
+	Address              string     `json:"address"`
+	OSFamily             string     `json:"os_family"`
+	OSVersion            string     `json:"os_version"`
+	Architecture         string     `json:"architecture"`
+	ExecutionMode        string     `json:"execution_mode"`
+	AgentStatus          string     `json:"agent_status"`
+	AgentVersion         string     `json:"agent_version"`
+	AgentProtocolVersion string     `json:"agent_protocol_version"`
+	AgentRegisteredAt    *time.Time `json:"agent_registered_at,omitempty"`
+	AgentLastSeenAt      *time.Time `json:"agent_last_seen_at,omitempty"`
+	LastHeartbeatAt      *time.Time `json:"last_heartbeat_at"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 type NodeAccessMethod struct {
