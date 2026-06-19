@@ -1,8 +1,8 @@
 # Next steps
 
 Актуальный baseline: `ROADMAP_V1_AND_TZ.md`.
-Текущая точка фиксации: `0.6.10.2-alpha`.
-Следующая итерация: `0.6.10.3-alpha`.
+Текущая точка фиксации: `0.6.10.3-alpha`.
+Следующая итерация: `0.6.10.4-alpha`.
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`.
 
 1. Зафиксировать CI green после managed backhaul probe/cleanup lifecycle: `bash -n`, `go test`, `go vet`, `go build`, `scripts/build.sh`, `git diff --check`.

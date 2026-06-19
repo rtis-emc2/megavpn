@@ -1,7 +1,7 @@
 # RTIS MegaVPN Platform v1.0 Roadmap and Technical Specification
 
 Дата анализа: 2026-05-15  
-Базовая версия кода: RTIS MegaVPN 0.6.10.2-alpha
+Базовая версия кода: RTIS MegaVPN 0.6.10.3-alpha
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 
@@ -921,9 +921,9 @@ v1.0 can be released only when:
 7. Где должен жить production artifact storage: local filesystem only или сразу закладываем S3-compatible abstraction?
 8. Требуется ли MFA для admin/superadmin в v1.0?
 
-## 11. Release 0.6.10.2-alpha Closure
+## 11. Release 0.6.10.3-alpha Closure
 
-Цель релиза `0.6.10.2-alpha`: закрыть базовую production-структуру перед следующей итерацией `0.6.10.3-alpha`.
+Цель релиза `0.6.10.3-alpha`: закрыть frontend bootstrap hotfix перед следующей итерацией `0.6.10.4-alpha`.
 
 Зафиксировано в этом релизе:
 
@@ -934,11 +934,12 @@ v1.0 can be released only when:
 - Managed Backhaul получил bidirectional probe jobs с RTT/packet-loss projection в `health_json`.
 - Managed Backhaul delete больше не является только soft-delete: cleanup jobs удаляют управляемые systemd units и backhaul directories на ingress/egress nodes.
 - OpenVPN UDP backhaul profile усилен совместимым static-key fallback профилем с HMAC-SHA256, replay window, keepalive, MTU/MSS параметрами и operator profile JSON.
+- Backhaul UI перестал жестко падать при частично обновленных/закешированных frontend assets; startup errors теперь показываются как понятный аварийный экран вместо белой страницы.
 - OpenVPN instance config path стал slug-scoped, что соответствует `openvpn-server@<slug>`.
 - Deploy script подтверждает обновление из GitHub, проверяет dirty worktree и требует `rsync`.
 - Добавлен PKI root inventory endpoint/UI для операторского контроля текущих platform CA roots.
 
-Что сознательно остается на `0.6.10.2-alpha+`:
+Что сознательно остается на `0.6.10.3-alpha+`:
 
 - Automatic health-based backhaul failover между несколькими transport profiles.
 - OpenVPN revoke/rotation runtime state validation на удаленном тесте.

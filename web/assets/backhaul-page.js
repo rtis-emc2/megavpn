@@ -23,7 +23,6 @@
       typeof tableCard !== 'function' ||
       typeof statusTag !== 'function' ||
       typeof escapeHTML !== 'function' ||
-      typeof requestJSON !== 'function' ||
       typeof sendJSON !== 'function' ||
       typeof refresh !== 'function' ||
       typeof openModal !== 'function' ||
@@ -32,6 +31,9 @@
     ) {
       throw new Error('MegaVPNBackhaulPage requires page dependencies');
     }
+    const getJSON = typeof requestJSON === 'function'
+      ? requestJSON
+      : (path) => sendJSON(path, 'GET', null);
 
     function nodeByID(id) {
       return (state.nodes || []).find((node) => node.id === id) || null;
@@ -126,7 +128,7 @@
         const jobs = [];
         for (const id of ids) {
           try {
-            jobs.push(await requestJSON(`/api/v1/jobs/${encodeURIComponent(id)}`));
+            jobs.push(await getJSON(`/api/v1/jobs/${encodeURIComponent(id)}`));
           } catch (err) {
             jobs.push({ id, status: 'failed', type: 'unknown', error: err.message });
           }

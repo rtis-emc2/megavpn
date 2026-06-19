@@ -1,4 +1,30 @@
 (() => {
+  function escapeBootstrapHTML(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
+  }
+
+  function renderBootstrapError(error) {
+    if (window.__MegaVPNBootReady) return;
+    const message = typeof error === 'string' ? error : (error?.message || 'Frontend bootstrap failed');
+    const authGate = document.getElementById('authGate');
+    const appShell = document.getElementById('appShell');
+    if (appShell) appShell.hidden = true;
+    if (!authGate) return;
+    authGate.hidden = false;
+    authGate.innerHTML = `
+      <div class="auth-card">
+        <div class="eyebrow">Frontend error</div>
+        <h1>Unable to load control plane UI</h1>
+        <p class="muted">The browser loaded incompatible or incomplete frontend assets. Refresh the page after deployment finishes.</p>
+        <div class="form-result"><span class="tag danger">${escapeBootstrapHTML(message)}</span></div>
+        <button class="primary-btn" type="button" data-bootstrap-refresh>Refresh</button>
+      </div>`;
+    authGate.querySelector('[data-bootstrap-refresh]')?.addEventListener('click', () => window.location.reload());
+  }
+
+  window.addEventListener('error', (event) => renderBootstrapError(event.error || event.message));
+  window.addEventListener('unhandledrejection', (event) => renderBootstrapError(event.reason || 'Unhandled frontend promise rejection'));
+
   const state = {
     page: 'dashboard',
     apiBase: localStorage.getItem('megavpn.apiBase') || '',
@@ -3450,7 +3476,13 @@ key_secret_ref = ${escapeHTML(item.key_secret_ref_id || 'n/a')}</div>
     });
   }
 
-  bind();
-  render();
-  refresh();
+  try {
+    bind();
+    render();
+    refresh();
+    window.__MegaVPNBootReady = true;
+  } catch (err) {
+    renderBootstrapError(err);
+    throw err;
+  }
 })();
