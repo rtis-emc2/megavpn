@@ -64,6 +64,7 @@ Core API/UI:
 15. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer route lookup, peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
 16. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; missing units/files/directories/interfaces are reported as `not found - skip`, and only after the cleanup batch succeeds does the link move to `deleted`.
 17. Before queueing a new cleanup batch and before Jobs API reads, the backend recovers stale `running` jobs whose lease has expired back to `retrying`. This prevents a dead agent request or interrupted process from blocking backhaul deletion indefinitely.
+18. Deleted links are excluded from active Backhaul operations but remain visible for a short operator-review window in the Backhaul UI `Recently Deleted Backhaul` table with per-transport ingress/egress cleanup summaries.
 
 ## Security Model
 
@@ -103,6 +104,7 @@ Minimum production path for the first ingress/egress pair:
 - Agent offline: jobs remain queued until the agent polls. If an agent claimed a job and died, the backend returns the expired `running` lease to `retrying`.
 - Endpoint unreachable: tunnel unit may start but health reports `degraded`; inspect agent job result and transport health.
 - Cleanup failed: link remains `failed`; inspect the cleanup job result. Stale `running` cleanup jobs are recovered automatically after lease expiry, but real failed/cancelled jobs still require operator retry. The agent will not remove paths outside the managed backhaul directory or managed systemd unit prefix.
+- Cleanup succeeded and link disappeared from the active list: expected lifecycle behavior. The link is now `deleted`; use the `Recently Deleted Backhaul` table and Jobs/Audit views for cleanup confirmation.
 - Xray/IPsec selected: config is written and status becomes `materialized`, but it is not enabled automatically; manual transport activation is required until the driver-specific safety gate exists.
 - Duplicate ingress/egress/name: database constraint blocks active duplicate links.
 - Route table is `main`: kernel enforcement skips the route; managed backhaul links allocate a dedicated table automatically.

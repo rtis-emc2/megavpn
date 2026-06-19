@@ -404,6 +404,7 @@
     openModal,
     closeModal,
     renderActionResponse,
+    formatDate,
   });
   if (!backhaulPage) throw new Error('MegaVPNBackhaulPage is not loaded');
 

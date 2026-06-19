@@ -15,6 +15,7 @@
       openModal,
       closeModal,
       renderActionResponse,
+      formatDate,
     } = ctx;
     if (
       !state ||
@@ -34,6 +35,9 @@
     const getJSON = typeof requestJSON === 'function'
       ? requestJSON
       : (path) => sendJSON(path, 'GET', null);
+    const renderDate = typeof formatDate === 'function'
+      ? formatDate
+      : (value) => String(value || 'n/a');
 
     function nodeByID(id) {
       return (state.nodes || []).find((node) => node.id === id) || null;
@@ -184,6 +188,30 @@
       return '<span class="tag">not applied</span>';
     }
 
+    function cleanupRoleSummary(cleanup, role) {
+      if (!cleanup || typeof cleanup !== 'object') return `${role}: n/a`;
+      const status = firstText(cleanup.status, 'unknown');
+      const removed = Array.isArray(cleanup.removed_paths) ? cleanup.removed_paths.length : 0;
+      const skipped = Array.isArray(cleanup.skipped_items) ? cleanup.skipped_items.length : 0;
+      const parts = [`${role}: ${status}`];
+      if (removed) parts.push(`${removed} removed`);
+      if (skipped) parts.push(`${skipped} skipped`);
+      return parts.join(' · ');
+    }
+
+    function deletedCleanupSummary(link) {
+      const transports = Array.isArray(link?.transports) ? link.transports : [];
+      if (!transports.length) return 'No transport cleanup records.';
+      return transports.map((transport) => {
+        const cleanup = transport.health?.cleanup || {};
+        return [
+          transport.driver || 'transport',
+          cleanupRoleSummary(cleanup.ingress, 'ingress'),
+          cleanupRoleSummary(cleanup.egress, 'egress'),
+        ].join(' · ');
+      }).join(' | ');
+    }
+
     function probeBlockReason(link, transport) {
       if (!transport) return 'Selected transport is not available.';
       if (String(link?.status || '').toLowerCase() !== 'active') return 'Apply profiles successfully on both nodes before testing.';
@@ -280,7 +308,9 @@
 
     function render() {
       setTitle('Backhaul');
-      const links = Array.isArray(state.backhaulLinks) ? state.backhaulLinks.filter((link) => link.status !== 'deleted') : [];
+      const allLinks = Array.isArray(state.backhaulLinks) ? state.backhaulLinks : [];
+      const links = allLinks.filter((link) => link.status !== 'deleted');
+      const deletedLinks = allLinks.filter((link) => link.status === 'deleted');
       const rows = links.map((link) => {
         const ingress = nodeByID(link.ingress_node_id);
         const egress = nodeByID(link.egress_node_id);
@@ -302,6 +332,18 @@
           probeTitle: blockReason,
         };
       });
+      const deletedRows = deletedLinks.map((link) => {
+        const ingress = nodeByID(link.ingress_node_id);
+        const egress = nodeByID(link.egress_node_id);
+        return {
+          name: link.name || 'backhaul',
+          ingress: ingress?.name || link.ingress_node_id,
+          egress: egress?.name || link.egress_node_id,
+          deletedAt: renderDate(link.updated_at),
+          profiles: renderTransportTags(link),
+          cleanup: deletedCleanupSummary(link),
+        };
+      });
       el('content').innerHTML = `
         ${tableCard('Ingress to Egress Backhaul', rows, [
           { title: 'Name', key: 'name' },
@@ -321,7 +363,15 @@
               <button class="secondary-btn probe-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}" title="${escapeHTML(row.probeTitle || 'Test both directions')}"${row.canProbe ? '' : ' disabled'}>Test</button>
               <button class="danger-btn delete-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}" data-link-name="${escapeHTML(row.name)}">Delete</button>
             </div>` },
-        ], '<button class="secondary-btn" id="createBackhaulBtn" type="button">Create backhaul</button>')}`;
+        ], '<button class="secondary-btn" id="createBackhaulBtn" type="button">Create backhaul</button>')}
+        ${deletedRows.length ? tableCard('Recently Deleted Backhaul', deletedRows, [
+          { title: 'Name', key: 'name' },
+          { title: 'Ingress', key: 'ingress' },
+          { title: 'Egress', key: 'egress' },
+          { title: 'Deleted', key: 'deletedAt' },
+          { title: 'Profiles', key: 'profiles', render: (row) => row.profiles },
+          { title: 'Cleanup', key: 'cleanup' },
+        ]) : ''}`;
       bindPageActions();
     }
 

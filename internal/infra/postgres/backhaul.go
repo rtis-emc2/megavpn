@@ -50,6 +50,7 @@ func (s *Store) ListBackhaulLinks(ctx context.Context) ([]domain.BackhaulLink, e
 		updated_at
 	from backhaul_links
 	where status <> 'deleted'
+	   or updated_at >= now() - interval '24 hours'
 	order by created_at desc`)
 	if err != nil {
 		return nil, err
