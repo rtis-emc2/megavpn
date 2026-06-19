@@ -65,6 +65,7 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 	if !isSafeBackhaulManagedPath(outputPath) {
 		return "failed", map[string]any{"error": "backhaul manifest path is not allowed", "output_path": outputPath, "link_id": linkID, "transport_id": transportID, "role": role}
 	}
+	previousManifest := readBackhaulManifest(outputPath)
 	manifest := redactedBackhaulManifest(j.Payload)
 	b, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -101,6 +102,34 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 			result["error"] = "backhaul systemd_unit is invalid"
 			return "failed", result
 		}
+		iface := stringify(j.Payload["interface_name"])
+		if !isSafeBackhaulInterface(iface) {
+			result["error"] = "backhaul interface_name is invalid"
+			return "failed", result
+		}
+		previousCleanup, err := cleanupPreviousBackhaulRuntime(ctx, previousManifest, unit, iface, changed)
+		if len(previousCleanup) > 0 {
+			result["previous_runtime_cleanup"] = previousCleanup
+		}
+		if err != nil {
+			result["error"] = err.Error()
+			return "failed", result
+		}
+		if !backhaulUnitNotFound(unit) {
+			stopCode, stopOut := runInstallCommand(ctx, "systemctl", "stop", unit)
+			result["pre_start_stop_output"] = truncate(stopOut, 2000)
+			if stopCode != 0 {
+				result["pre_start_stop_warning"] = "existing backhaul unit stop failed: " + firstLine(stopOut)
+			}
+			_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", unit)
+		}
+		ifaceCleanup, err := cleanupBackhaulInterface(ctx, iface)
+		if err != nil {
+			result["error"] = err.Error()
+			result["interface_cleanup"] = ifaceCleanup
+			return "failed", result
+		}
+		result["interface_cleanup"] = ifaceCleanup
 		_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
 		code, out := runInstallCommand(ctx, "systemctl", "enable", "--now", unit)
 		result["systemd_unit"] = unit
@@ -217,6 +246,15 @@ func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (stri
 		_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", unit)
 		stoppedUnits = append(stoppedUnits, unit)
 	}
+	ifaceCleanup, err := cleanupBackhaulInterface(ctx, stringify(j.Payload["interface_name"]))
+	if err != nil {
+		return "failed", map[string]any{"error": err.Error(), "interface_cleanup": ifaceCleanup, "link_id": linkID, "transport_id": transportID, "role": role}
+	}
+	if stringify(ifaceCleanup["status"]) == "removed" {
+		removedPaths = append(removedPaths, stringify(ifaceCleanup["interface"])+": interface removed")
+	} else if skipped := stringify(ifaceCleanup["status"]); skipped != "" && stringify(ifaceCleanup["interface"]) != "" {
+		skippedItems = append(skippedItems, stringify(ifaceCleanup["interface"])+": "+skipped)
+	}
 	for _, path := range paths {
 		if !isSafeBackhaulManagedPath(path) {
 			return "failed", map[string]any{"error": "backhaul managed file path is not allowed", "path": path, "link_id": linkID, "transport_id": transportID, "role": role}
@@ -247,17 +285,18 @@ func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (stri
 	}
 	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
 	return "succeeded", map[string]any{
-		"message":         "backhaul transport cleaned from node",
-		"node_id":         nodeID,
-		"link_id":         linkID,
-		"transport_id":    transportID,
-		"role":            role,
-		"driver":          driver,
-		"delete_batch_id": stringify(j.Payload["delete_batch_id"]),
-		"stopped_units":   stoppedUnits,
-		"removed_paths":   removedPaths,
-		"skipped_items":   skippedItems,
-		"warnings":        warnings,
+		"message":           "backhaul transport cleaned from node",
+		"node_id":           nodeID,
+		"link_id":           linkID,
+		"transport_id":      transportID,
+		"role":              role,
+		"driver":            driver,
+		"delete_batch_id":   stringify(j.Payload["delete_batch_id"]),
+		"stopped_units":     stoppedUnits,
+		"removed_paths":     removedPaths,
+		"skipped_items":     skippedItems,
+		"warnings":          warnings,
+		"interface_cleanup": ifaceCleanup,
 	}
 }
 
@@ -290,6 +329,165 @@ func isSafeBackhaulManagedDir(path string) bool {
 func isSafeBackhaulUnit(unit string) bool {
 	unit = strings.TrimSpace(unit)
 	return strings.HasPrefix(unit, "megavpn-backhaul-") && strings.HasSuffix(unit, ".service") && !strings.Contains(unit, "/") && !strings.Contains(unit, "..")
+}
+
+func readBackhaulManifest(path string) map[string]any {
+	path = strings.TrimSpace(path)
+	if path == "" || !isSafeBackhaulManagedPath(path) {
+		return nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(b, &manifest); err != nil {
+		return nil
+	}
+	return manifest
+}
+
+func isSafeBackhaulInterface(iface string) bool {
+	iface = strings.TrimSpace(iface)
+	if iface == "" || len(iface) > 15 || !strings.HasPrefix(iface, "mgbh") {
+		return false
+	}
+	for _, r := range iface {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func cleanupPreviousBackhaulRuntime(ctx context.Context, previous map[string]any, currentUnit, currentIface string, currentPaths []string) (map[string]any, error) {
+	if len(previous) == 0 {
+		return nil, nil
+	}
+	result := map[string]any{}
+	currentPathSet := map[string]bool{}
+	for _, path := range currentPaths {
+		currentPathSet[strings.TrimSpace(path)] = true
+	}
+	previousUnit := stringify(previous["systemd_unit"])
+	if previousUnit != "" && previousUnit != currentUnit {
+		if !isSafeBackhaulUnit(previousUnit) {
+			result["previous_systemd_unit"] = previousUnit
+			result["previous_unit_status"] = "skipped"
+			result["previous_unit_reason"] = "previous systemd unit is invalid"
+			return result, fmt.Errorf("previous backhaul systemd_unit is invalid")
+		}
+		result["previous_systemd_unit"] = previousUnit
+		if backhaulUnitNotFound(previousUnit) {
+			result["previous_unit_status"] = "skipped"
+			result["previous_unit_reason"] = "unit not found - skip"
+		} else {
+			stopCode, stopOut := runInstallCommand(ctx, "systemctl", "stop", previousUnit)
+			result["previous_unit_stop_output"] = truncate(stopOut, 2000)
+			if stopCode != 0 {
+				result["previous_unit_status"] = "failed"
+				result["previous_unit_reason"] = "stop failed"
+				return result, fmt.Errorf("previous backhaul unit stop failed for %s: %s", previousUnit, firstLine(stopOut))
+			}
+			_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", previousUnit)
+			result["previous_unit_status"] = "stopped"
+		}
+		disableCode, disableOut := runInstallCommand(ctx, "systemctl", "disable", previousUnit)
+		result["previous_unit_disable_output"] = truncate(disableOut, 2000)
+		if disableCode != 0 && !isMissingSystemdUnitOutput(disableOut) {
+			result["previous_unit_status"] = "failed"
+			result["previous_unit_reason"] = "disable failed"
+			return result, fmt.Errorf("previous backhaul unit disable failed for %s: %s", previousUnit, firstLine(disableOut))
+		}
+	}
+	previousIface := stringify(previous["interface_name"])
+	if previousIface != "" && previousIface != currentIface {
+		ifaceCleanup, err := cleanupBackhaulInterface(ctx, previousIface)
+		result["previous_interface_cleanup"] = ifaceCleanup
+		if err != nil {
+			return result, err
+		}
+	}
+	removedPaths := []string{}
+	skippedPaths := []string{}
+	for _, path := range backhaulManifestFilePaths(previous) {
+		if currentPathSet[path] {
+			continue
+		}
+		if !isSafeBackhaulManagedPath(path) {
+			return result, fmt.Errorf("previous backhaul managed file path is not allowed: %s", path)
+		}
+		removed, err := removeManagedPath(path, false)
+		if err != nil {
+			return result, err
+		}
+		if removed {
+			removedPaths = append(removedPaths, path)
+		} else {
+			skippedPaths = append(skippedPaths, path+": not found - skip")
+		}
+	}
+	if len(removedPaths) > 0 {
+		result["previous_removed_paths"] = removedPaths
+	}
+	if len(skippedPaths) > 0 {
+		result["previous_skipped_paths"] = skippedPaths
+	}
+	return result, nil
+}
+
+func backhaulManifestFilePaths(manifest map[string]any) []string {
+	items, ok := manifest["files"].([]any)
+	if !ok {
+		return nil
+	}
+	paths := []string{}
+	seen := map[string]bool{}
+	for _, item := range items {
+		fileMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		path := strings.TrimSpace(stringify(fileMap["path"]))
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func cleanupBackhaulInterface(ctx context.Context, iface string) (map[string]any, error) {
+	iface = strings.TrimSpace(iface)
+	result := map[string]any{"interface": iface}
+	if iface == "" {
+		result["status"] = "skipped"
+		result["reason"] = "interface name is empty"
+		return result, nil
+	}
+	if !isSafeBackhaulInterface(iface) {
+		result["status"] = "failed"
+		result["reason"] = "interface name is not a managed backhaul interface"
+		return result, fmt.Errorf("backhaul interface_name is invalid")
+	}
+	showCode, showOut := runInstallCommand(ctx, "ip", "link", "show", "dev", iface)
+	result["link_output"] = truncate(showOut, 1000)
+	if showCode != 0 {
+		result["status"] = "skipped"
+		result["reason"] = "interface not found - skip"
+		return result, nil
+	}
+	deleteCode, deleteOut := runInstallCommand(ctx, "ip", "link", "delete", "dev", iface)
+	result["delete_output"] = truncate(deleteOut, 1000)
+	if deleteCode != 0 {
+		result["status"] = "failed"
+		result["reason"] = "interface delete failed"
+		return result, fmt.Errorf("backhaul interface cleanup failed for %s: %s", iface, firstLine(deleteOut))
+	}
+	result["status"] = "removed"
+	return result, nil
 }
 
 func redactedBackhaulManifest(payload map[string]any) map[string]any {

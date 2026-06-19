@@ -64,6 +64,41 @@ func TestBackhaulUnitSafety(t *testing.T) {
 	}
 }
 
+func TestBackhaulInterfaceSafety(t *testing.T) {
+	t.Parallel()
+
+	if !isSafeBackhaulInterface("mgbh25d1660cc1") {
+		t.Fatal("expected managed backhaul interface to be allowed")
+	}
+	for _, iface := range []string{
+		"",
+		"eth0",
+		"wg0",
+		"mgbh../../x",
+		"mgbh-this-name-is-too-long",
+	} {
+		if isSafeBackhaulInterface(iface) {
+			t.Fatalf("interface %q should be blocked", iface)
+		}
+	}
+}
+
+func TestBackhaulManifestFilePaths(t *testing.T) {
+	t.Parallel()
+
+	got := backhaulManifestFilePaths(map[string]any{
+		"files": []any{
+			map[string]any{"path": "/etc/megavpn/backhaul/link/old.conf"},
+			map[string]any{"path": "/etc/megavpn/backhaul/link/old.conf"},
+			map[string]any{"path": "  "},
+			"unexpected",
+		},
+	})
+	if len(got) != 1 || got[0] != "/etc/megavpn/backhaul/link/old.conf" {
+		t.Fatalf("paths = %#v, want one unique managed path", got)
+	}
+}
+
 func TestMissingSystemdUnitOutputDetection(t *testing.T) {
 	t.Parallel()
 
