@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const defaultBackhaulRoot = "/etc/megavpn/backhaul/"
@@ -96,7 +97,16 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 			result["health"] = probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, unit, true, 1)
 			return "failed", result
 		}
+		health := probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, unit, true, 1)
+		result["health"] = health
+		if stringify(health["status"]) == "unhealthy" {
+			result["error"] = "backhaul activation health check failed"
+			result["health_status"] = health["status"]
+			result["health_reason"] = health["reason"]
+			return "failed", result
+		}
 		result["message"] = "backhaul transport materialized and activated"
+		return "succeeded", result
 	}
 	result["health"] = probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, stringify(j.Payload["systemd_unit"]), stringify(j.Payload["activate"]) == "true", 1)
 	return "succeeded", result
@@ -124,7 +134,7 @@ func (c client) probeBackhaul(ctx context.Context, j job, st agentState) (string
 	count := intFromPayload(j.Payload["probe_count"], 3)
 	health := probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), stringify(j.Payload["peer_address"]), unit, true, count)
 	status := "succeeded"
-	if health["status"] == "unhealthy" {
+	if stringify(health["status"]) != "healthy" {
 		status = "failed"
 	}
 	return status, map[string]any{
@@ -161,19 +171,31 @@ func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (stri
 	dirs := stringSliceFromPayload(j.Payload["directories"])
 	stoppedUnits := []string{}
 	removedPaths := []string{}
+	skippedItems := []string{}
 	warnings := []string{}
 	for _, unit := range units {
 		if !isSafeBackhaulUnit(unit) {
 			return "failed", map[string]any{"error": "backhaul systemd_unit is invalid", "systemd_unit": unit, "link_id": linkID, "transport_id": transportID, "role": role}
 		}
-		code, out := runInstallCommand(ctx, "systemctl", "disable", "--now", unit)
-		if code != 0 && !isMissingSystemdUnitOutput(out) {
-			return "failed", map[string]any{"error": "backhaul systemd disable failed", "systemd_unit": unit, "output": truncate(out, 2000), "link_id": linkID, "transport_id": transportID, "role": role}
+		if backhaulUnitNotFound(unit) {
+			skippedItems = append(skippedItems, unit+": not found - skip")
+			warnings = append(warnings, "systemd unit not found - skip: "+unit)
+			continue
+		}
+		stopCode, stopOut := runInstallCommand(ctx, "systemctl", "stop", unit)
+		if stopCode != 0 {
+			warnings = append(warnings, "systemd stop warning for "+unit+": "+firstLine(stopOut))
+		}
+		disableCode, disableOut := runInstallCommand(ctx, "systemctl", "disable", unit)
+		if disableCode != 0 {
+			if isMissingSystemdUnitOutput(disableOut) {
+				skippedItems = append(skippedItems, unit+": not found - skip")
+				warnings = append(warnings, "systemd unit not found - skip: "+unit)
+			} else {
+				warnings = append(warnings, "systemd disable warning for "+unit+": "+firstLine(disableOut))
+			}
 		}
 		_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", unit)
-		if code != 0 {
-			warnings = append(warnings, "systemd unit was already absent: "+unit)
-		}
 		stoppedUnits = append(stoppedUnits, unit)
 	}
 	for _, path := range paths {
@@ -186,6 +208,8 @@ func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (stri
 		}
 		if removed {
 			removedPaths = append(removedPaths, path)
+		} else {
+			skippedItems = append(skippedItems, path+": not found - skip")
 		}
 	}
 	for _, dir := range dirs {
@@ -198,6 +222,8 @@ func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (stri
 		}
 		if removed {
 			removedPaths = append(removedPaths, dir)
+		} else {
+			skippedItems = append(skippedItems, dir+": not found - skip")
 		}
 	}
 	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
@@ -211,6 +237,7 @@ func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (stri
 		"delete_batch_id": stringify(j.Payload["delete_batch_id"]),
 		"stopped_units":   stoppedUnits,
 		"removed_paths":   removedPaths,
+		"skipped_items":   skippedItems,
 		"warnings":        warnings,
 	}
 }
@@ -310,7 +337,15 @@ func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, a
 		health["reason"] = "interface name is empty"
 		return health
 	}
-	code, out := runInstallCommand(ctx, "ip", "link", "show", "dev", iface)
+	var code int
+	var out string
+	for attempt := 0; attempt < 5; attempt++ {
+		code, out = runInstallCommand(ctx, "ip", "link", "show", "dev", iface)
+		if code == 0 {
+			break
+		}
+		time.Sleep(time.Second)
+	}
 	health["interface"] = iface
 	health["link_output"] = truncate(out, 1000)
 	if code != 0 {
@@ -397,8 +432,15 @@ func isMissingSystemdUnitOutput(out string) bool {
 	out = strings.ToLower(out)
 	return strings.Contains(out, "does not exist") ||
 		strings.Contains(out, "not loaded") ||
+		strings.Contains(out, "not-found") ||
+		strings.Contains(out, "not found") ||
 		strings.Contains(out, "could not be found") ||
 		strings.Contains(out, "no such file")
+}
+
+func backhaulUnitNotFound(unit string) bool {
+	state := strings.ToLower(strings.TrimSpace(runOutput("systemctl", "show", unit, "-p", "LoadState", "--value")))
+	return state == "" || state == "not-found"
 }
 
 func stringSliceFromPayload(raw any) []string {

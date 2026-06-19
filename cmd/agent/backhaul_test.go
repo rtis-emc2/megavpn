@@ -64,6 +64,25 @@ func TestBackhaulUnitSafety(t *testing.T) {
 	}
 }
 
+func TestMissingSystemdUnitOutputDetection(t *testing.T) {
+	t.Parallel()
+
+	missing := []string{
+		"Unit megavpn-backhaul-test.service could not be found.",
+		"Failed to disable unit: Unit file megavpn-backhaul-test.service does not exist.",
+		"Loaded: not-found (Reason: Unit megavpn-backhaul-test.service not found.)",
+		"Unit megavpn-backhaul-test.service not loaded.",
+	}
+	for _, out := range missing {
+		if !isMissingSystemdUnitOutput(out) {
+			t.Fatalf("expected missing unit output to be detected: %q", out)
+		}
+	}
+	if isMissingSystemdUnitOutput("Job for megavpn-backhaul-test.service failed because the control process exited with error code.") {
+		t.Fatal("runtime stop failure must not be classified as missing unit")
+	}
+}
+
 func TestParsePingStats(t *testing.T) {
 	t.Parallel()
 

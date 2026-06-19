@@ -417,6 +417,9 @@ func (s *Store) ApplyBackhaulCleanupResult(ctx context.Context, job domain.Job, 
 	if units, ok := result["stopped_units"]; ok {
 		cleanup["stopped_units"] = units
 	}
+	if skipped, ok := result["skipped_items"]; ok {
+		cleanup["skipped_items"] = skipped
+	}
 	if status != "succeeded" {
 		errText := firstNonEmptyRouteValue(stringify(result["error"]), "backhaul cleanup failed")
 		cleanup["error"] = errText

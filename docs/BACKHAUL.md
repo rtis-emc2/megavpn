@@ -53,20 +53,20 @@ Core API/UI:
 4. Operator applies the backhaul link.
 5. Control Plane queues two `node.backhaul.apply` jobs: one for ingress, one for egress.
 6. Each agent validates its own `node_id`, validates managed paths and writes only allowed files.
-7. For managed-systemd drivers, the agent reloads systemd, enables the generated unit and records interface/peer health.
+7. For managed-systemd drivers, the agent reloads systemd, enables the generated unit and records unit/interface health. Apply fails when the generated unit is not `active` or the tunnel interface is not present.
 8. When both sides succeed, the selected transport and link become `active`.
 9. Route-policy projection can use the active managed backhaul interface for remote egress routes.
 10. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow` candidates only.
 11. Operator can run `probe` from the Backhaul UI after the selected transport is `active`. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
 12. Each probe validates systemd active state, local interface presence and ICMP reachability to the peer tunnel address.
 13. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including packet loss and min/avg/max/stddev latency when Linux ping reports RTT data.
-14. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; only after the cleanup batch succeeds does the link move to `deleted`.
+14. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; missing units/files/directories are reported as `not found - skip`, and only after the cleanup batch succeeds does the link move to `deleted`.
 
 ## Security Model
 
 - Secrets are generated server-side and stored through secret refs, not in public UI responses.
 - Agent writes are restricted to `/etc/megavpn/backhaul/` and `megavpn-backhaul-*.service`.
-- Agent cleanup removes only validated managed systemd units and one-level managed directories under `/etc/megavpn/backhaul/`; missing files are treated as already-cleaned idempotent state.
+- Agent cleanup removes only validated managed systemd units and one-level managed directories under `/etc/megavpn/backhaul/`; missing units/files/directories are treated as already-cleaned idempotent state and reported as `not found - skip`.
 - Agent result manifests redact file content before persistence.
 - Backhaul jobs are agent-only; the worker refuses to execute `node.backhaul.apply`, `node.backhaul.probe` and `node.backhaul.cleanup`.
 - Backhaul activation and route policy enforcement are separate jobs with separate audit/job results.
@@ -96,6 +96,7 @@ Minimum production path for the first ingress/egress pair:
 ## Failure Scenarios
 
 - One side fails apply: transport and link move to `failed`; inspect job logs and agent result.
+- Unit/interface missing after apply: apply job fails; install/verify the runtime capability on that node before applying again.
 - Agent offline: jobs remain queued/running until the agent polls.
 - Endpoint unreachable: tunnel unit may start but health reports `degraded`; inspect agent job result and transport health.
 - Cleanup failed: link remains `failed`; inspect the cleanup job result. The agent will not remove paths outside the managed backhaul directory or managed systemd unit prefix.

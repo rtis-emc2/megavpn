@@ -1,4 +1,4 @@
--- MegaVPN 0.6.10.3-alpha: capability installation framework.
+-- MegaVPN 0.6.10.4-alpha: capability installation framework.
 -- Adds install job metadata/events and normalizes service definitions for nginx and xray-core.
 
 alter table service_definitions
