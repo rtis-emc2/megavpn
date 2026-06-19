@@ -723,6 +723,41 @@
     clientsPage.render();
   }
 
+  function firstJobResultText(...values) {
+    for (const value of values) {
+      const text = String(value ?? '').trim();
+      if (text) return text;
+    }
+    return '';
+  }
+
+  function jobHealthResultText(health = {}) {
+    const reason = firstJobResultText(health.error, health.reason);
+    const loss = Number(health.packet_loss_percent);
+    const avg = Number(health.latency_avg_ms);
+    return [
+      reason,
+      Number.isFinite(loss) ? `${loss % 1 === 0 ? loss.toFixed(0) : loss.toFixed(1)}% loss` : '',
+      Number.isFinite(avg) ? `${avg.toFixed(1)} ms avg` : '',
+    ].filter(Boolean).join(' · ');
+  }
+
+  function jobResultText(job) {
+    const result = job?.result || {};
+    const health = result.health || {};
+    return firstJobResultText(
+      job?.error,
+      result.error,
+      result.health_error,
+      result.health_reason,
+      health.error,
+      health.reason,
+      jobHealthResultText(health),
+      result.active_state,
+      result.message
+    );
+  }
+
   function renderJobs() {
     setTitle('Jobs');
     const rows = (state.jobs || []).map((job) => ({
@@ -731,7 +766,7 @@
       scope: job.scope_type && job.scope_id ? `${job.scope_type}:${job.scope_id}` : job.scope_type || 'n/a',
       created: formatDate(job.created_at),
       status: job.status || 'queued',
-      result: job?.result?.error || job?.result?.message || job?.result?.active_state || '',
+      result: jobResultText(job),
     }));
     el('content').innerHTML = `
       ${tableCard('Job Queue', rows, [

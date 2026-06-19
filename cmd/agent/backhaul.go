@@ -112,21 +112,24 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 		result["active_state"] = currentUnitState(unit)
 		if code != 0 {
 			result["error"] = "backhaul systemd activation failed"
-			result["health"] = probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, unit, true, 1)
+			health := probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, unit, true, 1)
+			result["health"] = health
+			addBackhaulHealthFields(result, health)
 			return "failed", result
 		}
 		health := probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, unit, true, 1)
 		result["health"] = health
+		addBackhaulHealthFields(result, health)
 		if stringify(health["status"]) == "unhealthy" {
 			result["error"] = "backhaul activation health check failed"
-			result["health_status"] = health["status"]
-			result["health_reason"] = health["reason"]
 			return "failed", result
 		}
 		result["message"] = "backhaul transport materialized and activated"
 		return "succeeded", result
 	}
-	result["health"] = probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, stringify(j.Payload["systemd_unit"]), stringify(j.Payload["activate"]) == "true", 1)
+	health := probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, stringify(j.Payload["systemd_unit"]), stringify(j.Payload["activate"]) == "true", 1)
+	result["health"] = health
+	addBackhaulHealthFields(result, health)
 	return "succeeded", result
 }
 
@@ -155,7 +158,7 @@ func (c client) probeBackhaul(ctx context.Context, j job, st agentState) (string
 	if stringify(health["status"]) != "healthy" {
 		status = "failed"
 	}
-	return status, map[string]any{
+	result := map[string]any{
 		"message":        "backhaul probe completed",
 		"node_id":        nodeID,
 		"link_id":        linkID,
@@ -167,6 +170,8 @@ func (c client) probeBackhaul(ctx context.Context, j job, st agentState) (string
 		"peer_address":   stringify(j.Payload["peer_address"]),
 		"health":         health,
 	}
+	addBackhaulHealthFields(result, health)
+	return status, result
 }
 
 func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (string, map[string]any) {
@@ -431,6 +436,29 @@ func parsePingStats(out string) map[string]any {
 		}
 	}
 	return stats
+}
+
+func addBackhaulHealthFields(result, health map[string]any) {
+	if result == nil || health == nil {
+		return
+	}
+	for _, key := range []string{
+		"status",
+		"reason",
+		"error",
+		"packet_loss_percent",
+		"latency_min_ms",
+		"latency_avg_ms",
+		"latency_max_ms",
+		"latency_stddev_ms",
+		"peer",
+		"peer_probe_output",
+		"active_state",
+	} {
+		if value, ok := health[key]; ok {
+			result["health_"+key] = value
+		}
+	}
 }
 
 func removeManagedPath(path string, recursive bool) (bool, error) {

@@ -61,7 +61,7 @@ Core API/UI:
 12. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow` candidates only.
 13. Operator can run `probe` from the Backhaul UI after the selected transport is `active`. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
 14. Each probe validates systemd active state, local interface presence and ICMP reachability to the peer tunnel address.
-15. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including packet loss and min/avg/max/stddev latency when Linux ping reports RTT data.
+15. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
 16. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; missing units/files/directories are reported as `not found - skip`, and only after the cleanup batch succeeds does the link move to `deleted`.
 17. Before queueing a new cleanup batch and before Jobs API reads, the backend recovers stale `running` jobs whose lease has expired back to `retrying`. This prevents a dead agent request or interrupted process from blocking backhaul deletion indefinitely.
 
@@ -89,7 +89,7 @@ Minimum production path for the first ingress/egress pair:
 5. Apply profiles.
 6. Confirm both generated jobs are `succeeded`.
 7. Run Backhaul `Test` and verify both ingress and egress probe jobs are `succeeded`.
-8. Check health summary: both sides should report `healthy`, packet loss should be `0`, latency should be visible as average RTT.
+8. Check health summary: both sides should report `healthy`, packet loss should be `0`, latency should be visible as average RTT. If a service is active but the test is `failed/degraded`, use the shown reason, peer address and packet loss to distinguish firewall/UDP reachability, tunnel handshake and route table problems.
 9. Create client access route with remote egress node.
 10. Queue route policy sync for the ingress node.
 11. Verify route projection uses `managed_backhaul` and route policy job reports `enforced=true`.

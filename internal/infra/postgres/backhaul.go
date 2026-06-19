@@ -417,20 +417,62 @@ func (s *Store) ApplyBackhaulProbeResult(ctx context.Context, job domain.Job, st
 	if transportID == "" || role == "" {
 		return
 	}
-	health, _ := result["health"].(map[string]any)
-	if health == nil {
-		health = map[string]any{"status": status}
-	}
-	if status != "succeeded" {
-		health["status"] = "failed"
-		health["error"] = firstNonEmptyRouteValue(stringify(result["error"]), "backhaul probe failed")
-	}
-	health["checked_at"] = time.Now().UTC().Format(time.RFC3339)
+	health, lastError := normalizeBackhaulProbeHealth(status, result, time.Now().UTC())
 	_, _ = s.db.Exec(ctx, `update backhaul_transports
 		set health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $2::text[], $3::jsonb, true),
 		    last_error=$4,
 		    updated_at=now()
-		where id=$1`, transportID, []string{role}, mustJSON(health), stringify(health["error"]))
+		where id=$1`, transportID, []string{role}, mustJSON(health), lastError)
+}
+
+func normalizeBackhaulProbeHealth(jobStatus string, result map[string]any, checkedAt time.Time) (map[string]any, string) {
+	if result == nil {
+		result = map[string]any{}
+	}
+	health, _ := result["health"].(map[string]any)
+	if health == nil {
+		health = map[string]any{}
+	}
+	out := make(map[string]any, len(health)+8)
+	for key, value := range health {
+		out[key] = value
+	}
+	if stringify(out["status"]) == "" {
+		out["status"] = firstNonEmptyBackhaulString(stringify(result["health_status"]), jobStatus)
+	}
+	if reason := firstNonEmptyBackhaulString(stringify(out["reason"]), stringify(result["health_reason"])); reason != "" {
+		out["reason"] = reason
+	}
+	if errText := firstNonEmptyBackhaulString(stringify(out["error"]), stringify(result["health_error"]), stringify(result["error"])); errText != "" {
+		out["error"] = errText
+	}
+	if jobStatus != "succeeded" {
+		out["job_status"] = jobStatus
+		if stringify(out["status"]) == "" || stringify(out["status"]) == "succeeded" {
+			out["status"] = "failed"
+		}
+		if stringify(out["error"]) == "" {
+			out["error"] = firstNonEmptyBackhaulString(stringify(out["reason"]), "backhaul probe failed")
+		}
+	}
+	if checkedAt.IsZero() {
+		checkedAt = time.Now().UTC()
+	}
+	out["checked_at"] = checkedAt.UTC().Format(time.RFC3339)
+	lastError := ""
+	if jobStatus != "succeeded" || stringify(out["status"]) == "degraded" || stringify(out["status"]) == "unhealthy" || stringify(out["status"]) == "failed" {
+		lastError = firstNonEmptyBackhaulString(stringify(out["error"]), stringify(out["reason"]))
+	}
+	return out, lastError
+}
+
+func firstNonEmptyBackhaulString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func (s *Store) ApplyBackhaulCleanupResult(ctx context.Context, job domain.Job, status string, result map[string]any) {

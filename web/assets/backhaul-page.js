@@ -84,10 +84,48 @@
       };
     }
 
+    function firstText(...values) {
+      for (const value of values) {
+        const text = String(value ?? '').trim();
+        if (text) return text;
+      }
+      return '';
+    }
+
+    function optionalNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function formatPercent(value) {
+      const number = optionalNumber(value);
+      if (number == null) return '';
+      return `${number % 1 === 0 ? number.toFixed(0) : number.toFixed(1)}% loss`;
+    }
+
+    function healthSummary(health = {}) {
+      const reason = firstText(health.error, health.reason);
+      const peer = firstText(health.peer);
+      const loss = formatPercent(health.packet_loss_percent);
+      const avg = optionalNumber(health.latency_avg_ms);
+      const metrics = [
+        peer ? `peer ${peer}` : '',
+        loss,
+        avg == null ? '' : `${avg.toFixed(1)} ms avg`,
+      ].filter(Boolean).join(' · ');
+      return [reason, metrics].filter(Boolean).join(' · ');
+    }
+
     function renderHealthCell(transport) {
       if (!transport) return '<span class="tag">unknown</span>';
       const health = transportHealth(transport);
       const latency = health.avgLatency == null ? '' : `<small>${escapeHTML(health.avgLatency.toFixed(1))} ms avg</small>`;
+      const ingressSummary = healthSummary(health.ingress);
+      const egressSummary = healthSummary(health.egress);
+      const details = [
+        ingressSummary ? `ingress: ${ingressSummary}` : '',
+        egressSummary ? `egress: ${egressSummary}` : '',
+      ].filter(Boolean).join(' | ');
       return `
         <div class="stacked-status">
           <span class="inline-actions compact-inline">
@@ -95,6 +133,7 @@
             ${statusTag(health.egress.status || 'unknown')}
           </span>
           ${latency}
+          ${details ? `<small>${escapeHTML(details)}</small>` : ''}
         </div>`;
     }
 
@@ -121,7 +160,18 @@
 
     function jobResultSummary(job) {
       const result = job?.result || {};
-      return result.error || result.message || result.health_reason || result.active_state || '';
+      const health = result.health || {};
+      return firstText(
+        job?.error,
+        result.error,
+        result.health_error,
+        result.health_reason,
+        health.error,
+        health.reason,
+        healthSummary(health),
+        result.active_state,
+        result.message
+      );
     }
 
     async function pollJobs(jobIDs, targetID, onDone) {
