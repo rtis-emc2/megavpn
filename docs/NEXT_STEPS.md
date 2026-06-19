@@ -1,11 +1,11 @@
 # Next steps
 
 Актуальный baseline: `ROADMAP_V1_AND_TZ.md`.
-Текущая точка фиксации: `0.6.10.12-alpha`.
-Следующая итерация: `0.6.10.13-alpha`.
+Текущая точка фиксации: `0.6.10.13-alpha`.
+Следующая итерация: `0.6.10.14-alpha`.
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`.
 
-1. На реальных ingress/egress nodes повторить Backhaul Apply profiles после обновления API/UI/agent: apply должен ждать только локальный service readiness, без peer ping. После `both sides` запустить Backhaul Test: probe должен ждать route lookup и ping retries, а не падать на первом раннем ping.
+1. На реальных ingress/egress nodes повторить Backhaul Apply profiles после обновления API/UI/agent: egress failure должен показывать root cause первым (`systemd unit is not active`, `interface is not present`, `active_state=failed`) вместо generic `backhaul service readiness check failed`.
 2. Запустить PostgreSQL integration suite с `MEGAVPN_TEST_DATABASE_DSN`; тест создает временную schema, применяет все migrations и проверяет jobs, locks, provisioning и baseline access routes.
 3. Проверить `/api/v1/service-drivers`, `/api/v1/instances/runtime-states`, `/api/v1/instances/{id}/runtime-state`, `/api/v1/instances/{id}/runtime-observations` и `/agent/runtime/instances` на тестовом control plane после реального `instance.apply`.
 4. Проверить node bootstrap console на удаленном control plane: top tabs, onboarding mode explanation, Agent channel next-step CTA, видимость `MEGAVPN_PUBLIC_BASE_URL` с кастомным HTTPS-портом, Settings -> Control Plane TLS profile + Apply edge, создание SSH access method, rotate enrollment token, queue bootstrap, автоматический переход setup method из SSH bootstrap в agent-managed после успешной установки агента, чтение bootstrap run details в одно-колоночном layout без горизонтальной прокрутки, а также переход `awaiting heartbeat -> online` после первого heartbeat агента.

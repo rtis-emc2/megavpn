@@ -55,7 +55,7 @@ Core API/UI:
 6. Before writing files for managed-systemd drivers, each agent verifies runtime capability and installs the missing Ubuntu package when needed. Egress apply also requires `iproute2` and `nftables` before managed NAT is enabled.
 7. Each agent validates its own `node_id`, validates managed paths and writes only allowed files.
 8. For managed-systemd drivers, the agent reloads systemd, enables the generated unit and records local service readiness only: systemd `active` and tunnel interface presence. Apply intentionally does not ping the peer because the opposite side may still be starting. WireGuard configs use the local tunnel host with the transport `/30` prefix so a connected route to the peer tunnel IP exists even while `Table=off` prevents wg-quick from installing broad routes. Apply fails when runtime install fails, the generated unit is not `active`, or the tunnel interface is not present.
-9. When both sides succeed, managed-systemd transports become `active`; profile-only transports become `materialized` and never produce a false active route. Failed apply results are stored per side in `health_json.ingress` or `health_json.egress` so a partial apply shows the missing/failing side explicitly.
+9. When both sides succeed, managed-systemd transports become `active`; profile-only transports become `materialized` and never produce a false active route. Failed apply results are stored per side in `health_json.ingress` or `health_json.egress` so a partial apply shows the missing/failing side explicitly, with the root cause shown before generic failure text.
 10. Every L3 transport profile gets its own `/30`; duplicate failed profiles are normalized to a unique CIDR during the next apply.
 11. Route-policy projection can use the active managed backhaul interface for remote egress routes.
 12. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow` candidates only.
@@ -96,7 +96,7 @@ Minimum production path for the first ingress/egress pair:
 
 ## Failure Scenarios
 
-- One side fails apply: transport and link move to `failed`; Backhaul UI shows `partial`, the applied side, the missing/failing side and the per-side health/error saved from the failed job.
+- One side fails apply: transport and link move to `failed`; Backhaul UI shows `partial`, the applied side, the missing/failing side and the per-side health/error saved from the failed job. Root-cause readiness reasons such as `systemd unit is not active`, `interface is not present`, `active_state=failed` and `unit_status_output` are preserved for operator diagnostics.
 - Unit/interface missing after apply: apply job fails; install/verify the runtime capability on that node before applying again.
 - Agent offline: jobs remain queued until the agent polls. If an agent claimed a job and died, the backend returns the expired `running` lease to `retrying`.
 - Endpoint unreachable: tunnel unit may start but health reports `degraded`; inspect agent job result and transport health.

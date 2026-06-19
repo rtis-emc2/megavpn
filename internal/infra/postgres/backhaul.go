@@ -421,7 +421,7 @@ func normalizeBackhaulApplyHealth(jobStatus string, result map[string]any, check
 	if reason := firstNonEmptyBackhaulString(stringify(out["reason"]), stringify(result["health_reason"])); reason != "" {
 		out["reason"] = reason
 	}
-	if errText := firstNonEmptyBackhaulString(stringify(out["error"]), stringify(result["health_error"]), stringify(result["error"]), stringify(result["message"])); errText != "" {
+	if errText := firstNonEmptyBackhaulString(stringify(out["reason"]), stringify(out["error"]), stringify(result["health_reason"]), stringify(result["health_error"]), stringify(result["error"]), stringify(result["message"])); errText != "" {
 		out["error"] = errText
 	}
 	if stage := strings.TrimSpace(stringify(result["stage"])); stage != "" {
@@ -432,7 +432,7 @@ func normalizeBackhaulApplyHealth(jobStatus string, result map[string]any, check
 		checkedAt = time.Now().UTC()
 	}
 	out["checked_at"] = checkedAt.UTC().Format(time.RFC3339)
-	lastError := firstNonEmptyBackhaulString(stringify(out["error"]), stringify(out["reason"]), "backhaul apply failed")
+	lastError := firstNonEmptyBackhaulString(stringify(out["reason"]), stringify(out["error"]), "backhaul apply failed")
 	return out, lastError
 }
 

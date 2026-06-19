@@ -104,11 +104,15 @@
     }
 
     function healthSummary(health = {}) {
-      const reason = firstText(health.error, health.reason, health.route_warning);
+      const reason = firstText(health.reason, health.route_warning, health.error);
       const peer = firstText(health.peer);
       const loss = formatPercent(health.packet_loss_percent);
       const avg = optionalNumber(health.latency_avg_ms);
+      const active = firstText(health.active_state);
+      const iface = firstText(health.interface);
       const metrics = [
+        active ? `unit ${active}` : '',
+        iface ? `dev ${iface}` : '',
         peer ? `peer ${peer}` : '',
         loss,
         avg == null ? '' : `${avg.toFixed(1)} ms avg`,
@@ -209,14 +213,14 @@
       const health = result.health || {};
       return firstText(
         job?.error,
-        result.error,
-        result.health_error,
         result.health_reason,
         result.health_route_warning,
-        health.error,
         health.reason,
         health.route_warning,
+        result.health_error,
+        health.error,
         healthSummary(health),
+        result.error,
         result.active_state,
         result.message
       );

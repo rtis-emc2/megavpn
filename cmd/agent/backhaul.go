@@ -107,8 +107,8 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 		result["systemd_output"] = truncate(out, 2000)
 		result["active_state"] = currentUnitState(unit)
 		if code != 0 {
-			result["error"] = "backhaul systemd activation failed"
 			health := backhaulReadinessHealth(ctx, stringify(j.Payload["interface_name"]), unit, true)
+			result["error"] = backhaulHealthError("backhaul systemd activation failed", health)
 			result["health"] = health
 			addBackhaulHealthFields(result, health)
 			return "failed", result
@@ -117,7 +117,7 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 		result["health"] = health
 		addBackhaulHealthFields(result, health)
 		if stringify(health["status"]) == "unhealthy" {
-			result["error"] = "backhaul service readiness check failed"
+			result["error"] = backhaulHealthError("backhaul service readiness check failed", health)
 			return "failed", result
 		}
 		result["message"] = "backhaul transport materialized and activated"
@@ -352,6 +352,8 @@ func backhaulReadinessHealth(ctx context.Context, iface, unit string, activated 
 	if unit != "" && stringify(health["active_state"]) != "active" {
 		health["status"] = "unhealthy"
 		health["reason"] = "systemd unit is not active"
+		_, statusOut := runInstallCommand(ctx, "systemctl", "status", unit, "--no-pager", "-l")
+		health["unit_status_output"] = truncate(statusOut, 2000)
 		return health
 	}
 	iface = strings.TrimSpace(iface)
@@ -372,6 +374,38 @@ func backhaulReadinessHealth(ctx context.Context, iface, unit string, activated 
 	health["status"] = "healthy"
 	health["reason"] = "service active and interface present"
 	return health
+}
+
+func backhaulHealthError(prefix string, health map[string]any) string {
+	parts := []string{strings.TrimSpace(prefix)}
+	if reason := stringify(health["reason"]); reason != "" {
+		parts = append(parts, reason)
+	}
+	details := []string{}
+	if state := stringify(health["active_state"]); state != "" && state != "unknown" {
+		details = append(details, "active_state="+state)
+	}
+	if iface := stringify(health["interface"]); iface != "" {
+		details = append(details, "interface="+iface)
+	}
+	if attempts := stringify(health["interface_attempts"]); attempts != "" {
+		details = append(details, "interface_attempts="+attempts)
+	}
+	out := strings.Join(nonEmptyStrings(parts), ": ")
+	if len(details) > 0 {
+		out += " (" + strings.Join(details, ", ") + ")"
+	}
+	return out
+}
+
+func nonEmptyStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, strings.TrimSpace(value))
+		}
+	}
+	return out
 }
 
 func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, activated bool, count int) map[string]any {
@@ -579,6 +613,7 @@ func addBackhaulHealthFields(result, health map[string]any) {
 		"ping_attempts",
 		"route_warning",
 		"active_state",
+		"unit_status_output",
 	} {
 		if value, ok := health[key]; ok {
 			result["health_"+key] = value

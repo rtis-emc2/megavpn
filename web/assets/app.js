@@ -732,11 +732,13 @@
   }
 
   function jobHealthResultText(health = {}) {
-    const reason = firstJobResultText(health.error, health.reason, health.route_warning);
+    const reason = firstJobResultText(health.reason, health.route_warning, health.error);
     const loss = Number(health.packet_loss_percent);
     const avg = Number(health.latency_avg_ms);
     return [
       reason,
+      health.active_state ? `unit ${health.active_state}` : '',
+      health.interface ? `dev ${health.interface}` : '',
       Number.isFinite(loss) ? `${loss % 1 === 0 ? loss.toFixed(0) : loss.toFixed(1)}% loss` : '',
       Number.isFinite(avg) ? `${avg.toFixed(1)} ms avg` : '',
     ].filter(Boolean).join(' · ');
@@ -747,14 +749,14 @@
     const health = result.health || {};
     return firstJobResultText(
       job?.error,
-      result.error,
-      result.health_error,
       result.health_reason,
       result.health_route_warning,
-      health.error,
       health.reason,
       health.route_warning,
+      result.health_error,
+      health.error,
       jobHealthResultText(health),
+      result.error,
       result.active_state,
       result.message
     );

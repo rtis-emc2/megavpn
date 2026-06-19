@@ -128,8 +128,8 @@ func TestNormalizeBackhaulApplyHealthPreservesFailedRoleReason(t *testing.T) {
 	if got := stringify(health["reason"]); got != "systemd unit is not active" {
 		t.Fatalf("reason = %q, want systemd unit is not active", got)
 	}
-	if got := stringify(health["error"]); got != "backhaul systemd activation failed" {
-		t.Fatalf("error = %q, want backhaul systemd activation failed", got)
+	if got := stringify(health["error"]); got != "systemd unit is not active" {
+		t.Fatalf("error = %q, want systemd unit is not active", got)
 	}
 	if got := stringify(health["stage"]); got != "systemd_enable" {
 		t.Fatalf("stage = %q, want systemd_enable", got)
@@ -140,8 +140,8 @@ func TestNormalizeBackhaulApplyHealthPreservesFailedRoleReason(t *testing.T) {
 	if got := stringify(health["checked_at"]); got != checkedAt.Format(time.RFC3339) {
 		t.Fatalf("checked_at = %q, want %q", got, checkedAt.Format(time.RFC3339))
 	}
-	if lastError != "backhaul systemd activation failed" {
-		t.Fatalf("lastError = %q, want backhaul systemd activation failed", lastError)
+	if lastError != "systemd unit is not active" {
+		t.Fatalf("lastError = %q, want systemd unit is not active", lastError)
 	}
 }
 

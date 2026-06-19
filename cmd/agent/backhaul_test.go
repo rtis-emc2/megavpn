@@ -111,6 +111,20 @@ func TestRouteUsesInterface(t *testing.T) {
 	}
 }
 
+func TestBackhaulHealthErrorIncludesReadinessDetails(t *testing.T) {
+	t.Parallel()
+
+	got := backhaulHealthError("backhaul service readiness check failed", map[string]any{
+		"reason":       "systemd unit is not active",
+		"active_state": "failed",
+		"interface":    "mgbh123",
+	})
+	want := "backhaul service readiness check failed: systemd unit is not active (active_state=failed, interface=mgbh123)"
+	if got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
 func TestRedactedBackhaulManifestRemovesFileContent(t *testing.T) {
 	t.Parallel()
 
