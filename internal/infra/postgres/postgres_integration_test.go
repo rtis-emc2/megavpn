@@ -313,7 +313,7 @@ func TestPostgresIntegrationAgentVersionProjection(t *testing.T) {
 		t.Fatalf("registered node agent projection = version:%q protocol:%q registered:%v last_seen:%v", registered.AgentVersion, registered.AgentProtocolVersion, registered.AgentRegisteredAt, registered.AgentLastSeenAt)
 	}
 
-	if err := store.HeartbeatByNodeIDWithVersion(ctx, node.ID, "0.6.10.7-alpha", "v1"); err != nil {
+	if err := store.HeartbeatByNodeIDWithVersion(ctx, node.ID, "0.6.10.8-alpha", "v1"); err != nil {
 		t.Fatalf("heartbeat with version: %v", err)
 	}
 	nodes, err := store.ListNodes(ctx)
@@ -330,7 +330,7 @@ func TestPostgresIntegrationAgentVersionProjection(t *testing.T) {
 	if projected == nil {
 		t.Fatal("registered node missing from list nodes")
 	}
-	if projected.AgentVersion != "0.6.10.7-alpha" {
+	if projected.AgentVersion != "0.6.10.8-alpha" {
 		t.Fatalf("projected agent version = %q, want heartbeat version", projected.AgentVersion)
 	}
 }

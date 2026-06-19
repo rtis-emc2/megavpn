@@ -57,3 +57,16 @@ func TestBackhaulApplyCompleteStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestUniqueBackhaulTunnelCIDRDoesNotReuseSelectedCIDR(t *testing.T) {
+	t.Parallel()
+
+	used := map[string]bool{"10.240.10.0/30": true}
+	got := uniqueBackhaulTunnelCIDR("link-1", "10.240.10.0/30", backhaul.DriverOpenVPNUDP, 1, used)
+	if got == "10.240.10.0/30" {
+		t.Fatalf("unique CIDR reused existing CIDR")
+	}
+	if err := backhaul.ValidateTunnelCIDR(got); err != nil {
+		t.Fatalf("generated CIDR %q is invalid: %v", got, err)
+	}
+}

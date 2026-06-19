@@ -179,12 +179,15 @@ func (s *Store) CreateBackhaulLink(ctx context.Context, link domain.BackhaulLink
 		return domain.BackhaulLink{}, err
 	}
 	var selectedTransportID string
+	usedTunnelCIDRs := map[string]bool{}
 	for idx, driver := range drivers {
 		def, _ := backhaul.Definition(driver)
-		transport, err := s.buildBackhaulTransport(ctx, link, def, endpointHost, tunnelCIDR, idx)
+		transportCIDR := uniqueBackhaulTunnelCIDR(link.ID, tunnelCIDR, def.Code, idx, usedTunnelCIDRs)
+		transport, err := s.buildBackhaulTransport(ctx, link, def, endpointHost, transportCIDR, idx)
 		if err != nil {
 			return domain.BackhaulLink{}, err
 		}
+		usedTunnelCIDRs[transport.TunnelCIDR] = true
 		if _, err := tx.Exec(ctx, `insert into backhaul_transports(
 			id,link_id,driver,priority,status,endpoint_host,endpoint_port,protocol,interface_name,tunnel_cidr,ingress_address,egress_address,config_json,secret_refs_json,health_json,created_at,updated_at
 		) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
@@ -305,6 +308,14 @@ func (s *Store) CreateBackhaulApplyJobs(ctx context.Context, linkID string) ([]d
 	link, err := s.GetBackhaulLink(ctx, linkID)
 	if err != nil {
 		return nil, err
+	}
+	if changed, err := s.ensureBackhaulUniqueTransportCIDRs(ctx, link); err != nil {
+		return nil, err
+	} else if changed {
+		link, err = s.GetBackhaulLink(ctx, linkID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(link.Transports) == 0 {
 		return nil, fmt.Errorf("backhaul transport profiles not found")
@@ -1178,6 +1189,57 @@ func backhaulApplyCompleteStatus(activationMode, driver string) string {
 		}
 	}
 	return "materialized"
+}
+
+func (s *Store) ensureBackhaulUniqueTransportCIDRs(ctx context.Context, link domain.BackhaulLink) (bool, error) {
+	used := map[string]bool{}
+	changed := false
+	for idx, transport := range link.Transports {
+		cidr := strings.TrimSpace(transport.TunnelCIDR)
+		if cidr != "" && !used[cidr] {
+			used[cidr] = true
+			continue
+		}
+		if strings.EqualFold(transport.Status, "active") {
+			continue
+		}
+		nextCIDR := uniqueBackhaulTunnelCIDR(link.ID, cidr, transport.Driver, idx, used)
+		ingressAddress, egressAddress, err := pointToPointAddresses(nextCIDR)
+		if err != nil {
+			return changed, err
+		}
+		if _, err := s.db.Exec(ctx, `update backhaul_transports
+			set tunnel_cidr=$2,
+			    ingress_address=$3,
+			    egress_address=$4,
+			    health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), '{cidr_normalized}', $5::jsonb, true),
+			    updated_at=now()
+			where id=$1`,
+			transport.ID,
+			nextCIDR,
+			ingressAddress,
+			egressAddress,
+			mustJSON(map[string]any{"from": cidr, "to": nextCIDR, "reason": "duplicate transport tunnel CIDR"})); err != nil {
+			return changed, err
+		}
+		used[nextCIDR] = true
+		changed = true
+	}
+	return changed, nil
+}
+
+func uniqueBackhaulTunnelCIDR(linkID, requested, driver string, idx int, used map[string]bool) string {
+	requested = strings.TrimSpace(requested)
+	if idx == 0 && requested != "" && !used[requested] && backhaul.ValidateTunnelCIDR(requested) == nil {
+		return requested
+	}
+	for salt := 0; salt < 64; salt++ {
+		candidate := defaultBackhaulCIDR(fmt.Sprintf("%s:%s:%d:%d", linkID, driver, idx, salt))
+		if !used[candidate] {
+			return candidate
+		}
+	}
+	return defaultBackhaulCIDR(fmt.Sprintf("%s:%s:%d:fallback", linkID, driver, idx))
 }
 
 func defaultBackhaulCIDR(seed string) string {

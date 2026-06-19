@@ -30,6 +30,7 @@ type Store struct {
 
 const (
 	jobLeaseDuration              = 2 * time.Minute
+	longNodeJobLeaseDuration      = 15 * time.Minute
 	legacyRunningJobRecoveryAfter = 10 * time.Minute
 )
 
@@ -1361,7 +1362,7 @@ func (s *Store) RecoverStaleJobLeases(ctx context.Context) (int, error) {
 			"new_status":                    "retrying",
 			"recovery_reason":               "running job exceeded its lease",
 			"legacy_recovery_after":         legacyRunningJobRecoveryAfter.String(),
-			"normal_lease_duration":         jobLeaseDuration.String(),
+			"job_lease_duration":            jobLeaseDurationForType(job.Type).String(),
 			"requires_agent_or_worker_poll": true,
 		})
 	}
@@ -1701,7 +1702,7 @@ func (s *Store) claimJob(ctx context.Context, owner, where string, args []any) (
 			continue
 		}
 		now := time.Now().UTC()
-		lockedUntil := now.Add(jobLeaseDuration)
+		lockedUntil := now.Add(jobLeaseDurationForType(j.Type))
 		_, err = tx.Exec(ctx, `update jobs set status='running',started_at=coalesce(started_at,$2),locked_by=$3,locked_until=$4 where id=$1 and status in ('queued','retrying')`, j.ID, now, owner, lockedUntil)
 		if err != nil {
 			return domain.Job{}, false, err
@@ -1963,7 +1964,8 @@ func acquireJobResourceLockTx(ctx context.Context, tx pgx.Tx, j domain.Job) erro
 		return nil
 	}
 	_, _ = tx.Exec(ctx, `delete from resource_locks where resource_type=$1 and resource_id=$2 and lock_kind=$3 and expires_at < now()`, resourceType, resourceID, lockKind)
-	_, err := tx.Exec(ctx, `insert into resource_locks(id,resource_type,resource_id,lock_kind,job_id,acquired_at,expires_at) values($1,$2,$3,$4,$5,now(),now()+interval '2 minutes')`, id.New(), resourceType, resourceID, lockKind, j.ID)
+	expiresAt := time.Now().UTC().Add(jobLeaseDurationForType(j.Type))
+	_, err := tx.Exec(ctx, `insert into resource_locks(id,resource_type,resource_id,lock_kind,job_id,acquired_at,expires_at) values($1,$2,$3,$4,$5,now(),$6)`, id.New(), resourceType, resourceID, lockKind, j.ID, expiresAt)
 	return err
 }
 
@@ -1984,6 +1986,9 @@ func jobLockTarget(j domain.Job) (resourceType string, resourceID string, lockKi
 		}
 		return "instance", *j.InstanceID, kind, true
 	}
+	if j.NodeID != nil && *j.NodeID != "" && strings.HasPrefix(j.Type, "node.") {
+		return "node", *j.NodeID, "bootstrap", true
+	}
 	if j.ScopeID != nil && *j.ScopeID != "" {
 		switch {
 		case strings.HasPrefix(j.Type, "client."):
@@ -1992,10 +1997,16 @@ func jobLockTarget(j domain.Job) (resourceType string, resourceID string, lockKi
 			return "node", *j.ScopeID, "bootstrap", true
 		}
 	}
-	if j.NodeID != nil && *j.NodeID != "" && strings.HasPrefix(j.Type, "node.") {
-		return "node", *j.NodeID, "bootstrap", true
-	}
 	return "", "", "", false
+}
+
+func jobLeaseDurationForType(jobType string) time.Duration {
+	switch jobType {
+	case "node.capability.install", "node.backhaul.apply", "instance.apply":
+		return longNodeJobLeaseDuration
+	default:
+		return jobLeaseDuration
+	}
 }
 
 type nodeServiceDiscoveryScanner interface{ Scan(dest ...any) error }

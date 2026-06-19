@@ -104,7 +104,7 @@
       return `
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Job</th><th>Type</th><th>Status</th><th>Node</th></tr></thead>
+            <thead><tr><th>Job</th><th>Type</th><th>Status</th><th>Node</th><th>Result</th></tr></thead>
             <tbody>
               ${list.map((job) => `
                 <tr data-job-id="${escapeHTML(job.id || '')}">
@@ -112,10 +112,16 @@
                   <td>${escapeHTML(job.type || 'n/a')}</td>
                   <td class="job-status-cell">${statusTag(job.status || 'queued')}</td>
                   <td>${escapeHTML(job.node_id || 'n/a')}</td>
+                  <td>${escapeHTML(jobResultSummary(job))}</td>
                 </tr>`).join('')}
             </tbody>
           </table>
         </div>`;
+    }
+
+    function jobResultSummary(job) {
+      const result = job?.result || {};
+      return result.error || result.message || result.health_reason || result.active_state || '';
     }
 
     async function pollJobs(jobIDs, targetID, onDone) {
@@ -378,9 +384,20 @@
       if (target) target.innerHTML = '<span class="tag warn">queueing</span>';
       try {
         const data = await sendJSON(`/api/v1/backhaul-links/${linkID}/apply`, 'POST', {});
-        if (target) target.innerHTML = renderActionResponse(data, 'Backhaul apply queued');
-        else openModal('Backhaul apply queued', 'Jobs', renderActionResponse(data, 'Backhaul apply queued'), { wide: true });
+        const jobIDs = (data.jobs || []).map((job) => job.id).filter(Boolean);
+        const body = `
+          ${renderActionResponse(data, 'Backhaul apply queued')}
+          <div id="backhaulApplyJobs">${renderJobList(data.jobs || [])}</div>
+          <div class="modal-actions">
+            <button class="primary-btn" type="button" id="closeBackhaulApplyBtn">Close</button>
+          </div>`;
+        if (target) target.innerHTML = body;
+        else openModal('Backhaul apply queued', 'Jobs', body, { wide: true });
+        document.getElementById('closeBackhaulApplyBtn')?.addEventListener('click', closeModal);
         await refresh();
+        await pollJobs(jobIDs, 'backhaulApplyJobs', async () => {
+          await refresh();
+        });
       } catch (err) {
         const body = renderActionResponse({ error: err.message, details: err?.payload || null }, 'Backhaul apply failed');
         if (target) target.innerHTML = body;

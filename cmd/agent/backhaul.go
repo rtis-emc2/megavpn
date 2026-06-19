@@ -31,6 +31,23 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 	if err != nil {
 		return "failed", map[string]any{"error": err.Error(), "stage": "decode_files", "link_id": linkID, "transport_id": transportID, "role": role}
 	}
+	activate := stringify(j.Payload["activate"]) == "true"
+	capability := ensureBackhaulRuntimeCapability(ctx, driver, role, activate)
+	if capability["ok"] != true {
+		return "failed", map[string]any{
+			"error":         firstNonEmptyAgentString(stringify(capability["message"]), "backhaul runtime capability is not available"),
+			"stage":         "ensure_capability",
+			"node_id":       nodeID,
+			"link_id":       linkID,
+			"transport_id":  transportID,
+			"role":          role,
+			"driver":        driver,
+			"capability":    capability,
+			"active_state":  "capability_missing",
+			"health":        map[string]any{"status": "unhealthy", "reason": "runtime capability is not available"},
+			"activation_ok": false,
+		}
+	}
 	changed := make([]string, 0, len(files)+1)
 	for _, file := range files {
 		if !isSafeBackhaulManagedPath(file.Path) {
@@ -76,12 +93,13 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 		"active_state":     "materialized",
 		"enforced":         false,
 		"enforcement_note": "client route kernel enforcement is not enabled by backhaul apply",
+		"capability":       capability,
 	}
 	peerAddress := stringify(j.Payload["egress_address"])
 	if role == "egress" {
 		peerAddress = stringify(j.Payload["ingress_address"])
 	}
-	if stringify(j.Payload["activate"]) == "true" {
+	if activate {
 		unit := stringify(j.Payload["systemd_unit"])
 		if !isSafeBackhaulUnit(unit) {
 			result["error"] = "backhaul systemd_unit is invalid"
@@ -443,6 +461,114 @@ func backhaulUnitNotFound(unit string) bool {
 	return state == "" || state == "not-found"
 }
 
+func ensureBackhaulRuntimeCapability(ctx context.Context, driver, role string, activate bool) map[string]any {
+	result := map[string]any{
+		"ok":       true,
+		"required": activate,
+		"driver":   driver,
+		"role":     role,
+	}
+	if !activate {
+		result["status"] = "skipped"
+		result["message"] = "runtime capability is not required for materialize-only backhaul profile"
+		return result
+	}
+
+	var capability map[string]any
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "wireguard":
+		capability = verifyWireGuard(ctx)
+		if capability["ok"] != true {
+			capability = installUbuntuPackageCapability(ctx, "wireguard", "wireguard-tools", "wireguard-tools", nil)
+		}
+	case "openvpn_udp", "openvpn_tcp_443":
+		capability = verifyOpenVPN(ctx)
+		if capability["ok"] != true {
+			capability = installUbuntuPackageCapability(ctx, "openvpn", "openvpn", "openvpn", []string{"openvpn"})
+		}
+	default:
+		result["status"] = "skipped"
+		result["message"] = "driver does not require automatic runtime capability installation"
+		return result
+	}
+	result["runtime"] = capability
+	if capability["ok"] != true {
+		result["ok"] = false
+		result["status"] = "failed"
+		result["message"] = "runtime package install/verify failed: " + firstNonEmptyAgentString(stringify(capability["message"]), driver)
+		return result
+	}
+
+	checks := []map[string]any{
+		ensureBackhaulCommand(ctx, "ip", "iproute2"),
+	}
+	if role == "egress" {
+		checks = append(checks, ensureBackhaulCommand(ctx, "nft", "nftables"))
+	}
+	result["system_commands"] = checks
+	for _, check := range checks {
+		if check["ok"] != true {
+			result["ok"] = false
+			result["status"] = "failed"
+			result["message"] = "required system command is not available: " + stringify(check["binary"])
+			return result
+		}
+	}
+	result["status"] = "succeeded"
+	result["message"] = "runtime capability verified"
+	return result
+}
+
+func ensureBackhaulCommand(ctx context.Context, binary, packageName string) map[string]any {
+	out := map[string]any{
+		"binary":  binary,
+		"package": packageName,
+	}
+	if path := strings.TrimSpace(runOutput("which", binary)); path != "" {
+		out["ok"] = true
+		out["status"] = "present"
+		out["path"] = path
+		return out
+	}
+	if os.Geteuid() != 0 {
+		out["ok"] = false
+		out["status"] = "missing"
+		out["message"] = packageName + " install requires root"
+		return out
+	}
+	steps := []map[string]any{}
+	run := func(name string, args ...string) bool {
+		code, output := runInstallCommand(ctx, name, args...)
+		steps = append(steps, map[string]any{"command": append([]string{name}, args...), "exit_code": code, "output": truncate(output, 4000)})
+		return code == 0
+	}
+	if !run("apt-get", "update") {
+		out["ok"] = false
+		out["status"] = "failed"
+		out["message"] = "apt update failed before installing " + packageName
+		out["steps"] = steps
+		return out
+	}
+	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", packageName) {
+		out["ok"] = false
+		out["status"] = "failed"
+		out["message"] = packageName + " package install failed"
+		out["steps"] = steps
+		return out
+	}
+	out["steps"] = steps
+	if path := strings.TrimSpace(runOutput("which", binary)); path != "" {
+		out["ok"] = true
+		out["status"] = "installed"
+		out["path"] = path
+		return out
+	}
+	out["ok"] = false
+	out["status"] = "failed"
+	out["message"] = binary + " binary is still missing after installing " + packageName
+	return out
+}
+
 func stringSliceFromPayload(raw any) []string {
 	out := []string{}
 	switch value := raw.(type) {
@@ -489,4 +615,13 @@ func hostOnlyAddress(address string) string {
 		return address[:idx]
 	}
 	return address
+}
+
+func firstNonEmptyAgentString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }

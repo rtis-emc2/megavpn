@@ -1,7 +1,7 @@
 # RTIS MegaVPN Platform v1.0 Roadmap and Technical Specification
 
 Дата анализа: 2026-05-15  
-Базовая версия кода: RTIS MegaVPN 0.6.10.7-alpha
+Базовая версия кода: RTIS MegaVPN 0.6.10.8-alpha
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 
@@ -1007,7 +1007,28 @@ v1.0 can be released only when:
 - Автоматический health-based failover между active backhaul transports.
 - Throughput/MTU/MSS probes поверх текущего RTT/packet-loss health baseline.
 
-## 15. Immediate Next Actions
+## 15. Release 0.6.10.8-alpha Closure
+
+Цель релиза `0.6.10.8-alpha`: исправить реальный отказ backhaul apply на чистых nodes, где WireGuard/OpenVPN runtime packages еще не установлены, и убрать конфликт одинаковых L3 tunnel CIDR между auto-start transport profiles.
+
+Зафиксировано в этом релизе:
+
+- Agent `node.backhaul.apply` для WireGuard/OpenVPN теперь выполняет runtime verify/install inline перед записью конфигов и запуском systemd unit.
+- WireGuard apply устанавливает `wireguard-tools`, OpenVPN apply устанавливает `openvpn`; egress apply дополнительно требует `iproute2` и `nftables` для managed forwarding/NAT.
+- Ошибка capability install теперь попадает прямо в job result: stage `ensure_capability`, runtime output и понятный `message`.
+- Каждый L3 transport profile получает уникальный `/30`; duplicate failed profiles нормализуются при следующем Apply без пересоздания backhaul link.
+- Node job lock теперь использует реальный `node_id` для `node.*` jobs, даже если scope is `backhaul`, поэтому ingress/egress jobs не блокируют друг друга по link id.
+- Долгие node jobs (`node.capability.install`, `node.backhaul.apply`, `instance.apply`) получили 15-minute lease, чтобы `apt-get install` не превращался в stale retry через 2 минуты.
+- Backhaul apply modal и Jobs page показывают result/error/message, чтобы failed jobs были диагностируемы без ручного открытия API.
+
+Что сознательно остается на `0.6.10.8-alpha+`:
+
+- Проверить на реальных nodes, что после обновления агента повторный Apply поднимает WireGuard/OpenVPN и Test показывает RTT.
+- Добавить controlled rollback/remove для route-policy rules при удалении access routes.
+- Добавить health-based failover между active backhaul transports.
+- Реализовать Xray TUN/strongSwan activation gates.
+
+## 16. Immediate Next Actions
 
 1. Принять решения по open questions 1-4, потому что они влияют на scope, schema и frontend.
 2. Поднять Go toolchain/CI и зафиксировать build/test baseline.

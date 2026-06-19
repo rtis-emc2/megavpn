@@ -731,6 +731,7 @@
       scope: job.scope_type && job.scope_id ? `${job.scope_type}:${job.scope_id}` : job.scope_type || 'n/a',
       created: formatDate(job.created_at),
       status: job.status || 'queued',
+      result: job?.result?.error || job?.result?.message || job?.result?.active_state || '',
     }));
     el('content').innerHTML = `
       ${tableCard('Job Queue', rows, [
@@ -739,6 +740,7 @@
         { title: 'Scope', key: 'scope' },
         { title: 'Created', key: 'created' },
         { title: 'Status', key: 'status', render: (r) => statusTag(r.status) },
+        { title: 'Result', key: 'result' },
       ])}
       <section class="card"><h2>Concurrency rules</h2><p>Один mutating job на instance, один bootstrap/install job на node, destructive actions через lock и audit.</p></section>`;
   }

@@ -1,0 +1,3 @@
+-- Code-only migration marker for 0.6.10.8-alpha.
+-- Backhaul apply now verifies/installs WireGuard/OpenVPN runtime dependencies,
+-- enforces unique L3 transport CIDRs and uses node-scoped locks for node jobs.
