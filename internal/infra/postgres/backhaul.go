@@ -359,11 +359,18 @@ func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, stat
 		return
 	}
 	if status != "succeeded" {
-		errText := strings.TrimSpace(stringify(result["error"]))
-		if errText == "" {
-			errText = "backhaul apply failed"
+		health, lastError := normalizeBackhaulApplyHealth(status, result, time.Now().UTC())
+		errText := firstNonEmptyBackhaulString(lastError, "backhaul apply failed")
+		if role != "" {
+			_, _ = s.db.Exec(ctx, `update backhaul_transports
+				set status='failed',
+				    last_error=$2,
+				    health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $3::text[], $4::jsonb, true),
+				    updated_at=now()
+				where id=$1`, transportID, errText, []string{role}, mustJSON(health))
+		} else {
+			_, _ = s.db.Exec(ctx, `update backhaul_transports set status='failed', last_error=$2, updated_at=now() where id=$1`, transportID, errText)
 		}
-		_, _ = s.db.Exec(ctx, `update backhaul_transports set status='failed', last_error=$2, updated_at=now() where id=$1`, transportID, errText)
 		s.refreshBackhaulLinkApplyStatus(ctx, linkID)
 		return
 	}
@@ -394,6 +401,39 @@ func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, stat
 			where id=$1`, transportID, backhaulApplyCompleteStatus(activationMode, driver))
 	}
 	s.refreshBackhaulLinkApplyStatus(ctx, linkID)
+}
+
+func normalizeBackhaulApplyHealth(jobStatus string, result map[string]any, checkedAt time.Time) (map[string]any, string) {
+	if result == nil {
+		result = map[string]any{}
+	}
+	health, _ := result["health"].(map[string]any)
+	if health == nil {
+		health = map[string]any{}
+	}
+	out := make(map[string]any, len(health)+8)
+	for key, value := range health {
+		out[key] = value
+	}
+	if stringify(out["status"]) == "" {
+		out["status"] = "failed"
+	}
+	if reason := firstNonEmptyBackhaulString(stringify(out["reason"]), stringify(result["health_reason"])); reason != "" {
+		out["reason"] = reason
+	}
+	if errText := firstNonEmptyBackhaulString(stringify(out["error"]), stringify(result["health_error"]), stringify(result["error"]), stringify(result["message"])); errText != "" {
+		out["error"] = errText
+	}
+	if stage := strings.TrimSpace(stringify(result["stage"])); stage != "" {
+		out["stage"] = stage
+	}
+	out["job_status"] = jobStatus
+	if checkedAt.IsZero() {
+		checkedAt = time.Now().UTC()
+	}
+	out["checked_at"] = checkedAt.UTC().Format(time.RFC3339)
+	lastError := firstNonEmptyBackhaulString(stringify(out["error"]), stringify(out["reason"]), "backhaul apply failed")
+	return out, lastError
 }
 
 func (s *Store) refreshBackhaulLinkApplyStatus(ctx context.Context, linkID string) {

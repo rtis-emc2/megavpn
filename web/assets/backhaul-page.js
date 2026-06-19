@@ -129,6 +129,37 @@
         </div>`;
     }
 
+    function roleApplied(transport, role) {
+      if (!transport) return false;
+      return role === 'egress' ? Boolean(transport.applied_egress_at) : Boolean(transport.applied_ingress_at);
+    }
+
+    function renderAppliedCell(transport) {
+      if (!transport) return '<span class="tag">n/a</span>';
+      const ingressApplied = roleApplied(transport, 'ingress');
+      const egressApplied = roleApplied(transport, 'egress');
+      if (ingressApplied && egressApplied) {
+        return '<span class="tag ok">both sides</span>';
+      }
+      if (ingressApplied || egressApplied) {
+        return `
+          <div class="stacked-status">
+            <span class="tag warn">partial</span>
+            <small>${ingressApplied ? 'ingress applied' : 'ingress missing'}</small>
+            <small>${egressApplied ? 'egress applied' : 'egress missing'}</small>
+          </div>`;
+      }
+      return '<span class="tag">not applied</span>';
+    }
+
+    function probeBlockReason(link, transport) {
+      if (!transport) return 'Selected transport is not available.';
+      if (String(link?.status || '').toLowerCase() !== 'active') return 'Apply profiles successfully on both nodes before testing.';
+      if (String(transport.status || '').toLowerCase() !== 'active') return 'Selected transport is not active yet.';
+      if (!roleApplied(transport, 'ingress') || !roleApplied(transport, 'egress')) return 'Both ingress and egress sides must be applied before testing.';
+      return '';
+    }
+
     function renderHealthCell(transport) {
       if (!transport) return '<span class="tag">unknown</span>';
       const health = transportHealth(transport);
@@ -138,6 +169,8 @@
       const details = [
         ingressSummary ? `ingress: ${ingressSummary}` : '',
         egressSummary ? `egress: ${egressSummary}` : '',
+        !roleApplied(transport, 'ingress') ? 'ingress: not applied' : '',
+        !roleApplied(transport, 'egress') ? 'egress: not applied' : '',
       ].filter(Boolean).join(' | ');
       return `
         <div class="stacked-status">
@@ -219,6 +252,7 @@
         const ingress = nodeByID(link.ingress_node_id);
         const egress = nodeByID(link.egress_node_id);
         const transport = selectedTransport(link);
+        const blockReason = probeBlockReason(link, transport);
         return {
           id: link.id,
           name: link.name || 'backhaul',
@@ -230,6 +264,9 @@
           transports: renderTransportTags(link),
           health: renderHealthCell(transport),
           tunnel: renderTunnelCell(transport),
+          applied: renderAppliedCell(transport),
+          canProbe: blockReason === '',
+          probeTitle: blockReason,
         };
       });
       el('content').innerHTML = `
@@ -242,12 +279,13 @@
           { title: 'Tunnel', key: 'tunnel', render: (row) => row.tunnel },
           { title: 'Status', key: 'status', render: (row) => statusTag(row.status) },
           { title: 'Health', key: 'health', render: (row) => row.health },
+          { title: 'Applied', key: 'applied', render: (row) => row.applied },
           { title: 'Profiles', key: 'transports', render: (row) => row.transports },
           { title: 'Actions', key: 'id', render: (row) => `
             <div class="inline-actions">
               <button class="secondary-btn inspect-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Manage</button>
               <button class="primary-btn apply-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Apply profiles</button>
-              <button class="secondary-btn probe-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Test</button>
+              <button class="secondary-btn probe-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}" title="${escapeHTML(row.probeTitle || 'Test both directions')}"${row.canProbe ? '' : ' disabled'}>Test</button>
               <button class="danger-btn delete-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}" data-link-name="${escapeHTML(row.name)}">Delete</button>
             </div>` },
         ], '<button class="secondary-btn" id="createBackhaulBtn" type="button">Create backhaul</button>')}`;
@@ -263,6 +301,7 @@
         button.addEventListener('click', () => applyBackhaul(button.dataset.linkId));
       });
       document.querySelectorAll('.probe-backhaul-btn').forEach((button) => {
+        if (button.disabled) return;
         button.addEventListener('click', () => probeBackhaul(button.dataset.linkId));
       });
       document.querySelectorAll('.delete-backhaul-btn').forEach((button) => {
@@ -410,6 +449,8 @@
       const ingress = nodeByID(link.ingress_node_id);
       const egress = nodeByID(link.egress_node_id);
       const transports = Array.isArray(link.transports) ? link.transports : [];
+      const selected = selectedTransport(link);
+      const blockReason = probeBlockReason(link, selected);
       openModal(link.name || 'Backhaul', 'Ingress-to-egress transport profiles', `
         <div class="grid cols-4">
           <div class="card"><div class="mini-label">Ingress</div><div class="metric-caption">${escapeHTML(ingress?.name || link.ingress_node_id)}</div></div>
@@ -430,20 +471,22 @@
                   <td>${escapeHTML(transport.interface_name || 'n/a')}</td>
                   <td>${renderTunnelCell(transport)}</td>
                   <td>${renderHealthCell(transport)}</td>
-                  <td>${escapeHTML(transport.applied_ingress_at ? 'ingress ' : '')}${escapeHTML(transport.applied_egress_at ? 'egress' : '') || 'n/a'}</td>
+                  <td>${renderAppliedCell(transport)}</td>
                 </tr>`).join('') : '<tr><td colspan="8"><div class="empty">No transport profiles.</div></td></tr>'}
             </tbody>
           </table>
         </div>
         <div class="modal-actions">
           <button class="secondary-btn" id="closeBackhaulDetailsBtn" type="button">Close</button>
-          <button class="secondary-btn" id="probeBackhaulDetailsBtn" type="button">Test both directions</button>
+          <button class="secondary-btn" id="probeBackhaulDetailsBtn" type="button" title="${escapeHTML(blockReason || 'Test both directions')}"${blockReason ? ' disabled' : ''}>Test both directions</button>
           <button class="primary-btn" id="applyBackhaulDetailsBtn" type="button">Apply profiles</button>
         </div>
         <div id="backhaulDetailsResult" class="form-result"></div>`, { wide: true });
       document.getElementById('closeBackhaulDetailsBtn')?.addEventListener('click', closeModal);
       document.getElementById('applyBackhaulDetailsBtn')?.addEventListener('click', () => applyBackhaul(link.id, 'backhaulDetailsResult'));
-      document.getElementById('probeBackhaulDetailsBtn')?.addEventListener('click', () => probeBackhaul(link.id, 'backhaulDetailsResult'));
+      if (!blockReason) {
+        document.getElementById('probeBackhaulDetailsBtn')?.addEventListener('click', () => probeBackhaul(link.id, 'backhaulDetailsResult'));
+      }
     }
 
     async function applyBackhaul(linkID, targetID = '') {

@@ -55,11 +55,11 @@ Core API/UI:
 6. Before writing files for managed-systemd drivers, each agent verifies runtime capability and installs the missing Ubuntu package when needed. Egress apply also requires `iproute2` and `nftables` before managed NAT is enabled.
 7. Each agent validates its own `node_id`, validates managed paths and writes only allowed files.
 8. For managed-systemd drivers, the agent reloads systemd, enables the generated unit and records unit/interface health. WireGuard configs use the local tunnel host with the transport `/30` prefix so a connected route to the peer tunnel IP exists even while `Table=off` prevents wg-quick from installing broad routes. Apply fails when runtime install fails, the generated unit is not `active`, or the tunnel interface is not present.
-9. When both sides succeed, managed-systemd transports become `active`; profile-only transports become `materialized` and never produce a false active route.
+9. When both sides succeed, managed-systemd transports become `active`; profile-only transports become `materialized` and never produce a false active route. Failed apply results are stored per side in `health_json.ingress` or `health_json.egress` so a partial apply shows the missing/failing side explicitly.
 10. Every L3 transport profile gets its own `/30`; duplicate failed profiles are normalized to a unique CIDR during the next apply.
 11. Route-policy projection can use the active managed backhaul interface for remote egress routes.
 12. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow` candidates only.
-13. Operator can run `probe` from the Backhaul UI after the selected transport is `active`. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
+13. Operator can run `probe` from the Backhaul UI after the selected transport is `active` and both ingress/egress sides have applied timestamps. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
 14. Each probe validates systemd active state, local interface presence and ICMP reachability to the peer tunnel address.
 15. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer route lookup, peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
 16. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; missing units/files/directories are reported as `not found - skip`, and only after the cleanup batch succeeds does the link move to `deleted`.
@@ -96,7 +96,7 @@ Minimum production path for the first ingress/egress pair:
 
 ## Failure Scenarios
 
-- One side fails apply: transport and link move to `failed`; inspect job logs and agent result.
+- One side fails apply: transport and link move to `failed`; Backhaul UI shows `partial`, the applied side, the missing/failing side and the per-side health/error saved from the failed job.
 - Unit/interface missing after apply: apply job fails; install/verify the runtime capability on that node before applying again.
 - Agent offline: jobs remain queued until the agent polls. If an agent claimed a job and died, the backend returns the expired `running` lease to `retrying`.
 - Endpoint unreachable: tunnel unit may start but health reports `degraded`; inspect agent job result and transport health.
