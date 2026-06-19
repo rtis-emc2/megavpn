@@ -95,10 +95,6 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 		"enforcement_note": "client route kernel enforcement is not enabled by backhaul apply",
 		"capability":       capability,
 	}
-	peerAddress := stringify(j.Payload["egress_address"])
-	if role == "egress" {
-		peerAddress = stringify(j.Payload["ingress_address"])
-	}
 	if activate {
 		unit := stringify(j.Payload["systemd_unit"])
 		if !isSafeBackhaulUnit(unit) {
@@ -112,22 +108,22 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 		result["active_state"] = currentUnitState(unit)
 		if code != 0 {
 			result["error"] = "backhaul systemd activation failed"
-			health := probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, unit, true, 1)
+			health := backhaulReadinessHealth(ctx, stringify(j.Payload["interface_name"]), unit, true)
 			result["health"] = health
 			addBackhaulHealthFields(result, health)
 			return "failed", result
 		}
-		health := probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, unit, true, 1)
+		health := backhaulReadinessHealth(ctx, stringify(j.Payload["interface_name"]), unit, true)
 		result["health"] = health
 		addBackhaulHealthFields(result, health)
 		if stringify(health["status"]) == "unhealthy" {
-			result["error"] = "backhaul activation health check failed"
+			result["error"] = "backhaul service readiness check failed"
 			return "failed", result
 		}
 		result["message"] = "backhaul transport materialized and activated"
 		return "succeeded", result
 	}
-	health := probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, stringify(j.Payload["systemd_unit"]), stringify(j.Payload["activate"]) == "true", 1)
+	health := backhaulReadinessHealth(ctx, stringify(j.Payload["interface_name"]), stringify(j.Payload["systemd_unit"]), stringify(j.Payload["activate"]) == "true")
 	result["health"] = health
 	addBackhaulHealthFields(result, health)
 	return "succeeded", result
@@ -329,10 +325,11 @@ func redactedBackhaulFileList(raw any) []map[string]any {
 	return out
 }
 
-func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, activated bool, count int) map[string]any {
+func backhaulReadinessHealth(ctx context.Context, iface, unit string, activated bool) map[string]any {
 	health := map[string]any{
-		"status":    "skipped",
-		"activated": activated,
+		"status":     "skipped",
+		"activated":  activated,
+		"probe_mode": "service_readiness",
 	}
 	unit = strings.TrimSpace(unit)
 	if unit != "" {
@@ -343,11 +340,14 @@ func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, a
 			return health
 		}
 		health["systemd_unit"] = unit
-		health["active_state"] = currentUnitState(unit)
 	}
 	if !activated {
 		health["reason"] = "transport materialized without automatic activation"
 		return health
+	}
+	if unit != "" {
+		state := waitBackhaulUnitActive(ctx, unit, 12)
+		health["active_state"] = state
 	}
 	if unit != "" && stringify(health["active_state"]) != "active" {
 		health["status"] = "unhealthy"
@@ -360,20 +360,24 @@ func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, a
 		health["reason"] = "interface name is empty"
 		return health
 	}
-	var code int
-	var out string
-	for attempt := 0; attempt < 5; attempt++ {
-		code, out = runInstallCommand(ctx, "ip", "link", "show", "dev", iface)
-		if code == 0 {
-			break
-		}
-		time.Sleep(time.Second)
-	}
+	code, out, attempts := waitBackhaulInterface(ctx, iface, 20)
 	health["interface"] = iface
 	health["link_output"] = truncate(out, 1000)
+	health["interface_attempts"] = attempts
 	if code != 0 {
 		health["status"] = "unhealthy"
 		health["reason"] = "interface is not present"
+		return health
+	}
+	health["status"] = "healthy"
+	health["reason"] = "service active and interface present"
+	return health
+}
+
+func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, activated bool, count int) map[string]any {
+	health := backhaulReadinessHealth(ctx, iface, unit, activated)
+	health["probe_mode"] = "connectivity"
+	if stringify(health["status"]) != "healthy" {
 		return health
 	}
 	peer := hostOnlyAddress(peerAddress)
@@ -386,8 +390,9 @@ func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, a
 		count = 3
 	}
 	health["peer"] = peer
-	routeCode, routeOut := runInstallCommand(ctx, "ip", "route", "get", peer)
+	routeCode, routeOut, routeAttempts := waitBackhaulPeerRoute(ctx, peer, iface, 20)
 	health["peer_route_output"] = truncate(routeOut, 1000)
+	health["route_attempts"] = routeAttempts
 	if routeCode != 0 {
 		health["status"] = "degraded"
 		health["reason"] = "peer route lookup failed"
@@ -399,8 +404,9 @@ func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, a
 		health["route_warning"] = "expected dev " + iface
 		return health
 	}
-	code, out = runInstallCommand(ctx, "ping", "-c", strconv.Itoa(count), "-W", "2", peer)
+	code, out, pingAttempts := waitBackhaulPeerPing(ctx, peer, count, 8)
 	health["peer_probe_output"] = truncate(out, 1000)
+	health["ping_attempts"] = pingAttempts
 	for key, value := range parsePingStats(out) {
 		health[key] = value
 	}
@@ -410,7 +416,93 @@ func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, a
 		return health
 	}
 	health["status"] = "healthy"
+	health["reason"] = "peer connectivity verified"
 	return health
+}
+
+func waitBackhaulUnitActive(ctx context.Context, unit string, attempts int) string {
+	state := ""
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		state = currentUnitState(unit)
+		if state == "active" {
+			return state
+		}
+		if !sleepBackhaulProbe(ctx, time.Second) {
+			return state
+		}
+	}
+	return state
+}
+
+func waitBackhaulInterface(ctx context.Context, iface string, attempts int) (int, string, int) {
+	var code int
+	var out string
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 1; attempt <= attempts; attempt++ {
+		code, out = runInstallCommand(ctx, "ip", "link", "show", "dev", iface)
+		if code == 0 {
+			return code, out, attempt
+		}
+		if !sleepBackhaulProbe(ctx, time.Second) {
+			return code, out, attempt
+		}
+	}
+	return code, out, attempts
+}
+
+func waitBackhaulPeerRoute(ctx context.Context, peer, iface string, attempts int) (int, string, int) {
+	var code int
+	var out string
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 1; attempt <= attempts; attempt++ {
+		code, out = runInstallCommand(ctx, "ip", "route", "get", peer)
+		if code == 0 && routeUsesInterface(out, iface) {
+			return code, out, attempt
+		}
+		if !sleepBackhaulProbe(ctx, time.Second) {
+			return code, out, attempt
+		}
+	}
+	return code, out, attempts
+}
+
+func waitBackhaulPeerPing(ctx context.Context, peer string, count, attempts int) (int, string, int) {
+	var code int
+	var out string
+	if attempts < 1 {
+		attempts = 1
+	}
+	if count < 1 || count > 5 {
+		count = 3
+	}
+	for attempt := 1; attempt <= attempts; attempt++ {
+		code, out = runInstallCommand(ctx, "ping", "-c", strconv.Itoa(count), "-W", "2", peer)
+		if code == 0 {
+			return code, out, attempt
+		}
+		if !sleepBackhaulProbe(ctx, time.Second) {
+			return code, out, attempt
+		}
+	}
+	return code, out, attempts
+}
+
+func sleepBackhaulProbe(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func routeUsesInterface(routeOut, iface string) bool {
@@ -473,6 +565,8 @@ func addBackhaulHealthFields(result, health map[string]any) {
 		"status",
 		"reason",
 		"error",
+		"probe_mode",
+		"interface_attempts",
 		"packet_loss_percent",
 		"latency_min_ms",
 		"latency_avg_ms",
@@ -481,6 +575,8 @@ func addBackhaulHealthFields(result, health map[string]any) {
 		"peer",
 		"peer_probe_output",
 		"peer_route_output",
+		"route_attempts",
+		"ping_attempts",
 		"route_warning",
 		"active_state",
 	} {
