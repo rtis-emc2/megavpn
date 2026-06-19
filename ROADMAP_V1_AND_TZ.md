@@ -1,7 +1,7 @@
 # RTIS MegaVPN Platform v1.0 Roadmap and Technical Specification
 
 Дата анализа: 2026-05-15  
-Базовая версия кода: RTIS MegaVPN 0.6.10.6-alpha
+Базовая версия кода: RTIS MegaVPN 0.6.10.7-alpha
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 
@@ -986,7 +986,28 @@ v1.0 can be released only when:
 - Фоновый automatic agent rollout policy с maintenance windows и canary rollout.
 - Dedicated agent upgrade endpoint с dry-run/eligibility report вместо UI loop over node bootstrap endpoint.
 
-## 14. Immediate Next Actions
+## 14. Release 0.6.10.7-alpha Closure
+
+Цель релиза `0.6.10.7-alpha`: сделать managed backhaul profiles честными и применяемыми по всем выбранным transport-драйверам без ложного `active` для materialize-only профилей.
+
+Зафиксировано в этом релизе:
+
+- Backhaul apply теперь создает `node.backhaul.apply` jobs для каждого выбранного transport profile, а не только для preferred driver.
+- WireGuard и OpenVPN UDP/TCP остаются managed-systemd драйверами: агент пишет конфиги, ставит systemd unit, запускает сервис, проверяет unit/interface и сохраняет health.
+- Egress-side WireGuard/OpenVPN start scripts продолжают включать `net.ipv4.ip_forward=1` и managed nftables masquerade для backhaul интерфейса.
+- IPsec/IKEv2/L2TP и Xray/VLESS профили после успешного apply получают статус `materialized`, а не `active`, пока нет driver-specific safety gate.
+- Link status теперь зависит от selected transport: remote route projection использует только selected transport в статусе `active`.
+- UI Backhaul Create переименовал секцию в ingress-to-egress transport profiles, показывает `auto-start service` vs `profile only` и больше не рисует выбранные карточки как disabled-серые блоки.
+- Явный список drivers из UI больше не расширяется автоматически до всего driver catalog; preferred driver добавляется безопасно, если оператор снял его checkbox.
+
+Что сознательно остается на `0.6.10.7-alpha+`:
+
+- Controlled Xray TUN activation с policy routing, loop protection и edge TLS/camouflage validation.
+- strongSwan/IKEv2 activation gate с проверкой host profile, firewall и rollback.
+- Автоматический health-based failover между active backhaul transports.
+- Throughput/MTU/MSS probes поверх текущего RTT/packet-loss health baseline.
+
+## 15. Immediate Next Actions
 
 1. Принять решения по open questions 1-4, потому что они влияют на scope, schema и frontend.
 2. Поднять Go toolchain/CI и зафиксировать build/test baseline.

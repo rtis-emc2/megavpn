@@ -173,7 +173,7 @@
           { title: 'Actions', key: 'id', render: (row) => `
             <div class="inline-actions">
               <button class="secondary-btn inspect-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Manage</button>
-              <button class="primary-btn apply-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Apply</button>
+              <button class="primary-btn apply-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Apply profiles</button>
               <button class="secondary-btn probe-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Test</button>
               <button class="danger-btn delete-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}" data-link-name="${escapeHTML(row.name)}">Delete</button>
             </div>` },
@@ -211,13 +211,26 @@
         </option>`).join('');
     }
 
+    function driverModeTag(driver) {
+      const autoStart = driver.activation_mode === 'managed_systemd';
+      const routeCapable = Boolean(driver.supports_kernel_routes);
+      return `
+        <span class="tag ${autoStart ? 'ok' : 'stub'}">${autoStart ? 'auto-start service' : 'profile only'}</span>
+        <span class="tag ${routeCapable ? 'ok' : 'stub'}">${routeCapable ? 'L3 route capable' : 'no kernel routes'}</span>`;
+    }
+
+    function defaultBackhaulDriverChecked(driver) {
+      return ['wireguard', 'openvpn_udp'].includes(driver.code);
+    }
+
     function driverCheckboxes() {
       return (state.backhaulDrivers || []).map((driver, index) => `
         <label class="check-row">
-          <input type="checkbox" name="drivers" value="${escapeHTML(driver.code)}"${index < 4 ? ' checked' : ''} />
+          <input type="checkbox" name="drivers" value="${escapeHTML(driver.code)}"${defaultBackhaulDriverChecked(driver) || index === 0 ? ' checked' : ''} />
           <span>
             <strong>${escapeHTML(driver.label || driver.code)}</strong>
             <small>${escapeHTML(driver.layer || 'transport')} · ${escapeHTML(driver.default_protocol || '')}/${escapeHTML(driver.default_port || '')}</small>
+            <span class="inline-actions compact-inline profile-mode-tags">${driverModeTag(driver)}</span>
           </span>
         </label>`).join('');
     }
@@ -267,7 +280,8 @@
             <input name="route_metric" type="number" min="1" max="4096" value="50" />
           </div>
           <div class="field full">
-            <label>Transport profiles</label>
+            <label>Ingress-to-egress transport profiles</label>
+            <div class="field-hint">Checked profiles are internal backhaul transports, not client configs. Auto-start profiles install and start systemd services on both nodes; profile-only drivers write configs and stay inactive until their safety gate is implemented.</div>
             <div class="choice-list">${driverCheckboxes()}</div>
           </div>
           <div class="field full modal-actions">
@@ -286,13 +300,17 @@
       const target = document.getElementById('createBackhaulResult');
       const form = new FormData(formEl);
       const drivers = form.getAll('drivers').map((item) => String(item || '').trim()).filter(Boolean);
+      const desiredDriver = String(form.get('desired_driver') || '').trim();
+      if (desiredDriver && !drivers.includes(desiredDriver)) {
+        drivers.unshift(desiredDriver);
+      }
       target.innerHTML = '<span class="tag warn">creating</span>';
       try {
         const payload = {
           name: String(form.get('name') || '').trim(),
           ingress_node_id: String(form.get('ingress_node_id') || '').trim(),
           egress_node_id: String(form.get('egress_node_id') || '').trim(),
-          desired_driver: String(form.get('desired_driver') || '').trim(),
+          desired_driver: desiredDriver,
           endpoint_host: String(form.get('endpoint_host') || '').trim(),
           tunnel_cidr: String(form.get('tunnel_cidr') || '').trim(),
           routing_table: String(form.get('routing_table') || '').trim(),
@@ -301,9 +319,9 @@
         };
         const data = await sendJSON('/api/v1/backhaul-links', 'POST', payload);
         await refresh();
-        openModal('Backhaul created', 'Profile is ready to apply', `
+        openModal('Backhaul created', 'Profiles are ready to apply', `
           ${renderActionResponse(data, 'Backhaul profile created')}
-          <div class="empty">Transport profiles were created in the control plane. Use Apply to materialize the selected driver on both nodes, then Test to verify both directions.</div>
+          <div class="empty">Selected backhaul profiles were created in the control plane. Use Apply profiles to write configs on both nodes. Auto-start profiles will also start their services and run agent health checks.</div>
           <div class="modal-actions">
             <button class="primary-btn" type="button" id="closeBackhaulCreateResultBtn">Close</button>
           </div>`, { wide: true });
@@ -319,7 +337,7 @@
       const ingress = nodeByID(link.ingress_node_id);
       const egress = nodeByID(link.egress_node_id);
       const transports = Array.isArray(link.transports) ? link.transports : [];
-      openModal(link.name || 'Backhaul', 'Transport profiles', `
+      openModal(link.name || 'Backhaul', 'Ingress-to-egress transport profiles', `
         <div class="grid cols-4">
           <div class="card"><div class="mini-label">Ingress</div><div class="metric-caption">${escapeHTML(ingress?.name || link.ingress_node_id)}</div></div>
           <div class="card"><div class="mini-label">Egress</div><div class="metric-caption">${escapeHTML(egress?.name || link.egress_node_id)}</div></div>
@@ -328,25 +346,26 @@
         </div>
         <div class="table-wrap" style="margin-top:16px">
           <table>
-            <thead><tr><th>Driver</th><th>Status</th><th>Endpoint</th><th>Interface</th><th>Tunnel</th><th>Health</th><th>Applied</th></tr></thead>
+            <thead><tr><th>Driver</th><th>Status</th><th>Mode</th><th>Endpoint</th><th>Interface</th><th>Tunnel</th><th>Health</th><th>Applied</th></tr></thead>
             <tbody>
               ${transports.length ? transports.map((transport) => `
                 <tr>
                   <td>${escapeHTML(driverLabel(transport.driver))}</td>
                   <td>${statusTag(transport.status || 'planned')}</td>
+                  <td>${driverModeTag(driverDef(transport.driver) || {})}</td>
                   <td>${escapeHTML(transport.endpoint_host || 'n/a')}:${escapeHTML(transport.endpoint_port || 'n/a')} ${escapeHTML(transport.protocol || '')}</td>
                   <td>${escapeHTML(transport.interface_name || 'n/a')}</td>
                   <td>${escapeHTML(transport.tunnel_cidr || 'n/a')}</td>
                   <td>${renderHealthCell(transport)}</td>
                   <td>${escapeHTML(transport.applied_ingress_at ? 'ingress ' : '')}${escapeHTML(transport.applied_egress_at ? 'egress' : '') || 'n/a'}</td>
-                </tr>`).join('') : '<tr><td colspan="7"><div class="empty">No transport profiles.</div></td></tr>'}
+                </tr>`).join('') : '<tr><td colspan="8"><div class="empty">No transport profiles.</div></td></tr>'}
             </tbody>
           </table>
         </div>
         <div class="modal-actions">
           <button class="secondary-btn" id="closeBackhaulDetailsBtn" type="button">Close</button>
           <button class="secondary-btn" id="probeBackhaulDetailsBtn" type="button">Test both directions</button>
-          <button class="primary-btn" id="applyBackhaulDetailsBtn" type="button">Apply selected driver</button>
+          <button class="primary-btn" id="applyBackhaulDetailsBtn" type="button">Apply profiles</button>
         </div>
         <div id="backhaulDetailsResult" class="form-result"></div>`, { wide: true });
       document.getElementById('closeBackhaulDetailsBtn')?.addEventListener('click', closeModal);

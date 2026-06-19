@@ -306,46 +306,39 @@ func (s *Store) CreateBackhaulApplyJobs(ctx context.Context, linkID string) ([]d
 	if err != nil {
 		return nil, err
 	}
-	transport := selectedBackhaulTransport(link)
-	if transport == nil {
-		return nil, fmt.Errorf("selected backhaul transport not found")
+	if len(link.Transports) == 0 {
+		return nil, fmt.Errorf("backhaul transport profiles not found")
 	}
-	if _, ok := backhaul.Definition(transport.Driver); !ok {
-		return nil, fmt.Errorf("unsupported backhaul transport")
-	}
-	ingressPayload, err := s.buildBackhaulApplyPayload(ctx, link, *transport, "ingress")
-	if err != nil {
-		return nil, err
-	}
-	egressPayload, err := s.buildBackhaulApplyPayload(ctx, link, *transport, "egress")
-	if err != nil {
-		return nil, err
-	}
-	jobs := make([]domain.Job, 0, 2)
-	for _, item := range []struct {
-		nodeID  string
-		payload map[string]any
-	}{
-		{nodeID: link.IngressNodeID, payload: ingressPayload},
-		{nodeID: link.EgressNodeID, payload: egressPayload},
-	} {
-		nodeID := item.nodeID
-		job, err := s.CreateJob(ctx, domain.Job{
-			Type:      "node.backhaul.apply",
-			ScopeType: "backhaul",
-			ScopeID:   &link.ID,
-			NodeID:    &nodeID,
-			Priority:  75,
-			Payload:   item.payload,
-		})
-		if err != nil {
-			return jobs, err
+	jobs := make([]domain.Job, 0, len(link.Transports)*2)
+	for _, transport := range link.Transports {
+		if _, ok := backhaul.Definition(transport.Driver); !ok {
+			return jobs, fmt.Errorf("unsupported backhaul transport %q", transport.Driver)
 		}
-		jobs = append(jobs, job)
+		for _, role := range []string{"ingress", "egress"} {
+			payload, err := s.buildBackhaulApplyPayload(ctx, link, transport, role)
+			if err != nil {
+				return jobs, err
+			}
+			nodeID := nodeIDForBackhaulRole(link, role)
+			job, err := s.CreateJob(ctx, domain.Job{
+				Type:      "node.backhaul.apply",
+				ScopeType: "backhaul",
+				ScopeID:   &link.ID,
+				NodeID:    &nodeID,
+				Priority:  75,
+				Payload:   payload,
+			})
+			if err != nil {
+				return jobs, err
+			}
+			jobs = append(jobs, job)
+		}
 	}
 	_, _ = s.db.Exec(ctx, `update backhaul_links set status='pending_apply', updated_at=now() where id=$1`, link.ID)
-	_, _ = s.db.Exec(ctx, `update backhaul_transports set status='pending_apply', last_error='', updated_at=now() where id=$1`, transport.ID)
-	_, _ = s.CreateAudit(ctx, "system", "backhaul.apply", "backhaul", &link.ID, "managed backhaul apply queued")
+	for _, transport := range link.Transports {
+		_, _ = s.db.Exec(ctx, `update backhaul_transports set status='pending_apply', last_error='', updated_at=now() where id=$1`, transport.ID)
+	}
+	_, _ = s.CreateAudit(ctx, "system", "backhaul.apply", "backhaul", &link.ID, "managed backhaul profile apply queued")
 	return jobs, nil
 }
 
@@ -360,7 +353,7 @@ func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, stat
 			errText = "backhaul apply failed"
 		}
 		_, _ = s.db.Exec(ctx, `update backhaul_transports set status='failed', last_error=$2, updated_at=now() where id=$1`, transportID, errText)
-		_, _ = s.db.Exec(ctx, `update backhaul_links set status='failed', updated_at=now() where id=$1`, linkID)
+		s.refreshBackhaulLinkApplyStatus(ctx, linkID)
 		return
 	}
 	switch role {
@@ -376,12 +369,36 @@ func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, stat
 			set health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $2::text[], $3::jsonb, true), updated_at=now()
 			where id=$1`, transportID, []string{role}, mustJSON(health))
 	}
-	_, _ = s.db.Exec(ctx, `update backhaul_transports
-		set status='active', updated_at=now()
-		where id=$1 and applied_ingress_at is not null and applied_egress_at is not null`, transportID)
-	_, _ = s.db.Exec(ctx, `update backhaul_links
-		set status='active', updated_at=now()
-		where id=$1 and exists(select 1 from backhaul_transports where id=$2 and status='active')`, linkID, transportID)
+	var activationMode, driver string
+	var ingressApplied, egressApplied bool
+	if err := s.db.QueryRow(ctx, `select
+		coalesce(config_json->>'activation_mode',''),
+		driver,
+		applied_ingress_at is not null,
+		applied_egress_at is not null
+	from backhaul_transports
+	where id=$1`, transportID).Scan(&activationMode, &driver, &ingressApplied, &egressApplied); err == nil && ingressApplied && egressApplied {
+		_, _ = s.db.Exec(ctx, `update backhaul_transports
+			set status=$2, updated_at=now()
+			where id=$1`, transportID, backhaulApplyCompleteStatus(activationMode, driver))
+	}
+	s.refreshBackhaulLinkApplyStatus(ctx, linkID)
+}
+
+func (s *Store) refreshBackhaulLinkApplyStatus(ctx context.Context, linkID string) {
+	_, _ = s.db.Exec(ctx, `update backhaul_links bl
+		set status=case
+				when st.status='active' then 'active'
+				when st.status='materialized' then 'materialized'
+				when st.status='failed' then 'failed'
+				when st.status in ('pending_apply','planned') then 'pending_apply'
+				else bl.status
+			end,
+			updated_at=now()
+		from backhaul_transports st
+		where bl.id=$1
+		  and bl.selected_transport_id=st.id
+		  and bl.status <> 'deleted'`, linkID)
 }
 
 func (s *Store) ApplyBackhaulProbeResult(ctx context.Context, job domain.Job, status string, result map[string]any) {
@@ -1122,6 +1139,7 @@ func backhaulDriversFromMetadata(metadata map[string]any, desired string) []stri
 		out = append(out, driver)
 	}
 	add(desired)
+	_, explicitDrivers := metadata["drivers"]
 	switch raw := metadata["drivers"].(type) {
 	case []string:
 		for _, driver := range raw {
@@ -1132,7 +1150,7 @@ func backhaulDriversFromMetadata(metadata map[string]any, desired string) []stri
 			add(stringify(driver))
 		}
 	}
-	if len(out) <= 1 {
+	if !explicitDrivers && len(out) <= 1 {
 		for _, driver := range []string{
 			backhaul.DriverWireGuard,
 			backhaul.DriverOpenVPNUDP,
@@ -1148,6 +1166,18 @@ func backhaulDriversFromMetadata(metadata map[string]any, desired string) []stri
 		}
 	}
 	return out
+}
+
+func backhaulApplyCompleteStatus(activationMode, driver string) string {
+	if strings.EqualFold(strings.TrimSpace(activationMode), "managed_systemd") {
+		return "active"
+	}
+	if strings.TrimSpace(activationMode) == "" {
+		if def, ok := backhaul.Definition(driver); ok && def.ActivationMode == "managed_systemd" {
+			return "active"
+		}
+	}
+	return "materialized"
 }
 
 func defaultBackhaulCIDR(seed string) string {

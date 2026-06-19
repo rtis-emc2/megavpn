@@ -207,12 +207,19 @@ tr:hover td { background: rgba(148,163,184,0.04); }
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(7,16,24,0.28);
+  background: var(--panel);
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.check-row:has(input:checked) {
+  border-color: rgba(185, 28, 28, 0.34);
+  background: #fff7f7;
+  box-shadow: inset 0 0 0 1px rgba(185, 28, 28, 0.08);
 }
 .check-row input { margin-top: 3px; }
 .check-row strong, .check-row small { display: block; }
 .check-row strong { color: var(--text); }
 .check-row small { color: var(--muted-2); font-size: 11px; line-height: 1.35; margin-top: 5px; }
+.profile-mode-tags { margin-top: 8px; }
 .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:16px; }
 .form-result, .auth-message { margin-top: 14px; }
 .subtle-notice { margin-top: 14px; margin-bottom: 0; }

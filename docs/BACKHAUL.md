@@ -47,14 +47,14 @@ Core API/UI:
 
 ## Data Flow
 
-1. Operator creates a backhaul link and selects ingress node, egress node and preferred driver.
+1. Operator creates a backhaul link and selects ingress node, egress node, preferred driver and internal transport profiles.
 2. Control Plane validates node roles and driver support.
 3. Control Plane generates driver material and stores secrets as encrypted secret refs.
 4. Operator applies the backhaul link.
-5. Control Plane queues two `node.backhaul.apply` jobs: one for ingress, one for egress.
+5. Control Plane queues `node.backhaul.apply` jobs for every selected transport profile: one ingress job and one egress job per profile.
 6. Each agent validates its own `node_id`, validates managed paths and writes only allowed files.
 7. For managed-systemd drivers, the agent reloads systemd, enables the generated unit and records unit/interface health. Apply fails when the generated unit is not `active` or the tunnel interface is not present.
-8. When both sides succeed, the selected transport and link become `active`.
+8. When both sides succeed, managed-systemd transports become `active`; profile-only transports become `materialized` and never produce a false active route.
 9. Route-policy projection can use the active managed backhaul interface for remote egress routes.
 10. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow` candidates only.
 11. Operator can run `probe` from the Backhaul UI after the selected transport is `active`. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
@@ -86,7 +86,7 @@ Minimum production path for the first ingress/egress pair:
    - IPsec: `ipsec` and optionally `xl2tpd`
    - Xray: `xray-core`
 4. Create Backhaul link.
-5. Apply selected driver.
+5. Apply profiles.
 6. Confirm both generated jobs are `succeeded`.
 7. Run Backhaul `Test` and verify both ingress and egress probe jobs are `succeeded`.
 8. Check health summary: both sides should report `healthy`, packet loss should be `0`, latency should be visible as average RTT.
@@ -101,7 +101,7 @@ Minimum production path for the first ingress/egress pair:
 - Agent offline: jobs remain queued until the agent polls. If an agent claimed a job and died, the backend returns the expired `running` lease to `retrying`.
 - Endpoint unreachable: tunnel unit may start but health reports `degraded`; inspect agent job result and transport health.
 - Cleanup failed: link remains `failed`; inspect the cleanup job result. Stale `running` cleanup jobs are recovered automatically after lease expiry, but real failed/cancelled jobs still require operator retry. The agent will not remove paths outside the managed backhaul directory or managed systemd unit prefix.
-- Xray/IPsec selected: config is written but not enabled automatically; manual transport activation is required.
+- Xray/IPsec selected: config is written and status becomes `materialized`, but it is not enabled automatically; manual transport activation is required until the driver-specific safety gate exists.
 - Duplicate ingress/egress/name: database constraint blocks active duplicate links.
 - Route table is `main`: kernel enforcement skips the route; managed backhaul links allocate a dedicated table automatically.
 
