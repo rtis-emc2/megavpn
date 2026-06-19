@@ -81,9 +81,9 @@ func runOnce(ctx context.Context, log interface {
 		status, result = handleClientProvisionJob(ctx, store, job)
 	case "artifact.build":
 		status, result = handleClientProvisionJob(ctx, store, job)
-	case "node.backhaul.apply":
+	case "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup":
 		status = "failed"
-		result["error"] = "node.backhaul.apply must be handled by an agent"
+		result["error"] = job.Type + " must be handled by an agent"
 	case "instance.apply":
 		status = "failed"
 		result["error"] = "instance.apply must be handled by an agent"

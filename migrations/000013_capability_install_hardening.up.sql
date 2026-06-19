@@ -1,4 +1,4 @@
--- MegaVPN 0.6.10.1-alpha: capability install hardening.
+-- MegaVPN 0.6.10.2-alpha: capability install hardening.
 -- Makes capability result storage tolerant to failed installers and installer-owned states.
 
 alter table node_capabilities

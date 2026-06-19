@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 )
 
@@ -91,13 +93,126 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 		result["active_state"] = currentUnitState(unit)
 		if code != 0 {
 			result["error"] = "backhaul systemd activation failed"
-			result["health"] = probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, true)
+			result["health"] = probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, unit, true, 1)
 			return "failed", result
 		}
 		result["message"] = "backhaul transport materialized and activated"
 	}
-	result["health"] = probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, stringify(j.Payload["activate"]) == "true")
+	result["health"] = probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), peerAddress, stringify(j.Payload["systemd_unit"]), stringify(j.Payload["activate"]) == "true", 1)
 	return "succeeded", result
+}
+
+func (c client) probeBackhaul(ctx context.Context, j job, st agentState) (string, map[string]any) {
+	nodeID := stringify(j.Payload["node_id"])
+	if nodeID == "" {
+		nodeID = st.NodeID
+	}
+	if st.NodeID != "" && nodeID != "" && nodeID != st.NodeID {
+		return "failed", map[string]any{"error": "backhaul node_id does not match enrolled agent", "payload_node_id": nodeID, "agent_node_id": st.NodeID}
+	}
+	linkID := stringify(j.Payload["link_id"])
+	transportID := stringify(j.Payload["transport_id"])
+	role := strings.ToLower(stringify(j.Payload["role"]))
+	driver := stringify(j.Payload["driver"])
+	if linkID == "" || transportID == "" || role == "" || driver == "" {
+		return "failed", map[string]any{"error": "link_id, transport_id, role and driver are required"}
+	}
+	unit := stringify(j.Payload["systemd_unit"])
+	if unit != "" && !isSafeBackhaulUnit(unit) {
+		return "failed", map[string]any{"error": "backhaul systemd_unit is invalid", "systemd_unit": unit}
+	}
+	count := intFromPayload(j.Payload["probe_count"], 3)
+	health := probeBackhaulHealth(ctx, stringify(j.Payload["interface_name"]), stringify(j.Payload["peer_address"]), unit, true, count)
+	status := "succeeded"
+	if health["status"] == "unhealthy" {
+		status = "failed"
+	}
+	return status, map[string]any{
+		"message":        "backhaul probe completed",
+		"node_id":        nodeID,
+		"link_id":        linkID,
+		"transport_id":   transportID,
+		"role":           role,
+		"driver":         driver,
+		"interface_name": stringify(j.Payload["interface_name"]),
+		"systemd_unit":   unit,
+		"peer_address":   stringify(j.Payload["peer_address"]),
+		"health":         health,
+	}
+}
+
+func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (string, map[string]any) {
+	nodeID := stringify(j.Payload["node_id"])
+	if nodeID == "" {
+		nodeID = st.NodeID
+	}
+	if st.NodeID != "" && nodeID != "" && nodeID != st.NodeID {
+		return "failed", map[string]any{"error": "backhaul node_id does not match enrolled agent", "payload_node_id": nodeID, "agent_node_id": st.NodeID}
+	}
+	linkID := stringify(j.Payload["link_id"])
+	transportID := stringify(j.Payload["transport_id"])
+	role := strings.ToLower(stringify(j.Payload["role"]))
+	driver := stringify(j.Payload["driver"])
+	if linkID == "" || transportID == "" || role == "" || driver == "" {
+		return "failed", map[string]any{"error": "link_id, transport_id, role and driver are required"}
+	}
+	units := stringSliceFromPayload(j.Payload["systemd_units"])
+	paths := stringSliceFromPayload(j.Payload["paths"])
+	dirs := stringSliceFromPayload(j.Payload["directories"])
+	stoppedUnits := []string{}
+	removedPaths := []string{}
+	warnings := []string{}
+	for _, unit := range units {
+		if !isSafeBackhaulUnit(unit) {
+			return "failed", map[string]any{"error": "backhaul systemd_unit is invalid", "systemd_unit": unit, "link_id": linkID, "transport_id": transportID, "role": role}
+		}
+		code, out := runInstallCommand(ctx, "systemctl", "disable", "--now", unit)
+		if code != 0 && !isMissingSystemdUnitOutput(out) {
+			return "failed", map[string]any{"error": "backhaul systemd disable failed", "systemd_unit": unit, "output": truncate(out, 2000), "link_id": linkID, "transport_id": transportID, "role": role}
+		}
+		_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", unit)
+		if code != 0 {
+			warnings = append(warnings, "systemd unit was already absent: "+unit)
+		}
+		stoppedUnits = append(stoppedUnits, unit)
+	}
+	for _, path := range paths {
+		if !isSafeBackhaulManagedPath(path) {
+			return "failed", map[string]any{"error": "backhaul managed file path is not allowed", "path": path, "link_id": linkID, "transport_id": transportID, "role": role}
+		}
+		removed, err := removeManagedPath(path, false)
+		if err != nil {
+			return "failed", map[string]any{"error": err.Error(), "path": path, "link_id": linkID, "transport_id": transportID, "role": role}
+		}
+		if removed {
+			removedPaths = append(removedPaths, path)
+		}
+	}
+	for _, dir := range dirs {
+		if !isSafeBackhaulManagedDir(dir) {
+			return "failed", map[string]any{"error": "backhaul managed directory is not allowed", "path": dir, "link_id": linkID, "transport_id": transportID, "role": role}
+		}
+		removed, err := removeManagedPath(dir, true)
+		if err != nil {
+			return "failed", map[string]any{"error": err.Error(), "path": dir, "link_id": linkID, "transport_id": transportID, "role": role}
+		}
+		if removed {
+			removedPaths = append(removedPaths, dir)
+		}
+	}
+	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+	return "succeeded", map[string]any{
+		"message":         "backhaul transport cleaned from node",
+		"node_id":         nodeID,
+		"link_id":         linkID,
+		"transport_id":    transportID,
+		"role":            role,
+		"driver":          driver,
+		"delete_batch_id": stringify(j.Payload["delete_batch_id"]),
+		"stopped_units":   stoppedUnits,
+		"removed_paths":   removedPaths,
+		"warnings":        warnings,
+	}
 }
 
 func isSafeBackhaulManagedPath(path string) bool {
@@ -112,6 +227,18 @@ func isSafeBackhaulManagedPath(path string) bool {
 		return true
 	}
 	return false
+}
+
+func isSafeBackhaulManagedDir(path string) bool {
+	path = strings.TrimRight(strings.TrimSpace(path), "/")
+	if path == "" || strings.Contains(path, "\x00") || strings.Contains(path, "..") {
+		return false
+	}
+	if !strings.HasPrefix(path, strings.TrimRight(defaultBackhaulRoot, "/")+"/") {
+		return false
+	}
+	rest := strings.TrimPrefix(path, strings.TrimRight(defaultBackhaulRoot, "/")+"/")
+	return rest != "" && !strings.Contains(rest, "/")
 }
 
 func isSafeBackhaulUnit(unit string) bool {
@@ -152,13 +279,29 @@ func redactedBackhaulFileList(raw any) []map[string]any {
 	return out
 }
 
-func probeBackhaulHealth(ctx context.Context, iface, peerAddress string, activated bool) map[string]any {
+func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, activated bool, count int) map[string]any {
 	health := map[string]any{
 		"status":    "skipped",
 		"activated": activated,
 	}
+	unit = strings.TrimSpace(unit)
+	if unit != "" {
+		if !isSafeBackhaulUnit(unit) {
+			health["status"] = "unhealthy"
+			health["reason"] = "systemd unit is invalid"
+			health["systemd_unit"] = unit
+			return health
+		}
+		health["systemd_unit"] = unit
+		health["active_state"] = currentUnitState(unit)
+	}
 	if !activated {
 		health["reason"] = "transport materialized without automatic activation"
+		return health
+	}
+	if unit != "" && stringify(health["active_state"]) != "active" {
+		health["status"] = "unhealthy"
+		health["reason"] = "systemd unit is not active"
 		return health
 	}
 	iface = strings.TrimSpace(iface)
@@ -181,9 +324,15 @@ func probeBackhaulHealth(ctx context.Context, iface, peerAddress string, activat
 		health["reason"] = "peer address is empty"
 		return health
 	}
-	code, out = runInstallCommand(ctx, "ping", "-c", "1", "-W", "2", peer)
+	if count < 1 || count > 5 {
+		count = 3
+	}
+	code, out = runInstallCommand(ctx, "ping", "-c", strconv.Itoa(count), "-W", "2", peer)
 	health["peer"] = peer
 	health["peer_probe_output"] = truncate(out, 1000)
+	for key, value := range parsePingStats(out) {
+		health[key] = value
+	}
 	if code != 0 {
 		health["status"] = "degraded"
 		health["reason"] = "peer ping failed"
@@ -191,6 +340,102 @@ func probeBackhaulHealth(ctx context.Context, iface, peerAddress string, activat
 	}
 	health["status"] = "healthy"
 	return health
+}
+
+func parsePingStats(out string) map[string]any {
+	stats := map[string]any{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "packet loss") {
+			for _, part := range strings.Split(line, ",") {
+				part = strings.TrimSpace(part)
+				if !strings.Contains(part, "packet loss") {
+					continue
+				}
+				raw := strings.TrimSpace(strings.TrimSuffix(part, "packet loss"))
+				raw = strings.TrimSuffix(raw, "%")
+				if v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64); err == nil {
+					stats["packet_loss_percent"] = v
+				}
+			}
+		}
+		if strings.Contains(line, "min/avg/max") && strings.Contains(line, "=") {
+			parts := strings.SplitN(line, "=", 2)
+			values := strings.Fields(strings.TrimSpace(parts[1]))
+			if len(values) == 0 {
+				continue
+			}
+			nums := strings.Split(values[0], "/")
+			keys := []string{"latency_min_ms", "latency_avg_ms", "latency_max_ms", "latency_stddev_ms"}
+			for idx, raw := range nums {
+				if idx >= len(keys) {
+					break
+				}
+				if v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64); err == nil {
+					stats[keys[idx]] = v
+				}
+			}
+		}
+	}
+	return stats
+}
+
+func removeManagedPath(path string, recursive bool) (bool, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if recursive {
+		return true, os.RemoveAll(path)
+	}
+	return true, os.Remove(path)
+}
+
+func isMissingSystemdUnitOutput(out string) bool {
+	out = strings.ToLower(out)
+	return strings.Contains(out, "does not exist") ||
+		strings.Contains(out, "not loaded") ||
+		strings.Contains(out, "could not be found") ||
+		strings.Contains(out, "no such file")
+}
+
+func stringSliceFromPayload(raw any) []string {
+	out := []string{}
+	switch value := raw.(type) {
+	case []string:
+		for _, item := range value {
+			if item = strings.TrimSpace(item); item != "" {
+				out = append(out, item)
+			}
+		}
+	case []any:
+		for _, item := range value {
+			if text := stringify(item); text != "" {
+				out = append(out, text)
+			}
+		}
+	}
+	return out
+}
+
+func intFromPayload(raw any, fallback int) int {
+	switch value := raw.(type) {
+	case int:
+		return value
+	case int32:
+		return int(value)
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	case string:
+		if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func hostOnlyAddress(address string) string {

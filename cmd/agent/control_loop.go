@@ -152,6 +152,10 @@ func (c *client) execute(ctx context.Context, j job, st *agentState) (string, ma
 		return c.rotateAgentToken(ctx, j, st)
 	case "node.backhaul.apply":
 		return c.applyBackhaul(ctx, j, *st)
+	case "node.backhaul.probe":
+		return c.probeBackhaul(ctx, j, *st)
+	case "node.backhaul.cleanup":
+		return c.cleanupBackhaul(ctx, j, *st)
 	case "node.route_policy.apply":
 		return c.applyRoutePolicy(ctx, j, *st)
 	case "instance.restart", "instance.apply", "instance.start", "instance.stop", "instance.enable", "instance.disable":

@@ -222,6 +222,82 @@ func (s *Store) DeleteBackhaulLink(ctx context.Context, linkID string) (domain.B
 	return link, nil
 }
 
+func (s *Store) CreateBackhaulProbeJobs(ctx context.Context, linkID string) ([]domain.Job, error) {
+	link, err := s.GetBackhaulLink(ctx, linkID)
+	if err != nil {
+		return nil, err
+	}
+	transport := selectedBackhaulTransport(link)
+	if transport == nil {
+		return nil, fmt.Errorf("selected backhaul transport not found")
+	}
+	if link.Status != "active" || transport.Status != "active" {
+		return nil, fmt.Errorf("backhaul link must be active before probe; apply selected driver first")
+	}
+	jobs := make([]domain.Job, 0, 2)
+	for _, role := range []string{"ingress", "egress"} {
+		nodeID := nodeIDForBackhaulRole(link, role)
+		job, err := s.CreateJob(ctx, domain.Job{
+			Type:      "node.backhaul.probe",
+			ScopeType: "backhaul",
+			ScopeID:   &link.ID,
+			NodeID:    &nodeID,
+			Priority:  70,
+			Payload:   buildBackhaulProbePayload(link, *transport, role),
+		})
+		if err != nil {
+			return jobs, err
+		}
+		jobs = append(jobs, job)
+	}
+	_, _ = s.CreateAudit(ctx, "system", "backhaul.probe", "backhaul", &link.ID, "managed backhaul probe queued")
+	return jobs, nil
+}
+
+func (s *Store) CreateBackhaulDeleteJobs(ctx context.Context, linkID string) (domain.BackhaulLink, []domain.Job, error) {
+	link, err := s.GetBackhaulLink(ctx, linkID)
+	if err != nil {
+		return domain.BackhaulLink{}, nil, err
+	}
+	if len(link.Transports) == 0 {
+		deleted, err := s.DeleteBackhaulLink(ctx, link.ID)
+		return deleted, nil, err
+	}
+	batchID := id.New()
+	if link.Metadata == nil {
+		link.Metadata = map[string]any{}
+	}
+	link.Metadata["delete_batch_id"] = batchID
+	link.Metadata["delete_requested_at"] = time.Now().UTC().Format(time.RFC3339)
+	jobs := make([]domain.Job, 0, len(link.Transports)*2)
+	for _, transport := range link.Transports {
+		for _, role := range []string{"ingress", "egress"} {
+			nodeID := nodeIDForBackhaulRole(link, role)
+			job, err := s.CreateJob(ctx, domain.Job{
+				Type:      "node.backhaul.cleanup",
+				ScopeType: "backhaul",
+				ScopeID:   &link.ID,
+				NodeID:    &nodeID,
+				Priority:  90,
+				Payload:   buildBackhaulCleanupPayload(link, transport, role, batchID),
+			})
+			if err != nil {
+				return domain.BackhaulLink{}, jobs, err
+			}
+			jobs = append(jobs, job)
+		}
+	}
+	_, _ = s.db.Exec(ctx, `update backhaul_links
+		set status='disabled', metadata_json=$2, updated_at=now()
+		where id=$1`, link.ID, mustJSON(link.Metadata))
+	_, _ = s.db.Exec(ctx, `update backhaul_transports
+		set status='disabled', last_error='', updated_at=now()
+		where link_id=$1`, link.ID)
+	_, _ = s.CreateAudit(ctx, "system", "backhaul.delete", "backhaul", &link.ID, "managed backhaul cleanup queued")
+	link.Status = "disabled"
+	return link, jobs, nil
+}
+
 func (s *Store) CreateBackhaulApplyJobs(ctx context.Context, linkID string) ([]domain.Job, error) {
 	link, err := s.GetBackhaulLink(ctx, linkID)
 	if err != nil {
@@ -271,18 +347,7 @@ func (s *Store) CreateBackhaulApplyJobs(ctx context.Context, linkID string) ([]d
 }
 
 func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, status string, result map[string]any) {
-	linkID := strings.TrimSpace(stringify(result["link_id"]))
-	if linkID == "" {
-		linkID = strings.TrimSpace(stringify(job.Payload["link_id"]))
-	}
-	transportID := strings.TrimSpace(stringify(result["transport_id"]))
-	if transportID == "" {
-		transportID = strings.TrimSpace(stringify(job.Payload["transport_id"]))
-	}
-	role := strings.ToLower(strings.TrimSpace(stringify(result["role"])))
-	if role == "" {
-		role = strings.ToLower(strings.TrimSpace(stringify(job.Payload["role"])))
-	}
+	linkID, transportID, role := backhaulJobIdentity(job, result)
 	if linkID == "" || transportID == "" {
 		return
 	}
@@ -314,6 +379,87 @@ func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, stat
 	_, _ = s.db.Exec(ctx, `update backhaul_links
 		set status='active', updated_at=now()
 		where id=$1 and exists(select 1 from backhaul_transports where id=$2 and status='active')`, linkID, transportID)
+}
+
+func (s *Store) ApplyBackhaulProbeResult(ctx context.Context, job domain.Job, status string, result map[string]any) {
+	_, transportID, role := backhaulJobIdentity(job, result)
+	if transportID == "" || role == "" {
+		return
+	}
+	health, _ := result["health"].(map[string]any)
+	if health == nil {
+		health = map[string]any{"status": status}
+	}
+	if status != "succeeded" {
+		health["status"] = "failed"
+		health["error"] = firstNonEmptyRouteValue(stringify(result["error"]), "backhaul probe failed")
+	}
+	health["checked_at"] = time.Now().UTC().Format(time.RFC3339)
+	_, _ = s.db.Exec(ctx, `update backhaul_transports
+		set health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $2::text[], $3::jsonb, true),
+		    last_error=$4,
+		    updated_at=now()
+		where id=$1`, transportID, []string{role}, mustJSON(health), stringify(health["error"]))
+}
+
+func (s *Store) ApplyBackhaulCleanupResult(ctx context.Context, job domain.Job, status string, result map[string]any) {
+	linkID, transportID, role := backhaulJobIdentity(job, result)
+	if linkID == "" || transportID == "" || role == "" {
+		return
+	}
+	cleanup := map[string]any{
+		"status":      status,
+		"finished_at": time.Now().UTC().Format(time.RFC3339),
+	}
+	if removed, ok := result["removed_paths"]; ok {
+		cleanup["removed_paths"] = removed
+	}
+	if units, ok := result["stopped_units"]; ok {
+		cleanup["stopped_units"] = units
+	}
+	if status != "succeeded" {
+		errText := firstNonEmptyRouteValue(stringify(result["error"]), "backhaul cleanup failed")
+		cleanup["error"] = errText
+		_, _ = s.db.Exec(ctx, `update backhaul_transports set status='failed', last_error=$2, updated_at=now() where id=$1`, transportID, errText)
+		_, _ = s.db.Exec(ctx, `update backhaul_links set status='failed', updated_at=now() where id=$1`, linkID)
+	} else {
+		_, _ = s.db.Exec(ctx, `update backhaul_transports set status='disabled', last_error='', updated_at=now() where id=$1`, transportID)
+	}
+	_, _ = s.db.Exec(ctx, `update backhaul_transports
+		set health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $2::text[], $3::jsonb, true), updated_at=now()
+		where id=$1`, transportID, []string{"cleanup", role}, mustJSON(cleanup))
+
+	batchID := firstNonEmptyRouteValue(stringify(result["delete_batch_id"]), stringify(job.Payload["delete_batch_id"]))
+	if batchID == "" {
+		return
+	}
+	var pending, failed int
+	_ = s.db.QueryRow(ctx, `select
+		count(*) filter (where status in ('queued','running','retrying'))::int,
+		count(*) filter (where status in ('failed','cancelled'))::int
+	from jobs
+	where type='node.backhaul.cleanup'
+	  and scope_id=$1
+	  and payload_json->>'delete_batch_id'=$2`, linkID, batchID).Scan(&pending, &failed)
+	if pending == 0 && failed == 0 {
+		_, _ = s.db.Exec(ctx, `update backhaul_links set status='deleted', updated_at=now() where id=$1`, linkID)
+	}
+}
+
+func backhaulJobIdentity(job domain.Job, result map[string]any) (string, string, string) {
+	linkID := strings.TrimSpace(stringify(result["link_id"]))
+	if linkID == "" {
+		linkID = strings.TrimSpace(stringify(job.Payload["link_id"]))
+	}
+	transportID := strings.TrimSpace(stringify(result["transport_id"]))
+	if transportID == "" {
+		transportID = strings.TrimSpace(stringify(job.Payload["transport_id"]))
+	}
+	role := strings.ToLower(strings.TrimSpace(stringify(result["role"])))
+	if role == "" {
+		role = strings.ToLower(strings.TrimSpace(stringify(job.Payload["role"])))
+	}
+	return linkID, transportID, role
 }
 
 func (s *Store) buildBackhaulApplyPayload(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string) (map[string]any, error) {
@@ -360,6 +506,39 @@ func (s *Store) buildBackhaulApplyPayload(ctx context.Context, link domain.Backh
 			"reason":                           "backhaul transport materialization is separate from client route kernel enforcement",
 		},
 	}, nil
+}
+
+func buildBackhaulProbePayload(link domain.BackhaulLink, transport domain.BackhaulTransport, role string) map[string]any {
+	peerAddress := transport.EgressAddress
+	if role == "egress" {
+		peerAddress = transport.IngressAddress
+	}
+	return map[string]any{
+		"node_id":        nodeIDForBackhaulRole(link, role),
+		"link_id":        link.ID,
+		"transport_id":   transport.ID,
+		"role":           role,
+		"driver":         transport.Driver,
+		"interface_name": transport.InterfaceName,
+		"systemd_unit":   backhaulSystemdUnit(link, transport, role),
+		"peer_address":   peerAddress,
+		"probe_count":    3,
+	}
+}
+
+func buildBackhaulCleanupPayload(link domain.BackhaulLink, transport domain.BackhaulTransport, role, batchID string) map[string]any {
+	return map[string]any{
+		"node_id":         nodeIDForBackhaulRole(link, role),
+		"link_id":         link.ID,
+		"transport_id":    transport.ID,
+		"role":            role,
+		"driver":          transport.Driver,
+		"interface_name":  transport.InterfaceName,
+		"delete_batch_id": batchID,
+		"systemd_units":   backhaulSystemdUnits(link, transport, role),
+		"paths":           backhaulCleanupPaths(link, transport, role),
+		"directories":     []string{"/etc/megavpn/backhaul/" + safeBackhaulSlug(link, transport)},
+	}
 }
 
 func (s *Store) backhaulSideMaterial(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string, def backhaul.DriverDefinition) (map[string]any, error) {
@@ -448,6 +627,7 @@ func (s *Store) openVPNBackhaulMaterial(ctx context.Context, link domain.Backhau
 	slug := safeBackhaulSlug(link, transport)
 	configPath := "/etc/megavpn/backhaul/" + slug + "/openvpn.conf"
 	keyPath := "/etc/megavpn/backhaul/" + slug + "/openvpn.static.key"
+	profilePath := "/etc/megavpn/backhaul/" + slug + "/openvpn-profile-" + role + ".json"
 	unitName := "megavpn-backhaul-" + slug + ".service"
 	unitPath := "/etc/systemd/system/" + unitName
 	pidPath := "/run/" + unitName + ".pid"
@@ -464,9 +644,20 @@ func (s *Store) openVPNBackhaulMaterial(ctx context.Context, link domain.Backhau
 		"dev-type tun",
 		"proto " + proto,
 		"port " + strconv.Itoa(transport.EndpointPort),
+		"topology p2p",
+		"cipher AES-256-CBC",
+		"auth SHA256",
+		"auth-nocache",
+		"replay-window 64 15",
+		"mute-replay-warnings",
+		"tun-mtu 1500",
+		"mssfix 1360",
+		"allow-compression no",
 	}
 	if role == "ingress" {
 		lines = append(lines, "remote "+transport.EndpointHost+" "+strconv.Itoa(transport.EndpointPort))
+		lines = append(lines, "resolv-retry infinite")
+		lines = append(lines, "nobind")
 		lines = append(lines, "ifconfig "+hostAddress(transport.IngressAddress)+" "+hostAddress(transport.EgressAddress))
 	} else {
 		lines = append(lines, "local 0.0.0.0")
@@ -476,13 +667,45 @@ func (s *Store) openVPNBackhaulMaterial(ctx context.Context, link domain.Backhau
 		"secret "+keyPath,
 		"persist-key",
 		"persist-tun",
+		"persist-local-ip",
+		"persist-remote-ip",
 		"keepalive 10 60",
+		"ping-timer-rem",
 		"verb 3",
 		"",
 	)
+	if transport.Driver == backhaul.DriverOpenVPNUDP && role == "ingress" {
+		lines = append(lines[:len(lines)-1], "explicit-exit-notify 1", "")
+	}
+	profile := backhaulOperatorProfile(link, transport, role, backhaul.DriverDefinition{
+		Code:                 transport.Driver,
+		Label:                "OpenVPN P2P",
+		Layer:                "l3",
+		ActivationMode:       "managed_systemd",
+		SupportsKernelRoutes: true,
+		Capabilities:         []string{"openvpn"},
+	}, map[string]any{
+		"config_path":  configPath,
+		"key_path":     keyPath,
+		"systemd_unit": unitName,
+		"profile": map[string]any{
+			"mode":          "static_key_p2p",
+			"cipher":        "AES-256-CBC",
+			"auth":          "SHA256",
+			"tun_mtu":       1500,
+			"mssfix":        1360,
+			"keepalive":     "10 60",
+			"replay_window": "64 15",
+		},
+	})
+	profileJSON, err := json.MarshalIndent(profile, "", "  ")
+	if err != nil {
+		return nil, err
+	}
 	files := []map[string]any{
 		{"path": configPath, "mode": "0600", "content": strings.Join(lines, "\n")},
 		{"path": keyPath, "mode": "0600", "content": staticKey},
+		{"path": profilePath, "mode": "0640", "content": string(profileJSON) + "\n"},
 	}
 	unitStart := "/usr/sbin/openvpn --daemon " + shellQuotePG(unitName) + " --writepid " + shellQuotePG(pidPath) + " --config " + shellQuotePG(configPath)
 	unitStop := "/bin/sh -c " + shellQuotePG("test ! -f "+pidPath+" || kill $(cat "+pidPath+")")
@@ -951,6 +1174,34 @@ func defaultBackhaulInterface(linkID, driver string) string {
 
 func safeBackhaulSlug(link domain.BackhaulLink, transport domain.BackhaulTransport) string {
 	return slugify(link.Name + "-" + transport.Driver + "-" + shortID(transport.ID))
+}
+
+func backhaulSystemdUnit(link domain.BackhaulLink, transport domain.BackhaulTransport, role string) string {
+	units := backhaulSystemdUnits(link, transport, role)
+	if len(units) == 0 {
+		return ""
+	}
+	return units[0]
+}
+
+func backhaulSystemdUnits(link domain.BackhaulLink, transport domain.BackhaulTransport, role string) []string {
+	slug := safeBackhaulSlug(link, transport)
+	switch transport.Driver {
+	case backhaul.DriverWireGuard, backhaul.DriverOpenVPNUDP, backhaul.DriverOpenVPNTCP443:
+		return []string{"megavpn-backhaul-" + slug + ".service"}
+	case backhaul.DriverXrayVLESSWS, backhaul.DriverXrayVLESSGRPC, backhaul.DriverXrayReality, backhaul.DriverXrayTUNVLESS:
+		return []string{"megavpn-backhaul-" + slug + "-" + role + ".service"}
+	default:
+		return nil
+	}
+}
+
+func backhaulCleanupPaths(link domain.BackhaulLink, transport domain.BackhaulTransport, role string) []string {
+	paths := []string{}
+	for _, unit := range backhaulSystemdUnits(link, transport, role) {
+		paths = append(paths, "/etc/systemd/system/"+unit)
+	}
+	return paths
 }
 
 func backhaulManifestPath(link domain.BackhaulLink, transport domain.BackhaulTransport, role string) string {

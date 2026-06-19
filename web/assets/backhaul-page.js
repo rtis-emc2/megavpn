@@ -9,6 +9,7 @@
       tableCard,
       statusTag,
       escapeHTML,
+      requestJSON,
       sendJSON,
       refresh,
       openModal,
@@ -22,6 +23,7 @@
       typeof tableCard !== 'function' ||
       typeof statusTag !== 'function' ||
       typeof escapeHTML !== 'function' ||
+      typeof requestJSON !== 'function' ||
       typeof sendJSON !== 'function' ||
       typeof refresh !== 'function' ||
       typeof openModal !== 'function' ||
@@ -64,6 +66,79 @@
         </span>`).join('');
     }
 
+    function transportHealth(transport) {
+      const health = transport?.health || {};
+      const ingress = health.ingress || {};
+      const egress = health.egress || {};
+      const status = [ingress.status, egress.status].filter(Boolean);
+      const avg = [ingress.latency_avg_ms, egress.latency_avg_ms]
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value));
+      return {
+        ingress,
+        egress,
+        status: status.length ? status.join(' / ') : health.status || 'unknown',
+        avgLatency: avg.length ? (avg.reduce((sum, value) => sum + value, 0) / avg.length) : null,
+      };
+    }
+
+    function renderHealthCell(transport) {
+      if (!transport) return '<span class="tag">unknown</span>';
+      const health = transportHealth(transport);
+      const latency = health.avgLatency == null ? '' : `<small>${escapeHTML(health.avgLatency.toFixed(1))} ms avg</small>`;
+      return `
+        <div class="stacked-status">
+          <span class="inline-actions compact-inline">
+            ${statusTag(health.ingress.status || 'unknown')}
+            ${statusTag(health.egress.status || 'unknown')}
+          </span>
+          ${latency}
+        </div>`;
+    }
+
+    function renderJobList(jobs) {
+      const list = Array.isArray(jobs) ? jobs : [];
+      if (!list.length) return '<div class="empty">No node jobs were queued.</div>';
+      return `
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Job</th><th>Type</th><th>Status</th><th>Node</th></tr></thead>
+            <tbody>
+              ${list.map((job) => `
+                <tr data-job-id="${escapeHTML(job.id || '')}">
+                  <td>${escapeHTML(job.id || 'n/a')}</td>
+                  <td>${escapeHTML(job.type || 'n/a')}</td>
+                  <td class="job-status-cell">${statusTag(job.status || 'queued')}</td>
+                  <td>${escapeHTML(job.node_id || 'n/a')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    async function pollJobs(jobIDs, targetID, onDone) {
+      const target = document.getElementById(targetID);
+      const ids = (jobIDs || []).filter(Boolean);
+      if (!target || !ids.length) return;
+      const terminal = new Set(['succeeded', 'failed', 'cancelled']);
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, attempt < 3 ? 1000 : 2500));
+        const jobs = [];
+        for (const id of ids) {
+          try {
+            jobs.push(await requestJSON(`/api/v1/jobs/${encodeURIComponent(id)}`));
+          } catch (err) {
+            jobs.push({ id, status: 'failed', type: 'unknown', error: err.message });
+          }
+        }
+        target.innerHTML = renderJobList(jobs);
+        if (jobs.every((job) => terminal.has(String(job.status || '').toLowerCase()))) {
+          if (typeof onDone === 'function') await onDone(jobs);
+          return;
+        }
+      }
+    }
+
     function render() {
       setTitle('Backhaul');
       const links = Array.isArray(state.backhaulLinks) ? state.backhaulLinks.filter((link) => link.status !== 'deleted') : [];
@@ -80,6 +155,7 @@
           endpoint: transport ? `${transport.endpoint_host || 'n/a'}:${transport.endpoint_port || 'n/a'} ${transport.protocol || ''}` : 'n/a',
           status: link.status || 'unknown',
           transports: renderTransportTags(link),
+          health: renderHealthCell(transport),
         };
       });
       el('content').innerHTML = `
@@ -90,11 +166,13 @@
           { title: 'Driver', key: 'driver' },
           { title: 'Endpoint', key: 'endpoint' },
           { title: 'Status', key: 'status', render: (row) => statusTag(row.status) },
+          { title: 'Health', key: 'health', render: (row) => row.health },
           { title: 'Profiles', key: 'transports', render: (row) => row.transports },
           { title: 'Actions', key: 'id', render: (row) => `
             <div class="inline-actions">
               <button class="secondary-btn inspect-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Manage</button>
               <button class="primary-btn apply-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Apply</button>
+              <button class="secondary-btn probe-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Test</button>
               <button class="danger-btn delete-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}" data-link-name="${escapeHTML(row.name)}">Delete</button>
             </div>` },
         ], '<button class="secondary-btn" id="createBackhaulBtn" type="button">Create backhaul</button>')}`;
@@ -108,6 +186,9 @@
       });
       document.querySelectorAll('.apply-backhaul-btn').forEach((button) => {
         button.addEventListener('click', () => applyBackhaul(button.dataset.linkId));
+      });
+      document.querySelectorAll('.probe-backhaul-btn').forEach((button) => {
+        button.addEventListener('click', () => probeBackhaul(button.dataset.linkId));
       });
       document.querySelectorAll('.delete-backhaul-btn').forEach((button) => {
         button.addEventListener('click', () => openDeleteBackhaulModal(button.dataset.linkId, button.dataset.linkName));
@@ -217,8 +298,14 @@
           drivers,
         };
         const data = await sendJSON('/api/v1/backhaul-links', 'POST', payload);
-        target.innerHTML = renderActionResponse(data, 'Backhaul created');
         await refresh();
+        openModal('Backhaul created', 'Profile is ready to apply', `
+          ${renderActionResponse(data, 'Backhaul profile created')}
+          <div class="empty">Transport profiles were created in the control plane. Use Apply to materialize the selected driver on both nodes, then Test to verify both directions.</div>
+          <div class="modal-actions">
+            <button class="primary-btn" type="button" id="closeBackhaulCreateResultBtn">Close</button>
+          </div>`, { wide: true });
+        document.getElementById('closeBackhaulCreateResultBtn')?.addEventListener('click', closeModal);
       } catch (err) {
         target.innerHTML = renderActionResponse({ error: err.message, details: err?.payload || null }, 'Backhaul create failed');
       }
@@ -239,7 +326,7 @@
         </div>
         <div class="table-wrap" style="margin-top:16px">
           <table>
-            <thead><tr><th>Driver</th><th>Status</th><th>Endpoint</th><th>Interface</th><th>Tunnel</th><th>Applied</th></tr></thead>
+            <thead><tr><th>Driver</th><th>Status</th><th>Endpoint</th><th>Interface</th><th>Tunnel</th><th>Health</th><th>Applied</th></tr></thead>
             <tbody>
               ${transports.length ? transports.map((transport) => `
                 <tr>
@@ -248,18 +335,21 @@
                   <td>${escapeHTML(transport.endpoint_host || 'n/a')}:${escapeHTML(transport.endpoint_port || 'n/a')} ${escapeHTML(transport.protocol || '')}</td>
                   <td>${escapeHTML(transport.interface_name || 'n/a')}</td>
                   <td>${escapeHTML(transport.tunnel_cidr || 'n/a')}</td>
+                  <td>${renderHealthCell(transport)}</td>
                   <td>${escapeHTML(transport.applied_ingress_at ? 'ingress ' : '')}${escapeHTML(transport.applied_egress_at ? 'egress' : '') || 'n/a'}</td>
-                </tr>`).join('') : '<tr><td colspan="6"><div class="empty">No transport profiles.</div></td></tr>'}
+                </tr>`).join('') : '<tr><td colspan="7"><div class="empty">No transport profiles.</div></td></tr>'}
             </tbody>
           </table>
         </div>
         <div class="modal-actions">
           <button class="secondary-btn" id="closeBackhaulDetailsBtn" type="button">Close</button>
+          <button class="secondary-btn" id="probeBackhaulDetailsBtn" type="button">Test both directions</button>
           <button class="primary-btn" id="applyBackhaulDetailsBtn" type="button">Apply selected driver</button>
         </div>
         <div id="backhaulDetailsResult" class="form-result"></div>`, { wide: true });
       document.getElementById('closeBackhaulDetailsBtn')?.addEventListener('click', closeModal);
       document.getElementById('applyBackhaulDetailsBtn')?.addEventListener('click', () => applyBackhaul(link.id, 'backhaulDetailsResult'));
+      document.getElementById('probeBackhaulDetailsBtn')?.addEventListener('click', () => probeBackhaul(link.id, 'backhaulDetailsResult'));
     }
 
     async function applyBackhaul(linkID, targetID = '') {
@@ -274,6 +364,34 @@
         const body = renderActionResponse({ error: err.message, details: err?.payload || null }, 'Backhaul apply failed');
         if (target) target.innerHTML = body;
         else openModal('Backhaul apply failed', 'Error', body, { wide: true });
+      }
+    }
+
+    async function probeBackhaul(linkID, targetID = '') {
+      const target = targetID ? document.getElementById(targetID) : null;
+      if (target) target.innerHTML = '<span class="tag warn">testing</span>';
+      try {
+        const data = await sendJSON(`/api/v1/backhaul-links/${linkID}/probe`, 'POST', {});
+        const jobIDs = (data.jobs || []).map((job) => job.id).filter(Boolean);
+        const body = `
+          ${renderActionResponse(data, 'Backhaul probe queued')}
+          <div id="backhaulProbeJobs">${renderJobList(data.jobs || [])}</div>
+          <div class="modal-actions">
+            <button class="primary-btn" type="button" id="closeBackhaulProbeBtn">Close</button>
+          </div>`;
+        if (target) {
+          target.innerHTML = body;
+        } else {
+          openModal('Backhaul test', 'Bidirectional probe', body, { wide: true });
+        }
+        document.getElementById('closeBackhaulProbeBtn')?.addEventListener('click', closeModal);
+        await pollJobs(jobIDs, 'backhaulProbeJobs', async () => {
+          await refresh();
+        });
+      } catch (err) {
+        const body = renderActionResponse({ error: err.message, details: err?.payload || null }, 'Backhaul probe failed');
+        if (target) target.innerHTML = body;
+        else openModal('Backhaul probe failed', 'Error', body, { wide: true });
       }
     }
 
@@ -294,8 +412,24 @@
         target.innerHTML = '<span class="tag warn">deleting</span>';
         try {
           const data = await sendJSON(`/api/v1/backhaul-links/${linkID}`, 'DELETE', null);
-          target.innerHTML = renderActionResponse(data, 'Backhaul deleted');
+          const jobIDs = (data.jobs || []).map((job) => job.id).filter(Boolean);
+          openModal('Backhaul cleanup', 'Removing managed files from nodes', `
+            ${renderActionResponse(data, jobIDs.length ? 'Backhaul cleanup queued' : 'Backhaul deleted')}
+            <div id="backhaulCleanupJobs">${renderJobList(data.jobs || [])}</div>
+            <div class="empty">The link will disappear after cleanup jobs succeed on both ingress and egress nodes.</div>
+            <div class="modal-actions">
+              <button class="primary-btn" id="closeBackhaulCleanupBtn" type="button">Close</button>
+            </div>`, { wide: true });
+          document.getElementById('closeBackhaulCleanupBtn')?.addEventListener('click', closeModal);
           await refresh();
+          await pollJobs(jobIDs, 'backhaulCleanupJobs', async (jobs) => {
+            await refresh();
+            const failed = jobs.some((job) => ['failed', 'cancelled'].includes(String(job.status || '').toLowerCase()));
+            const result = document.getElementById('backhaulCleanupJobs');
+            if (result && !failed) {
+              result.insertAdjacentHTML('afterend', '<div class="form-result"><span class="tag ok">removed from nodes</span></div>');
+            }
+          });
         } catch (err) {
           target.innerHTML = renderActionResponse({ error: err.message, details: err?.payload || null }, 'Backhaul delete failed');
         }

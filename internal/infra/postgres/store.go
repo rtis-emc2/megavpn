@@ -1261,7 +1261,7 @@ func (s *Store) CancelJob(ctx context.Context, jobID string) (domain.Job, error)
 }
 
 func (s *Store) ClaimJob(ctx context.Context, workerID string) (domain.Job, bool, error) {
-	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.backhaul.apply','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable')`, nil)
+	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable')`, nil)
 }
 
 func (s *Store) CompleteJob(ctx context.Context, idv, status string, result map[string]any) error {
@@ -1354,6 +1354,10 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 		switch jobType {
 		case "node.backhaul.apply":
 			s.ApplyBackhaulJobResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, NodeID: nil, Payload: payload, Result: result}, status, result)
+		case "node.backhaul.probe":
+			s.ApplyBackhaulProbeResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, NodeID: nil, Payload: payload, Result: result}, status, result)
+		case "node.backhaul.cleanup":
+			s.ApplyBackhaulCleanupResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, NodeID: nil, Payload: payload, Result: result}, status, result)
 		case "node.bootstrap":
 			if scopeID != nil && shouldHandoffNodeBootstrapToAgent(payload, result) {
 				_, _ = s.db.Exec(ctx, `update nodes
@@ -1418,8 +1422,15 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 		case "platform.control_plane_tls.apply":
 			_ = s.MarkControlPlaneTLSApplyResult(ctx, true, "")
 		}
-	} else if jobType == "node.backhaul.apply" {
-		s.ApplyBackhaulJobResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
+	} else if strings.HasPrefix(jobType, "node.backhaul.") {
+		switch jobType {
+		case "node.backhaul.apply":
+			s.ApplyBackhaulJobResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
+		case "node.backhaul.probe":
+			s.ApplyBackhaulProbeResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
+		case "node.backhaul.cleanup":
+			s.ApplyBackhaulCleanupResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
+		}
 	} else if jobType == "platform.control_plane_tls.apply" {
 		errText := strings.TrimSpace(stringify(result["error"]))
 		if errText == "" {
@@ -1512,7 +1523,7 @@ func (s *Store) AgentNextJob(ctx context.Context, nodeRef string) (domain.Job, b
 	if err := s.db.QueryRow(ctx, `select id from nodes where (id::text=$1 or name=$1) and status <> 'retired'`, nodeRef).Scan(&nodeID); err != nil {
 		return domain.Job{}, false, err
 	}
-	where := `(node_id=$1 or node_id is null) and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.backhaul.apply','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable')`
+	where := `(node_id=$1 or node_id is null) and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable')`
 	job, ok, err := s.claimJob(ctx, "agent:"+nodeID, where, []any{nodeID})
 	if err != nil || !ok {
 		return job, ok, err

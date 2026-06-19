@@ -31,6 +31,26 @@ func TestBackhaulManagedPathSafety(t *testing.T) {
 	}
 }
 
+func TestBackhaulManagedDirSafety(t *testing.T) {
+	t.Parallel()
+
+	if !isSafeBackhaulManagedDir("/etc/megavpn/backhaul/link-1") {
+		t.Fatal("expected managed backhaul directory to be allowed")
+	}
+	for _, dir := range []string{
+		"",
+		"/etc/megavpn/backhaul",
+		"/etc/megavpn/backhaul/",
+		"/etc/megavpn/backhaul/../agent",
+		"/etc/megavpn/backhaul/link-1/nested",
+		"/tmp/link-1",
+	} {
+		if isSafeBackhaulManagedDir(dir) {
+			t.Fatalf("dir %q should be blocked", dir)
+		}
+	}
+}
+
 func TestBackhaulUnitSafety(t *testing.T) {
 	t.Parallel()
 
@@ -41,6 +61,23 @@ func TestBackhaulUnitSafety(t *testing.T) {
 		if isSafeBackhaulUnit(unit) {
 			t.Fatalf("unit %q should be blocked", unit)
 		}
+	}
+}
+
+func TestParsePingStats(t *testing.T) {
+	t.Parallel()
+
+	stats := parsePingStats(`PING 10.240.0.2 (10.240.0.2) 56(84) bytes of data.
+64 bytes from 10.240.0.2: icmp_seq=1 ttl=64 time=0.123 ms
+
+--- 10.240.0.2 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2040ms
+rtt min/avg/max/mdev = 0.123/0.456/0.789/0.111 ms`)
+	if got := stats["packet_loss_percent"]; got != float64(0) {
+		t.Fatalf("packet_loss_percent = %#v, want 0", got)
+	}
+	if got := stats["latency_avg_ms"]; got != float64(0.456) {
+		t.Fatalf("latency_avg_ms = %#v, want 0.456", got)
 	}
 }
 

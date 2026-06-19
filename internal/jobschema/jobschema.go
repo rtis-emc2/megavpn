@@ -168,6 +168,96 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else if ok {
 			normalized["warnings"] = warnings
 		}
+	case "node.backhaul.probe":
+		nodeID, err := requireString(payload, "node_id")
+		if err != nil {
+			return nil, err
+		}
+		linkID, err := requireString(payload, "link_id")
+		if err != nil {
+			return nil, err
+		}
+		transportID, err := requireString(payload, "transport_id")
+		if err != nil {
+			return nil, err
+		}
+		role, err := requireString(payload, "role")
+		if err != nil {
+			return nil, err
+		}
+		role = strings.ToLower(role)
+		if role != "ingress" && role != "egress" {
+			return nil, validationf("payload.role must be ingress or egress")
+		}
+		driverCode, err := requireString(payload, "driver")
+		if err != nil {
+			return nil, err
+		}
+		driverCode = backhaul.NormalizeDriver(driverCode)
+		if err := backhaul.ValidateDriver(driverCode); err != nil {
+			return nil, validationf("%s", err.Error())
+		}
+		normalized["node_id"] = nodeID
+		normalized["link_id"] = linkID
+		normalized["transport_id"] = transportID
+		normalized["role"] = role
+		normalized["driver"] = driverCode
+		trimOptionalStrings(normalized, payload, "interface_name", "systemd_unit", "peer_address")
+		if v, ok, err := optionalInt(payload, "probe_count"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["probe_count"] = v
+		}
+	case "node.backhaul.cleanup":
+		nodeID, err := requireString(payload, "node_id")
+		if err != nil {
+			return nil, err
+		}
+		linkID, err := requireString(payload, "link_id")
+		if err != nil {
+			return nil, err
+		}
+		transportID, err := requireString(payload, "transport_id")
+		if err != nil {
+			return nil, err
+		}
+		role, err := requireString(payload, "role")
+		if err != nil {
+			return nil, err
+		}
+		role = strings.ToLower(role)
+		if role != "ingress" && role != "egress" {
+			return nil, validationf("payload.role must be ingress or egress")
+		}
+		driverCode, err := requireString(payload, "driver")
+		if err != nil {
+			return nil, err
+		}
+		driverCode = backhaul.NormalizeDriver(driverCode)
+		if err := backhaul.ValidateDriver(driverCode); err != nil {
+			return nil, validationf("%s", err.Error())
+		}
+		normalized["node_id"] = nodeID
+		normalized["link_id"] = linkID
+		normalized["transport_id"] = transportID
+		normalized["role"] = role
+		normalized["driver"] = driverCode
+		trimOptionalStrings(normalized, payload, "interface_name", "delete_batch_id")
+		if systemdUnits, ok, err := optionalStringSlice(payload, "systemd_units"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["systemd_units"] = systemdUnits
+		}
+		if paths, ok, err := optionalStringSlice(payload, "paths"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["paths"] = paths
+		}
+		if directories, ok, err := optionalStringSlice(payload, "directories"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["directories"] = directories
+		}
 	case "node.route_policy.apply":
 		nodeID, err := requireString(payload, "node_id")
 		if err != nil {

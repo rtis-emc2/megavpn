@@ -268,6 +268,7 @@
     tableCard,
     statusTag,
     escapeHTML,
+    requestJSON,
     sendJSON,
     refresh,
     openModal,

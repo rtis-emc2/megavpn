@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**RTIS MegaVPN 0.6.10.1-alpha**
+**RTIS MegaVPN 0.6.10.2-alpha**
 
 RTIS MegaVPN — self-hosted distributed VPN orchestration platform.
 
@@ -35,14 +35,14 @@ VPN / Proxy Services
 
 # Current Status
 
-Release: `0.6.10.1-alpha`
+Release: `0.6.10.2-alpha`
 
 Current branch status: expanded service-pack matrix for standalone services, provisioning/artifact/share-link smoke runner for the test server, stricter revision/apply lifecycle with validation markers, rollback baseline and revision diff visibility, certificate lifecycle hardening, job payload validation, deployment baseline stabilization, a top-tabbed node console, actionable node lifecycle/onboarding guidance, visible agent public URL runtime config, automatic SSH bootstrap handoff into the agent-managed channel, HTTPS-only control plane edge guidance, interactive Control Plane installer with secure defaults, sudo/snap Go path handling and correct systemd oneshot migration result handling, UI-backed Control Plane TLS profile settings, worker-driven nginx TLS edge apply, unified service driver contract with typed operation and health-check interfaces, operation-aware agent runtime handlers, service-specific agent validation registry, driver-backed instance runtime health/drift projection with retained observation history and UI-visible health/drift reasons, bidirectional HMAC-signed agent transport for agent requests plus job/runtime-target responses with replay-window verification, route-policy enforceability and ingress egress/output projection for L3/L4 candidates vs observe-only routes, conservative kernel policy routing for IPv4 L3/L4 allow candidates through managed backhaul, compact modular Instances/Revisions/Services/Ops/Clients/Artifacts/Backhaul/Nodes/Settings/Certificates UI pages, safe instance soft-delete flow, a fixed modular UI dependency export that prevents the login screen from rendering as a blank page, an offline admin password reset utility for operational lockout recovery, local-file certificate import with RSA PKCS#1/PKCS#8 key support plus pre-import certificate preview, hardened SSH bootstrap known_hosts/key handling inside the worker sandbox, installer preservation of already-applied managed Control Plane TLS certificates, private-domain-free Xray WebSocket camouflage service-pack defaults with Nginx website fallback, UI-managed client egress/output route policy plus selective client provisioning and authenticated client config preview/download for OVPN/VLESS/WireGuard and related artifacts, and managed ingress-egress backhaul links with WireGuard/OpenVPN auto-activation, egress NAT bootstrap and IPsec/Xray materialized fallback profiles.
 
 Immediate program priorities:
 
 - stabilize clean GitHub baseline under `rtis-emc2/megavpn`
-- complete `0.6.10.1-alpha` CI/build/deploy verification
+- complete `0.6.10.2-alpha` CI/build/deploy verification
 - verify `MEGAVPN_PUBLIC_BASE_URL` with custom ports in Settings and Agent channel diagnostics
 - verify the control plane public edge terminates TLS on the same host/port used by `MEGAVPN_PUBLIC_BASE_URL`
 - verify Settings -> Control Plane TLS can select imported commercial certificates or self-signed fallback profile and apply nginx TLS edge through worker job
@@ -77,7 +77,7 @@ SSH bootstrap stores first-seen remote host keys in `/var/lib/megavpn/ssh/known_
 
 The Control Plane installer treats `self-signed-nginx` as bootstrap fallback only. If managed TLS material exists at `/etc/megavpn/control-plane-tls/fullchain.pem` plus `/etc/megavpn/control-plane-tls/privkey.pem`, rerunning the installer keeps or restores nginx to that commercial certificate instead of downgrading the public edge back to the installer self-signed certificate. Use `MEGAVPN_CP_FORCE_SELF_SIGNED_NGINX=1` only for an intentional rollback to installer-generated self-signed TLS.
 
-Managed backhaul links connect ingress and egress nodes through `/api/v1/backhaul-links` and the Backhaul UI page. WireGuard and OpenVPN UDP/TCP profiles are materialized and activated by `node.backhaul.apply` agent jobs. IPsec/IKEv2/L2TP and Xray/VLESS profiles are written as explicit config/profile files and intentionally require a manual activation stage until routing-loop, edge-TLS and strongSwan profile validation are finalized. See `docs/BACKHAUL.md`.
+Managed backhaul links connect ingress and egress nodes through `/api/v1/backhaul-links` and the Backhaul UI page. WireGuard and OpenVPN UDP/TCP profiles are materialized and activated by `node.backhaul.apply` agent jobs. Operators can run bidirectional `node.backhaul.probe` checks from the UI and managed delete now queues `node.backhaul.cleanup` jobs to remove generated units/files from both nodes before the link disappears. IPsec/IKEv2/L2TP and Xray/VLESS profiles are written as explicit config/profile files and intentionally require a manual activation stage until routing-loop, edge-TLS and strongSwan profile validation are finalized. See `docs/BACKHAUL.md`.
 
 Реализовано:
 
@@ -120,7 +120,7 @@ Managed backhaul links connect ingress and egress nodes through `/api/v1/backhau
 - route-policy payloads classify each client access route as `l3_l4_candidate` or `observe_only` with explicit reasons, project the required egress output and apply conservative kernel policy routing for IPv4 L3/L4 allow candidates
 - Xray WebSocket camouflage service pack defaults to hidden path `/assets/rtis-sync` on the public endpoint and a neutral Nginx fallback website placeholder for normal browser traffic
 - Client Access route creation UI supports explicit `local_breakout` and remote `egress_node` output policy with backhaul next-hop/interface/table fields
-- Managed Backhaul API/UI supports ingress-to-egress links, driver catalog discovery, generated secret refs, dual-node apply jobs, route-policy projection through active managed backhaul interfaces and agent-side file/path safety checks
+- Managed Backhaul API/UI supports ingress-to-egress links, driver catalog discovery, generated secret refs, dual-node apply jobs, bidirectional RTT/packet-loss probes, node cleanup jobs, route-policy projection through active managed backhaul interfaces and agent-side file/path safety checks
 - Client Access UI supports selective provisioning of chosen service instances and exposes generated client configs with authenticated preview/download endpoints for `.ovpn`, VLESS URL, WireGuard config, MTProto, HTTP proxy, Shadowsocks and IPsec/L2TP bundles
 - interactive Control Plane installer with prompts for public URL/domain, TLS mode, PostgreSQL DSN/fields, secret master key, artifact path, bootstrap admin and systemd/nginx setup
 - retained instance runtime observation history for job-derived and agent-derived health/drift snapshots

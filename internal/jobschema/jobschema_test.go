@@ -190,6 +190,50 @@ func TestNormalizeNodeBackhaulApplyRejectsInvalidDriver(t *testing.T) {
 	}
 }
 
+func TestNormalizeNodeBackhaulProbe(t *testing.T) {
+	payload, err := Normalize("node.backhaul.probe", map[string]any{
+		"node_id":        " node-1 ",
+		"link_id":        " link-1 ",
+		"transport_id":   " transport-1 ",
+		"role":           " Egress ",
+		"driver":         "wireguard",
+		"interface_name": " mgbh0 ",
+		"systemd_unit":   " megavpn-backhaul-link.service ",
+		"peer_address":   "10.240.0.1",
+		"probe_count":    3,
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := payload["role"]; got != "egress" {
+		t.Fatalf("role = %v, want egress", got)
+	}
+	if got := payload["interface_name"]; got != "mgbh0" {
+		t.Fatalf("interface_name = %v, want mgbh0", got)
+	}
+}
+
+func TestNormalizeNodeBackhaulCleanup(t *testing.T) {
+	payload, err := Normalize("node.backhaul.cleanup", map[string]any{
+		"node_id":         "node-1",
+		"link_id":         "link-1",
+		"transport_id":    "transport-1",
+		"role":            "ingress",
+		"driver":          "openvpn_udp",
+		"delete_batch_id": "batch-1",
+		"systemd_units":   []any{" megavpn-backhaul-link.service "},
+		"paths":           []any{"/etc/systemd/system/megavpn-backhaul-link.service"},
+		"directories":     []any{"/etc/megavpn/backhaul/link"},
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	units, ok := payload["systemd_units"].([]string)
+	if !ok || len(units) != 1 || units[0] != "megavpn-backhaul-link.service" {
+		t.Fatalf("systemd_units = %#v, want normalized string slice", payload["systemd_units"])
+	}
+}
+
 func TestNormalizeArtifactBuild(t *testing.T) {
 	payload, err := Normalize("artifact.build", map[string]any{
 		"client_id":     " client-1 ",

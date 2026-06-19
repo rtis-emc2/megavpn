@@ -93,13 +93,34 @@ func (s *Server) applyBackhaulLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 202, response{"jobs": out, "job_count": len(out)})
 }
 
-func (s *Server) deleteBackhaulLink(w http.ResponseWriter, r *http.Request) {
-	link, err := s.store.DeleteBackhaulLink(r.Context(), idParam(r))
+func (s *Server) probeBackhaulLink(w http.ResponseWriter, r *http.Request) {
+	jobs, err := s.store.CreateBackhaulProbeJobs(r.Context(), idParam(r))
 	if err != nil {
 		writeErr(w, classifyBackhaulErrStatus(err), err.Error())
 		return
 	}
-	writeJSON(w, 200, link)
+	out := make([]domain.Job, 0, len(jobs))
+	for _, job := range jobs {
+		out = append(out, redactedJob(job))
+	}
+	writeJSON(w, 202, response{"jobs": out, "job_count": len(out)})
+}
+
+func (s *Server) deleteBackhaulLink(w http.ResponseWriter, r *http.Request) {
+	link, jobs, err := s.store.CreateBackhaulDeleteJobs(r.Context(), idParam(r))
+	if err != nil {
+		writeErr(w, classifyBackhaulErrStatus(err), err.Error())
+		return
+	}
+	out := make([]domain.Job, 0, len(jobs))
+	for _, job := range jobs {
+		out = append(out, redactedJob(job))
+	}
+	status := http.StatusAccepted
+	if len(out) == 0 {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, response{"link": link, "jobs": out, "job_count": len(out)})
 }
 
 func classifyBackhaulErrStatus(err error) int {
