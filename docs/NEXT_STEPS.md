@@ -1,11 +1,11 @@
 # Next steps
 
 Актуальный baseline: `ROADMAP_V1_AND_TZ.md`.
-Текущая точка фиксации: `0.6.10.4-alpha`.
-Следующая итерация: `0.6.10.5-alpha`.
+Текущая точка фиксации: `0.6.10.5-alpha`.
+Следующая итерация: `0.6.10.6-alpha`.
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`.
 
-1. Зафиксировать CI green после managed backhaul probe/cleanup lifecycle: `bash -n`, `go test`, `go vet`, `go build`, `scripts/build.sh`, `git diff --check`.
+1. Проверить на реальных ingress/egress nodes, что stale `running` backhaul cleanup jobs возвращаются в `retrying` после lease expiry и delete завершается после успешного повторного cleanup.
 2. Запустить PostgreSQL integration suite с `MEGAVPN_TEST_DATABASE_DSN`; тест создает временную schema, применяет все migrations и проверяет jobs, locks, provisioning и baseline access routes.
 3. Проверить `/api/v1/service-drivers`, `/api/v1/instances/runtime-states`, `/api/v1/instances/{id}/runtime-state`, `/api/v1/instances/{id}/runtime-observations` и `/agent/runtime/instances` на тестовом control plane после реального `instance.apply`.
 4. Проверить node bootstrap console на удаленном control plane: top tabs, onboarding mode explanation, Agent channel next-step CTA, видимость `MEGAVPN_PUBLIC_BASE_URL` с кастомным HTTPS-портом, Settings -> Control Plane TLS profile + Apply edge, создание SSH access method, rotate enrollment token, queue bootstrap, автоматический переход setup method из SSH bootstrap в agent-managed после успешной установки агента, чтение bootstrap run details в одно-колоночном layout без горизонтальной прокрутки, а также переход `awaiting heartbeat -> online` после первого heartbeat агента.

@@ -61,6 +61,7 @@ Core API/UI:
 12. Each probe validates systemd active state, local interface presence and ICMP reachability to the peer tunnel address.
 13. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including packet loss and min/avg/max/stddev latency when Linux ping reports RTT data.
 14. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; missing units/files/directories are reported as `not found - skip`, and only after the cleanup batch succeeds does the link move to `deleted`.
+15. Before queueing a new cleanup batch and before Jobs API reads, the backend recovers stale `running` jobs whose lease has expired back to `retrying`. This prevents a dead agent request or interrupted process from blocking backhaul deletion indefinitely.
 
 ## Security Model
 
@@ -97,9 +98,9 @@ Minimum production path for the first ingress/egress pair:
 
 - One side fails apply: transport and link move to `failed`; inspect job logs and agent result.
 - Unit/interface missing after apply: apply job fails; install/verify the runtime capability on that node before applying again.
-- Agent offline: jobs remain queued/running until the agent polls.
+- Agent offline: jobs remain queued until the agent polls. If an agent claimed a job and died, the backend returns the expired `running` lease to `retrying`.
 - Endpoint unreachable: tunnel unit may start but health reports `degraded`; inspect agent job result and transport health.
-- Cleanup failed: link remains `failed`; inspect the cleanup job result. The agent will not remove paths outside the managed backhaul directory or managed systemd unit prefix.
+- Cleanup failed: link remains `failed`; inspect the cleanup job result. Stale `running` cleanup jobs are recovered automatically after lease expiry, but real failed/cancelled jobs still require operator retry. The agent will not remove paths outside the managed backhaul directory or managed systemd unit prefix.
 - Xray/IPsec selected: config is written but not enabled automatically; manual transport activation is required.
 - Duplicate ingress/egress/name: database constraint blocks active duplicate links.
 - Route table is `main`: kernel enforcement skips the route; managed backhaul links allocate a dedicated table automatically.

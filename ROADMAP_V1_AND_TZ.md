@@ -1,7 +1,7 @@
 # RTIS MegaVPN Platform v1.0 Roadmap and Technical Specification
 
 Дата анализа: 2026-05-15  
-Базовая версия кода: RTIS MegaVPN 0.6.10.4-alpha
+Базовая версия кода: RTIS MegaVPN 0.6.10.5-alpha
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 
@@ -949,7 +949,25 @@ v1.0 can be released only when:
 - Revision diff/apply/rollback workflow.
 - Go build/test CI baseline на машине с установленным Go toolchain.
 
-## 12. Immediate Next Actions
+## 12. Release 0.6.10.5-alpha Closure
+
+Цель релиза `0.6.10.5-alpha`: убрать deadlock-сценарий, когда зависший `running` cleanup job блокировал managed backhaul delete.
+
+Зафиксировано в этом релизе:
+
+- Введен общий backend recovery для stale job leases: `running` jobs с истекшим `locked_until` возвращаются в `retrying`.
+- Legacy `running` jobs без `locked_until` восстанавливаются после защитного TTL, чтобы старые записи не зависали навсегда.
+- Jobs API и Backhaul delete запускают recovery перед чтением/новым cleanup batch, поэтому оператору не нужно вручную дергать диагностику ноды.
+- Cancel job теперь сначала выполняет recovery, поэтому stale `running` job можно отменить после возврата в `retrying`.
+- Backhaul UI сообщает, что offline agents оставляют jobs в очереди, а stale leases восстанавливаются backend maintenance.
+
+Что сознательно остается на `0.6.10.5-alpha+`:
+
+- Lease owner token для защиты от позднего результата старого агента после retry.
+- Отдельный операторский action `force detach` для ситуации, когда node потеряна навсегда и cleanup физически невозможен.
+- Автоматический health-based backhaul failover между несколькими transport profiles.
+
+## 13. Immediate Next Actions
 
 1. Принять решения по open questions 1-4, потому что они влияют на scope, schema и frontend.
 2. Поднять Go toolchain/CI и зафиксировать build/test baseline.

@@ -28,6 +28,11 @@ type Store struct {
 	artifactRoot string
 }
 
+const (
+	jobLeaseDuration              = 2 * time.Minute
+	legacyRunningJobRecoveryAfter = 10 * time.Minute
+)
+
 func New(pool *pgxpool.Pool) *Store {
 	return &Store{db: pool, artifactRoot: defaultArtifactRoot}
 }
@@ -1188,6 +1193,9 @@ func (s *Store) ListJobs(ctx context.Context, limit int) ([]domain.Job, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	if _, err := s.RecoverStaleJobLeases(ctx); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Query(ctx, `select id,type,scope_type,scope_id,node_id,instance_id,status,priority,payload_json,coalesce(result_json,'{}'::jsonb),locked_by,locked_until,created_at,started_at,finished_at from jobs order by created_at desc limit $1`, limit)
 	if err != nil {
 		return nil, err
@@ -1205,6 +1213,9 @@ func (s *Store) ListJobs(ctx context.Context, limit int) ([]domain.Job, error) {
 }
 
 func (s *Store) GetJob(ctx context.Context, jobID string) (domain.Job, error) {
+	if _, err := s.RecoverStaleJobLeases(ctx); err != nil {
+		return domain.Job{}, err
+	}
 	row := s.db.QueryRow(ctx, `select id,type,scope_type,scope_id,node_id,instance_id,status,priority,payload_json,coalesce(result_json,'{}'::jsonb),locked_by,locked_until,created_at,started_at,finished_at from jobs where id=$1`, jobID)
 	return scanJob(row)
 }
@@ -1232,6 +1243,9 @@ func (s *Store) ListJobLogs(ctx context.Context, jobID string, limit int) ([]dom
 }
 
 func (s *Store) CancelJob(ctx context.Context, jobID string) (domain.Job, error) {
+	if _, err := s.RecoverStaleJobLeases(ctx); err != nil {
+		return domain.Job{}, err
+	}
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return domain.Job{}, err
@@ -1262,6 +1276,32 @@ func (s *Store) CancelJob(ctx context.Context, jobID string) (domain.Job, error)
 
 func (s *Store) ClaimJob(ctx context.Context, workerID string) (domain.Job, bool, error) {
 	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable')`, nil)
+}
+
+func (s *Store) RecoverStaleJobLeases(ctx context.Context) (int, error) {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	jobs, err := recoverStaleJobLeasesTx(ctx, tx, time.Now().UTC())
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	for _, job := range jobs {
+		_ = s.AddJobLog(ctx, job.ID, "warn", "stale job lease recovered", map[string]any{
+			"new_status":                    "retrying",
+			"recovery_reason":               "running job exceeded its lease",
+			"legacy_recovery_after":         legacyRunningJobRecoveryAfter.String(),
+			"normal_lease_duration":         jobLeaseDuration.String(),
+			"requires_agent_or_worker_poll": true,
+		})
+	}
+	return len(jobs), nil
 }
 
 func (s *Store) CompleteJob(ctx context.Context, idv, status string, result map[string]any) error {
@@ -1563,8 +1603,9 @@ func (s *Store) claimJob(ctx context.Context, owner, where string, args []any) (
 	}
 	defer tx.Rollback(ctx)
 
-	_, _ = tx.Exec(ctx, `delete from resource_locks where expires_at < now()`)
-	_, _ = tx.Exec(ctx, `update jobs set status='retrying', locked_by=null, locked_until=null where status='running' and locked_until is not null and locked_until < now()`)
+	if _, err := recoverStaleJobLeasesTx(ctx, tx, time.Now().UTC()); err != nil {
+		return domain.Job{}, false, err
+	}
 
 	query := `select id,type,scope_type,scope_id,node_id,instance_id,status,priority,payload_json,coalesce(result_json,'{}'::jsonb),locked_by,locked_until,created_at,started_at,finished_at from jobs where status in ('queued','retrying') and ` + where + ` order by priority asc, created_at asc limit 10 for update skip locked`
 	rows, err := tx.Query(ctx, query, args...)
@@ -1596,7 +1637,8 @@ func (s *Store) claimJob(ctx context.Context, owner, where string, args []any) (
 			continue
 		}
 		now := time.Now().UTC()
-		_, err = tx.Exec(ctx, `update jobs set status='running',started_at=coalesce(started_at,$2),locked_by=$3,locked_until=$2 + interval '2 minutes' where id=$1 and status in ('queued','retrying')`, j.ID, now, owner)
+		lockedUntil := now.Add(jobLeaseDuration)
+		_, err = tx.Exec(ctx, `update jobs set status='running',started_at=coalesce(started_at,$2),locked_by=$3,locked_until=$4 where id=$1 and status in ('queued','retrying')`, j.ID, now, owner, lockedUntil)
 		if err != nil {
 			return domain.Job{}, false, err
 		}
@@ -1610,7 +1652,6 @@ func (s *Store) claimJob(ctx context.Context, owner, where string, args []any) (
 		}
 		j.Status = "running"
 		j.LockedBy = &owner
-		lockedUntil := now.Add(2 * time.Minute)
 		j.LockedUntil = &lockedUntil
 		if j.StartedAt == nil {
 			j.StartedAt = &now
@@ -1619,6 +1660,38 @@ func (s *Store) claimJob(ctx context.Context, owner, where string, args []any) (
 		return j, true, nil
 	}
 	return domain.Job{}, false, nil
+}
+
+func recoverStaleJobLeasesTx(ctx context.Context, tx pgx.Tx, now time.Time) ([]domain.Job, error) {
+	if _, err := tx.Exec(ctx, `delete from resource_locks where expires_at < $1`, now); err != nil {
+		return nil, err
+	}
+	legacyCutoff := now.Add(-legacyRunningJobRecoveryAfter)
+	rows, err := tx.Query(ctx, `update jobs
+		set status='retrying',
+		    locked_by=null,
+		    locked_until=null
+		where status='running'
+		  and (
+		    (locked_until is not null and locked_until < $1)
+		    or (locked_until is null and coalesce(started_at, created_at) < $2)
+		  )
+		returning id,type,scope_type,scope_id,node_id,instance_id,status,priority,payload_json,coalesce(result_json,'{}'::jsonb),locked_by,locked_until,created_at,started_at,finished_at`,
+		now, legacyCutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recovered := make([]domain.Job, 0)
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		recovered = append(recovered, job)
+	}
+	return recovered, rows.Err()
 }
 func (s *Store) ListAudit(ctx context.Context, limit int) ([]domain.AuditEvent, error) {
 	if limit <= 0 || limit > 500 {

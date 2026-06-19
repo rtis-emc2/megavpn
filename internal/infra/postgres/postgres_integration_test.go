@@ -208,6 +208,77 @@ func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationRecoverStaleJobLeases(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-stale-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.1.10",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	job, err := store.CreateJob(ctx, domain.Job{
+		Type:      "node.route_policy.apply",
+		ScopeType: "node",
+		ScopeID:   &node.ID,
+		NodeID:    &node.ID,
+		Priority:  20,
+		Payload: map[string]any{
+			"node_id": node.ID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create route policy job: %v", err)
+	}
+
+	claimed, ok, err := store.AgentNextJob(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("claim route policy job: %v", err)
+	}
+	if !ok || claimed.ID != job.ID || claimed.Status != "running" || claimed.LockedUntil == nil {
+		t.Fatalf("claimed job = %#v, want running claimed job %s", claimed, job.ID)
+	}
+	assertResourceLockCount(t, ctx, store, claimed.ID, "node", "bootstrap", 1)
+
+	if _, err := store.db.Exec(ctx, `update jobs set locked_until=$2 where id=$1`, claimed.ID, time.Now().UTC().Add(-time.Minute)); err != nil {
+		t.Fatalf("expire job lease: %v", err)
+	}
+	recoveredCount, err := store.RecoverStaleJobLeases(ctx)
+	if err != nil {
+		t.Fatalf("recover stale job leases: %v", err)
+	}
+	if recoveredCount != 1 {
+		t.Fatalf("recovered job count = %d, want 1", recoveredCount)
+	}
+	recovered, err := store.GetJob(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("get recovered job: %v", err)
+	}
+	if recovered.Status != "retrying" || recovered.LockedBy != nil || recovered.LockedUntil != nil {
+		t.Fatalf("recovered job state = status:%s locked_by:%v locked_until:%v, want retrying with no lease", recovered.Status, recovered.LockedBy, recovered.LockedUntil)
+	}
+	assertResourceLockCount(t, ctx, store, claimed.ID, "node", "bootstrap", 0)
+
+	cancelled, err := store.CancelJob(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("cancel recovered job: %v", err)
+	}
+	if cancelled.Status != "cancelled" || cancelled.FinishedAt == nil {
+		t.Fatalf("cancelled job = %#v, want terminal cancelled job", cancelled)
+	}
+}
+
 func setupPostgresIntegrationStore(t *testing.T) (*Store, context.Context) {
 	t.Helper()
 

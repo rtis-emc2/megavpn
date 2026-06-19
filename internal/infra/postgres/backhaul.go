@@ -255,6 +255,9 @@ func (s *Store) CreateBackhaulProbeJobs(ctx context.Context, linkID string) ([]d
 }
 
 func (s *Store) CreateBackhaulDeleteJobs(ctx context.Context, linkID string) (domain.BackhaulLink, []domain.Job, error) {
+	if _, err := s.RecoverStaleJobLeases(ctx); err != nil {
+		return domain.BackhaulLink{}, nil, err
+	}
 	link, err := s.GetBackhaulLink(ctx, linkID)
 	if err != nil {
 		return domain.BackhaulLink{}, nil, err

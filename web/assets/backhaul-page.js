@@ -418,7 +418,7 @@
           openModal('Backhaul cleanup', 'Removing managed files from nodes', `
             ${renderActionResponse(data, jobIDs.length ? 'Backhaul cleanup queued' : 'Backhaul deleted')}
             <div id="backhaulCleanupJobs">${renderJobList(data.jobs || [])}</div>
-            <div class="empty">The link will disappear after cleanup jobs succeed on both ingress and egress nodes.</div>
+            <div class="empty">Cleanup jobs remove managed units and files from both nodes. Stale job leases are recovered automatically; offline agents keep jobs queued until they poll again.</div>
             <div class="modal-actions">
               <button class="primary-btn" id="closeBackhaulCleanupBtn" type="button">Close</button>
             </div>`, { wide: true });
