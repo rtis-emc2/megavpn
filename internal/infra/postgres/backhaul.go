@@ -777,7 +777,6 @@ func (s *Store) openVPNBackhaulMaterial(ctx context.Context, link domain.Backhau
 		"mute-replay-warnings",
 		"tun-mtu 1500",
 		"mssfix 1360",
-		"allow-compression no",
 	}
 	if role == "ingress" {
 		lines = append(lines, "remote "+transport.EndpointHost+" "+strconv.Itoa(transport.EndpointPort))

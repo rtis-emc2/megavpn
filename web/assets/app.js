@@ -731,6 +731,34 @@
     return '';
   }
 
+  function firstUsefulJobOutputLine(value) {
+    const lines = String(value ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+    if (!lines.length) return '';
+    const important = lines.find((line) => /options error|error:|failed|cannot|unable|exiting|status=|active:/i.test(line));
+    return important || lines[0];
+  }
+
+  function jobSystemdDiagnosticText(result = {}, health = {}) {
+    const unit = firstJobResultText(result.systemd_unit, health.systemd_unit);
+    const state = firstJobResultText(result.health_active_state, health.active_state, result.active_state);
+    const output = firstUsefulJobOutputLine(
+      result.health_unit_status_output
+      || health.unit_status_output
+      || result.systemd_output
+      || result.pre_start_stop_warning
+    );
+    return [unit ? `unit ${unit}` : '', state ? `state ${state}` : '', output].filter(Boolean).join(' · ');
+  }
+
+  function jobDetailedFailureText(job, result = {}, health = {}) {
+    const reason = firstJobResultText(job?.error, result.health_reason, health.reason, result.error);
+    const details = jobSystemdDiagnosticText(result, health);
+    if (reason && details && /systemd|unit|activation|not active/i.test(reason)) {
+      return `${reason} · ${details}`;
+    }
+    return '';
+  }
+
   function jobHealthResultText(health = {}) {
     const reason = firstJobResultText(health.reason, health.route_warning, health.error);
     const loss = Number(health.packet_loss_percent);
@@ -748,6 +776,7 @@
     const result = job?.result || {};
     const health = result.health || {};
     return firstJobResultText(
+      jobDetailedFailureText(job, result, health),
       job?.error,
       result.health_reason,
       result.health_route_warning,
@@ -756,6 +785,7 @@
       result.health_error,
       health.error,
       jobHealthResultText(health),
+      jobSystemdDiagnosticText(result, health),
       result.error,
       result.active_state,
       result.message

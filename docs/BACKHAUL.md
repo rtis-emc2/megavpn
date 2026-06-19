@@ -36,8 +36,8 @@ Core API/UI:
 | Driver | Layer | Apply behavior | Notes |
 | --- | --- | --- | --- |
 | `wireguard` | L3 | Verifies/installs `wireguard-tools`, writes config, writes systemd unit, enables unit | Primary low-overhead transport. |
-| `openvpn_udp` | L3 | Verifies/installs `openvpn`, writes hardened static-key P2P config/profile, writes systemd unit, enables unit | UDP fallback when WireGuard is unsuitable. Uses compatible AES-256-CBC + HMAC-SHA256 static-key mode until cert-mode backhaul is split into a separate driver. |
-| `openvpn_tcp_443` | L3 | Verifies/installs `openvpn`, writes config/static key, writes systemd unit, enables unit | TCP fallback; avoid as default due TCP-over-TCP behavior. |
+| `openvpn_udp` | L3 | Verifies/installs `openvpn`, writes static-key P2P config/profile, writes systemd unit, enables unit | UDP fallback when WireGuard is unsuitable. Uses compatible AES-256-CBC + HMAC-SHA256 static-key mode and avoids version-sensitive compression directives until cert-mode backhaul is split into a separate driver. |
+| `openvpn_tcp_443` | L3 | Verifies/installs `openvpn`, writes config/static key, writes systemd unit, enables unit | TCP fallback; avoid as default due TCP-over-TCP behavior. Uses the same compatibility profile as OpenVPN UDP. |
 | `ipsec_l2tp` | L3 | Writes strongSwan profile and PSK file only | Manual activation until full host profile validation exists. |
 | `ikev2` | L3 | Writes strongSwan profile and PSK file only | Manual activation until full host profile validation exists. |
 | `xray_vless_ws_tls` | Proxy | Writes Xray client/server profile and unit only | Requires TLS edge review before activation. |
@@ -97,6 +97,7 @@ Minimum production path for the first ingress/egress pair:
 ## Failure Scenarios
 
 - One side fails apply: transport and link move to `failed`; Backhaul UI shows `partial`, the applied side, the missing/failing side and the per-side health/error saved from the failed job. Root-cause readiness reasons such as `systemd unit is not active`, `interface is not present`, `active_state=failed` and `unit_status_output` are preserved for operator diagnostics.
+- OpenVPN unit fails on start: check the Jobs or Backhaul modal result summary first; it includes the unit name, active state and first useful `systemctl status`/OpenVPN error line before manual SSH inspection is needed.
 - Different `mgbh*` interface names or different tunnel CIDRs on ingress and egress for the same selected transport indicate stale runtime state or different transport profiles, not a healthy single tunnel. Re-apply removes interfaces recorded in the previous managed manifest and the target managed interface before recreating it; unrelated stale interfaces from older/deleted links must be removed by managed Backhaul delete or a controlled one-time cleanup after verifying the owning unit is obsolete.
 - Unit/interface missing after apply: apply job fails; install/verify the runtime capability on that node before applying again.
 - Agent offline: jobs remain queued until the agent polls. If an agent claimed a job and died, the backend returns the expired `running` lease to `retrying`.
