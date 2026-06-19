@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  go:
+    name: Go build and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Check formatting
+        run: |
+          test -z "$(gofmt -l ./cmd ./internal)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build binaries
+        run: ./scripts/build.sh
+
+      - name: Check shell syntax
+        run: |
+          bash -n deploy-local.sh
+          bash -n scripts/alpha-smoke.sh
+          bash -n scripts/build.sh
+          bash -n scripts/install-runtime.sh
+          bash -n scripts/install-web.sh
+          bash -n scripts/run-local.sh
+

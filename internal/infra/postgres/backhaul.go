@@ -1,0 +1,1335 @@
+package postgres
+
+import (
+	"context"
+	"crypto/ecdh"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/netip"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/rtis-emc2/megavpn/internal/backhaul"
+	"github.com/rtis-emc2/megavpn/internal/domain"
+	"github.com/rtis-emc2/megavpn/internal/platform/id"
+)
+
+type routePolicyBackhaul struct {
+	LinkID         string
+	TransportID    string
+	Driver         string
+	InterfaceName  string
+	IngressAddress string
+	EgressAddress  string
+	RoutingTable   string
+	RouteMetric    int
+	Status         string
+}
+
+func (s *Store) ListBackhaulLinks(ctx context.Context) ([]domain.BackhaulLink, error) {
+	rows, err := s.db.Query(ctx, `select
+		id::text,
+		name,
+		ingress_node_id::text,
+		egress_node_id::text,
+		status,
+		selected_transport_id::text,
+		desired_driver,
+		routing_table,
+		route_metric,
+		failover_policy_json,
+		metadata_json,
+		created_at,
+		updated_at
+	from backhaul_links
+	where status <> 'deleted'
+	order by created_at desc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.BackhaulLink{}
+	for rows.Next() {
+		link, err := scanBackhaulLink(rows)
+		if err != nil {
+			return nil, err
+		}
+		link.Transports, err = s.listBackhaulTransports(ctx, link.ID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, link)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetBackhaulLink(ctx context.Context, linkID string) (domain.BackhaulLink, error) {
+	linkID = strings.TrimSpace(linkID)
+	row := s.db.QueryRow(ctx, `select
+		id::text,
+		name,
+		ingress_node_id::text,
+		egress_node_id::text,
+		status,
+		selected_transport_id::text,
+		desired_driver,
+		routing_table,
+		route_metric,
+		failover_policy_json,
+		metadata_json,
+		created_at,
+		updated_at
+	from backhaul_links
+	where id=$1 and status <> 'deleted'`, linkID)
+	link, err := scanBackhaulLink(row)
+	if err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	link.Transports, err = s.listBackhaulTransports(ctx, link.ID)
+	if err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	return link, nil
+}
+
+func (s *Store) CreateBackhaulLink(ctx context.Context, link domain.BackhaulLink) (domain.BackhaulLink, error) {
+	link.Name = strings.TrimSpace(link.Name)
+	link.IngressNodeID = strings.TrimSpace(link.IngressNodeID)
+	link.EgressNodeID = strings.TrimSpace(link.EgressNodeID)
+	link.DesiredDriver = backhaul.NormalizeDriver(firstNonEmptyRouteValue(link.DesiredDriver, backhaul.DriverWireGuard))
+	link.RoutingTable = strings.TrimSpace(link.RoutingTable)
+	if link.RouteMetric <= 0 {
+		link.RouteMetric = 50
+	}
+	if link.FailoverPolicy == nil {
+		link.FailoverPolicy = map[string]any{"mode": "manual_priority", "auto_failover": false}
+	}
+	if link.Metadata == nil {
+		link.Metadata = map[string]any{}
+	}
+	if link.Name == "" {
+		link.Name = "backhaul-" + shortID(link.IngressNodeID) + "-" + shortID(link.EgressNodeID)
+	}
+	if !isSafeRouteIdentifier(link.Name) {
+		return domain.BackhaulLink{}, fmt.Errorf("backhaul name must be a safe identifier")
+	}
+	if err := backhaul.ValidateDriver(link.DesiredDriver); err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	if link.IngressNodeID == "" || link.EgressNodeID == "" {
+		return domain.BackhaulLink{}, fmt.Errorf("ingress_node_id and egress_node_id are required")
+	}
+	if link.IngressNodeID == link.EgressNodeID {
+		return domain.BackhaulLink{}, fmt.Errorf("ingress and egress nodes must be different")
+	}
+	ingress, err := s.GetNode(ctx, link.IngressNodeID)
+	if err != nil {
+		return domain.BackhaulLink{}, fmt.Errorf("ingress node not found: %w", err)
+	}
+	egress, err := s.GetNode(ctx, link.EgressNodeID)
+	if err != nil {
+		return domain.BackhaulLink{}, fmt.Errorf("egress node not found: %w", err)
+	}
+	if !strings.EqualFold(ingress.Role, "ingress") {
+		return domain.BackhaulLink{}, fmt.Errorf("ingress node must have role=ingress")
+	}
+	if !strings.EqualFold(egress.Role, "egress") {
+		return domain.BackhaulLink{}, fmt.Errorf("egress node must have role=egress")
+	}
+	endpointHost := strings.TrimSpace(stringify(link.Metadata["endpoint_host"]))
+	if endpointHost == "" {
+		endpointHost = strings.TrimSpace(egress.Address)
+	}
+	if endpointHost == "" {
+		return domain.BackhaulLink{}, fmt.Errorf("endpoint_host is required when egress node address is empty")
+	}
+	link.ID = id.New()
+	if link.RoutingTable == "" || strings.EqualFold(link.RoutingTable, "auto") || strings.EqualFold(link.RoutingTable, "main") {
+		link.RoutingTable = defaultBackhaulRoutingTable(link.ID)
+	}
+	link.Status = "planned"
+	now := time.Now().UTC()
+	link.CreatedAt = now
+	link.UpdatedAt = now
+	drivers := backhaulDriversFromMetadata(link.Metadata, link.DesiredDriver)
+	tunnelCIDR := strings.TrimSpace(stringify(link.Metadata["tunnel_cidr"]))
+	if tunnelCIDR == "" {
+		tunnelCIDR = defaultBackhaulCIDR(link.ID)
+	}
+	if err := backhaul.ValidateTunnelCIDR(tunnelCIDR); err != nil {
+		return domain.BackhaulLink{}, err
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `insert into backhaul_links(
+		id,name,ingress_node_id,egress_node_id,status,desired_driver,routing_table,route_metric,failover_policy_json,metadata_json,created_at,updated_at
+	) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		link.ID, link.Name, link.IngressNodeID, link.EgressNodeID, link.Status, link.DesiredDriver, link.RoutingTable, link.RouteMetric, mustJSON(link.FailoverPolicy), mustJSON(link.Metadata), now, now); err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	var selectedTransportID string
+	for idx, driver := range drivers {
+		def, _ := backhaul.Definition(driver)
+		transport, err := s.buildBackhaulTransport(ctx, link, def, endpointHost, tunnelCIDR, idx)
+		if err != nil {
+			return domain.BackhaulLink{}, err
+		}
+		if _, err := tx.Exec(ctx, `insert into backhaul_transports(
+			id,link_id,driver,priority,status,endpoint_host,endpoint_port,protocol,interface_name,tunnel_cidr,ingress_address,egress_address,config_json,secret_refs_json,health_json,created_at,updated_at
+		) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+			transport.ID, transport.LinkID, transport.Driver, transport.Priority, transport.Status, transport.EndpointHost, transport.EndpointPort, transport.Protocol,
+			transport.InterfaceName, transport.TunnelCIDR, transport.IngressAddress, transport.EgressAddress, mustJSON(transport.Config), mustJSON(transport.SecretRefs), mustJSON(transport.Health), now, now); err != nil {
+			return domain.BackhaulLink{}, err
+		}
+		if transport.Driver == link.DesiredDriver {
+			selectedTransportID = transport.ID
+		}
+	}
+	if selectedTransportID == "" {
+		return domain.BackhaulLink{}, fmt.Errorf("desired backhaul transport was not created")
+	}
+	if _, err := tx.Exec(ctx, `update backhaul_links set selected_transport_id=$2, updated_at=now() where id=$1`, link.ID, selectedTransportID); err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "backhaul.create", "backhaul", &link.ID, "managed backhaul link created")
+	return s.GetBackhaulLink(ctx, link.ID)
+}
+
+func (s *Store) DeleteBackhaulLink(ctx context.Context, linkID string) (domain.BackhaulLink, error) {
+	link, err := s.GetBackhaulLink(ctx, linkID)
+	if err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	if _, err := s.db.Exec(ctx, `update backhaul_links set status='deleted', updated_at=now() where id=$1`, link.ID); err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "backhaul.delete", "backhaul", &link.ID, "managed backhaul link deleted")
+	link.Status = "deleted"
+	return link, nil
+}
+
+func (s *Store) CreateBackhaulApplyJobs(ctx context.Context, linkID string) ([]domain.Job, error) {
+	link, err := s.GetBackhaulLink(ctx, linkID)
+	if err != nil {
+		return nil, err
+	}
+	transport := selectedBackhaulTransport(link)
+	if transport == nil {
+		return nil, fmt.Errorf("selected backhaul transport not found")
+	}
+	if _, ok := backhaul.Definition(transport.Driver); !ok {
+		return nil, fmt.Errorf("unsupported backhaul transport")
+	}
+	ingressPayload, err := s.buildBackhaulApplyPayload(ctx, link, *transport, "ingress")
+	if err != nil {
+		return nil, err
+	}
+	egressPayload, err := s.buildBackhaulApplyPayload(ctx, link, *transport, "egress")
+	if err != nil {
+		return nil, err
+	}
+	jobs := make([]domain.Job, 0, 2)
+	for _, item := range []struct {
+		nodeID  string
+		payload map[string]any
+	}{
+		{nodeID: link.IngressNodeID, payload: ingressPayload},
+		{nodeID: link.EgressNodeID, payload: egressPayload},
+	} {
+		nodeID := item.nodeID
+		job, err := s.CreateJob(ctx, domain.Job{
+			Type:      "node.backhaul.apply",
+			ScopeType: "backhaul",
+			ScopeID:   &link.ID,
+			NodeID:    &nodeID,
+			Priority:  75,
+			Payload:   item.payload,
+		})
+		if err != nil {
+			return jobs, err
+		}
+		jobs = append(jobs, job)
+	}
+	_, _ = s.db.Exec(ctx, `update backhaul_links set status='pending_apply', updated_at=now() where id=$1`, link.ID)
+	_, _ = s.db.Exec(ctx, `update backhaul_transports set status='pending_apply', last_error='', updated_at=now() where id=$1`, transport.ID)
+	_, _ = s.CreateAudit(ctx, "system", "backhaul.apply", "backhaul", &link.ID, "managed backhaul apply queued")
+	return jobs, nil
+}
+
+func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, status string, result map[string]any) {
+	linkID := strings.TrimSpace(stringify(result["link_id"]))
+	if linkID == "" {
+		linkID = strings.TrimSpace(stringify(job.Payload["link_id"]))
+	}
+	transportID := strings.TrimSpace(stringify(result["transport_id"]))
+	if transportID == "" {
+		transportID = strings.TrimSpace(stringify(job.Payload["transport_id"]))
+	}
+	role := strings.ToLower(strings.TrimSpace(stringify(result["role"])))
+	if role == "" {
+		role = strings.ToLower(strings.TrimSpace(stringify(job.Payload["role"])))
+	}
+	if linkID == "" || transportID == "" {
+		return
+	}
+	if status != "succeeded" {
+		errText := strings.TrimSpace(stringify(result["error"]))
+		if errText == "" {
+			errText = "backhaul apply failed"
+		}
+		_, _ = s.db.Exec(ctx, `update backhaul_transports set status='failed', last_error=$2, updated_at=now() where id=$1`, transportID, errText)
+		_, _ = s.db.Exec(ctx, `update backhaul_links set status='failed', updated_at=now() where id=$1`, linkID)
+		return
+	}
+	switch role {
+	case "ingress":
+		_, _ = s.db.Exec(ctx, `update backhaul_transports set applied_ingress_at=now(), last_error='', updated_at=now() where id=$1`, transportID)
+	case "egress":
+		_, _ = s.db.Exec(ctx, `update backhaul_transports set applied_egress_at=now(), last_error='', updated_at=now() where id=$1`, transportID)
+	default:
+		return
+	}
+	if health, ok := result["health"].(map[string]any); ok && health != nil {
+		_, _ = s.db.Exec(ctx, `update backhaul_transports
+			set health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $2::text[], $3::jsonb, true), updated_at=now()
+			where id=$1`, transportID, []string{role}, mustJSON(health))
+	}
+	_, _ = s.db.Exec(ctx, `update backhaul_transports
+		set status='active', updated_at=now()
+		where id=$1 and applied_ingress_at is not null and applied_egress_at is not null`, transportID)
+	_, _ = s.db.Exec(ctx, `update backhaul_links
+		set status='active', updated_at=now()
+		where id=$1 and exists(select 1 from backhaul_transports where id=$2 and status='active')`, linkID, transportID)
+}
+
+func (s *Store) buildBackhaulApplyPayload(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string) (map[string]any, error) {
+	def, ok := backhaul.Definition(transport.Driver)
+	if !ok {
+		return nil, fmt.Errorf("unsupported backhaul driver %q", transport.Driver)
+	}
+	side, err := s.backhaulSideMaterial(ctx, link, transport, role, def)
+	if err != nil {
+		return nil, err
+	}
+	files, _ := side["files"].([]map[string]any)
+	payloadFiles := make([]any, 0, len(files))
+	for _, file := range files {
+		payloadFiles = append(payloadFiles, file)
+	}
+	activate := def.ActivationMode == "managed_systemd"
+	return map[string]any{
+		"node_id":                nodeIDForBackhaulRole(link, role),
+		"link_id":                link.ID,
+		"transport_id":           transport.ID,
+		"role":                   role,
+		"driver":                 transport.Driver,
+		"driver_layer":           def.Layer,
+		"activation_mode":        def.ActivationMode,
+		"activate":               activate,
+		"supports_kernel_routes": def.SupportsKernelRoutes,
+		"link_name":              link.Name,
+		"interface_name":         transport.InterfaceName,
+		"routing_table":          link.RoutingTable,
+		"route_metric":           link.RouteMetric,
+		"endpoint_host":          transport.EndpointHost,
+		"endpoint_port":          transport.EndpointPort,
+		"protocol":               transport.Protocol,
+		"tunnel_cidr":            transport.TunnelCIDR,
+		"ingress_address":        transport.IngressAddress,
+		"egress_address":         transport.EgressAddress,
+		"output_path":            backhaulManifestPath(link, transport, role),
+		"systemd_unit":           stringify(side["systemd_unit"]),
+		"files":                  payloadFiles,
+		"warnings":               def.Warnings,
+		"enforcement": map[string]any{
+			"kernel_route_enforcement_enabled": false,
+			"reason":                           "backhaul transport materialization is separate from client route kernel enforcement",
+		},
+	}, nil
+}
+
+func (s *Store) backhaulSideMaterial(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string, def backhaul.DriverDefinition) (map[string]any, error) {
+	switch transport.Driver {
+	case backhaul.DriverWireGuard:
+		return s.wireGuardBackhaulMaterial(ctx, link, transport, role)
+	case backhaul.DriverOpenVPNUDP, backhaul.DriverOpenVPNTCP443:
+		return s.openVPNBackhaulMaterial(ctx, link, transport, role)
+	default:
+		return s.materializeOnlyBackhaulMaterial(ctx, link, transport, role, def)
+	}
+}
+
+func (s *Store) wireGuardBackhaulMaterial(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string) (map[string]any, error) {
+	ingressPriv, err := s.resolveSecretString(ctx, transport.SecretRefs["ingress_private_key_secret_ref_id"])
+	if err != nil {
+		return nil, err
+	}
+	egressPriv, err := s.resolveSecretString(ctx, transport.SecretRefs["egress_private_key_secret_ref_id"])
+	if err != nil {
+		return nil, err
+	}
+	ingressPub := stringify(transport.Config["ingress_public_key"])
+	egressPub := stringify(transport.Config["egress_public_key"])
+	slug := safeBackhaulSlug(link, transport)
+	configPath := "/etc/megavpn/backhaul/" + slug + "/" + transport.InterfaceName + ".conf"
+	unitName := "megavpn-backhaul-" + slug + ".service"
+	unitPath := "/etc/systemd/system/" + unitName
+	var config string
+	if role == "egress" {
+		config = strings.Join([]string{
+			"[Interface]",
+			"PrivateKey = " + egressPriv,
+			"Address = " + transport.EgressAddress,
+			"ListenPort = " + strconv.Itoa(transport.EndpointPort),
+			"Table = off",
+			"",
+			"[Peer]",
+			"PublicKey = " + ingressPub,
+			"AllowedIPs = 0.0.0.0/0, ::/0",
+			"PersistentKeepalive = 25",
+			"",
+		}, "\n")
+	} else {
+		config = strings.Join([]string{
+			"[Interface]",
+			"PrivateKey = " + ingressPriv,
+			"Address = " + transport.IngressAddress,
+			"Table = off",
+			"",
+			"[Peer]",
+			"PublicKey = " + egressPub,
+			"Endpoint = " + transport.EndpointHost + ":" + strconv.Itoa(transport.EndpointPort),
+			"AllowedIPs = 0.0.0.0/0, ::/0",
+			"PersistentKeepalive = 25",
+			"",
+		}, "\n")
+	}
+	files := []map[string]any{
+		{"path": configPath, "mode": "0600", "content": config},
+	}
+	unitStart := "/usr/bin/wg-quick up " + shellQuotePG(configPath)
+	unitStop := "/usr/bin/wg-quick down " + shellQuotePG(configPath)
+	if role == "egress" {
+		startPath := "/etc/megavpn/backhaul/" + slug + "/egress-start.sh"
+		stopPath := "/etc/megavpn/backhaul/" + slug + "/egress-stop.sh"
+		files = append(files,
+			map[string]any{"path": startPath, "mode": "0700", "content": renderBackhaulEgressStartScript(slug, transport.InterfaceName, unitStart)},
+			map[string]any{"path": stopPath, "mode": "0700", "content": renderBackhaulEgressStopScript(slug, transport.InterfaceName, unitStop)},
+		)
+		unitStart = startPath
+		unitStop = stopPath
+	}
+	files = append(files, map[string]any{"path": unitPath, "mode": "0644", "content": renderBackhaulUnit(unitName, unitStart, unitStop)})
+	return map[string]any{
+		"systemd_unit": unitName,
+		"files":        files,
+	}, nil
+}
+
+func (s *Store) openVPNBackhaulMaterial(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string) (map[string]any, error) {
+	staticKey, err := s.resolveSecretString(ctx, transport.SecretRefs["static_key_secret_ref_id"])
+	if err != nil {
+		return nil, err
+	}
+	slug := safeBackhaulSlug(link, transport)
+	configPath := "/etc/megavpn/backhaul/" + slug + "/openvpn.conf"
+	keyPath := "/etc/megavpn/backhaul/" + slug + "/openvpn.static.key"
+	unitName := "megavpn-backhaul-" + slug + ".service"
+	unitPath := "/etc/systemd/system/" + unitName
+	pidPath := "/run/" + unitName + ".pid"
+	proto := "udp"
+	if transport.Driver == backhaul.DriverOpenVPNTCP443 {
+		if role == "egress" {
+			proto = "tcp-server"
+		} else {
+			proto = "tcp-client"
+		}
+	}
+	lines := []string{
+		"dev " + transport.InterfaceName,
+		"dev-type tun",
+		"proto " + proto,
+		"port " + strconv.Itoa(transport.EndpointPort),
+	}
+	if role == "ingress" {
+		lines = append(lines, "remote "+transport.EndpointHost+" "+strconv.Itoa(transport.EndpointPort))
+		lines = append(lines, "ifconfig "+hostAddress(transport.IngressAddress)+" "+hostAddress(transport.EgressAddress))
+	} else {
+		lines = append(lines, "local 0.0.0.0")
+		lines = append(lines, "ifconfig "+hostAddress(transport.EgressAddress)+" "+hostAddress(transport.IngressAddress))
+	}
+	lines = append(lines,
+		"secret "+keyPath,
+		"persist-key",
+		"persist-tun",
+		"keepalive 10 60",
+		"verb 3",
+		"",
+	)
+	files := []map[string]any{
+		{"path": configPath, "mode": "0600", "content": strings.Join(lines, "\n")},
+		{"path": keyPath, "mode": "0600", "content": staticKey},
+	}
+	unitStart := "/usr/sbin/openvpn --daemon " + shellQuotePG(unitName) + " --writepid " + shellQuotePG(pidPath) + " --config " + shellQuotePG(configPath)
+	unitStop := "/bin/sh -c " + shellQuotePG("test ! -f "+pidPath+" || kill $(cat "+pidPath+")")
+	if role == "egress" {
+		startPath := "/etc/megavpn/backhaul/" + slug + "/egress-start.sh"
+		stopPath := "/etc/megavpn/backhaul/" + slug + "/egress-stop.sh"
+		files = append(files,
+			map[string]any{"path": startPath, "mode": "0700", "content": renderBackhaulEgressStartScript(slug, transport.InterfaceName, unitStart)},
+			map[string]any{"path": stopPath, "mode": "0700", "content": renderBackhaulEgressStopScript(slug, transport.InterfaceName, unitStop)},
+		)
+		unitStart = startPath
+		unitStop = stopPath
+	}
+	files = append(files, map[string]any{"path": unitPath, "mode": "0644", "content": renderBackhaulUnit(unitName, unitStart, unitStop)})
+	return map[string]any{
+		"systemd_unit": unitName,
+		"files":        files,
+	}, nil
+}
+
+func (s *Store) materializeOnlyBackhaulMaterial(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string, def backhaul.DriverDefinition) (map[string]any, error) {
+	switch transport.Driver {
+	case backhaul.DriverIPSecL2TP, backhaul.DriverIKEv2:
+		return s.ipsecBackhaulMaterial(ctx, link, transport, role, def)
+	case backhaul.DriverXrayVLESSWS, backhaul.DriverXrayVLESSGRPC, backhaul.DriverXrayReality, backhaul.DriverXrayTUNVLESS:
+		return s.xrayBackhaulMaterial(ctx, link, transport, role, def)
+	}
+	slug := safeBackhaulSlug(link, transport)
+	config := map[string]any{
+		"link_id":          link.ID,
+		"link_name":        link.Name,
+		"driver":           transport.Driver,
+		"role":             role,
+		"endpoint_host":    transport.EndpointHost,
+		"endpoint_port":    transport.EndpointPort,
+		"protocol":         transport.Protocol,
+		"interface_name":   transport.InterfaceName,
+		"tunnel_cidr":      transport.TunnelCIDR,
+		"ingress_address":  transport.IngressAddress,
+		"egress_address":   transport.EgressAddress,
+		"activation_mode":  def.ActivationMode,
+		"materialized_at":  time.Now().UTC().Format(time.RFC3339),
+		"operator_action":  "review driver config and enable transport-specific activation stage",
+		"driver_warnings":  def.Warnings,
+		"driver_config":    transport.Config,
+		"secret_ref_names": sortedBackhaulSecretRefNames(transport.SecretRefs),
+	}
+	b, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"systemd_unit": "",
+		"files": []map[string]any{
+			{"path": "/etc/megavpn/backhaul/" + slug + "/" + transport.Driver + "-" + role + ".json", "mode": "0600", "content": string(b) + "\n"},
+		},
+	}, nil
+}
+
+func (s *Store) ipsecBackhaulMaterial(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string, def backhaul.DriverDefinition) (map[string]any, error) {
+	psk, err := s.resolveSecretString(ctx, transport.SecretRefs["psk_secret_ref_id"])
+	if err != nil {
+		return nil, err
+	}
+	slug := safeBackhaulSlug(link, transport)
+	configPath := "/etc/megavpn/backhaul/" + slug + "/ipsec.conf"
+	secretsPath := "/etc/megavpn/backhaul/" + slug + "/ipsec.secrets"
+	profilePath := "/etc/megavpn/backhaul/" + slug + "/ipsec-profile.json"
+	config, secrets := buildBackhaulIPSecConfig(link, transport, role, def, psk)
+	profile := backhaulOperatorProfile(link, transport, role, def, map[string]any{
+		"config_path":  configPath,
+		"secrets_path": secretsPath,
+		"activation":   "manual ipsec/strongSwan import required",
+	})
+	profileJSON, err := json.MarshalIndent(profile, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"systemd_unit": "",
+		"files": []map[string]any{
+			{"path": configPath, "mode": "0640", "content": config},
+			{"path": secretsPath, "mode": "0600", "content": secrets},
+			{"path": profilePath, "mode": "0640", "content": string(profileJSON) + "\n"},
+		},
+	}, nil
+}
+
+func (s *Store) xrayBackhaulMaterial(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string, def backhaul.DriverDefinition) (map[string]any, error) {
+	uuid, err := s.resolveSecretString(ctx, transport.SecretRefs["uuid_secret_ref_id"])
+	if err != nil {
+		return nil, err
+	}
+	realityPrivateKey := ""
+	if transport.Driver == backhaul.DriverXrayReality {
+		realityPrivateKey, err = s.resolveSecretString(ctx, transport.SecretRefs["reality_private_key_secret_ref_id"])
+		if err != nil {
+			return nil, err
+		}
+	}
+	slug := safeBackhaulSlug(link, transport)
+	configPath := "/etc/megavpn/backhaul/" + slug + "/xray-" + role + ".json"
+	profilePath := "/etc/megavpn/backhaul/" + slug + "/xray-profile-" + role + ".json"
+	unitName := "megavpn-backhaul-" + slug + "-" + role + ".service"
+	unitPath := "/etc/systemd/system/" + unitName
+	config := buildBackhaulXrayConfig(link, transport, role, def, uuid, realityPrivateKey)
+	configJSON, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	profile := backhaulOperatorProfile(link, transport, role, def, map[string]any{
+		"config_path":  configPath,
+		"systemd_unit": unitName,
+		"activation":   "manual Xray/Nginx routing review required",
+	})
+	profileJSON, err := json.MarshalIndent(profile, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"systemd_unit": "",
+		"files": []map[string]any{
+			{"path": configPath, "mode": "0640", "content": string(configJSON) + "\n"},
+			{"path": profilePath, "mode": "0640", "content": string(profileJSON) + "\n"},
+			{"path": unitPath, "mode": "0644", "content": renderBackhaulUnit(unitName, "/bin/sh -c 'exec xray run -config "+configPath+"'", "")},
+		},
+	}, nil
+}
+
+func (s *Store) buildBackhaulTransport(ctx context.Context, link domain.BackhaulLink, def backhaul.DriverDefinition, endpointHost, tunnelCIDR string, idx int) (domain.BackhaulTransport, error) {
+	ingressAddr, egressAddr, err := pointToPointAddresses(tunnelCIDR)
+	if err != nil {
+		return domain.BackhaulTransport{}, err
+	}
+	secretRefs := map[string]any{}
+	config := map[string]any{
+		"activation_mode":        def.ActivationMode,
+		"supports_kernel_routes": def.SupportsKernelRoutes,
+	}
+	switch def.Code {
+	case backhaul.DriverWireGuard:
+		ingressPriv, ingressPub, err := generateX25519KeyPair()
+		if err != nil {
+			return domain.BackhaulTransport{}, err
+		}
+		egressPriv, egressPub, err := generateX25519KeyPair()
+		if err != nil {
+			return domain.BackhaulTransport{}, err
+		}
+		ingressRef, err := s.CreateSecretRef(ctx, "private_key", []byte(ingressPriv), map[string]any{"scope": "backhaul", "link_id": link.ID, "driver": def.Code, "role": "ingress"})
+		if err != nil {
+			return domain.BackhaulTransport{}, err
+		}
+		egressRef, err := s.CreateSecretRef(ctx, "private_key", []byte(egressPriv), map[string]any{"scope": "backhaul", "link_id": link.ID, "driver": def.Code, "role": "egress"})
+		if err != nil {
+			return domain.BackhaulTransport{}, err
+		}
+		secretRefs["ingress_private_key_secret_ref_id"] = ingressRef.ID
+		secretRefs["egress_private_key_secret_ref_id"] = egressRef.ID
+		config["ingress_public_key"] = ingressPub
+		config["egress_public_key"] = egressPub
+	case backhaul.DriverOpenVPNUDP, backhaul.DriverOpenVPNTCP443:
+		key, err := generateOpenVPNStaticKey()
+		if err != nil {
+			return domain.BackhaulTransport{}, err
+		}
+		ref, err := s.CreateSecretRef(ctx, "psk", []byte(key), map[string]any{"scope": "backhaul", "link_id": link.ID, "driver": def.Code, "material": "openvpn_static_key"})
+		if err != nil {
+			return domain.BackhaulTransport{}, err
+		}
+		secretRefs["static_key_secret_ref_id"] = ref.ID
+	case backhaul.DriverIPSecL2TP, backhaul.DriverIKEv2:
+		psk, err := randomBase64(32)
+		if err != nil {
+			return domain.BackhaulTransport{}, err
+		}
+		ref, err := s.CreateSecretRef(ctx, "psk", []byte(psk), map[string]any{"scope": "backhaul", "link_id": link.ID, "driver": def.Code, "material": "ipsec_psk"})
+		if err != nil {
+			return domain.BackhaulTransport{}, err
+		}
+		secretRefs["psk_secret_ref_id"] = ref.ID
+	default:
+		uuid := id.New()
+		ref, err := s.CreateSecretRef(ctx, "uuid", []byte(uuid), map[string]any{"scope": "backhaul", "link_id": link.ID, "driver": def.Code, "material": "xray_uuid"})
+		if err != nil {
+			return domain.BackhaulTransport{}, err
+		}
+		secretRefs["uuid_secret_ref_id"] = ref.ID
+		if def.Code == backhaul.DriverXrayReality {
+			privateKey, publicKey, err := generateXrayRealityKeyPair()
+			if err != nil {
+				return domain.BackhaulTransport{}, err
+			}
+			privateRef, err := s.CreateSecretRef(ctx, "private_key", []byte(privateKey), map[string]any{"scope": "backhaul", "link_id": link.ID, "driver": def.Code, "material": "xray_reality_private_key"})
+			if err != nil {
+				return domain.BackhaulTransport{}, err
+			}
+			shortIDRaw, err := randomBytes(8)
+			if err != nil {
+				return domain.BackhaulTransport{}, err
+			}
+			secretRefs["reality_private_key_secret_ref_id"] = privateRef.ID
+			config["reality_public_key"] = publicKey
+			config["reality_short_id"] = hex.EncodeToString(shortIDRaw)
+		}
+		config["xray_network"] = xrayBackhaulNetwork(def.Code)
+		config["xray_security"] = xrayBackhaulSecurity(def.Code)
+		config["path"] = "/assets/" + shortID(link.ID) + "-sync"
+	}
+	return domain.BackhaulTransport{
+		ID:             id.New(),
+		LinkID:         link.ID,
+		Driver:         def.Code,
+		Priority:       (idx + 1) * 10,
+		Status:         "planned",
+		EndpointHost:   endpointHost,
+		EndpointPort:   def.DefaultPort,
+		Protocol:       def.DefaultProtocol,
+		InterfaceName:  defaultBackhaulInterface(link.ID, def.Code),
+		TunnelCIDR:     tunnelCIDR,
+		IngressAddress: ingressAddr,
+		EgressAddress:  egressAddr,
+		Config:         config,
+		SecretRefs:     secretRefs,
+		Health:         map[string]any{"status": "unknown"},
+	}, nil
+}
+
+func (s *Store) listBackhaulTransports(ctx context.Context, linkID string) ([]domain.BackhaulTransport, error) {
+	rows, err := s.db.Query(ctx, `select
+		id::text,
+		link_id::text,
+		driver,
+		priority,
+		status,
+		endpoint_host,
+		endpoint_port,
+		protocol,
+		interface_name,
+		tunnel_cidr,
+		ingress_address,
+		egress_address,
+		config_json,
+		secret_refs_json,
+		health_json,
+		applied_ingress_at,
+		applied_egress_at,
+		last_error,
+		created_at,
+		updated_at
+	from backhaul_transports
+	where link_id=$1
+	order by priority asc, driver asc`, strings.TrimSpace(linkID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.BackhaulTransport{}
+	for rows.Next() {
+		transport, err := scanBackhaulTransport(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, transport)
+	}
+	return out, rows.Err()
+}
+
+func scanBackhaulLink(row pgx.Row) (domain.BackhaulLink, error) {
+	var link domain.BackhaulLink
+	var selectedTransportID *string
+	var failoverRaw, metadataRaw []byte
+	if err := row.Scan(
+		&link.ID,
+		&link.Name,
+		&link.IngressNodeID,
+		&link.EgressNodeID,
+		&link.Status,
+		&selectedTransportID,
+		&link.DesiredDriver,
+		&link.RoutingTable,
+		&link.RouteMetric,
+		&failoverRaw,
+		&metadataRaw,
+		&link.CreatedAt,
+		&link.UpdatedAt,
+	); err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	link.SelectedTransportID = selectedTransportID
+	_ = json.Unmarshal(failoverRaw, &link.FailoverPolicy)
+	_ = json.Unmarshal(metadataRaw, &link.Metadata)
+	if link.FailoverPolicy == nil {
+		link.FailoverPolicy = map[string]any{}
+	}
+	if link.Metadata == nil {
+		link.Metadata = map[string]any{}
+	}
+	return link, nil
+}
+
+func scanBackhaulTransport(row pgx.Row) (domain.BackhaulTransport, error) {
+	var transport domain.BackhaulTransport
+	var configRaw, secretRefsRaw, healthRaw []byte
+	if err := row.Scan(
+		&transport.ID,
+		&transport.LinkID,
+		&transport.Driver,
+		&transport.Priority,
+		&transport.Status,
+		&transport.EndpointHost,
+		&transport.EndpointPort,
+		&transport.Protocol,
+		&transport.InterfaceName,
+		&transport.TunnelCIDR,
+		&transport.IngressAddress,
+		&transport.EgressAddress,
+		&configRaw,
+		&secretRefsRaw,
+		&healthRaw,
+		&transport.AppliedIngressAt,
+		&transport.AppliedEgressAt,
+		&transport.LastError,
+		&transport.CreatedAt,
+		&transport.UpdatedAt,
+	); err != nil {
+		return domain.BackhaulTransport{}, err
+	}
+	_ = json.Unmarshal(configRaw, &transport.Config)
+	_ = json.Unmarshal(secretRefsRaw, &transport.SecretRefs)
+	_ = json.Unmarshal(healthRaw, &transport.Health)
+	if transport.Config == nil {
+		transport.Config = map[string]any{}
+	}
+	if transport.SecretRefs == nil {
+		transport.SecretRefs = map[string]any{}
+	}
+	if transport.Health == nil {
+		transport.Health = map[string]any{}
+	}
+	return transport, nil
+}
+
+func (s *Store) listRoutePolicyBackhauls(ctx context.Context, ingressNodeID string) (map[string]routePolicyBackhaul, error) {
+	rows, err := s.db.Query(ctx, `select
+		bl.egress_node_id::text,
+		bl.id::text,
+		bt.id::text,
+		bt.driver,
+		bt.interface_name,
+		bt.ingress_address,
+		bt.egress_address,
+		bl.routing_table,
+		bl.route_metric,
+		bt.status
+	from backhaul_links bl
+	join backhaul_transports bt on bt.id=bl.selected_transport_id
+	where bl.ingress_node_id=$1
+	  and bl.status='active'
+	  and bt.status='active'`, strings.TrimSpace(ingressNodeID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]routePolicyBackhaul{}
+	for rows.Next() {
+		var egressNodeID string
+		var b routePolicyBackhaul
+		if err := rows.Scan(&egressNodeID, &b.LinkID, &b.TransportID, &b.Driver, &b.InterfaceName, &b.IngressAddress, &b.EgressAddress, &b.RoutingTable, &b.RouteMetric, &b.Status); err != nil {
+			return nil, err
+		}
+		if b.RoutingTable == "" || strings.EqualFold(b.RoutingTable, "main") || strings.EqualFold(b.RoutingTable, "auto") {
+			b.RoutingTable = defaultBackhaulRoutingTable(b.LinkID)
+		}
+		out[egressNodeID] = b
+	}
+	return out, rows.Err()
+}
+
+func selectedBackhaulTransport(link domain.BackhaulLink) *domain.BackhaulTransport {
+	if link.SelectedTransportID == nil {
+		return nil
+	}
+	for idx := range link.Transports {
+		if link.Transports[idx].ID == *link.SelectedTransportID {
+			return &link.Transports[idx]
+		}
+	}
+	return nil
+}
+
+func nodeIDForBackhaulRole(link domain.BackhaulLink, role string) string {
+	if role == "egress" {
+		return link.EgressNodeID
+	}
+	return link.IngressNodeID
+}
+
+func backhaulDriversFromMetadata(metadata map[string]any, desired string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	add := func(driver string) {
+		driver = backhaul.NormalizeDriver(driver)
+		if driver == "" || seen[driver] || backhaul.ValidateDriver(driver) != nil {
+			return
+		}
+		seen[driver] = true
+		out = append(out, driver)
+	}
+	add(desired)
+	switch raw := metadata["drivers"].(type) {
+	case []string:
+		for _, driver := range raw {
+			add(driver)
+		}
+	case []any:
+		for _, driver := range raw {
+			add(stringify(driver))
+		}
+	}
+	if len(out) <= 1 {
+		for _, driver := range []string{
+			backhaul.DriverWireGuard,
+			backhaul.DriverOpenVPNUDP,
+			backhaul.DriverOpenVPNTCP443,
+			backhaul.DriverIPSecL2TP,
+			backhaul.DriverIKEv2,
+			backhaul.DriverXrayVLESSWS,
+			backhaul.DriverXrayVLESSGRPC,
+			backhaul.DriverXrayReality,
+			backhaul.DriverXrayTUNVLESS,
+		} {
+			add(driver)
+		}
+	}
+	return out
+}
+
+func defaultBackhaulCIDR(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	third := int(sum[0])
+	fourth := int(sum[1]) & 0xfc
+	return fmt.Sprintf("10.240.%d.%d/30", third, fourth)
+}
+
+func defaultBackhaulRoutingTable(seed string) string {
+	sum := sha256.Sum256([]byte("backhaul-route-table:" + seed))
+	return strconv.Itoa(20000 + int(sum[0])<<8 + int(sum[1]))
+}
+
+func pointToPointAddresses(cidr string) (string, string, error) {
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return "", "", err
+	}
+	base := prefix.Masked().Addr()
+	ingress := base.Next()
+	egress := ingress.Next()
+	return ingress.String(), egress.String(), nil
+}
+
+func defaultBackhaulInterface(linkID, driver string) string {
+	sum := sha256.Sum256([]byte(linkID + ":" + driver))
+	return "mgbh" + hex.EncodeToString(sum[:])[:10]
+}
+
+func safeBackhaulSlug(link domain.BackhaulLink, transport domain.BackhaulTransport) string {
+	return slugify(link.Name + "-" + transport.Driver + "-" + shortID(transport.ID))
+}
+
+func backhaulManifestPath(link domain.BackhaulLink, transport domain.BackhaulTransport, role string) string {
+	return "/etc/megavpn/backhaul/" + safeBackhaulSlug(link, transport) + "/" + role + "-manifest.json"
+}
+
+func renderBackhaulUnit(unitName, startCmd, stopCmd string) string {
+	lines := []string{
+		"[Unit]",
+		"Description=RTIS MegaVPN managed backhaul transport " + unitName,
+		"After=network-online.target",
+		"Wants=network-online.target",
+		"",
+		"[Service]",
+		"Type=oneshot",
+		"RemainAfterExit=yes",
+		"ExecStart=" + startCmd,
+	}
+	if strings.TrimSpace(stopCmd) != "" {
+		lines = append(lines, "ExecStop="+stopCmd)
+	}
+	lines = append(lines,
+		"",
+		"[Install]",
+		"WantedBy=multi-user.target",
+		"",
+	)
+	return strings.Join(lines, "\n")
+}
+
+func renderBackhaulEgressStartScript(slug, iface, transportStartCmd string) string {
+	comment := "megavpn:backhaul:" + slug + ":egress-masquerade"
+	return strings.Join([]string{
+		"#!/usr/bin/env sh",
+		"set -eu",
+		"",
+		"# Generated by megavpn-agent. Do not edit manually.",
+		transportStartCmd,
+		"sysctl -w net.ipv4.ip_forward=1 >/dev/null",
+		"if command -v nft >/dev/null 2>&1; then",
+		"  nft list table ip megavpn_backhaul >/dev/null 2>&1 || nft add table ip megavpn_backhaul",
+		"  nft list chain ip megavpn_backhaul postrouting >/dev/null 2>&1 || nft add chain ip megavpn_backhaul postrouting '{ type nat hook postrouting priority srcnat; policy accept; }'",
+		"  if ! nft list chain ip megavpn_backhaul postrouting | grep -Fq " + shellQuotePG(comment) + "; then",
+		"    nft add rule ip megavpn_backhaul postrouting iifname " + shellQuotePG(iface) + " masquerade comment " + shellQuotePG(comment),
+		"  fi",
+		"fi",
+		"",
+	}, "\n")
+}
+
+func renderBackhaulEgressStopScript(slug, iface, transportStopCmd string) string {
+	comment := "megavpn:backhaul:" + slug + ":egress-masquerade"
+	lines := []string{
+		"#!/usr/bin/env sh",
+		"set -eu",
+		"",
+		"# Generated by megavpn-agent. Do not edit manually.",
+		"if command -v nft >/dev/null 2>&1; then",
+		"  handles=$(nft -a list chain ip megavpn_backhaul postrouting 2>/dev/null | awk -v c=" + shellQuotePG(comment) + " 'index($0, c) > 0 {print $NF}')",
+		"  for handle in $handles; do",
+		"    nft delete rule ip megavpn_backhaul postrouting handle \"$handle\" >/dev/null 2>&1 || true",
+		"  done",
+		"fi",
+	}
+	if strings.TrimSpace(transportStopCmd) != "" {
+		lines = append(lines, transportStopCmd+" >/dev/null 2>&1 || true")
+	}
+	_ = iface
+	lines = append(lines, "")
+	return strings.Join(lines, "\n")
+}
+
+func buildBackhaulIPSecConfig(link domain.BackhaulLink, transport domain.BackhaulTransport, role string, def backhaul.DriverDefinition, psk string) (string, string) {
+	connName := "megavpn-backhaul-" + safeBackhaulSlug(link, transport)
+	left := "%defaultroute"
+	right := transport.EndpointHost
+	leftSubnet := hostAddress(transport.IngressAddress) + "/32"
+	rightSubnet := hostAddress(transport.EgressAddress) + "/32"
+	auto := "start"
+	if role == "egress" {
+		left = "%any"
+		right = "%any"
+		leftSubnet = hostAddress(transport.EgressAddress) + "/32"
+		rightSubnet = hostAddress(transport.IngressAddress) + "/32"
+		auto = "add"
+	}
+	keyExchange := "ikev2"
+	if def.Code == backhaul.DriverIPSecL2TP {
+		keyExchange = "ikev1"
+	}
+	config := strings.Join([]string{
+		"config setup",
+		"  uniqueids=no",
+		"",
+		"conn " + connName,
+		"  keyexchange=" + keyExchange,
+		"  authby=psk",
+		"  type=tunnel",
+		"  left=" + left,
+		"  leftsubnet=" + leftSubnet,
+		"  right=" + right,
+		"  rightsubnet=" + rightSubnet,
+		"  ike=aes256-sha256-modp2048!",
+		"  esp=aes256-sha256!",
+		"  dpdaction=restart",
+		"  dpddelay=30s",
+		"  dpdtimeout=120s",
+		"  auto=" + auto,
+		"",
+	}, "\n")
+	secrets := ": PSK \"" + strings.ReplaceAll(psk, "\"", "\\\"") + "\"\n"
+	return config, secrets
+}
+
+func buildBackhaulXrayConfig(link domain.BackhaulLink, transport domain.BackhaulTransport, role string, def backhaul.DriverDefinition, uuid, realityPrivateKey string) map[string]any {
+	if role == "egress" {
+		return buildBackhaulXrayServerConfig(link, transport, def, uuid, realityPrivateKey)
+	}
+	return buildBackhaulXrayClientConfig(link, transport, def, uuid)
+}
+
+func buildBackhaulXrayServerConfig(link domain.BackhaulLink, transport domain.BackhaulTransport, def backhaul.DriverDefinition, uuid, realityPrivateKey string) map[string]any {
+	streamSettings := xrayBackhaulServerStreamSettings(link, transport, def, realityPrivateKey)
+	return map[string]any{
+		"log": map[string]any{"loglevel": "warning"},
+		"inbounds": []any{
+			map[string]any{
+				"tag":      "megavpn-backhaul-in",
+				"listen":   "0.0.0.0",
+				"port":     transport.EndpointPort,
+				"protocol": "vless",
+				"settings": map[string]any{
+					"clients": []any{
+						map[string]any{"id": uuid, "email": "backhaul-" + shortID(link.ID)},
+					},
+					"decryption": "none",
+				},
+				"streamSettings": streamSettings,
+			},
+		},
+		"outbounds": []any{
+			map[string]any{"tag": "direct", "protocol": "freedom"},
+			map[string]any{"tag": "block", "protocol": "blackhole"},
+		},
+	}
+}
+
+func buildBackhaulXrayClientConfig(link domain.BackhaulLink, transport domain.BackhaulTransport, def backhaul.DriverDefinition, uuid string) map[string]any {
+	outbound := map[string]any{
+		"tag":      "megavpn-backhaul-out",
+		"protocol": "vless",
+		"settings": map[string]any{
+			"vnext": []any{
+				map[string]any{
+					"address": transport.EndpointHost,
+					"port":    transport.EndpointPort,
+					"users": []any{
+						map[string]any{"id": uuid, "encryption": "none"},
+					},
+				},
+			},
+		},
+		"streamSettings": xrayBackhaulClientStreamSettings(link, transport, def),
+	}
+	cfg := map[string]any{
+		"log": map[string]any{"loglevel": "warning"},
+		"inbounds": []any{
+			map[string]any{
+				"tag":      "local-socks",
+				"listen":   "127.0.0.1",
+				"port":     10808,
+				"protocol": "socks",
+				"settings": map[string]any{"udp": true},
+			},
+		},
+		"outbounds": []any{
+			outbound,
+			map[string]any{"tag": "direct", "protocol": "freedom"},
+			map[string]any{"tag": "block", "protocol": "blackhole"},
+		},
+		"routing": map[string]any{
+			"rules": []any{
+				map[string]any{"type": "field", "inboundTag": []any{"local-socks"}, "outboundTag": "megavpn-backhaul-out"},
+			},
+		},
+	}
+	if def.Code == backhaul.DriverXrayTUNVLESS {
+		cfg["operator_note"] = "Xray TUN requires explicit Linux policy routing and loop protection before activation."
+	}
+	return cfg
+}
+
+func xrayBackhaulServerStreamSettings(link domain.BackhaulLink, transport domain.BackhaulTransport, def backhaul.DriverDefinition, realityPrivateKey string) map[string]any {
+	settings := map[string]any{
+		"network":  xrayBackhaulNetwork(def.Code),
+		"security": xrayBackhaulSecurity(def.Code),
+	}
+	applyXrayBackhaulTransportSettings(settings, link, transport, def, false, realityPrivateKey)
+	return settings
+}
+
+func xrayBackhaulClientStreamSettings(link domain.BackhaulLink, transport domain.BackhaulTransport, def backhaul.DriverDefinition) map[string]any {
+	settings := map[string]any{
+		"network":  xrayBackhaulNetwork(def.Code),
+		"security": xrayBackhaulSecurity(def.Code),
+	}
+	applyXrayBackhaulTransportSettings(settings, link, transport, def, true, "")
+	return settings
+}
+
+func applyXrayBackhaulTransportSettings(settings map[string]any, link domain.BackhaulLink, transport domain.BackhaulTransport, def backhaul.DriverDefinition, client bool, realityPrivateKey string) {
+	switch xrayBackhaulNetwork(def.Code) {
+	case "grpc":
+		settings["grpcSettings"] = map[string]any{"serviceName": "megavpn-backhaul-" + shortID(link.ID)}
+	case "ws":
+		settings["wsSettings"] = map[string]any{
+			"path": stringify(transport.Config["path"]),
+			"headers": map[string]any{
+				"Host": transport.EndpointHost,
+			},
+		}
+	}
+	switch xrayBackhaulSecurity(def.Code) {
+	case "reality":
+		if client {
+			settings["realitySettings"] = map[string]any{
+				"serverName":  transport.EndpointHost,
+				"fingerprint": "chrome",
+				"publicKey":   stringify(transport.Config["reality_public_key"]),
+				"shortId":     stringify(transport.Config["reality_short_id"]),
+			}
+		} else {
+			settings["realitySettings"] = map[string]any{
+				"show":        false,
+				"dest":        "www.cloudflare.com:443",
+				"xver":        0,
+				"serverNames": []any{transport.EndpointHost},
+				"privateKey":  realityPrivateKey,
+				"shortIds":    []any{stringify(transport.Config["reality_short_id"])},
+			}
+		}
+	case "tls":
+		if client {
+			settings["tlsSettings"] = map[string]any{"serverName": transport.EndpointHost}
+		} else {
+			settings["operator_note"] = "TLS termination certificate is required; use Nginx edge or add tlsSettings before activation."
+		}
+	}
+}
+
+func backhaulOperatorProfile(link domain.BackhaulLink, transport domain.BackhaulTransport, role string, def backhaul.DriverDefinition, extra map[string]any) map[string]any {
+	profile := map[string]any{
+		"link_id":                link.ID,
+		"link_name":              link.Name,
+		"transport_id":           transport.ID,
+		"driver":                 transport.Driver,
+		"role":                   role,
+		"layer":                  def.Layer,
+		"activation_mode":        def.ActivationMode,
+		"supports_kernel_routes": def.SupportsKernelRoutes,
+		"endpoint_host":          transport.EndpointHost,
+		"endpoint_port":          transport.EndpointPort,
+		"protocol":               transport.Protocol,
+		"interface_name":         transport.InterfaceName,
+		"tunnel_cidr":            transport.TunnelCIDR,
+		"ingress_address":        transport.IngressAddress,
+		"egress_address":         transport.EgressAddress,
+		"driver_warnings":        def.Warnings,
+		"secret_ref_names":       sortedBackhaulSecretRefNames(transport.SecretRefs),
+		"generated_at":           time.Now().UTC().Format(time.RFC3339),
+	}
+	for key, value := range extra {
+		profile[key] = value
+	}
+	return profile
+}
+
+func generateX25519KeyPair() (string, string, error) {
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	return base64.StdEncoding.EncodeToString(key.Bytes()), base64.StdEncoding.EncodeToString(key.PublicKey().Bytes()), nil
+}
+
+func generateXrayRealityKeyPair() (string, string, error) {
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(key.Bytes()), base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), nil
+}
+
+func generateOpenVPNStaticKey() (string, error) {
+	raw, err := randomBytes(256)
+	if err != nil {
+		return "", err
+	}
+	hexed := hex.EncodeToString(raw)
+	lines := []string{"-----BEGIN OpenVPN Static key V1-----"}
+	for idx := 0; idx < len(hexed); idx += 32 {
+		end := idx + 32
+		if end > len(hexed) {
+			end = len(hexed)
+		}
+		lines = append(lines, hexed[idx:end])
+	}
+	lines = append(lines, "-----END OpenVPN Static key V1-----", "")
+	return strings.Join(lines, "\n"), nil
+}
+
+func randomBytes(size int) ([]byte, error) {
+	out := make([]byte, size)
+	_, err := rand.Read(out)
+	return out, err
+}
+
+func randomBase64(size int) (string, error) {
+	raw, err := randomBytes(size)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawStdEncoding.EncodeToString(raw), nil
+}
+
+func (s *Store) resolveSecretString(ctx context.Context, ref any) (string, error) {
+	refID := strings.TrimSpace(stringify(ref))
+	if refID == "" {
+		return "", fmt.Errorf("secret ref is required")
+	}
+	_, value, err := s.ResolveSecretValue(ctx, refID)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(value)), nil
+}
+
+func hostAddress(address string) string {
+	if addr, err := netip.ParsePrefix(strings.TrimSpace(address)); err == nil {
+		return addr.Addr().String()
+	}
+	return strings.TrimSpace(address)
+}
+
+func xrayBackhaulNetwork(driver string) string {
+	switch driver {
+	case backhaul.DriverXrayVLESSGRPC:
+		return "grpc"
+	case backhaul.DriverXrayVLESSWS, backhaul.DriverXrayTUNVLESS:
+		return "ws"
+	default:
+		return "tcp"
+	}
+}
+
+func xrayBackhaulSecurity(driver string) string {
+	if driver == backhaul.DriverXrayReality {
+		return "reality"
+	}
+	return "tls"
+}
+
+func sortedBackhaulSecretRefNames(refs map[string]any) []string {
+	out := make([]string, 0, len(refs))
+	for key := range refs {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func shortID(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "-", "")
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
+}
+
+func shellQuotePG(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
