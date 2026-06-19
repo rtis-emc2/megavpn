@@ -732,7 +732,7 @@
   }
 
   function jobHealthResultText(health = {}) {
-    const reason = firstJobResultText(health.error, health.reason);
+    const reason = firstJobResultText(health.error, health.reason, health.route_warning);
     const loss = Number(health.packet_loss_percent);
     const avg = Number(health.latency_avg_ms);
     return [
@@ -750,8 +750,10 @@
       result.error,
       result.health_error,
       result.health_reason,
+      result.health_route_warning,
       health.error,
       health.reason,
+      health.route_warning,
       jobHealthResultText(health),
       result.active_state,
       result.message

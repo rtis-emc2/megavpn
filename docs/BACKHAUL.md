@@ -54,14 +54,14 @@ Core API/UI:
 5. Control Plane queues `node.backhaul.apply` jobs for every selected transport profile: one ingress job and one egress job per profile.
 6. Before writing files for managed-systemd drivers, each agent verifies runtime capability and installs the missing Ubuntu package when needed. Egress apply also requires `iproute2` and `nftables` before managed NAT is enabled.
 7. Each agent validates its own `node_id`, validates managed paths and writes only allowed files.
-8. For managed-systemd drivers, the agent reloads systemd, enables the generated unit and records unit/interface health. Apply fails when runtime install fails, the generated unit is not `active`, or the tunnel interface is not present.
+8. For managed-systemd drivers, the agent reloads systemd, enables the generated unit and records unit/interface health. WireGuard configs use the local tunnel host with the transport `/30` prefix so a connected route to the peer tunnel IP exists even while `Table=off` prevents wg-quick from installing broad routes. Apply fails when runtime install fails, the generated unit is not `active`, or the tunnel interface is not present.
 9. When both sides succeed, managed-systemd transports become `active`; profile-only transports become `materialized` and never produce a false active route.
 10. Every L3 transport profile gets its own `/30`; duplicate failed profiles are normalized to a unique CIDR during the next apply.
 11. Route-policy projection can use the active managed backhaul interface for remote egress routes.
 12. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow` candidates only.
 13. Operator can run `probe` from the Backhaul UI after the selected transport is `active`. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
 14. Each probe validates systemd active state, local interface presence and ICMP reachability to the peer tunnel address.
-15. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
+15. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer route lookup, peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
 16. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; missing units/files/directories are reported as `not found - skip`, and only after the cleanup batch succeeds does the link move to `deleted`.
 17. Before queueing a new cleanup batch and before Jobs API reads, the backend recovers stale `running` jobs whose lease has expired back to `retrying`. This prevents a dead agent request or interrupted process from blocking backhaul deletion indefinitely.
 
@@ -89,7 +89,7 @@ Minimum production path for the first ingress/egress pair:
 5. Apply profiles.
 6. Confirm both generated jobs are `succeeded`.
 7. Run Backhaul `Test` and verify both ingress and egress probe jobs are `succeeded`.
-8. Check health summary: both sides should report `healthy`, packet loss should be `0`, latency should be visible as average RTT. If a service is active but the test is `failed/degraded`, use the shown reason, peer address and packet loss to distinguish firewall/UDP reachability, tunnel handshake and route table problems.
+8. Check health summary: both sides should report `healthy`, packet loss should be `0`, latency should be visible as average RTT. If a service is active but the test is `failed/degraded`, use the shown reason, route lookup, peer address and packet loss to distinguish missing connected route, firewall/UDP reachability, tunnel handshake and route table problems.
 9. Create client access route with remote egress node.
 10. Queue route policy sync for the ingress node.
 11. Verify route projection uses `managed_backhaul` and route policy job reports `enforced=true`.

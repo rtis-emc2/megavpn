@@ -385,8 +385,21 @@ func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, a
 	if count < 1 || count > 5 {
 		count = 3
 	}
-	code, out = runInstallCommand(ctx, "ping", "-c", strconv.Itoa(count), "-W", "2", peer)
 	health["peer"] = peer
+	routeCode, routeOut := runInstallCommand(ctx, "ip", "route", "get", peer)
+	health["peer_route_output"] = truncate(routeOut, 1000)
+	if routeCode != 0 {
+		health["status"] = "degraded"
+		health["reason"] = "peer route lookup failed"
+		return health
+	}
+	if !routeUsesInterface(routeOut, iface) {
+		health["status"] = "degraded"
+		health["reason"] = "peer route does not use backhaul interface"
+		health["route_warning"] = "expected dev " + iface
+		return health
+	}
+	code, out = runInstallCommand(ctx, "ping", "-c", strconv.Itoa(count), "-W", "2", peer)
 	health["peer_probe_output"] = truncate(out, 1000)
 	for key, value := range parsePingStats(out) {
 		health[key] = value
@@ -398,6 +411,20 @@ func probeBackhaulHealth(ctx context.Context, iface, peerAddress, unit string, a
 	}
 	health["status"] = "healthy"
 	return health
+}
+
+func routeUsesInterface(routeOut, iface string) bool {
+	iface = strings.TrimSpace(iface)
+	if iface == "" {
+		return false
+	}
+	fields := strings.Fields(routeOut)
+	for idx := 0; idx < len(fields)-1; idx++ {
+		if fields[idx] == "dev" && fields[idx+1] == iface {
+			return true
+		}
+	}
+	return false
 }
 
 func parsePingStats(out string) map[string]any {
@@ -453,6 +480,8 @@ func addBackhaulHealthFields(result, health map[string]any) {
 		"latency_stddev_ms",
 		"peer",
 		"peer_probe_output",
+		"peer_route_output",
+		"route_warning",
 		"active_state",
 	} {
 		if value, ok := health[key]; ok {

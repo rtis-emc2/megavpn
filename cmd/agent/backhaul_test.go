@@ -100,6 +100,17 @@ rtt min/avg/max/mdev = 0.123/0.456/0.789/0.111 ms`)
 	}
 }
 
+func TestRouteUsesInterface(t *testing.T) {
+	t.Parallel()
+
+	if !routeUsesInterface("10.240.86.114 dev mgbhc1ddc0bcb8 src 10.240.86.113 uid 0", "mgbhc1ddc0bcb8") {
+		t.Fatal("expected route output to match backhaul interface")
+	}
+	if routeUsesInterface("10.240.86.114 via 192.0.2.1 dev eth0 src 192.0.2.10 uid 0", "mgbhc1ddc0bcb8") {
+		t.Fatal("default/public route must not match backhaul interface")
+	}
+}
+
 func TestRedactedBackhaulManifestRemovesFileContent(t *testing.T) {
 	t.Parallel()
 

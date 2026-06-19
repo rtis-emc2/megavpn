@@ -2,10 +2,12 @@ package postgres
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/rtis-emc2/megavpn/internal/backhaul"
+	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
 func TestBackhaulDriversFromMetadataExplicitListDoesNotExpandFallbacks(t *testing.T) {
@@ -121,5 +123,45 @@ func TestNormalizeBackhaulProbeHealthClearsLastErrorOnHealthySuccess(t *testing.
 	}
 	if lastError != "" {
 		t.Fatalf("lastError = %q, want empty", lastError)
+	}
+}
+
+func TestRenderWireGuardBackhaulConfigUsesPointToPointPrefix(t *testing.T) {
+	t.Parallel()
+
+	transport := domain.BackhaulTransport{
+		Driver:         backhaul.DriverWireGuard,
+		EndpointHost:   "203.0.113.10",
+		EndpointPort:   51830,
+		TunnelCIDR:     "10.240.86.112/30",
+		IngressAddress: "10.240.86.113",
+		EgressAddress:  "10.240.86.114",
+	}
+
+	ingressConfig := renderWireGuardBackhaulConfig(transport, "ingress", "ingress-private", "egress-public")
+	for _, want := range []string{
+		"Address = 10.240.86.113/30",
+		"Endpoint = 203.0.113.10:51830",
+		"# Peer tunnel address: 10.240.86.114",
+		"AllowedIPs = 0.0.0.0/0, ::/0",
+		"Table = off",
+	} {
+		if !strings.Contains(ingressConfig, want) {
+			t.Fatalf("ingress config missing %q:\n%s", want, ingressConfig)
+		}
+	}
+
+	egressConfig := renderWireGuardBackhaulConfig(transport, "egress", "egress-private", "ingress-public")
+	for _, want := range []string{
+		"Address = 10.240.86.114/30",
+		"ListenPort = 51830",
+		"# Peer tunnel address: 10.240.86.113",
+	} {
+		if !strings.Contains(egressConfig, want) {
+			t.Fatalf("egress config missing %q:\n%s", want, egressConfig)
+		}
+	}
+	if strings.Contains(egressConfig, "Endpoint =") {
+		t.Fatalf("egress config must not contain Endpoint:\n%s", egressConfig)
 	}
 }

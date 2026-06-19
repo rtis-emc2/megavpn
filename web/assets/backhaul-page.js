@@ -104,7 +104,7 @@
     }
 
     function healthSummary(health = {}) {
-      const reason = firstText(health.error, health.reason);
+      const reason = firstText(health.error, health.reason, health.route_warning);
       const peer = firstText(health.peer);
       const loss = formatPercent(health.packet_loss_percent);
       const avg = optionalNumber(health.latency_avg_ms);
@@ -114,6 +114,19 @@
         avg == null ? '' : `${avg.toFixed(1)} ms avg`,
       ].filter(Boolean).join(' · ');
       return [reason, metrics].filter(Boolean).join(' · ');
+    }
+
+    function renderTunnelCell(transport) {
+      if (!transport) return 'n/a';
+      const network = firstText(transport.tunnel_cidr, 'n/a');
+      const ingress = firstText(transport.ingress_address, 'n/a');
+      const egress = firstText(transport.egress_address, 'n/a');
+      return `
+        <div class="stacked-status">
+          <strong>${escapeHTML(network)}</strong>
+          <small>ingress ${escapeHTML(ingress)}</small>
+          <small>egress ${escapeHTML(egress)}</small>
+        </div>`;
     }
 
     function renderHealthCell(transport) {
@@ -166,8 +179,10 @@
         result.error,
         result.health_error,
         result.health_reason,
+        result.health_route_warning,
         health.error,
         health.reason,
+        health.route_warning,
         healthSummary(health),
         result.active_state,
         result.message
@@ -214,6 +229,7 @@
           status: link.status || 'unknown',
           transports: renderTransportTags(link),
           health: renderHealthCell(transport),
+          tunnel: renderTunnelCell(transport),
         };
       });
       el('content').innerHTML = `
@@ -223,6 +239,7 @@
           { title: 'Egress', key: 'egress' },
           { title: 'Driver', key: 'driver' },
           { title: 'Endpoint', key: 'endpoint' },
+          { title: 'Tunnel', key: 'tunnel', render: (row) => row.tunnel },
           { title: 'Status', key: 'status', render: (row) => statusTag(row.status) },
           { title: 'Health', key: 'health', render: (row) => row.health },
           { title: 'Profiles', key: 'transports', render: (row) => row.transports },
@@ -411,7 +428,7 @@
                   <td>${driverModeTag(driverDef(transport.driver) || {})}</td>
                   <td>${escapeHTML(transport.endpoint_host || 'n/a')}:${escapeHTML(transport.endpoint_port || 'n/a')} ${escapeHTML(transport.protocol || '')}</td>
                   <td>${escapeHTML(transport.interface_name || 'n/a')}</td>
-                  <td>${escapeHTML(transport.tunnel_cidr || 'n/a')}</td>
+                  <td>${renderTunnelCell(transport)}</td>
                   <td>${renderHealthCell(transport)}</td>
                   <td>${escapeHTML(transport.applied_ingress_at ? 'ingress ' : '')}${escapeHTML(transport.applied_egress_at ? 'egress' : '') || 'n/a'}</td>
                 </tr>`).join('') : '<tr><td colspan="8"><div class="empty">No transport profiles.</div></td></tr>'}

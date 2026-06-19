@@ -645,33 +645,9 @@ func (s *Store) wireGuardBackhaulMaterial(ctx context.Context, link domain.Backh
 	unitPath := "/etc/systemd/system/" + unitName
 	var config string
 	if role == "egress" {
-		config = strings.Join([]string{
-			"[Interface]",
-			"PrivateKey = " + egressPriv,
-			"Address = " + transport.EgressAddress,
-			"ListenPort = " + strconv.Itoa(transport.EndpointPort),
-			"Table = off",
-			"",
-			"[Peer]",
-			"PublicKey = " + ingressPub,
-			"AllowedIPs = 0.0.0.0/0, ::/0",
-			"PersistentKeepalive = 25",
-			"",
-		}, "\n")
+		config = renderWireGuardBackhaulConfig(transport, role, egressPriv, ingressPub)
 	} else {
-		config = strings.Join([]string{
-			"[Interface]",
-			"PrivateKey = " + ingressPriv,
-			"Address = " + transport.IngressAddress,
-			"Table = off",
-			"",
-			"[Peer]",
-			"PublicKey = " + egressPub,
-			"Endpoint = " + transport.EndpointHost + ":" + strconv.Itoa(transport.EndpointPort),
-			"AllowedIPs = 0.0.0.0/0, ::/0",
-			"PersistentKeepalive = 25",
-			"",
-		}, "\n")
+		config = renderWireGuardBackhaulConfig(transport, role, ingressPriv, egressPub)
 	}
 	files := []map[string]any{
 		{"path": configPath, "mode": "0600", "content": config},
@@ -693,6 +669,39 @@ func (s *Store) wireGuardBackhaulMaterial(ctx context.Context, link domain.Backh
 		"systemd_unit": unitName,
 		"files":        files,
 	}, nil
+}
+
+func renderWireGuardBackhaulConfig(transport domain.BackhaulTransport, role, privateKey, peerPublicKey string) string {
+	localAddress := backhaulAddressWithPrefix(transport.IngressAddress, transport.TunnelCIDR)
+	peerAddress := hostAddress(transport.EgressAddress)
+	if role == "egress" {
+		localAddress = backhaulAddressWithPrefix(transport.EgressAddress, transport.TunnelCIDR)
+		peerAddress = hostAddress(transport.IngressAddress)
+	}
+	lines := []string{
+		"[Interface]",
+		"PrivateKey = " + strings.TrimSpace(privateKey),
+		"Address = " + localAddress,
+	}
+	if role == "egress" {
+		lines = append(lines, "ListenPort = "+strconv.Itoa(transport.EndpointPort))
+	}
+	lines = append(lines,
+		"Table = off",
+		"",
+		"[Peer]",
+		"PublicKey = "+strings.TrimSpace(peerPublicKey),
+	)
+	if role != "egress" {
+		lines = append(lines, "Endpoint = "+transport.EndpointHost+":"+strconv.Itoa(transport.EndpointPort))
+	}
+	lines = append(lines,
+		"# Peer tunnel address: "+peerAddress,
+		"AllowedIPs = 0.0.0.0/0, ::/0",
+		"PersistentKeepalive = 25",
+		"",
+	)
+	return strings.Join(lines, "\n")
 }
 
 func (s *Store) openVPNBackhaulMaterial(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string) (map[string]any, error) {
@@ -1684,6 +1693,15 @@ func hostAddress(address string) string {
 		return addr.Addr().String()
 	}
 	return strings.TrimSpace(address)
+}
+
+func backhaulAddressWithPrefix(address, cidr string) string {
+	host := hostAddress(address)
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(cidr))
+	if err != nil || host == "" {
+		return host
+	}
+	return host + "/" + strconv.Itoa(prefix.Bits())
 }
 
 func xrayBackhaulNetwork(driver string) string {
