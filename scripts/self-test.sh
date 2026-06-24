@@ -134,14 +134,36 @@ require_go_vet() {
 }
 
 require_go_build() {
-  go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate
+	go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate
+}
+
+require_binary_version_commands() {
+	local code_version tmp bin out
+	code_version="$(sed -nE 's/^const Version = "([^"]+)"/\1/p' internal/platform/version/version.go)"
+	if [[ -z "$code_version" ]]; then
+		printf 'unable to read internal/platform/version.Version\n' >&2
+		return 1
+	fi
+	tmp="$(mktemp -d)"
+	go build -o "$tmp/megavpn-api" ./cmd/api
+	go build -o "$tmp/megavpn-worker" ./cmd/worker
+	go build -o "$tmp/megavpn-agent" ./cmd/agent
+	go build -o "$tmp/megavpn-migrate" ./cmd/migrate
+	go build -o "$tmp/megavpn-admin" ./cmd/admin
+	for bin in megavpn-api megavpn-worker megavpn-agent megavpn-migrate megavpn-admin; do
+		out="$("$tmp/$bin" --version 2>&1)"
+		if [[ "$out" != "$code_version" ]]; then
+			printf '%s --version = %q, want %q\n' "$bin" "$out" "$code_version" >&2
+			return 1
+		fi
+	done
 }
 
 require_shell_syntax() {
-  local file
-  while IFS= read -r file; do
-    bash -n "$file"
-  done < <(find scripts -type f -name '*.sh' -print | sort)
+	local file
+	while IFS= read -r file; do
+		bash -n "$file"
+	done < <(find scripts -type f -name '*.sh' -print | sort)
 }
 
 require_frontend_js_syntax() {
@@ -333,6 +355,7 @@ run_check "go-test" "All Go package tests pass" require_go_test
 run_check "go-test-race" "All Go package tests pass under race detector" require_go_race
 run_check "go-vet" "Go vet reports no issues" require_go_vet
 run_check "go-build" "API, worker, agent and migrate binaries build" require_go_build
+run_check "binary-version-commands" "All operational binaries print version and exit without runtime startup" require_binary_version_commands
 run_check "shell-syntax" "Shell scripts parse under bash -n" require_shell_syntax
 run_check "frontend-js-syntax" "Static Web UI JavaScript parses under node --check" require_frontend_js_syntax
 run_check "static-security-patterns" "No banned production command patterns are present" require_static_security_patterns

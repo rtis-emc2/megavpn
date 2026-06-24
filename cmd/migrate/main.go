@@ -12,9 +12,15 @@ import (
 
 	"github.com/rtis-emc2/megavpn/internal/platform/config"
 	"github.com/rtis-emc2/megavpn/internal/platform/database"
+	platformversion "github.com/rtis-emc2/megavpn/internal/platform/version"
 )
 
 func main() {
+	if platformversion.CommandRequested(os.Args[1:]) {
+		fmt.Println(platformversion.Version)
+		return
+	}
+
 	cfg := config.Load()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

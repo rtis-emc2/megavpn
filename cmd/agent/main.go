@@ -3,15 +3,22 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/rtis-emc2/megavpn/internal/platform/config"
 	"github.com/rtis-emc2/megavpn/internal/platform/logger"
+	platformversion "github.com/rtis-emc2/megavpn/internal/platform/version"
 )
 
 func main() {
+	if platformversion.CommandRequested(os.Args[1:]) {
+		fmt.Println(platformversion.Version)
+		return
+	}
+
 	cfg := config.Load()
 	log := logger.New(cfg.LogLevel)
 

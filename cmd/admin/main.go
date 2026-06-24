@@ -12,7 +12,7 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/infra/postgres"
 	"github.com/rtis-emc2/megavpn/internal/platform/config"
 	"github.com/rtis-emc2/megavpn/internal/platform/database"
-	"github.com/rtis-emc2/megavpn/internal/platform/version"
+	platformversion "github.com/rtis-emc2/megavpn/internal/platform/version"
 )
 
 func main() {
@@ -28,7 +28,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version", "--version", "-version":
-		fmt.Println(version.Version)
+		fmt.Println(platformversion.Version)
 	case "help", "--help", "-h":
 		usage()
 	default:

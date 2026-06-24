@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,11 +19,16 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/platform/config"
 	"github.com/rtis-emc2/megavpn/internal/platform/database"
 	"github.com/rtis-emc2/megavpn/internal/platform/logger"
-	"github.com/rtis-emc2/megavpn/internal/platform/version"
+	platformversion "github.com/rtis-emc2/megavpn/internal/platform/version"
 	"github.com/rtis-emc2/megavpn/internal/secrets"
 )
 
 func main() {
+	if platformversion.CommandRequested(os.Args[1:]) {
+		fmt.Println(platformversion.Version)
+		return
+	}
+
 	cfg := config.Load()
 	log := logger.New(cfg.LogLevel)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -75,7 +81,7 @@ func main() {
 	srv := &http.Server{
 		Addr: cfg.API.ListenAddr,
 		Handler: apihttp.New(log, store, apihttp.Options{
-			Version:                version.Version,
+			Version:                platformversion.Version,
 			ListenAddr:             cfg.API.ListenAddr,
 			PublicBaseURL:          cfg.API.PublicBaseURL,
 			ProductionMode:         cfg.API.ProductionMode,
@@ -101,7 +107,7 @@ func main() {
 	defer stop()
 	ch := make(chan error, 1)
 	go func() {
-		log.Info("starting api server", "listen_addr", cfg.API.ListenAddr, "version", version.Version)
+		log.Info("starting api server", "listen_addr", cfg.API.ListenAddr, "version", platformversion.Version)
 		ch <- srv.ListenAndServe()
 	}()
 	select {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,11 +13,16 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/platform/config"
 	"github.com/rtis-emc2/megavpn/internal/platform/database"
 	"github.com/rtis-emc2/megavpn/internal/platform/logger"
-	"github.com/rtis-emc2/megavpn/internal/platform/version"
+	platformversion "github.com/rtis-emc2/megavpn/internal/platform/version"
 	"github.com/rtis-emc2/megavpn/internal/secrets"
 )
 
 func main() {
+	if platformversion.CommandRequested(os.Args[1:]) {
+		fmt.Println(platformversion.Version)
+		return
+	}
+
 	cfg := config.Load()
 	log := logger.New(cfg.LogLevel)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -44,7 +50,7 @@ func main() {
 	defer stop()
 	ticker := time.NewTicker(cfg.Worker.Interval)
 	defer ticker.Stop()
-	log.Info("starting worker", "worker_id", cfg.Worker.WorkerID, "version", version.Version)
+	log.Info("starting worker", "worker_id", cfg.Worker.WorkerID, "version", platformversion.Version)
 	for {
 		select {
 		case <-root.Done():
