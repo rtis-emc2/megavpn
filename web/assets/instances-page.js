@@ -60,6 +60,28 @@
       return (state.instanceRuntimeStates || []).find((item) => item.instance_id === instanceID) || null;
     }
 
+    function activeNodes() {
+      return (state.nodes || []).filter((node) => node.status !== 'retired');
+    }
+
+    function instanceCapableServices() {
+      const ranked = new Map();
+      for (const service of (state.servicesCatalog || [])) {
+        if (service.supports_instances === false || service.enabled === false) continue;
+        const code = String(service.code || '').trim();
+        if (!code) continue;
+        const current = ranked.get(code);
+        if (!current || service.code === code) ranked.set(code, service);
+      }
+      return Array.from(ranked.values());
+    }
+
+    function serviceLabel(code) {
+      const normalized = String(code || '').trim();
+      const service = (state.servicesCatalog || []).find((item) => String(item.code || '').trim() === normalized);
+      return service?.label || service?.display_name || service?.name || normalized || 'unknown';
+    }
+
     function primaryReason(values, fallback) {
       const list = Array.isArray(values) ? values : [];
       const first = list.map((item) => String(item || '').trim()).find(Boolean);
@@ -104,11 +126,31 @@
       };
     }
 
+    function renderInstanceFact(label, value, className = '') {
+      return `
+        <div class="instance-fact ${className}">
+          <span>${escapeHTML(label)}</span>
+          <strong>${escapeHTML(String(value ?? '').trim() || 'n/a')}</strong>
+        </div>`;
+    }
+
+    function renderInstanceStateLine(label, status, reason) {
+      const text = compactReason(reason || 'No runtime details yet.');
+      return `
+        <div class="instance-state-line">
+          <div class="instance-state-head">
+            <span>${escapeHTML(label)}</span>
+            ${statusTag(status || 'unknown')}
+          </div>
+          <small title="${escapeHTML(reason || '')}">${escapeHTML(text)}</small>
+        </div>`;
+    }
+
     function actionButtons(row) {
       return `
-        <div class="inline-actions instance-row-actions">
+        <div class="instance-actions">
           <button class="secondary-btn instance-manage-btn" type="button" data-instance-id="${escapeHTML(row.id)}">Manage</button>
-          <button class="secondary-btn instance-action-btn" type="button" data-action="apply" data-instance-id="${escapeHTML(row.id)}">Apply</button>
+          <button class="primary-btn instance-action-btn" type="button" data-action="apply" data-instance-id="${escapeHTML(row.id)}">Apply</button>
           <button class="secondary-btn instance-action-btn" type="button" data-action="restart" data-instance-id="${escapeHTML(row.id)}">Restart</button>
           <button class="secondary-btn instance-action-btn" type="button" data-action="start" data-instance-id="${escapeHTML(row.id)}">Start</button>
           <button class="secondary-btn instance-action-btn" type="button" data-action="stop" data-instance-id="${escapeHTML(row.id)}">Stop</button>
@@ -116,9 +158,94 @@
         </div>`;
     }
 
+    function renderInstanceCard(instance) {
+      const row = toInstanceRow(instance);
+      return `
+        <article class="instance-row-card" data-instance-id="${escapeHTML(row.id)}">
+          <div class="instance-row-head">
+            <div class="instance-title-block">
+              <h3>${escapeHTML(row.name || 'instance')}</h3>
+              <div class="instance-subtitle">${escapeHTML(row.node)} -> ${escapeHTML(row.endpoint)}</div>
+            </div>
+            <div class="instance-row-tags">
+              ${statusTag(row.status)}
+              <span class="tag">${escapeHTML(serviceLabel(row.service))}</span>
+              <span class="tag">${escapeHTML(row.revision === 'applied' ? 'revision applied' : `revision ${row.revision}`)}</span>
+            </div>
+          </div>
+          <div class="instance-row-grid">
+            <section class="instance-panel">
+              <div class="instance-panel-label">Service</div>
+              <div class="instance-facts">
+                ${renderInstanceFact('Code', row.service)}
+                ${renderInstanceFact('Node', row.node)}
+                ${renderInstanceFact('Endpoint', row.endpoint, 'wide')}
+              </div>
+            </section>
+            <section class="instance-panel">
+              <div class="instance-panel-label">Desired state</div>
+              <div class="instance-facts">
+                ${renderInstanceFact('Lifecycle', row.status)}
+                ${renderInstanceFact('Revision', row.revision)}
+                ${renderInstanceFact('Instance ID', row.id, 'wide')}
+              </div>
+            </section>
+            <section class="instance-panel">
+              <div class="instance-panel-label">Runtime</div>
+              <div class="instance-state-stack">
+                ${renderInstanceStateLine('runtime', row.runtime, 'Agent runtime observation for this unit.')}
+                ${renderInstanceStateLine('health', row.health, row.healthReason)}
+                ${renderInstanceStateLine('drift', row.drift, row.driftReason)}
+              </div>
+            </section>
+            <section class="instance-panel">
+              <div class="instance-panel-label">Actions</div>
+              ${actionButtons(row)}
+            </section>
+          </div>
+        </article>`;
+    }
+
+    function renderInstancesList(instances) {
+      if (!instances.length) return renderEmptyInstancesState();
+      return instances.map(renderInstanceCard).join('');
+    }
+
+    function renderEmptyInstancesState() {
+      const nodes = activeNodes();
+      const services = instanceCapableServices();
+      const runtimeReports = Array.isArray(state.instanceRuntimeStates) ? state.instanceRuntimeStates.length : 0;
+      return `
+        <div class="instances-empty-state">
+          <div class="instances-empty-grid">
+            <div class="instance-empty-panel">
+              <span>Nodes</span>
+              <strong>${escapeHTML(String(nodes.length))}</strong>
+              <span>${escapeHTML(nodes.length ? 'available for managed instances' : 'no active nodes loaded')}</span>
+            </div>
+            <div class="instance-empty-panel">
+              <span>Service profiles</span>
+              <strong>${escapeHTML(String(services.length))}</strong>
+              <span>${escapeHTML(services.length ? services.slice(0, 4).map((item) => serviceLabel(item.code)).join(', ') : 'no instance-capable services loaded')}</span>
+            </div>
+            <div class="instance-empty-panel">
+              <span>Runtime reports</span>
+              <strong>${escapeHTML(String(runtimeReports))}</strong>
+              <span>${escapeHTML(runtimeReports ? 'agent observations available' : 'waiting for first instance report')}</span>
+            </div>
+          </div>
+          <div class="inline-actions">
+            <button class="primary-btn" id="emptyCreateInstanceBtn" type="button">Create instance</button>
+            <button class="secondary-btn" id="emptyCreateServicePackBtn" type="button">Create service pack</button>
+          </div>
+        </div>`;
+    }
+
     function bindActions() {
       document.getElementById('createInstanceBtn')?.addEventListener('click', openCreateInstanceModal);
       document.getElementById('createServicePackBtn')?.addEventListener('click', openCreateServicePackModal);
+      document.getElementById('emptyCreateInstanceBtn')?.addEventListener('click', openCreateInstanceModal);
+      document.getElementById('emptyCreateServicePackBtn')?.addEventListener('click', openCreateServicePackModal);
       document.querySelectorAll('.instance-manage-btn').forEach((button) => {
         button.addEventListener('click', () => openInstanceManageModal(button.dataset.instanceId));
       });
@@ -132,18 +259,21 @@
 
     function render() {
       setTitle('Instances');
-      const rows = (state.instances || []).map(toInstanceRow);
+      const instances = Array.isArray(state.instances) ? state.instances : [];
+      const runtimeReports = Array.isArray(state.instanceRuntimeStates) ? state.instanceRuntimeStates.length : 0;
       el('content').innerHTML = `
-        ${tableCard('Instances', rows, [
-          { title: 'Name', key: 'name', render: nameCell },
-          { title: 'Node', key: 'node' },
-          { title: 'Service', key: 'service', render: (row) => `<span class="tag">${escapeHTML(row.service)}</span>` },
-          { title: 'Endpoint', key: 'endpoint' },
-          { title: 'Runtime', key: 'runtime', render: (row) => statusTag(row.runtime) },
-          { title: 'Health', key: 'health', render: (row) => stateCell(row.health, row.healthReason) },
-          { title: 'Drift', key: 'drift', render: (row) => stateCell(row.drift, row.driftReason) },
-          { title: 'Actions', key: 'id', render: actionButtons },
-        ], '<div class="inline-actions"><button class="secondary-btn" id="createServicePackBtn" type="button">Create service pack</button><button class="secondary-btn" id="createInstanceBtn" type="button">Create instance</button></div>')}`;
+        <section class="table-card instances-overview">
+          <div class="table-head">
+            <h2>Instances</h2>
+            <div class="table-tools">
+              <span class="tag">${escapeHTML(String(instances.length))} active</span>
+              <span class="tag">${escapeHTML(String(runtimeReports))} runtime reports</span>
+              <button class="secondary-btn" id="createServicePackBtn" type="button">Create service pack</button>
+              <button class="secondary-btn" id="createInstanceBtn" type="button">Create instance</button>
+            </div>
+          </div>
+          <div class="instances-list">${renderInstancesList(instances)}</div>
+        </section>`;
       bindActions();
     }
 
