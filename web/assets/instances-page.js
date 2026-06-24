@@ -234,18 +234,12 @@
               <span>${escapeHTML(runtimeReports ? 'agent observations available' : 'waiting for first instance report')}</span>
             </div>
           </div>
-          <div class="inline-actions">
-            <button class="primary-btn" id="emptyCreateInstanceBtn" type="button">Create instance</button>
-            <button class="secondary-btn" id="emptyCreateServicePackBtn" type="button">Create service pack</button>
-          </div>
         </div>`;
     }
 
     function bindActions() {
       document.getElementById('createInstanceBtn')?.addEventListener('click', openCreateInstanceModal);
       document.getElementById('createServicePackBtn')?.addEventListener('click', openCreateServicePackModal);
-      document.getElementById('emptyCreateInstanceBtn')?.addEventListener('click', openCreateInstanceModal);
-      document.getElementById('emptyCreateServicePackBtn')?.addEventListener('click', openCreateServicePackModal);
       document.querySelectorAll('.instance-manage-btn').forEach((button) => {
         button.addEventListener('click', () => openInstanceManageModal(button.dataset.instanceId));
       });
