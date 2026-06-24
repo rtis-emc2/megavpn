@@ -197,7 +197,16 @@ provision_client_for_instances() {
 publish_share_link_for_client() {
   local client_id="$1"
   local artifact_id="$2"
-  request_json POST "/api/v1/clients/$client_id/share-links" "$(jq -n --arg target_id "$artifact_id" --argjson ttl_hours "$SMOKE_SHARE_LINK_TTL_HOURS" '{target_id: $target_id, ttl_hours: $ttl_hours}')" | jq -r '.id'
+  request_json POST "/api/v1/clients/$client_id/share-links" "$(jq -n --arg target_id "$artifact_id" --argjson ttl_hours "$SMOKE_SHARE_LINK_TTL_HOURS" '{target_id: $target_id, ttl_hours: $ttl_hours}')"
+}
+
+download_share_link_once() {
+  local token="$1"
+  local tmp
+  tmp="$(mktemp)"
+  curl -fsS -o "$tmp" "${BASE_URL%/}/share/$token"
+  test -s "$tmp"
+  rm -f "$tmp"
 }
 
 run_single_pack() {
@@ -280,9 +289,17 @@ run_single_pack() {
     fi
 
     if [[ "$SMOKE_SHARE_LINKS" == "1" ]]; then
-      share_link_id="$(publish_share_link_for_client "$client_id" "$ready_artifact_id")"
-      echo "[share-link] client_id=$client_id artifact_id=$ready_artifact_id share_link_id=$share_link_id"
-      request_json GET "/api/v1/clients/$client_id/share-links" | jq '{count: length, items: map({id, status, target_type, target_id, expires_at})}'
+      share_link_json="$(publish_share_link_for_client "$client_id" "$ready_artifact_id")"
+      share_link_id="$(echo "$share_link_json" | jq -r '.id')"
+      share_link_token="$(echo "$share_link_json" | jq -r '.token // empty')"
+      share_link_hint="$(echo "$share_link_json" | jq -r '.token_hint // empty')"
+      echo "[share-link] client_id=$client_id artifact_id=$ready_artifact_id share_link_id=$share_link_id token_hint=$share_link_hint"
+      if [[ -z "$share_link_token" ]]; then
+        echo "share link publish response did not include one-time token" >&2
+        return 1
+      fi
+      download_share_link_once "$share_link_token"
+      request_json GET "/api/v1/clients/$client_id/share-links" | jq '{count: length, items: map({id, status, target_type, target_id, token_hint, has_plaintext_token: has("token"), expires_at})}'
     fi
   else
     echo "[provision] skipped"

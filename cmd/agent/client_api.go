@@ -88,7 +88,7 @@ func (c client) listRuntimeTargets(ctx context.Context, nodeID string) ([]instan
 		b, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(b))
 	}
-	body, err := c.readSignedResponseBody(req, resp)
+	body, err := c.readSignedResponseBody(req, resp, true)
 	if err != nil {
 		return nil, err
 	}
@@ -116,13 +116,16 @@ func (c client) nextJob(ctx context.Context, nodeID string) (job, bool, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNoContent {
+		if _, err := c.readSignedResponseBody(req, resp, true); err != nil {
+			return job{}, false, err
+		}
 		return job{}, false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		return job{}, false, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(b))
 	}
-	body, err := c.readSignedResponseBody(req, resp)
+	body, err := c.readSignedResponseBody(req, resp, true)
 	if err != nil {
 		return job{}, false, err
 	}
@@ -153,7 +156,7 @@ func (c client) post(ctx context.Context, path string, payload any, out any) err
 		return err
 	}
 	defer resp.Body.Close()
-	body, readErr := c.readSignedResponseBody(req, resp)
+	body, readErr := c.readSignedResponseBody(req, resp, path != "/agent/register")
 	if readErr != nil {
 		return readErr
 	}
@@ -179,7 +182,7 @@ func (c client) signRequest(req *http.Request, body []byte) {
 	req.Header.Set(agentauth.HeaderSignature, signature)
 }
 
-func (c client) readSignedResponseBody(req *http.Request, resp *http.Response) ([]byte, error) {
+func (c client) readSignedResponseBody(req *http.Request, resp *http.Response, requireSignature bool) ([]byte, error) {
 	if resp == nil {
 		return nil, errors.New("response is nil")
 	}
@@ -188,6 +191,9 @@ func (c client) readSignedResponseBody(req *http.Request, resp *http.Response) (
 		return nil, err
 	}
 	if !responseHasAgentSignature(resp) {
+		if requireSignature {
+			return nil, errors.New("unsigned agent response rejected")
+		}
 		return body, nil
 	}
 	if strings.TrimSpace(c.token) == "" {

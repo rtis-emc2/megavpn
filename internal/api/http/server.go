@@ -15,6 +15,7 @@ import (
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/jobschema"
+	"github.com/rtis-emc2/megavpn/internal/rbac"
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
@@ -157,6 +158,7 @@ type Store interface {
 	HeartbeatWithVersion(context.Context, string, string, string) error
 	AgentNextJob(context.Context, string) (domain.Job, bool, error)
 	CompleteJob(context.Context, string, string, map[string]any) error
+	CompleteAgentJob(context.Context, string, string, string, map[string]any) error
 	AddJobLog(context.Context, string, string, string, map[string]any) error
 }
 
@@ -164,7 +166,9 @@ type Server struct {
 	log                    *slog.Logger
 	store                  Store
 	version                string
+	listenAddr             string
 	publicBaseURL          string
+	productionMode         bool
 	agentToken             string
 	allowAutoRegister      bool
 	agentSignatureEnforce  bool
@@ -184,7 +188,9 @@ type Server struct {
 
 type Options struct {
 	Version                string
+	ListenAddr             string
 	PublicBaseURL          string
+	ProductionMode         bool
 	AgentToken             string
 	AllowAutoRegister      bool
 	AgentSignatureEnforce  bool
@@ -205,7 +211,9 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 		log:                    log,
 		store:                  store,
 		version:                opts.Version,
+		listenAddr:             strings.TrimSpace(opts.ListenAddr),
 		publicBaseURL:          strings.TrimRight(strings.TrimSpace(opts.PublicBaseURL), "/"),
+		productionMode:         opts.ProductionMode,
 		agentToken:             opts.AgentToken,
 		allowAutoRegister:      opts.AllowAutoRegister,
 		agentSignatureEnforce:  opts.AgentSignatureEnforce,
@@ -552,11 +560,31 @@ func (s *Server) health(w nethttp.ResponseWriter, r *nethttp.Request) {
 func (s *Server) ready(w nethttp.ResponseWriter, r *nethttp.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+	if s.productionMode {
+		checks := s.runtimePreflightChecks(ctx)
+		status := runtimePreflightStatus(checks)
+		code := 200
+		readiness := "ready"
+		if !runtimePreflightIsReady(checks) {
+			code = 503
+			readiness = "not_ready"
+		}
+		writeJSON(w, code, response{
+			"status":           readiness,
+			"service":          "megavpn-api",
+			"version":          s.version,
+			"production_mode":  true,
+			"preflight_status": status,
+			"checks":           checks,
+			"time":             time.Now().UTC().Format(time.RFC3339),
+		})
+		return
+	}
 	if err := s.store.Ping(ctx); err != nil {
 		writeErr(w, 503, "database is not ready")
 		return
 	}
-	writeJSON(w, 200, response{"status": "ready", "service": "megavpn-api", "time": time.Now().UTC().Format(time.RFC3339)})
+	writeJSON(w, 200, response{"status": "ready", "service": "megavpn-api", "version": s.version, "production_mode": false, "time": time.Now().UTC().Format(time.RFC3339)})
 }
 func (s *Server) versionHandler(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, 200, response{
@@ -1375,6 +1403,17 @@ func (s *Server) createJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 400, "invalid job payload: type is required")
 		return
 	}
+	if jobTypeMustUseTypedEndpoint(j.Type) {
+		writeErr(w, 400, "privileged job type must be created through its typed API")
+		return
+	}
+	if permission := requiredPermissionForJobType(j.Type); permission != "" {
+		authCtx, ok := authFromRequest(r)
+		if !ok || !rbac.HasPermission(authCtx.PermissionCodes, permission) {
+			writeErr(w, 403, "job type requires "+permission)
+			return
+		}
+	}
 	if j.ScopeType == "" {
 		j.ScopeType = "system"
 	}
@@ -1541,7 +1580,7 @@ func (s *Server) agentHeartbeat(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 404, "node not registered")
 		return
 	}
-	writeJSON(w, 200, response{"status": "ok", "time": time.Now().UTC().Format(time.RFC3339)})
+	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"status": "ok", "time": time.Now().UTC().Format(time.RFC3339)})
 }
 func (s *Server) agentInventory(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req agentInventoryReq
@@ -1560,7 +1599,7 @@ func (s *Server) agentInventory(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	_ = s.store.RecordAgentInventorySync(r.Context(), req.NodeID, req.Source)
-	writeJSON(w, 200, response{"status": "accepted", "snapshot": snap, "capabilities": caps})
+	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"status": "accepted", "snapshot": snap, "capabilities": caps})
 }
 
 func (s *Server) agentRuntimeTargets(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -1604,7 +1643,7 @@ func (s *Server) agentRuntimeReport(w nethttp.ResponseWriter, r *nethttp.Request
 		writeErr(w, 500, "submit runtime report failed")
 		return
 	}
-	writeJSON(w, 200, response{"status": "accepted", "states": states})
+	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"status": "accepted", "states": states})
 }
 
 func (s *Server) agentNextJob(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -1624,7 +1663,7 @@ func (s *Server) agentNextJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	if !ok {
-		w.WriteHeader(204)
+		writeSignedAgentNoContent(w, r, bearerToken(r))
 		return
 	}
 	if j.NodeID != nil {
@@ -1650,7 +1689,11 @@ func (s *Server) agentJobResult(w nethttp.ResponseWriter, r *nethttp.Request) {
 		req.Status = "failed"
 	}
 	jobMeta, _ := s.store.GetJob(r.Context(), idv)
-	if err := s.store.CompleteJob(r.Context(), idv, req.Status, req.Result); err != nil {
+	owner := ""
+	if jobMeta.NodeID != nil {
+		owner = "agent:" + strings.TrimSpace(*jobMeta.NodeID)
+	}
+	if err := s.store.CompleteAgentJob(r.Context(), idv, owner, req.Status, req.Result); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -1658,7 +1701,49 @@ func (s *Server) agentJobResult(w nethttp.ResponseWriter, r *nethttp.Request) {
 		_ = s.store.RecordAgentJobResult(r.Context(), *jobMeta.NodeID, idv, jobMeta.Type, req.Status)
 	}
 	_ = s.store.AddJobLog(r.Context(), idv, "info", "agent submitted result", req.Result)
-	writeJSON(w, 200, response{"status": "accepted"})
+	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"status": "accepted"})
+}
+
+func jobTypeMustUseTypedEndpoint(jobType string) bool {
+	switch strings.TrimSpace(jobType) {
+	case "platform.control_plane_tls.apply",
+		"node.bootstrap",
+		"node.agent.rotate_token",
+		"node.backhaul.apply",
+		"node.backhaul.probe",
+		"node.backhaul.cleanup",
+		"node.route_policy.apply",
+		"node.capability.install",
+		"node.capability.verify",
+		"instance.apply",
+		"instance.restart",
+		"instance.start",
+		"instance.stop",
+		"instance.enable",
+		"instance.disable":
+		return true
+	default:
+		return false
+	}
+}
+
+func requiredPermissionForJobType(jobType string) string {
+	switch strings.TrimSpace(jobType) {
+	case "platform.control_plane_tls.apply":
+		return "settings.manage"
+	case "node.bootstrap", "node.agent.rotate_token":
+		return "node.bootstrap"
+	case "node.capability.install", "node.capability.verify", "node.inventory", "node.inventory.sync", "node.services.discover", "node.channel.probe", "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup", "node.route_policy.apply":
+		return "node.write"
+	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable":
+		return "instance.apply"
+	case "client.provision", "client.revoke":
+		return "client.provision"
+	case "artifact.build":
+		return "artifact.export"
+	default:
+		return ""
+	}
 }
 
 func tokenHint(token string) string {

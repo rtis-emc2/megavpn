@@ -619,6 +619,7 @@ write_runtime_env() {
   write_env_line "$tmp" "MEGAVPN_DATABASE_DSN" "$DATABASE_DSN"
   write_env_line "$tmp" "MEGAVPN_API_LISTEN_ADDR" "$API_LISTEN_ADDR"
   write_env_line "$tmp" "MEGAVPN_PUBLIC_BASE_URL" "$PUBLIC_BASE_URL"
+  write_env_line "$tmp" "MEGAVPN_PRODUCTION_MODE" "true"
   write_env_line "$tmp" "MEGAVPN_WEB_ROOT" "$WEB_ROOT"
   write_env_line "$tmp" "MEGAVPN_ARTIFACT_ROOT" "$ARTIFACT_ROOT"
   write_env_line "$tmp" "MEGAVPN_MASTER_KEY_PATH" "$MASTER_KEY_PATH"

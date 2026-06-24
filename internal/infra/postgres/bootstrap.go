@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,8 +16,14 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
 )
 
+var (
+	sshUserPattern          = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
+	sshHostPattern          = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$`)
+	sshHostKeySHA256Pattern = regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{32,64}={0,2}$`)
+)
+
 func (s *Store) ListNodeAccessMethods(ctx context.Context, nodeID string) ([]domain.NodeAccessMethod, error) {
-	rows, err := s.db.Query(ctx, `select id,node_id,method,is_enabled,coalesce(ssh_host,''),coalesce(ssh_port,0),coalesce(ssh_user,''),coalesce(auth_type,''),secret_ref_id,created_at,updated_at from node_access_methods where node_id=$1 order by created_at asc`, nodeID)
+	rows, err := s.db.Query(ctx, `select id,node_id,method,is_enabled,coalesce(ssh_host,''),coalesce(ssh_port,0),coalesce(ssh_user,''),coalesce(ssh_host_key_sha256,''),coalesce(auth_type,''),secret_ref_id,created_at,updated_at from node_access_methods where node_id=$1 order by created_at asc`, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -23,7 +31,7 @@ func (s *Store) ListNodeAccessMethods(ctx context.Context, nodeID string) ([]dom
 	out := []domain.NodeAccessMethod{}
 	for rows.Next() {
 		var x domain.NodeAccessMethod
-		if err := rows.Scan(&x.ID, &x.NodeID, &x.Method, &x.IsEnabled, &x.SSHHost, &x.SSHPort, &x.SSHUser, &x.AuthType, &x.SecretRefID, &x.CreatedAt, &x.UpdatedAt); err != nil {
+		if err := rows.Scan(&x.ID, &x.NodeID, &x.Method, &x.IsEnabled, &x.SSHHost, &x.SSHPort, &x.SSHUser, &x.SSHHostKeySHA256, &x.AuthType, &x.SecretRefID, &x.CreatedAt, &x.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, x)
@@ -45,6 +53,7 @@ func (s *Store) ReplaceNodeAccessMethods(ctx context.Context, nodeID string, met
 		methods[i].AuthType = strings.TrimSpace(methods[i].AuthType)
 		methods[i].SSHHost = strings.TrimSpace(methods[i].SSHHost)
 		methods[i].SSHUser = strings.TrimSpace(methods[i].SSHUser)
+		methods[i].SSHHostKeySHA256 = strings.TrimSpace(methods[i].SSHHostKeySHA256)
 		if methods[i].SecretRefID != nil {
 			secretRefID := strings.TrimSpace(*methods[i].SecretRefID)
 			if secretRefID == "" {
@@ -66,6 +75,15 @@ func (s *Store) ReplaceNodeAccessMethods(ctx context.Context, nodeID string, met
 			if methods[i].SSHUser == "" {
 				return nil, errors.New("ssh_user is required for ssh access method")
 			}
+			if !sshUserPattern.MatchString(methods[i].SSHUser) {
+				return nil, errors.New("ssh_user contains unsafe characters")
+			}
+			if !isSafeSSHAccessHost(methods[i].SSHHost) {
+				return nil, errors.New("ssh_host contains unsafe characters")
+			}
+			if methods[i].SSHHostKeySHA256 == "" || !sshHostKeySHA256Pattern.MatchString(methods[i].SSHHostKeySHA256) {
+				return nil, errors.New("ssh_host_key_sha256 is required for ssh bootstrap")
+			}
 			if methods[i].SSHPort == 0 {
 				methods[i].SSHPort = 22
 			}
@@ -85,6 +103,7 @@ func (s *Store) ReplaceNodeAccessMethods(ctx context.Context, nodeID string, met
 			methods[i].SSHPort = 0
 			methods[i].SSHHost = ""
 			methods[i].SSHUser = ""
+			methods[i].SSHHostKeySHA256 = ""
 			methods[i].SecretRefID = nil
 			if methods[i].AuthType == "" {
 				methods[i].AuthType = "none"
@@ -107,8 +126,8 @@ func (s *Store) ReplaceNodeAccessMethods(ctx context.Context, nodeID string, met
 		return nil, err
 	}
 	for _, x := range methods {
-		if _, err := tx.Exec(ctx, `insert into node_access_methods(id,node_id,method,is_enabled,ssh_host,ssh_port,ssh_user,auth_type,secret_ref_id,created_at,updated_at) values($1,$2,$3,$4,nullif($5,''),nullif($6,0),nullif($7,''),nullif($8,''),$9,$10,$11)`,
-			x.ID, x.NodeID, x.Method, x.IsEnabled, x.SSHHost, x.SSHPort, x.SSHUser, x.AuthType, x.SecretRefID, x.CreatedAt, x.UpdatedAt); err != nil {
+		if _, err := tx.Exec(ctx, `insert into node_access_methods(id,node_id,method,is_enabled,ssh_host,ssh_port,ssh_user,ssh_host_key_sha256,auth_type,secret_ref_id,created_at,updated_at) values($1,$2,$3,$4,nullif($5,''),nullif($6,0),nullif($7,''),nullif($8,''),nullif($9,''),$10,$11,$12)`,
+			x.ID, x.NodeID, x.Method, x.IsEnabled, x.SSHHost, x.SSHPort, x.SSHUser, x.SSHHostKeySHA256, x.AuthType, x.SecretRefID, x.CreatedAt, x.UpdatedAt); err != nil {
 			return nil, err
 		}
 	}
@@ -117,6 +136,24 @@ func (s *Store) ReplaceNodeAccessMethods(ctx context.Context, nodeID string, met
 	}
 	_, _ = s.CreateAudit(ctx, "system", "node.access_methods.replace", "node", &nodeID, "node access methods updated")
 	return s.ListNodeAccessMethods(ctx, nodeID)
+}
+
+func isSafeSSHAccessHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" || strings.HasPrefix(host, "-") || strings.ContainsAny(host, " \t\r\n;{}") {
+		return false
+	}
+	ipLiteral := host
+	if strings.HasPrefix(host, "[") || strings.HasSuffix(host, "]") {
+		if !strings.HasPrefix(host, "[") || !strings.HasSuffix(host, "]") {
+			return false
+		}
+		ipLiteral = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	}
+	if _, err := netip.ParseAddr(ipLiteral); err == nil {
+		return true
+	}
+	return sshHostPattern.MatchString(host)
 }
 
 func (s *Store) CreateNodeBootstrapJob(ctx context.Context, nodeID, bootstrapMode string, options map[string]any) (domain.Job, domain.NodeBootstrapRun, error) {

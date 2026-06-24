@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
@@ -32,6 +33,14 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 	}
 	changed := make([]string, 0, len(files))
 	for _, file := range files {
+		if err := validateManagedFilePolicy(payload, file); err != nil {
+			return "failed", map[string]any{
+				"error":        err.Error(),
+				"instance_id":  payload.InstanceID,
+				"service_code": payload.ServiceCode,
+				"path":         file.Path,
+			}
+		}
 		if err := writeManagedFile(file); err != nil {
 			return "failed", map[string]any{
 				"error":        err.Error(),
@@ -97,6 +106,9 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 
 func (e instanceRuntimeExecutor) Systemd(ctx context.Context, payload instanceJobPayload, operation string) (string, map[string]any) {
 	started := time.Now()
+	if !isAllowedInstanceUnit(payload, payload.SystemdUnit) {
+		return "failed", map[string]any{"error": "systemd_unit is not allowed for instance", "action": operation, "systemd_unit": payload.SystemdUnit, "service_code": payload.ServiceCode}
+	}
 	args, err := systemdArgsForOperation(operation, payload.SystemdUnit)
 	if err != nil {
 		return "failed", map[string]any{"error": err.Error(), "action": operation}
@@ -123,6 +135,10 @@ func (e instanceRuntimeExecutor) Systemd(ctx context.Context, payload instanceJo
 }
 
 func systemdArgsForOperation(operation, unit string) ([]string, error) {
+	unit = strings.TrimSpace(unit)
+	if !isSafeSystemdUnitToken(unit) {
+		return nil, fmt.Errorf("invalid systemd unit %q", unit)
+	}
 	switch operation {
 	case driver.OperationRestart:
 		return []string{"restart", unit}, nil
@@ -137,4 +153,30 @@ func systemdArgsForOperation(operation, unit string) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported systemd action %q", operation)
 	}
+}
+
+func isAllowedInstanceUnit(payload instanceJobPayload, unit string) bool {
+	unit = strings.TrimSuffix(strings.TrimSpace(unit), ".service")
+	if unit == "" || !isSafeSystemdUnitToken(unit) {
+		return false
+	}
+	serviceCode := driver.NormalizeCode(payload.ServiceCode)
+	if serviceCode == "" {
+		serviceCode = driver.NormalizeCode(payload.RuntimeServiceCode)
+	}
+	expected := strings.TrimSuffix(driver.DefaultSystemdUnit(serviceCode, payload.Slug), ".service")
+	return expected != "" && unit == expected
+}
+
+func isSafeSystemdUnitToken(unit string) bool {
+	unit = strings.TrimSpace(unit)
+	if unit == "" || strings.Contains(unit, "/") || strings.Contains(unit, "..") {
+		return false
+	}
+	for _, r := range unit {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return false
+		}
+	}
+	return true
 }

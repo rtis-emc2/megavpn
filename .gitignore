@@ -5,7 +5,8 @@ tmp/
 bin/
 dist/
 build/
-docs/
+docs/*
+!docs/*.md
 node_modules/
 .DS_Store
 coverage/

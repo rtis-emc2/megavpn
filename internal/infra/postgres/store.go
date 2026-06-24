@@ -851,7 +851,10 @@ func (s *Store) CreateInstance(ctx context.Context, x domain.Instance) (domain.I
 	_, _ = s.createInstanceRevision(ctx, x.ID, "system", "validated", spec)
 	payload, payloadErr := s.buildInstanceJobPayload(ctx, x, "apply")
 	if payloadErr == nil {
-		_, _ = s.CreateJob(ctx, domain.Job{Type: "instance.apply", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload})
+		if job, err := s.CreateJob(ctx, domain.Job{Type: "instance.apply", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload}); err == nil {
+			_ = s.AddJobLog(ctx, job.ID, "info", "initial instance apply queued", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
+			_, _ = s.CreateAudit(ctx, "system", "instance.apply", "instance", &x.ID, "initial instance apply queued")
+		}
 	}
 	_, _ = s.CreateAudit(ctx, "system", "instance.create", "instance", &x.ID, "instance created")
 	return x, nil
@@ -1164,8 +1167,10 @@ func (s *Store) PublishShareLink(ctx context.Context, clientID string, targetID 
 	if strings.TrimSpace(verifiedStatus) != "ready" {
 		return domain.ShareLink{}, fmt.Errorf("artifact %s is not ready for publishing", verifiedTargetID)
 	}
-	link := domain.ShareLink{ID: id.New(), ClientAccountID: clientID, TargetType: "artifact", TargetID: targetID, Token: randomToken(24), Status: "active", ExpiresAt: time.Now().UTC().Add(ttl), CreatedAt: time.Now().UTC()}
-	_, err := s.db.Exec(ctx, `insert into share_links(id,client_account_id,target_type,target_id,token,status,expires_at,created_at) values($1,$2,$3,$4,$5,$6,$7,$8)`, link.ID, link.ClientAccountID, link.TargetType, link.TargetID, link.Token, link.Status, link.ExpiresAt, link.CreatedAt)
+	token := randomToken(32)
+	link := domain.ShareLink{ID: id.New(), ClientAccountID: clientID, TargetType: "artifact", TargetID: targetID, Token: token, TokenHint: tokenHint(token), Status: "active", ExpiresAt: time.Now().UTC().Add(ttl), CreatedAt: time.Now().UTC()}
+	_, err := s.db.Exec(ctx, `insert into share_links(id,client_account_id,target_type,target_id,token_hash,token_hint,status,expires_at,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		link.ID, link.ClientAccountID, link.TargetType, link.TargetID, hashToken(token), link.TokenHint, link.Status, link.ExpiresAt, link.CreatedAt)
 	if err != nil {
 		return link, err
 	}
@@ -1174,7 +1179,7 @@ func (s *Store) PublishShareLink(ctx context.Context, clientID string, targetID 
 }
 
 func (s *Store) ListShareLinks(ctx context.Context, clientID string) ([]domain.ShareLink, error) {
-	query := `select id,client_account_id,target_type,target_id,token,status,expires_at,download_count,created_at from share_links`
+	query := `select id,client_account_id,target_type,target_id,coalesce(token_hint,''),status,expires_at,download_count,created_at from share_links`
 	args := []any{}
 	if clientID != "" {
 		query += ` where client_account_id=$1`
@@ -1189,7 +1194,7 @@ func (s *Store) ListShareLinks(ctx context.Context, clientID string) ([]domain.S
 	var out []domain.ShareLink
 	for rows.Next() {
 		var l domain.ShareLink
-		if err := rows.Scan(&l.ID, &l.ClientAccountID, &l.TargetType, &l.TargetID, &l.Token, &l.Status, &l.ExpiresAt, &l.DownloadCount, &l.CreatedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.ClientAccountID, &l.TargetType, &l.TargetID, &l.TokenHint, &l.Status, &l.ExpiresAt, &l.DownloadCount, &l.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, l)
@@ -1205,9 +1210,9 @@ func (s *Store) RevokeShareLink(ctx context.Context, clientID, linkID string) (d
 	err := s.db.QueryRow(ctx, `update share_links
 		set status='revoked'
 		where id=$1 and client_account_id=$2 and status in ('active','expired')
-		returning id,client_account_id,target_type,target_id,token,status,expires_at,download_count,created_at`,
+		returning id,client_account_id,target_type,target_id,coalesce(token_hint,''),status,expires_at,download_count,created_at`,
 		linkID, clientID,
-	).Scan(&link.ID, &link.ClientAccountID, &link.TargetType, &link.TargetID, &link.Token, &link.Status, &link.ExpiresAt, &link.DownloadCount, &link.CreatedAt)
+	).Scan(&link.ID, &link.ClientAccountID, &link.TargetType, &link.TargetID, &link.TokenHint, &link.Status, &link.ExpiresAt, &link.DownloadCount, &link.CreatedAt)
 	if err != nil {
 		return domain.ShareLink{}, err
 	}
@@ -1370,6 +1375,18 @@ func (s *Store) RecoverStaleJobLeases(ctx context.Context) (int, error) {
 }
 
 func (s *Store) CompleteJob(ctx context.Context, idv, status string, result map[string]any) error {
+	return s.completeJob(ctx, idv, "", false, status, result)
+}
+
+func (s *Store) CompleteAgentJob(ctx context.Context, idv, owner, status string, result map[string]any) error {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return errors.New("agent job owner is required")
+	}
+	return s.completeJob(ctx, idv, owner, true, status, result)
+}
+
+func (s *Store) completeJob(ctx context.Context, idv, owner string, requireLease bool, status string, result map[string]any) error {
 	if !in(status, "succeeded", "failed", "cancelled") {
 		return fmt.Errorf("unsupported completion status %q", status)
 	}
@@ -1393,11 +1410,25 @@ func (s *Store) CompleteJob(ctx context.Context, idv, status string, result map[
 	var instanceID *string
 	var currentStatus string
 	var payloadRaw []byte
-	if err := tx.QueryRow(ctx, `select type,scope_id,instance_id,status,payload_json from jobs where id=$1 for update`, idv).Scan(&jobType, &scopeID, &instanceID, &currentStatus, &payloadRaw); err != nil {
+	var lockedBy *string
+	var lockedUntil *time.Time
+	if err := tx.QueryRow(ctx, `select type,scope_id,instance_id,status,payload_json,locked_by,locked_until from jobs where id=$1 for update`, idv).Scan(&jobType, &scopeID, &instanceID, &currentStatus, &payloadRaw, &lockedBy, &lockedUntil); err != nil {
 		return err
 	}
 	if in(currentStatus, "succeeded", "failed", "cancelled") {
 		return fmt.Errorf("job already finished with status %s", currentStatus)
+	}
+	if requireLease {
+		now := time.Now().UTC()
+		if currentStatus != "running" {
+			return fmt.Errorf("job is not running")
+		}
+		if lockedBy == nil || strings.TrimSpace(*lockedBy) != owner {
+			return fmt.Errorf("job lease owner mismatch")
+		}
+		if lockedUntil == nil || !lockedUntil.After(now) {
+			return fmt.Errorf("job lease expired")
+		}
 	}
 
 	if _, err = tx.Exec(ctx, `update jobs set status=$2,result_json=$3,finished_at=now(),locked_by=null,locked_until=null where id=$1`, idv, status, b); err != nil {
@@ -1628,7 +1659,7 @@ func (s *Store) AgentNextJob(ctx context.Context, nodeRef string) (domain.Job, b
 	if err := s.db.QueryRow(ctx, `select id from nodes where (id::text=$1 or name=$1) and status <> 'retired'`, nodeRef).Scan(&nodeID); err != nil {
 		return domain.Job{}, false, err
 	}
-	where := `(node_id=$1 or node_id is null) and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable')`
+	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable')`
 	job, ok, err := s.claimJob(ctx, "agent:"+nodeID, where, []any{nodeID})
 	if err != nil || !ok {
 		return job, ok, err

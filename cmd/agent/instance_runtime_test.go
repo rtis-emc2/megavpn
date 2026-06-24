@@ -43,3 +43,70 @@ func TestSystemdArgsForUnsupportedOperation(t *testing.T) {
 		t.Fatal("expected unsupported operation error")
 	}
 }
+
+func TestSystemdArgsRejectUnsafeUnit(t *testing.T) {
+	t.Parallel()
+
+	for _, unit := range []string{"../../evil.service", "evil unit.service", "/etc/systemd/system/evil.service"} {
+		unit := unit
+		t.Run(unit, func(t *testing.T) {
+			t.Parallel()
+			if _, err := systemdArgsForOperation(driver.OperationRestart, unit); err == nil {
+				t.Fatalf("expected unsafe unit %q to be rejected", unit)
+			}
+		})
+	}
+}
+
+func TestInstanceUnitPolicyAllowsDriverDefaultOnly(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{ServiceCode: driver.WireGuard, Slug: "corp", SystemdUnit: "wg-quick@corp"}
+	if !isAllowedInstanceUnit(payload, payload.SystemdUnit) {
+		t.Fatalf("expected default unit to be allowed")
+	}
+	payload.SystemdUnit = "evil.service"
+	if isAllowedInstanceUnit(payload, payload.SystemdUnit) {
+		t.Fatalf("expected non-default unit to be rejected")
+	}
+}
+
+func TestManagedFilePolicyRejectsArbitraryServiceUnit(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{ServiceCode: driver.WireGuard, Slug: "corp", SystemdUnit: "wg-quick@corp"}
+	file := managedFileSpec{Path: "/etc/systemd/system/evil.service", Content: "[Service]\nExecStart=/bin/true\n", Mode: "0644"}
+	if err := validateManagedFilePolicy(payload, file); err == nil {
+		t.Fatal("expected arbitrary service unit path to be rejected")
+	}
+}
+
+func TestManagedFilePolicyRejectsArbitraryContentForDefaultServiceUnit(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{ServiceCode: driver.XrayCore, Slug: "edge", SystemdUnit: "megavpn-xray-edge"}
+	file := managedFileSpec{Path: "/etc/systemd/system/megavpn-xray-edge.service", Content: "[Service]\nExecStart=/bin/sh -c 'id'\n", Mode: "0644"}
+	if err := validateManagedFilePolicy(payload, file); err == nil {
+		t.Fatal("expected arbitrary service unit content to be rejected")
+	}
+}
+
+func TestManagedFilePolicyRejectsPathOutsideDriverRoots(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{ServiceCode: driver.WireGuard, Slug: "corp", SystemdUnit: "wg-quick@corp"}
+	file := managedFileSpec{Path: "/tmp/wg.conf", Content: "[Interface]\n", Mode: "0600"}
+	if err := validateManagedFilePolicy(payload, file); err == nil {
+		t.Fatal("expected path outside wireguard roots to be rejected")
+	}
+}
+
+func TestManagedFilePolicyAllowsDriverConfigPath(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{ServiceCode: driver.WireGuard, Slug: "corp", SystemdUnit: "wg-quick@corp"}
+	file := managedFileSpec{Path: "/etc/wireguard/corp.conf", Content: "[Interface]\n", Mode: "0600"}
+	if err := validateManagedFilePolicy(payload, file); err != nil {
+		t.Fatalf("expected driver config path to be allowed: %v", err)
+	}
+}

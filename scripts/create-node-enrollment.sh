@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/smoke.sh
+source "$SCRIPT_DIR/lib/smoke.sh"
 
 name="${1:-}"
 address="${2:-127.0.0.1}"
@@ -14,16 +17,15 @@ if [[ -z "$name" ]]; then
   exit 2
 fi
 
-need() { command -v "$1" >/dev/null 2>&1 || { echo "missing command: $1" >&2; exit 1; }; }
-need curl
-need jq
+smoke_require curl
+smoke_require jq
 
-nodes_json="$(curl -fsS "$api/api/v1/nodes")"
+nodes_json="$(smoke_curl "$api/api/v1/nodes")"
 node_id="$(jq -r --arg name "$name" '.[] | select(.name==$name and .status!="retired") | .id' <<<"$nodes_json" | head -1)"
 
 if [[ -z "$node_id" || "$node_id" == "null" ]]; then
   node_payload="$(jq -cn --arg name "$name" --arg address "$address" '{name:$name,kind:"remote",status:"draft",address:$address,execution_mode:"agent_managed"}')"
-  node_json="$(curl -fsS -X POST "$api/api/v1/nodes" -H 'Content-Type: application/json' -d "$node_payload")"
+  node_json="$(smoke_json_request POST "$api/api/v1/nodes" "$node_payload")"
   node_id="$(jq -r '.id' <<<"$node_json")"
 fi
 
@@ -32,7 +34,7 @@ if [[ -z "$node_id" || "$node_id" == "null" ]]; then
   exit 1
 fi
 
-token_json="$(curl -fsS -X POST "$api/api/v1/nodes/$node_id/enrollment-token")"
+token_json="$(smoke_json_request POST "$api/api/v1/nodes/$node_id/enrollment-token")"
 token="$(jq -r '.token' <<<"$token_json")"
 if [[ -z "$token" || "$token" == "null" ]]; then
   echo "control plane did not return enrollment token" >&2

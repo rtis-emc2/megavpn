@@ -1,0 +1,135 @@
+# Release Gates
+
+This file defines the minimum evidence required before tagging a production release.
+
+## 1. Release Gate
+
+Required command:
+
+```bash
+scripts/release-gate.sh
+```
+
+The release gate is fail-closed: any skipped gate makes the command fail because skipped checks are not production release evidence. For local diagnostics on a workstation that does not have PostgreSQL, systemd, nginx or a disposable test node, use `scripts/self-test.sh` or explicitly allow skips:
+
+```bash
+MEGAVPN_RELEASE_ALLOW_SKIPS=1 scripts/release-gate.sh
+```
+
+Diagnostic command with full PASS/FAIL/SKIP report:
+
+```bash
+scripts/self-test.sh
+```
+
+The baseline gate must pass:
+
+- `gofmt -l cmd internal` returns no files.
+- `go test ./...` passes.
+- `go test -race ./...` passes. Disabling it with `MEGAVPN_RELEASE_RUN_RACE=0` is a local diagnostic shortcut and counts as a skipped release gate.
+- `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate` passes.
+- Shell scripts under `scripts/` pass `bash -n`.
+- Smoke scripts that call `/api/v1` support `MEGAVPN_AUTH_TOKEN`.
+- Static production scan finds no `/bin/sh -c`, `StrictHostKeyChecking=accept-new`, or curl-to-shell pattern outside tests.
+
+## 2. Security Gate
+
+Required release evidence:
+
+- Share-link tokens are stored as `token_hash` plus `token_hint`; plaintext token is returned only once at publish time.
+- Agent transport rejects unsigned responses by default, including empty `204` polls.
+- SSH bootstrap requires pinned `ssh_host_key_sha256`.
+- Xray remote installer is fail-closed unless `MEGAVPN_XRAY_INSTALL_SCRIPT_SHA256` pins the downloaded script.
+- Audit events exist for bootstrap, instance apply, capability install/verify, share-link publish/revoke, login, settings and certificate changes.
+- Secret rotation runbook in `docs/OPERATIONS_RUNBOOK.md` is reviewed for this release.
+
+## 3. Runtime Gate
+
+Use a disposable PostgreSQL database:
+
+```bash
+MEGAVPN_RELEASE_DATABASE_DSN='postgres://...' scripts/release-gate.sh
+```
+
+This runs migrations and PostgreSQL integration tests, including job lifecycle and stale lease recovery.
+
+For API/worker/agent E2E, run against a disposable control plane and test node:
+
+```bash
+MEGAVPN_RELEASE_BASE_URL=https://control.example.com:58765 \
+MEGAVPN_AUTH_TOKEN=... \
+scripts/release-gate.sh
+```
+
+Minimum runtime evidence:
+
+- `/health` returns success as liveness.
+- `/api/v1/ready` returns success with `MEGAVPN_PRODUCTION_MODE=true`; this requires the runtime preflight status to be `ready`, not just a database ping.
+- Node enrollment creates a persistent agent token and heartbeat.
+- Agent job claim/result lifecycle works.
+- Stale running job leases recover after expiry.
+
+## 4. Infra Gate
+
+Required checks:
+
+- `systemd-analyze verify deploy/systemd/*.service` passes on a Linux host with systemd.
+- `nginx -t` passes on the target host after managed control-plane TLS apply.
+- `scripts/backup.sh` produces an archive from the disposable DB.
+- `scripts/restore.sh` restores the archive into a separate disposable DB.
+- Rollback plan is documented for the exact release version.
+
+Run backup/restore drill:
+
+```bash
+MEGAVPN_RELEASE_DATABASE_DSN='postgres://source...' \
+MEGAVPN_RELEASE_RESTORE_DATABASE_DSN='postgres://target...' \
+scripts/release-gate.sh
+```
+
+## 5. VPN / Service Gate
+
+Run the service-pack smoke matrix on a disposable node:
+
+```bash
+MEGAVPN_RELEASE_RUN_SERVICE_MATRIX=1 \
+MEGAVPN_RELEASE_BASE_URL=https://control.example.com:58765 \
+MEGAVPN_AUTH_TOKEN=... \
+MEGAVPN_RELEASE_NODE_ID=... \
+MEGAVPN_RELEASE_ENDPOINT_DOMAIN=smoke.example.com \
+scripts/release-gate.sh
+```
+
+Minimum matrix:
+
+- OpenVPN TCP/UDP
+- WireGuard
+- Xray Reality
+- Xray WebSocket/Nginx edge
+- HTTP Proxy
+- MTProto
+- Shadowsocks
+- IPsec/L2TP
+
+Drivers that are intentionally materialize-only must be recorded as such, not counted as active runtime success.
+
+## 6. Observability Gate
+
+Required UI/API visibility before release:
+
+- Job result includes failure stage and reason.
+- Agent version drift is visible per node.
+- Runtime state exposes health/drift reason.
+- Backhaul apply/probe surfaces systemd state, interface state and first useful diagnostic line.
+- Audit log can answer: who changed settings, who queued bootstrap/apply/capability jobs, who published/revoked share links.
+
+## 7. Documentation Gate
+
+Required documents:
+
+- `docs/THREAT_MODEL.md`
+- `docs/RBAC_MATRIX.md`
+- `docs/OPERATIONS_RUNBOOK.md`
+- `docs/RELEASE_GATES.md`
+- `docs/SELF_TESTING.md`
+- Production env templates under `deploy/env/`

@@ -57,6 +57,60 @@ func TestNextJobRejectsTamperedSignedResponse(t *testing.T) {
 	}
 }
 
+func TestNextJobRejectsUnsignedOKResponse(t *testing.T) {
+	t.Parallel()
+
+	c := newClient("https://control.example", "agent-token", "")
+	c.http = httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		body := []byte(`{"id":"job-1","type":"instance.apply","payload":{}}` + "\n")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewReader(body)),
+		}, nil
+	})
+
+	_, _, err := c.nextJob(context.Background(), "node-1")
+	if err == nil || !strings.Contains(err.Error(), "unsigned agent response rejected") {
+		t.Fatalf("nextJob unsigned 200 error = %v, want unsigned response rejection", err)
+	}
+}
+
+func TestNextJobRejectsUnsignedNoContentResponse(t *testing.T) {
+	t.Parallel()
+
+	c := newClient("https://control.example", "agent-token", "")
+	c.http = httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Header:     http.Header{},
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	})
+
+	_, _, err := c.nextJob(context.Background(), "node-1")
+	if err == nil || !strings.Contains(err.Error(), "unsigned agent response rejected") {
+		t.Fatalf("nextJob unsigned 204 error = %v, want unsigned response rejection", err)
+	}
+}
+
+func TestNextJobAcceptsSignedNoContentResponse(t *testing.T) {
+	t.Parallel()
+
+	c := newClient("https://control.example", "agent-token", "")
+	c.http = httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		return signedAgentTestResponse(req, "agent-token", http.StatusNoContent, nil), nil
+	})
+
+	j, ok, err := c.nextJob(context.Background(), "node-1")
+	if err != nil {
+		t.Fatalf("nextJob signed 204 error = %v", err)
+	}
+	if ok || j.ID != "" {
+		t.Fatalf("nextJob signed 204 = %#v/%v, want no job", j, ok)
+	}
+}
+
 func TestNextJobRejectsReplayedSignedResponse(t *testing.T) {
 	t.Parallel()
 

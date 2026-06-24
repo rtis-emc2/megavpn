@@ -13,6 +13,15 @@ Environment=MEGAVPN_MIGRATIONS_DIR=/opt/megavpn/migrations
 ExecStart=/opt/megavpn/bin/megavpn-migrate
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectHome=true
 ProtectSystem=full
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
 UMask=0077

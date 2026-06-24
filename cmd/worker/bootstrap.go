@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,6 +31,12 @@ type sshSession struct {
 }
 
 const sshKnownHostsPath = "/var/lib/megavpn/ssh/known_hosts"
+
+var (
+	bootstrapSSHUserPattern          = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
+	bootstrapSSHHostPattern          = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$`)
+	bootstrapSSHHostKeySHA256Pattern = regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{32,64}={0,2}$`)
+)
 
 func handleNodeBootstrapJob(ctx context.Context, log bootstrapLogger, store *postgres.Store, cfg config.Config, job domain.Job) (string, map[string]any) {
 	nodeID := strings.TrimSpace(stringify(job.Payload["node_id"]))
@@ -265,6 +273,9 @@ func newSSHSession(method domain.NodeAccessMethod, secret string) (*sshSession, 
 	if strings.TrimSpace(method.SSHHost) == "" || strings.TrimSpace(method.SSHUser) == "" {
 		return nil, errors.New("ssh_host and ssh_user are required")
 	}
+	if err := validateSSHBootstrapTarget(method); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(sshKnownHostsPath), 0o700); err != nil {
 		return nil, err
 	}
@@ -306,6 +317,10 @@ func newSSHSession(method domain.NodeAccessMethod, secret string) (*sshSession, 
 	if session.method.SSHPort == 0 {
 		session.method.SSHPort = 22
 	}
+	if err := ensurePinnedKnownHost(method); err != nil {
+		session.Close()
+		return nil, err
+	}
 	return session, nil
 }
 
@@ -345,10 +360,11 @@ func (s *sshSession) applySecretEnv(cmd *exec.Cmd) {
 
 func (s *sshSession) commandArgs(tool string, extra ...string) (string, []string) {
 	base := []string{
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "StrictHostKeyChecking=yes",
 		"-o", "UserKnownHostsFile=" + sshKnownHostsPath,
 		"-o", "GlobalKnownHostsFile=/dev/null",
 		"-o", "ConnectTimeout=10",
+		"-o", "HostKeyAlgorithms=ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512,rsa-sha2-256",
 		"-P", fmt.Sprintf("%d", s.method.SSHPort),
 	}
 	switch strings.TrimSpace(s.method.AuthType) {
@@ -356,35 +372,132 @@ func (s *sshSession) commandArgs(tool string, extra ...string) (string, []string
 		base = append(base, "-i", s.keyPath, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes")
 		if tool == "ssh" {
 			return "ssh", append([]string{
-				"-o", "StrictHostKeyChecking=accept-new",
+				"-o", "StrictHostKeyChecking=yes",
 				"-o", "UserKnownHostsFile=" + sshKnownHostsPath,
 				"-o", "GlobalKnownHostsFile=/dev/null",
 				"-o", "ConnectTimeout=10",
+				"-o", "HostKeyAlgorithms=ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512,rsa-sha2-256",
 				"-p", fmt.Sprintf("%d", s.method.SSHPort),
 				"-i", s.keyPath,
 				"-o", "IdentitiesOnly=yes",
 				"-o", "BatchMode=yes",
+				"--",
 				s.target(),
 			}, extra...)
 		}
-		return "scp", append(base, extra...)
+		return "scp", append(append(base, "--"), extra...)
 	case "password":
 		if tool == "ssh" {
 			return "sshpass", append([]string{"-e", "ssh",
-				"-o", "StrictHostKeyChecking=accept-new",
+				"-o", "StrictHostKeyChecking=yes",
 				"-o", "UserKnownHostsFile=" + sshKnownHostsPath,
 				"-o", "GlobalKnownHostsFile=/dev/null",
 				"-o", "ConnectTimeout=10",
+				"-o", "HostKeyAlgorithms=ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512,rsa-sha2-256",
 				"-p", fmt.Sprintf("%d", s.method.SSHPort),
 				"-o", "PreferredAuthentications=password",
 				"-o", "PubkeyAuthentication=no",
+				"--",
 				s.target(),
 			}, extra...)
 		}
-		return "sshpass", append([]string{"-e", "scp"}, append(base, extra...)...)
+		return "sshpass", append([]string{"-e", "scp"}, append(append(base, "--"), extra...)...)
 	default:
 		return tool, extra
 	}
+}
+
+func validateSSHBootstrapTarget(method domain.NodeAccessMethod) error {
+	user := strings.TrimSpace(method.SSHUser)
+	host := strings.TrimSpace(method.SSHHost)
+	pin := strings.TrimSpace(method.SSHHostKeySHA256)
+	if !bootstrapSSHUserPattern.MatchString(user) {
+		return errors.New("ssh_user contains unsafe characters")
+	}
+	if !isSafeSSHBootstrapHost(host) {
+		return errors.New("ssh_host contains unsafe characters")
+	}
+	if !bootstrapSSHHostKeySHA256Pattern.MatchString(pin) {
+		return errors.New("ssh_host_key_sha256 is required for ssh bootstrap")
+	}
+	return nil
+}
+
+func isSafeSSHBootstrapHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" || strings.HasPrefix(host, "-") || strings.ContainsAny(host, " \t\r\n;{}") {
+		return false
+	}
+	ipLiteral := host
+	if strings.HasPrefix(host, "[") || strings.HasSuffix(host, "]") {
+		if !strings.HasPrefix(host, "[") || !strings.HasSuffix(host, "]") {
+			return false
+		}
+		ipLiteral = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	}
+	if _, err := netip.ParseAddr(ipLiteral); err == nil {
+		return true
+	}
+	return bootstrapSSHHostPattern.MatchString(host)
+}
+
+func ensurePinnedKnownHost(method domain.NodeAccessMethod) error {
+	host := strings.Trim(strings.TrimSpace(method.SSHHost), "[]")
+	pin := strings.TrimSpace(method.SSHHostKeySHA256)
+	port := method.SSHPort
+	if port == 0 {
+		port = 22
+	}
+	scanCmd := exec.Command("ssh-keyscan", "-p", fmt.Sprintf("%d", port), "-T", "10", host)
+	scanOut, err := scanCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ssh host key scan failed: %w: %s", err, strings.TrimSpace(string(scanOut)))
+	}
+	lines := strings.TrimSpace(string(scanOut))
+	if lines == "" {
+		return errors.New("ssh host key scan returned no keys")
+	}
+	tmp, err := os.CreateTemp("", "megavpn-known-host-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.WriteString(lines + "\n"); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	fpOut, err := exec.Command("ssh-keygen", "-lf", tmpPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ssh host key fingerprint failed: %w: %s", err, strings.TrimSpace(string(fpOut)))
+	}
+	if !knownHostFingerprintMatches(string(fpOut), pin) {
+		return fmt.Errorf("ssh host key fingerprint mismatch for %s", method.SSHHost)
+	}
+	if err := os.MkdirAll(filepath.Dir(sshKnownHostsPath), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(sshKnownHostsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(lines + "\n")
+	return err
+}
+
+func knownHostFingerprintMatches(output, pin string) bool {
+	pin = strings.TrimSpace(pin)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == pin {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *sshSession) target() string {

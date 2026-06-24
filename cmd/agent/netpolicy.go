@@ -41,6 +41,9 @@ func applyNetworkPolicy(ctx context.Context, payload instanceJobPayload) (map[st
 	scriptPath := filepath.Join("/usr/local/lib/megavpn/netpolicy", slug+".sh")
 	unitName := "megavpn-netpolicy-" + slug + ".service"
 	unitPath := filepath.Join("/etc/systemd/system", unitName)
+	if !isSafeNetworkPolicyManagedPath(scriptPath) || !isSafeNetworkPolicyManagedPath(unitPath) || !isSafeNetworkPolicyUnit(unitName) {
+		return nil, fmt.Errorf("network policy managed path is not allowed")
+	}
 	if err := writeManagedFile(managedFileSpec{Path: scriptPath, Content: script, Mode: "0700"}); err != nil {
 		return nil, err
 	}
@@ -82,6 +85,30 @@ func renderNetworkPolicyUnit(unitName, scriptPath string, payload instanceJobPay
 		"WantedBy=multi-user.target",
 		"",
 	}, "\n")
+}
+
+func isSafeNetworkPolicyManagedPath(path string) bool {
+	path = cleanAbsPath(path)
+	if path == "" || hasUnsafePathToken(path) {
+		return false
+	}
+	if strings.HasPrefix(path, "/usr/local/lib/megavpn/netpolicy/") && strings.HasSuffix(path, ".sh") {
+		return true
+	}
+	if strings.HasPrefix(path, "/etc/systemd/system/megavpn-netpolicy-") && strings.HasSuffix(path, ".service") {
+		unit := strings.TrimPrefix(path, "/etc/systemd/system/")
+		return isSafeNetworkPolicyUnit(unit)
+	}
+	return false
+}
+
+func isSafeNetworkPolicyUnit(unit string) bool {
+	unit = strings.TrimSpace(unit)
+	return strings.HasPrefix(unit, "megavpn-netpolicy-") &&
+		strings.HasSuffix(unit, ".service") &&
+		!strings.Contains(unit, "/") &&
+		!strings.Contains(unit, "..") &&
+		!strings.ContainsAny(unit, " \t\r\n;{}")
 }
 
 func renderNetworkPolicyScript(payload instanceJobPayload) (string, map[string]int, bool, error) {

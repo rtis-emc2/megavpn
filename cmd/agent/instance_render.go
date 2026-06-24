@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
@@ -115,24 +116,209 @@ func singleConfigContent(spec map[string]any) (string, bool, error) {
 }
 
 func writeManagedFile(file managedFileSpec) error {
-	if strings.TrimSpace(file.Path) == "" {
+	path := cleanAbsPath(file.Path)
+	if path == "" {
 		return fmt.Errorf("managed file path is empty")
+	}
+	if hasUnsafePathToken(path) {
+		return fmt.Errorf("managed file path contains unsafe characters: %s", file.Path)
 	}
 	mode, err := parseFileMode(file.Mode)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
+	if err := rejectSymlinkPath(path); err != nil {
 		return err
 	}
-	tmp := file.Path + ".megavpn.tmp"
-	if err := os.WriteFile(tmp, []byte(file.Content), mode); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := rejectSymlinkPath(path); err != nil {
+		return err
+	}
+	tmpFile, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.megavpn.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := tmpFile.Name()
+	defer os.Remove(tmp)
+	if err := tmpFile.Chmod(mode); err != nil {
+		tmpFile.Close()
+		return err
+	}
+	if _, err := tmpFile.WriteString(file.Content); err != nil {
+		tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
 		return err
 	}
 	if err := os.Chmod(tmp, mode); err != nil {
 		return err
 	}
-	return os.Rename(tmp, file.Path)
+	return os.Rename(tmp, path)
+}
+
+func rejectSymlinkPath(path string) error {
+	path = filepath.Clean(path)
+	if path == string(filepath.Separator) {
+		return fmt.Errorf("managed file path must not be root")
+	}
+	dir := filepath.Dir(path)
+	current := string(filepath.Separator)
+	for _, part := range strings.Split(strings.TrimPrefix(dir, string(filepath.Separator)), string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("managed file parent must not be a symlink: %s", current)
+		}
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("managed file path must not be a symlink: %s", path)
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func validateManagedFilePolicy(payload instanceJobPayload, file managedFileSpec) error {
+	path := cleanAbsPath(file.Path)
+	if path == "" {
+		return fmt.Errorf("managed file path must be absolute")
+	}
+	if hasUnsafePathToken(path) {
+		return fmt.Errorf("managed file path contains unsafe characters: %s", file.Path)
+	}
+	if !isAllowedInstanceManagedPath(payload, path) {
+		return fmt.Errorf("managed file path is outside allowed roots for %s: %s", payload.ServiceCode, path)
+	}
+	if strings.HasPrefix(path, "/etc/systemd/system/") {
+		unit := strings.TrimSuffix(strings.TrimPrefix(path, "/etc/systemd/system/"), ".service")
+		if !isAllowedInstanceUnit(payload, unit) {
+			return fmt.Errorf("managed systemd unit is not allowed for %s: %s", payload.ServiceCode, unit)
+		}
+		if !isAllowedManagedServiceFile(payload, file.Content) {
+			return fmt.Errorf("managed systemd unit content is not allowed for %s: %s", payload.ServiceCode, unit)
+		}
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("managed file path must not be a symlink: %s", path)
+	}
+	return nil
+}
+
+func isAllowedManagedServiceFile(payload instanceJobPayload, content string) bool {
+	if strings.Contains(content, "/bin/sh") || strings.Contains(content, " -c ") {
+		return false
+	}
+	switch driver.NormalizeCode(payload.ServiceCode) {
+	case driver.XrayCore, driver.MTProto:
+		return strings.Contains(content, "ExecStart=/usr/bin/env xray run -config ")
+	case driver.HTTPProxy:
+		return strings.Contains(content, "ExecStart=/usr/bin/env squid -f ") &&
+			strings.Contains(content, "ExecReload=/usr/bin/env squid -k reconfigure -f ") &&
+			strings.Contains(content, "ExecStop=/usr/bin/env squid -k shutdown -f ")
+	case driver.Shadowsocks:
+		return strings.Contains(content, "ExecStart=/usr/bin/env ss-server -c ")
+	default:
+		return false
+	}
+}
+
+func cleanAbsPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || strings.Contains(path, "\x00") || !filepath.IsAbs(path) {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+func hasUnsafePathToken(path string) bool {
+	if strings.Contains(path, "/../") || strings.HasSuffix(path, "/..") {
+		return true
+	}
+	for _, r := range path {
+		if r == 0 || unicode.IsControl(r) || unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedInstanceManagedPath(payload instanceJobPayload, path string) bool {
+	path = cleanAbsPath(path)
+	if path == "" {
+		return false
+	}
+	if strings.HasPrefix(path, "/etc/systemd/system/") {
+		return strings.HasSuffix(path, ".service")
+	}
+	for _, root := range allowedInstancePathRoots(payload) {
+		if pathWithinRoot(path, root) {
+			return true
+		}
+	}
+	for _, allowed := range allowedInstanceExactPaths(payload) {
+		if path == cleanAbsPath(allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func allowedInstancePathRoots(payload instanceJobPayload) []string {
+	switch driver.NormalizeCode(payload.ServiceCode) {
+	case driver.XrayCore, driver.MTProto:
+		return []string{"/usr/local/etc/xray", "/etc/megavpn/certs"}
+	case driver.OpenVPN:
+		return []string{"/etc/openvpn/server", "/etc/megavpn/certs"}
+	case driver.WireGuard:
+		return []string{"/etc/wireguard"}
+	case driver.IPSec:
+		return []string{"/etc/megavpn/certs"}
+	case driver.XL2TPD:
+		return []string{"/etc/xl2tpd"}
+	case driver.HTTPProxy:
+		return []string{"/etc/squid"}
+	case driver.Shadowsocks:
+		return []string{"/etc/shadowsocks-libev"}
+	case driver.Nginx:
+		return []string{"/etc/nginx/conf.d", "/etc/megavpn/certs"}
+	default:
+		return nil
+	}
+}
+
+func allowedInstanceExactPaths(payload instanceJobPayload) []string {
+	switch driver.NormalizeCode(payload.ServiceCode) {
+	case driver.IPSec:
+		return []string{"/etc/ipsec.conf", "/etc/ipsec.secrets"}
+	case driver.XL2TPD:
+		return []string{"/etc/ppp/options.xl2tpd", "/etc/ppp/chap-secrets"}
+	default:
+		return nil
+	}
+}
+
+func pathWithinRoot(path, root string) bool {
+	path = cleanAbsPath(path)
+	root = cleanAbsPath(root)
+	if path == "" || root == "" {
+		return false
+	}
+	if path == root {
+		return true
+	}
+	return strings.HasPrefix(path, strings.TrimRight(root, "/")+"/")
 }
 
 func parseFileMode(raw string) (os.FileMode, error) {

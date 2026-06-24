@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"runtime"
 	"strings"
@@ -489,12 +492,40 @@ func installXrayCore(ctx context.Context, channel string) map[string]any {
 	if os.Geteuid() != 0 {
 		return map[string]any{"ok": false, "message": "xray-core install requires root", "steps": steps}
 	}
-	if !run("bash", "-c", "curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh -o /tmp/megavpn-xray-install-release.sh && bash /tmp/megavpn-xray-install-release.sh install") {
+	expectedSHA256 := strings.ToLower(strings.TrimSpace(os.Getenv("MEGAVPN_XRAY_INSTALL_SCRIPT_SHA256")))
+	if expectedSHA256 == "" {
+		return map[string]any{"ok": false, "message": "xray-core install requires MEGAVPN_XRAY_INSTALL_SCRIPT_SHA256 for pinned supply-chain verification", "steps": steps}
+	}
+	installerPath := "/tmp/megavpn-xray-install-release.sh"
+	if !run("curl", "-fsSL", "https://github.com/XTLS/Xray-install/raw/main/install-release.sh", "-o", installerPath) {
+		return map[string]any{"ok": false, "message": "xray-core install script download failed", "steps": steps}
+	}
+	if err := verifyFileSHA256(installerPath, expectedSHA256); err != nil {
+		return map[string]any{"ok": false, "message": "xray-core install script checksum verification failed", "error": err.Error(), "steps": steps}
+	}
+	if !run("bash", installerPath, "install") {
 		return map[string]any{"ok": false, "message": "xray-core install script failed", "steps": steps}
 	}
 	verify := verifyXrayCore(ctx)
 	verify["steps"] = steps
 	return verify
+}
+
+func verifyFileSHA256(path, expectedHex string) error {
+	expectedHex = strings.ToLower(strings.TrimSpace(expectedHex))
+	if len(expectedHex) != 64 {
+		return fmt.Errorf("expected sha256 must be 64 hex characters")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(b)
+	got := hex.EncodeToString(sum[:])
+	if got != expectedHex {
+		return fmt.Errorf("sha256 mismatch: got %s", got)
+	}
+	return nil
 }
 
 func installUbuntuPackageCapability(ctx context.Context, capabilityCode, packageName, verifyHint string, enableUnits []string) map[string]any {

@@ -35,9 +35,9 @@ Core API/UI:
 
 | Driver | Layer | Apply behavior | Notes |
 | --- | --- | --- | --- |
-| `wireguard` | L3 | Verifies/installs `wireguard-tools`, writes config, writes systemd unit, enables unit | Primary low-overhead transport. |
-| `openvpn_udp` | L3 | Verifies/installs `openvpn`, writes static-key P2P config/profile, writes systemd unit, enables unit | UDP fallback when WireGuard is unsuitable. Uses compatible AES-256-CBC + HMAC-SHA256 static-key mode and avoids version-sensitive compression directives until cert-mode backhaul is split into a separate driver. |
-| `openvpn_tcp_443` | L3 | Verifies/installs `openvpn`, writes config/static key, writes systemd unit, enables unit | TCP fallback; avoid as default due TCP-over-TCP behavior. Uses the same compatibility profile as OpenVPN UDP. |
+| `wireguard` | L3 | Verifies/installs `wireguard-tools`, `iproute2` and `nftables`, writes config, writes systemd unit, enables unit | Primary low-overhead transport. Ingress applies managed SNAT on `oifname <mgbh*>`; egress applies managed masquerade on `iifname <mgbh*>` so return traffic has a deterministic tunnel path. |
+| `openvpn_udp` | L3 | Verifies/installs `openvpn`, `iproute2` and `nftables`, writes static-key P2P config/profile, writes systemd unit, enables unit | UDP fallback when WireGuard is unsuitable. Uses compatible AES-256-CBC + HMAC-SHA256 static-key mode and avoids version-sensitive compression directives until cert-mode backhaul is split into a separate driver. |
+| `openvpn_tcp_443` | L3 | Verifies/installs `openvpn`, `iproute2` and `nftables`, writes config/static key, writes systemd unit, enables unit | TCP fallback; avoid as default due TCP-over-TCP behavior. Uses the same compatibility profile as OpenVPN UDP. |
 | `ipsec_l2tp` | L3 | Writes strongSwan profile and PSK file only | Manual activation until full host profile validation exists. |
 | `ikev2` | L3 | Writes strongSwan profile and PSK file only | Manual activation until full host profile validation exists. |
 | `xray_vless_ws_tls` | Proxy | Writes Xray client/server profile and unit only | Requires TLS edge review before activation. |
@@ -52,7 +52,7 @@ Core API/UI:
 3. Control Plane generates driver material and stores secrets as encrypted secret refs.
 4. Operator applies the backhaul link.
 5. Control Plane queues `node.backhaul.apply` jobs for every selected transport profile: one ingress job and one egress job per profile.
-6. Before writing files for managed-systemd drivers, each agent verifies runtime capability and installs the missing Ubuntu package when needed. Egress apply also requires `iproute2` and `nftables` before managed NAT is enabled.
+6. Before writing files for managed-systemd drivers, each agent verifies runtime capability and installs the missing Ubuntu package when needed. Both ingress and egress apply require `iproute2` and `nftables` before managed NAT is enabled.
 7. Each agent validates its own `node_id`, validates managed paths and writes only allowed files.
 8. For managed-systemd drivers, the agent reads the previous managed manifest, stops/disables obsolete managed units when present, resets failed state, removes obsolete generated files, removes previous/current managed `mgbh*` interfaces when present, reloads systemd, enables the generated unit and records local service readiness only: systemd `active` and tunnel interface presence. Apply intentionally does not ping the peer because the opposite side may still be starting. WireGuard configs use the local tunnel host with the transport `/30` prefix so a connected route to the peer tunnel IP exists even while `Table=off` prevents wg-quick from installing broad routes. Apply fails when runtime install fails, the generated unit is not `active`, or the tunnel interface is not present.
 9. When both sides succeed, managed-systemd transports become `active`; profile-only transports become `materialized` and never produce a false active route. Failed apply results are stored per side in `health_json.ingress` or `health_json.egress` so a partial apply shows the missing/failing side explicitly, with the root cause shown before generic failure text.
@@ -74,6 +74,7 @@ Core API/UI:
 - Agent result manifests redact file content before persistence.
 - Backhaul jobs are agent-only; the worker refuses to execute `node.backhaul.apply`, `node.backhaul.probe` and `node.backhaul.cleanup`.
 - Backhaul activation and route policy enforcement are separate jobs with separate audit/job results.
+- Managed L3 backhaul uses double NAT by default: ingress SNATs selected client traffic to the ingress tunnel address before it enters the backhaul, and egress masquerades traffic leaving the backhaul to the public/default route. This avoids unsafe broad reverse routes on egress nodes and keeps node-side return routing deterministic.
 - Route policy enforcement is conservative: IPv4, `allow`, L3/L4 source identity, CIDR/IPv4 endpoint destination and explicit non-main route table are required.
 - Xray/IPsec profiles are not auto-enabled until transport-specific safety gates are implemented.
 
@@ -83,7 +84,7 @@ Minimum production path for the first ingress/egress pair:
 
 1. Add ingress node and egress node.
 2. Verify both agents are `online`.
-3. For WireGuard/OpenVPN, runtime packages are installed by `Apply profiles` if missing. For profile-only drivers, install runtime capability before manual activation:
+3. For WireGuard/OpenVPN, runtime packages are installed by `Apply profiles` if missing. `nftables` is required on both ingress and egress nodes for managed NAT lifecycle. For profile-only drivers, install runtime capability before manual activation:
    - IPsec: `ipsec` and optionally `xl2tpd`
    - Xray: `xray-core`
 4. Create Backhaul link.
@@ -103,6 +104,7 @@ Minimum production path for the first ingress/egress pair:
 - Unit/interface missing after apply: apply job fails; install/verify the runtime capability on that node before applying again.
 - Agent offline: jobs remain queued until the agent polls. If an agent claimed a job and died, the backend returns the expired `running` lease to `retrying`.
 - Endpoint unreachable: tunnel unit may start but health reports `degraded`; inspect agent job result and transport health.
+- Client traffic reaches egress but replies do not return: verify both managed NAT comments exist in `nft list chain ip megavpn_backhaul postrouting`: `ingress-snat` on the ingress node and `egress-masquerade` on the egress node. Re-apply the selected backhaul transport if either rule is missing.
 - Cleanup failed: link remains `failed`; inspect the cleanup job result. Stale `running` cleanup jobs are recovered automatically after lease expiry, but real failed/cancelled jobs still require operator retry. The agent will not remove paths outside the managed backhaul directory or managed systemd unit prefix.
 - Cleanup succeeded and link disappeared from the active list: expected lifecycle behavior. The link is now `deleted`; use the `Recently Deleted Backhaul` table and Jobs/Audit views for cleanup confirmation.
 - Xray/IPsec selected: config is written and status becomes `materialized`, but it is not enabled automatically; manual transport activation is required until the driver-specific safety gate exists.

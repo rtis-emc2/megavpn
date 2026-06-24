@@ -186,6 +186,40 @@ func TestBuildNginxServerConfigRejectsUnsafeLocationPath(t *testing.T) {
 	}
 }
 
+func TestBuildNginxServerConfigRejectsUnsafeServerName(t *testing.T) {
+	_, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"mode":          "reverse_proxy",
+		"tls_enabled":   false,
+		"server_name":   "edge.example.com;\nroot /tmp;",
+		"location_path": "/assets/rtis-sync",
+		"upstream_url":  "http://127.0.0.1:7080",
+	})
+	if err == nil {
+		t.Fatal("expected unsafe server_name to be rejected")
+	}
+}
+
+func TestValidateNginxServerNameAllowsDNSWildcardAndIP(t *testing.T) {
+	for _, name := range []string{"edge.example.com", "*.edge.example.com", "127.0.0.1", "[2001:db8::1]", "_"} {
+		if err := validateNginxServerName(name); err != nil {
+			t.Fatalf("validateNginxServerName(%q) = %v", name, err)
+		}
+	}
+}
+
+func TestValidateNginxServerNameRejectsMalformedIPLiteral(t *testing.T) {
+	for _, name := range []string{"[2001:db8::1", "2001:db8::zz"} {
+		if err := validateNginxServerName(name); err == nil {
+			t.Fatalf("expected malformed IP literal %q to be rejected", name)
+		}
+	}
+}
+
 func TestBuildXrayServerConfigTLS(t *testing.T) {
 	cfg, err := buildXrayServerConfig(domain.Instance{
 		Name:         "edge-xray-tls",
@@ -225,5 +259,31 @@ func TestBuildXrayServerConfigTLS(t *testing.T) {
 	certs, ok := tlsSettings["certificates"].([]any)
 	if !ok || len(certs) != 1 {
 		t.Fatalf("expected one tls certificate entry, got %#v", tlsSettings["certificates"])
+	}
+}
+
+func TestBuildXrayUnitFileDoesNotUseShell(t *testing.T) {
+	t.Parallel()
+
+	unit := buildXrayUnitFile("megavpn-xray-edge", "/usr/local/etc/xray/edge.json", domain.Instance{Name: "edge", Slug: "edge"})
+	if strings.Contains(unit, "/bin/sh") || strings.Contains(unit, " -c ") {
+		t.Fatalf("unit must not use shell execution:\n%s", unit)
+	}
+	if !strings.Contains(unit, "ExecStart=/usr/bin/env xray run -config /usr/local/etc/xray/edge.json") {
+		t.Fatalf("unit missing direct xray ExecStart:\n%s", unit)
+	}
+}
+
+func TestValidateSystemdExecPathArgRejectsShellTokens(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"/tmp/$(id>/root/pwn)", "/tmp/a;reboot", "/tmp/with space.json", "../relative.json"} {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			if err := validateSystemdExecPathArg(path); err == nil {
+				t.Fatalf("expected path %q to be rejected", path)
+			}
+		})
 	}
 }

@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
 )
+
+var controlPlaneServerNamePattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$`)
 
 func (s *Store) GetControlPlaneTLSSettings(ctx context.Context) (domain.ControlPlaneTLSSettings, error) {
 	var x domain.ControlPlaneTLSSettings
@@ -119,7 +123,7 @@ func (s *Store) CreateControlPlaneTLSApplyJob(ctx context.Context) (domain.Job, 
 		"listen_port":     settings.ListenPort,
 		"mode":            settings.Mode,
 	}
-	return s.CreateJob(ctx, domain.Job{
+	job, err := s.CreateJob(ctx, domain.Job{
 		ID:        id.New(),
 		Type:      "platform.control_plane_tls.apply",
 		ScopeType: "platform",
@@ -127,6 +131,11 @@ func (s *Store) CreateControlPlaneTLSApplyJob(ctx context.Context) (domain.Job, 
 		Priority:  20,
 		Payload:   payload,
 	})
+	if err != nil {
+		return domain.Job{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "platform.control_plane_tls.apply", "platform", nil, "control plane tls apply queued")
+	return job, nil
 }
 
 func (s *Store) MarkControlPlaneTLSApplyResult(ctx context.Context, success bool, errText string) error {
@@ -155,6 +164,9 @@ func validateControlPlaneTLSSettings(x domain.ControlPlaneTLSSettings) error {
 	if x.ServerName == "" {
 		return fmt.Errorf("server_name is required")
 	}
+	if err := validateControlPlaneServerName(x.ServerName); err != nil {
+		return err
+	}
 	if x.ListenPort <= 0 || x.ListenPort > 65535 {
 		return fmt.Errorf("listen_port must be between 1 and 65535")
 	}
@@ -168,6 +180,33 @@ func validateControlPlaneTLSSettings(x domain.ControlPlaneTLSSettings) error {
 	host := strings.Trim(strings.ToLower(upstream.Hostname()), "[]")
 	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
 		return fmt.Errorf("upstream_url must point to loopback only")
+	}
+	return nil
+}
+
+func validateControlPlaneServerName(serverName string) error {
+	serverName = strings.TrimSpace(serverName)
+	if serverName == "" {
+		return fmt.Errorf("server_name is required")
+	}
+	if strings.ContainsAny(serverName, " \t\r\n;{}") {
+		return fmt.Errorf("server_name contains unsafe nginx directive characters")
+	}
+	if serverName == "_" {
+		return nil
+	}
+	ipLiteral := serverName
+	if strings.HasPrefix(serverName, "[") || strings.HasSuffix(serverName, "]") {
+		if !strings.HasPrefix(serverName, "[") || !strings.HasSuffix(serverName, "]") {
+			return fmt.Errorf("server_name must be a DNS name, wildcard DNS name, IP literal, or _")
+		}
+		ipLiteral = strings.TrimPrefix(strings.TrimSuffix(serverName, "]"), "[")
+	}
+	if _, err := netip.ParseAddr(ipLiteral); err == nil {
+		return nil
+	}
+	if !controlPlaneServerNamePattern.MatchString(serverName) {
+		return fmt.Errorf("server_name must be a DNS name, wildcard DNS name, IP literal, or _")
 	}
 	return nil
 }

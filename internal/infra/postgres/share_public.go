@@ -15,8 +15,8 @@ func (s *Store) ResolveShareLinkArtifact(ctx context.Context, token string) (dom
 		return domain.ShareLink{}, domain.Artifact{}, errors.New("share token is required")
 	}
 	var link domain.ShareLink
-	err := s.db.QueryRow(ctx, `select id,client_account_id,target_type,target_id,token,status,expires_at,download_count,created_at from share_links where token=$1`, token).
-		Scan(&link.ID, &link.ClientAccountID, &link.TargetType, &link.TargetID, &link.Token, &link.Status, &link.ExpiresAt, &link.DownloadCount, &link.CreatedAt)
+	err := s.db.QueryRow(ctx, `select id,client_account_id,target_type,target_id,coalesce(token_hint,''),status,expires_at,download_count,created_at from share_links where token_hash=$1`, hashToken(token)).
+		Scan(&link.ID, &link.ClientAccountID, &link.TargetType, &link.TargetID, &link.TokenHint, &link.Status, &link.ExpiresAt, &link.DownloadCount, &link.CreatedAt)
 	if err != nil {
 		return domain.ShareLink{}, domain.Artifact{}, err
 	}

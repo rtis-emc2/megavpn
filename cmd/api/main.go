@@ -76,7 +76,9 @@ func main() {
 		Addr: cfg.API.ListenAddr,
 		Handler: apihttp.New(log, store, apihttp.Options{
 			Version:                version.Version,
+			ListenAddr:             cfg.API.ListenAddr,
 			PublicBaseURL:          cfg.API.PublicBaseURL,
+			ProductionMode:         cfg.API.ProductionMode,
 			AgentToken:             cfg.Agent.Token,
 			AllowAutoRegister:      cfg.Agent.AllowAutoRegister,
 			AgentSignatureEnforce:  cfg.Agent.SignatureEnforce,

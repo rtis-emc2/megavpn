@@ -100,7 +100,7 @@ Nodes now expose `agent_version`, protocol version and agent timestamps directly
 - Service discovery
 - Capability installation jobs
 - nginx installer via official nginx.org repository
-- xray-core installer via official XTLS/Xray-install flow
+- xray-core installer via official XTLS/Xray-install flow with required `MEGAVPN_XRAY_INSTALL_SCRIPT_SHA256` pin
 - openvpn installer via Ubuntu repository
 - wireguard installer via Ubuntu repository
 - strongSwan / IPsec installer via Ubuntu repository
@@ -284,10 +284,13 @@ Production deployments must expose the Control Plane through HTTPS only. Bind th
 ```bash
 export MEGAVPN_API_LISTEN_ADDR=127.0.0.1:8080
 export MEGAVPN_PUBLIC_BASE_URL=https://control.example.com:58765
+export MEGAVPN_PRODUCTION_MODE=true
 export MEGAVPN_TRUST_PROXY_HEADERS=true
 ```
 
 The public host and port in `MEGAVPN_PUBLIC_BASE_URL` must terminate TLS directly. Remote agents use that exact URL for `/agent/register`, `/agent/heartbeat`, `/agent/jobs/next`, `/agent/jobs/{id}/result` and `/agent/inventory`.
+
+`MEGAVPN_PRODUCTION_MODE=true` makes `/api/v1/ready` fail closed on runtime preflight findings instead of reporting ready after a database ping only. In production mode, HTTP or local `MEGAVPN_PUBLIC_BASE_URL`, missing artifact storage, shared-token agent auto-registration, disabled request body limits and trusted proxy headers on a non-loopback API listener are readiness blockers. The normal production topology is API bound to `127.0.0.1`, HTTPS on the public edge and `MEGAVPN_TRUST_PROXY_HEADERS=true` only behind that controlled reverse proxy.
 
 The operator-facing source of truth for this edge is `Settings -> Control Plane TLS`. It stores the HTTPS-only public URL, server name, listen port, loopback upstream and selected managed certificate from the platform Certificate Manager. Commercial certificates should be imported through `Certificates -> Add certificate`; when no commercial certificate is available, use the self-signed fallback profile and later replace it with an imported or CA-issued leaf certificate. `Apply edge` queues `platform.control_plane_tls.apply`, materializes certificate/key files under `/etc/megavpn/control-plane-tls`, writes a TLS-only `/etc/nginx/conf.d/megavpn-control-plane.conf` server block without an HTTP redirect listener, validates with `nginx -t`, and reloads nginx.
 
@@ -303,15 +306,12 @@ Request bodies are capped by `MEGAVPN_API_MAX_REQUEST_BYTES` and default to `167
 
 Agent runtime authorization should use per-node enrollment and persistent agent tokens. The legacy shared `MEGAVPN_AGENT_TOKEN` fallback is accepted for node/job agent endpoints only when `MEGAVPN_AGENT_ALLOW_AUTO_REGISTER=true`; keep that disabled in production.
 
-Agent requests are HMAC-signed by updated agents with the persistent per-node token. Job/runtime-target responses from the API are also HMAC-signed and verified by the agent before JSON decode. The signature covers method or `RESPONSE`, request URI, timestamp, nonce and SHA-256 body hash. The API verifies signed requests and rejects invalid signatures even before enforcement is enabled. Rollout sequence:
+Agent requests are HMAC-signed by updated agents with the persistent per-node token. Job/runtime-target responses from the API are also HMAC-signed and verified by the agent before JSON decode, including empty `204 No Content` polls. The signature covers method or `RESPONSE`, request URI, timestamp, nonce and SHA-256 body hash. The API verifies signed requests and rejects invalid signatures even before enforcement is enabled. Fresh installs enforce signed agent traffic by default. Temporary compatibility rollback for legacy agents:
 
 ```bash
-# compatibility mode while old agents are still being upgraded
+# compatibility mode only while old agents are still being upgraded
 export MEGAVPN_AGENT_SIGNATURE_ENFORCE=false
 export MEGAVPN_AGENT_SIGNATURE_WINDOW=5m
-
-# enable after all active agents run a signed-request capable release
-export MEGAVPN_AGENT_SIGNATURE_ENFORCE=true
 ```
 
 This is an HTTP-message integrity and replay-window layer, not a replacement for HTTPS. The remaining v1.0 security decision is whether mTLS becomes mandatory in addition to signed HTTP messages.
@@ -408,7 +408,7 @@ The intended MVP flow for real ingress/egress nodes is:
 5. Press `Provision` on the client and select only the service instances this client may use.
 6. Open `Access` for the client, add route policy if the client must leave through a dedicated egress node instead of local breakout.
 7. Press `Build configs`, select the already provisioned service accesses and artifact type, then preview or download generated `.ovpn`, VLESS URL, WireGuard config or bundle artifacts.
-8. Optionally publish a share link or send the access package by email from the client/artifact actions.
+8. Optionally publish a share link or send the access package by email from the client/artifact actions. Share-link plaintext tokens are shown only once when published; persisted links expose only `token_hint`.
 
 Provisioning is intentionally explicit. The UI no longer silently grants every compatible service instance to a client; operators must choose the exact ingress/service entrypoints per account.
 
@@ -571,6 +571,30 @@ sudo MEGAVPN_CP_ASSUME_YES=1 \
   MEGAVPN_CP_ADMIN_USERNAME=superadmin \
   ./scripts/control-plane-install.sh
 ```
+
+Release hardening material is maintained in:
+
+- `docs/RELEASE_GATES.md`
+- `docs/SELF_TESTING.md`
+- `docs/THREAT_MODEL.md`
+- `docs/RBAC_MATRIX.md`
+- `docs/OPERATIONS_RUNBOOK.md`
+- `deploy/env/megavpn.production.env.example`
+- `deploy/env/megavpn-agent.production.env.example`
+
+Run the local release gate with:
+
+```bash
+scripts/release-gate.sh
+```
+
+Run the full diagnostic self-test with PASS/FAIL/SKIP reporting:
+
+```bash
+scripts/self-test.sh
+```
+
+`scripts/release-gate.sh` fails when required release checks are skipped. On a local workstation without PostgreSQL/systemd/nginx/live test-node dependencies, use `scripts/self-test.sh` for diagnostics or set `MEGAVPN_RELEASE_ALLOW_SKIPS=1` explicitly.
 
 `scripts/mvp-control-plane-install.sh` remains available for the older env-driven MVP automation path. `deploy-local.sh` is intended for updating an already installed checkout.
 

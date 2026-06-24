@@ -143,7 +143,7 @@ write_runtime_env() {
   write_env_line "$tmp" "MEGAVPN_MASTER_KEY_VERSION" "$MASTER_KEY_VERSION"
   write_env_line "$tmp" "MEGAVPN_TRUST_PROXY_HEADERS" "$TRUST_PROXY_HEADERS"
   write_env_line "$tmp" "MEGAVPN_AGENT_ALLOW_AUTO_REGISTER" "false"
-  write_env_line "$tmp" "MEGAVPN_AGENT_SIGNATURE_ENFORCE" "false"
+  write_env_line "$tmp" "MEGAVPN_AGENT_SIGNATURE_ENFORCE" "true"
   write_env_line "$tmp" "MEGAVPN_AGENT_SIGNATURE_WINDOW" "5m"
   write_env_line "$tmp" "MEGAVPN_BOOTSTRAP_ADMIN_USERNAME" "$ADMIN_USERNAME"
   write_env_line "$tmp" "MEGAVPN_BOOTSTRAP_ADMIN_EMAIL" "$ADMIN_EMAIL"

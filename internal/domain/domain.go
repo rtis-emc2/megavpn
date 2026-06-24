@@ -24,17 +24,18 @@ type Node struct {
 }
 
 type NodeAccessMethod struct {
-	ID          string    `json:"id"`
-	NodeID      string    `json:"node_id"`
-	Method      string    `json:"method"`
-	IsEnabled   bool      `json:"is_enabled"`
-	SSHHost     string    `json:"ssh_host"`
-	SSHPort     int       `json:"ssh_port"`
-	SSHUser     string    `json:"ssh_user"`
-	AuthType    string    `json:"auth_type"`
-	SecretRefID *string   `json:"secret_ref_id,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID               string    `json:"id"`
+	NodeID           string    `json:"node_id"`
+	Method           string    `json:"method"`
+	IsEnabled        bool      `json:"is_enabled"`
+	SSHHost          string    `json:"ssh_host"`
+	SSHPort          int       `json:"ssh_port"`
+	SSHUser          string    `json:"ssh_user"`
+	SSHHostKeySHA256 string    `json:"ssh_host_key_sha256"`
+	AuthType         string    `json:"auth_type"`
+	SecretRefID      *string   `json:"secret_ref_id,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type NodeBootstrapRun struct {
@@ -370,7 +371,8 @@ type ShareLink struct {
 	ClientAccountID string    `json:"client_account_id"`
 	TargetType      string    `json:"target_type"`
 	TargetID        string    `json:"target_id"`
-	Token           string    `json:"token"`
+	Token           string    `json:"token,omitempty"`
+	TokenHint       string    `json:"token_hint"`
 	Status          string    `json:"status"`
 	ExpiresAt       time.Time `json:"expires_at"`
 	DownloadCount   int64     `json:"download_count"`

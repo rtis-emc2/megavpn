@@ -151,3 +151,19 @@ func writeSignedAgentJSON(w nethttp.ResponseWriter, r *nethttp.Request, token st
 	w.WriteHeader(code)
 	_, _ = w.Write(body)
 }
+
+func writeSignedAgentNoContent(w nethttp.ResponseWriter, r *nethttp.Request, token string) {
+	if strings.TrimSpace(token) == "" {
+		w.WriteHeader(nethttp.StatusNoContent)
+		return
+	}
+	body := []byte{}
+	timestamp := strconv.FormatInt(time.Now().UTC().Unix(), 10)
+	nonce := agentauth.NewNonce()
+	signature, bodyHash := agentauth.Sign(token, "RESPONSE", r.URL.RequestURI(), timestamp, nonce, body)
+	w.Header().Set(agentauth.HeaderTimestamp, timestamp)
+	w.Header().Set(agentauth.HeaderNonce, nonce)
+	w.Header().Set(agentauth.HeaderBodyHash, bodyHash)
+	w.Header().Set(agentauth.HeaderSignature, signature)
+	w.WriteHeader(nethttp.StatusNoContent)
+}

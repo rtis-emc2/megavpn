@@ -21,6 +21,7 @@ type Config struct {
 type APIConfig struct {
 	ListenAddr        string
 	PublicBaseURL     string
+	ProductionMode    bool
 	WebRoot           string
 	TrustProxyHeaders bool
 	MaxRequestBytes   int64
@@ -79,6 +80,7 @@ func Load() Config {
 		API: APIConfig{
 			ListenAddr:        getEnv("MEGAVPN_API_LISTEN_ADDR", "0.0.0.0:8080"),
 			PublicBaseURL:     publicBaseURL,
+			ProductionMode:    getEnvBool("MEGAVPN_PRODUCTION_MODE", false),
 			WebRoot:           strings.TrimSpace(getEnv("MEGAVPN_WEB_ROOT", "")),
 			TrustProxyHeaders: getEnvBool("MEGAVPN_TRUST_PROXY_HEADERS", false),
 			MaxRequestBytes:   getEnvInt64("MEGAVPN_API_MAX_REQUEST_BYTES", 16*1024*1024),
@@ -95,7 +97,7 @@ func Load() Config {
 			NodeID:            getEnv("MEGAVPN_AGENT_NODE_ID", ""),
 			EnrollmentToken:   getEnv("MEGAVPN_AGENT_ENROLLMENT_TOKEN", ""),
 			AllowAutoRegister: getEnvBool("MEGAVPN_AGENT_ALLOW_AUTO_REGISTER", false),
-			SignatureEnforce:  getEnvBool("MEGAVPN_AGENT_SIGNATURE_ENFORCE", false),
+			SignatureEnforce:  getEnvBool("MEGAVPN_AGENT_SIGNATURE_ENFORCE", true),
 			SignatureWindow:   getEnvDuration("MEGAVPN_AGENT_SIGNATURE_WINDOW", 5*time.Minute),
 			PollInterval:      getEnvDuration("MEGAVPN_AGENT_POLL_INTERVAL", 10*time.Second),
 			StatePath:         getEnv("MEGAVPN_AGENT_STATE_PATH", "/var/lib/megavpn/agent/state.json"),

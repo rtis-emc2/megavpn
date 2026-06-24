@@ -1740,9 +1740,10 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
             <td>${escapeHTML(item.ssh_host || 'n/a')}${item.ssh_port ? `:${escapeHTML(String(item.ssh_port))}` : ''}</td>
             <td>${escapeHTML(item.ssh_user || 'n/a')}</td>
             <td>${escapeHTML(item.auth_type || 'n/a')}</td>
+            <td><code>${escapeHTML(item.ssh_host_key_sha256 || 'n/a')}</code></td>
             <td>${statusTag(item.is_enabled ? 'enabled' : 'disabled')}</td>
           </tr>`).join('')
-      : '<tr><td colspan="5"><div class="empty compact-empty">Access methods are not configured yet.</div></td></tr>';
+      : '<tr><td colspan="6"><div class="empty compact-empty">Access methods are not configured yet.</div></td></tr>';
     const runRows = runs.length
       ? runs.slice(0, 8).map((item) => `
           <tr>
@@ -1943,6 +1944,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
                       <div class="field"><label>Auth type</label><select name="auth_type"><option value="ssh_key"${sshMethod?.auth_type === 'ssh_key' ? ' selected' : ''}>ssh_key</option><option value="password"${sshMethod?.auth_type === 'password' ? ' selected' : ''}>password</option><option value="token"${sshMethod?.auth_type === 'token' ? ' selected' : ''}>token</option></select></div>
                       <div class="field"><label>Secret type</label><select name="secret_type"><option value="ssh_key">ssh_key</option><option value="password">password</option><option value="api_token">api_token</option><option value="opaque">opaque</option></select></div>
                       <div class="field"><label>Enabled</label><select name="is_enabled"><option value="true"${sshMethod?.is_enabled !== false ? ' selected' : ''}>true</option><option value="false"${sshMethod?.is_enabled === false ? ' selected' : ''}>false</option></select></div>
+                      <div class="field full"><label>SSH host key SHA256</label><input name="ssh_host_key_sha256" required value="${escapeHTML(sshMethod?.ssh_host_key_sha256 || '')}" placeholder="SHA256:..." /></div>
                       <div class="field full"><label>Secret value</label><textarea name="secret_value" rows="5" placeholder="${sshMethod?.secret_ref_id ? 'Leave empty to keep existing secret_ref_id.' : 'Paste SSH private key, password or token.'}"></textarea></div>
                       <div class="field full inline-actions">
                         <button class="primary-btn" type="submit">Save SSH access</button>
@@ -1957,7 +1959,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
                   <div class="table-head"><h2>Access Methods</h2><span class="tag">${escapeHTML(String(methods.length))} configured</span></div>
                   <div class="table-wrap">
                     <table>
-                      <thead><tr><th>Method</th><th>Endpoint</th><th>User</th><th>Auth</th><th>Status</th></tr></thead>
+                      <thead><tr><th>Method</th><th>Endpoint</th><th>User</th><th>Auth</th><th>Host key</th><th>Status</th></tr></thead>
                       <tbody>${methodRows}</tbody>
                     </table>
                   </div>
@@ -2087,6 +2089,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
         ssh_host: String(form.get('ssh_host') || '').trim(),
         ssh_port: Number(form.get('ssh_port') || 22),
         ssh_user: String(form.get('ssh_user') || '').trim(),
+        ssh_host_key_sha256: String(form.get('ssh_host_key_sha256') || '').trim(),
         auth_type: String(form.get('auth_type') || 'ssh_key'),
         secret_ref_id: secretRefID,
       };

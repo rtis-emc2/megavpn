@@ -73,3 +73,38 @@ func TestRenderNetworkPolicyScriptRejectsInvalidFirewallRule(t *testing.T) {
 		t.Fatal("expected invalid firewall protocol error")
 	}
 }
+
+func TestNetworkPolicyManagedPathAllowlist(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{
+		"/usr/local/lib/megavpn/netpolicy/edge.sh",
+		"/etc/systemd/system/megavpn-netpolicy-edge.service",
+	} {
+		if !isSafeNetworkPolicyManagedPath(path) {
+			t.Fatalf("expected managed path %q to be allowed", path)
+		}
+	}
+	for _, path := range []string{
+		"/usr/local/lib/megavpn/netpolicy/../evil.sh",
+		"/etc/systemd/system/ssh.service",
+		"/tmp/megavpn-netpolicy-edge.service",
+	} {
+		if isSafeNetworkPolicyManagedPath(path) {
+			t.Fatalf("expected managed path %q to be rejected", path)
+		}
+	}
+}
+
+func TestNetworkPolicyUnitAllowlist(t *testing.T) {
+	t.Parallel()
+
+	if !isSafeNetworkPolicyUnit("megavpn-netpolicy-edge.service") {
+		t.Fatal("expected managed network policy unit to be allowed")
+	}
+	for _, unit := range []string{"ssh.service", "megavpn-netpolicy-../ssh.service", "/etc/systemd/system/megavpn-netpolicy-edge.service"} {
+		if isSafeNetworkPolicyUnit(unit) {
+			t.Fatalf("expected unit %q to be rejected", unit)
+		}
+	}
+}

@@ -269,6 +269,9 @@ func TestPostgresIntegrationRecoverStaleJobLeases(t *testing.T) {
 		t.Fatalf("recovered job state = status:%s locked_by:%v locked_until:%v, want retrying with no lease", recovered.Status, recovered.LockedBy, recovered.LockedUntil)
 	}
 	assertResourceLockCount(t, ctx, store, claimed.ID, "node", "bootstrap", 0)
+	if err := store.CompleteAgentJob(ctx, claimed.ID, "agent:"+node.ID, "succeeded", map[string]any{"message": "stale result"}); err == nil {
+		t.Fatal("expected stale unleased agent completion to be rejected")
+	}
 
 	cancelled, err := store.CancelJob(ctx, claimed.ID)
 	if err != nil {

@@ -695,16 +695,21 @@ func (s *Store) wireGuardBackhaulMaterial(ctx context.Context, link domain.Backh
 	}
 	unitStart := "/usr/bin/wg-quick up " + shellQuotePG(configPath)
 	unitStop := "/usr/bin/wg-quick down " + shellQuotePG(configPath)
+	startPath := "/etc/megavpn/backhaul/" + slug + "/" + role + "-start.sh"
+	stopPath := "/etc/megavpn/backhaul/" + slug + "/" + role + "-stop.sh"
 	if role == "egress" {
-		startPath := "/etc/megavpn/backhaul/" + slug + "/egress-start.sh"
-		stopPath := "/etc/megavpn/backhaul/" + slug + "/egress-stop.sh"
 		files = append(files,
 			map[string]any{"path": startPath, "mode": "0700", "content": renderBackhaulEgressStartScript(slug, transport.InterfaceName, unitStart)},
 			map[string]any{"path": stopPath, "mode": "0700", "content": renderBackhaulEgressStopScript(slug, transport.InterfaceName, unitStop)},
 		)
-		unitStart = startPath
-		unitStop = stopPath
+	} else {
+		files = append(files,
+			map[string]any{"path": startPath, "mode": "0700", "content": renderBackhaulIngressStartScript(slug, transport.InterfaceName, unitStart)},
+			map[string]any{"path": stopPath, "mode": "0700", "content": renderBackhaulIngressStopScript(slug, transport.InterfaceName, unitStop)},
+		)
 	}
+	unitStart = startPath
+	unitStop = stopPath
 	files = append(files, map[string]any{"path": unitPath, "mode": "0644", "content": renderBackhaulUnit(unitName, unitStart, unitStop)})
 	return map[string]any{
 		"systemd_unit": unitName,
@@ -833,17 +838,22 @@ func (s *Store) openVPNBackhaulMaterial(ctx context.Context, link domain.Backhau
 		{"path": profilePath, "mode": "0640", "content": string(profileJSON) + "\n"},
 	}
 	unitStart := "/usr/sbin/openvpn --daemon " + shellQuotePG(unitName) + " --writepid " + shellQuotePG(pidPath) + " --config " + shellQuotePG(configPath)
-	unitStop := "/bin/sh -c " + shellQuotePG("test ! -f "+pidPath+" || kill $(cat "+pidPath+")")
+	unitStop := "test ! -f " + shellQuotePG(pidPath) + " || kill $(cat " + shellQuotePG(pidPath) + ")"
+	startPath := "/etc/megavpn/backhaul/" + slug + "/" + role + "-start.sh"
+	stopPath := "/etc/megavpn/backhaul/" + slug + "/" + role + "-stop.sh"
 	if role == "egress" {
-		startPath := "/etc/megavpn/backhaul/" + slug + "/egress-start.sh"
-		stopPath := "/etc/megavpn/backhaul/" + slug + "/egress-stop.sh"
 		files = append(files,
 			map[string]any{"path": startPath, "mode": "0700", "content": renderBackhaulEgressStartScript(slug, transport.InterfaceName, unitStart)},
 			map[string]any{"path": stopPath, "mode": "0700", "content": renderBackhaulEgressStopScript(slug, transport.InterfaceName, unitStop)},
 		)
-		unitStart = startPath
-		unitStop = stopPath
+	} else {
+		files = append(files,
+			map[string]any{"path": startPath, "mode": "0700", "content": renderBackhaulIngressStartScript(slug, transport.InterfaceName, unitStart)},
+			map[string]any{"path": stopPath, "mode": "0700", "content": renderBackhaulIngressStopScript(slug, transport.InterfaceName, unitStop)},
+		)
 	}
+	unitStart = startPath
+	unitStop = stopPath
 	files = append(files, map[string]any{"path": unitPath, "mode": "0644", "content": renderBackhaulUnit(unitName, unitStart, unitStop)})
 	return map[string]any{
 		"systemd_unit": unitName,
@@ -955,7 +965,7 @@ func (s *Store) xrayBackhaulMaterial(ctx context.Context, link domain.BackhaulLi
 		"files": []map[string]any{
 			{"path": configPath, "mode": "0640", "content": string(configJSON) + "\n"},
 			{"path": profilePath, "mode": "0640", "content": string(profileJSON) + "\n"},
-			{"path": unitPath, "mode": "0644", "content": renderBackhaulUnit(unitName, "/bin/sh -c 'exec xray run -config "+configPath+"'", "")},
+			{"path": unitPath, "mode": "0644", "content": renderBackhaulUnit(unitName, "/usr/bin/env xray run -config "+configPath, "")},
 		},
 	}, nil
 }
@@ -1422,7 +1432,15 @@ func renderBackhaulUnit(unitName, startCmd, stopCmd string) string {
 }
 
 func renderBackhaulEgressStartScript(slug, iface, transportStartCmd string) string {
-	comment := "megavpn:backhaul:" + slug + ":egress-masquerade"
+	return renderBackhaulNATStartScript(slug, iface, transportStartCmd, "iifname", "egress-masquerade")
+}
+
+func renderBackhaulIngressStartScript(slug, iface, transportStartCmd string) string {
+	return renderBackhaulNATStartScript(slug, iface, transportStartCmd, "oifname", "ingress-snat")
+}
+
+func renderBackhaulNATStartScript(slug, iface, transportStartCmd, direction, label string) string {
+	comment := "megavpn:backhaul:" + slug + ":" + label
 	return strings.Join([]string{
 		"#!/usr/bin/env sh",
 		"set -eu",
@@ -1434,7 +1452,7 @@ func renderBackhaulEgressStartScript(slug, iface, transportStartCmd string) stri
 		"  nft list table ip megavpn_backhaul >/dev/null 2>&1 || nft add table ip megavpn_backhaul",
 		"  nft list chain ip megavpn_backhaul postrouting >/dev/null 2>&1 || nft add chain ip megavpn_backhaul postrouting '{ type nat hook postrouting priority srcnat; policy accept; }'",
 		"  if ! nft list chain ip megavpn_backhaul postrouting | grep -Fq " + shellQuotePG(comment) + "; then",
-		"    nft add rule ip megavpn_backhaul postrouting iifname " + shellQuotePG(iface) + " masquerade comment " + shellQuotePG(comment),
+		"    nft add rule ip megavpn_backhaul postrouting " + direction + " " + shellQuotePG(iface) + " masquerade comment " + shellQuotePG(comment),
 		"  fi",
 		"fi",
 		"",
@@ -1442,19 +1460,34 @@ func renderBackhaulEgressStartScript(slug, iface, transportStartCmd string) stri
 }
 
 func renderBackhaulEgressStopScript(slug, iface, transportStopCmd string) string {
-	comment := "megavpn:backhaul:" + slug + ":egress-masquerade"
+	return renderBackhaulStopScript(slug, iface, transportStopCmd, "egress-masquerade")
+}
+
+func renderBackhaulIngressStopScript(slug, iface, transportStopCmd string) string {
+	return renderBackhaulStopScript(slug, iface, transportStopCmd, "ingress-snat")
+}
+
+func renderBackhaulStopScript(slug, iface, transportStopCmd string, labels ...string) string {
+	if len(labels) == 0 {
+		labels = []string{"egress-masquerade"}
+	}
 	lines := []string{
 		"#!/usr/bin/env sh",
 		"set -eu",
 		"",
 		"# Generated by megavpn-agent. Do not edit manually.",
 		"if command -v nft >/dev/null 2>&1; then",
-		"  handles=$(nft -a list chain ip megavpn_backhaul postrouting 2>/dev/null | awk -v c=" + shellQuotePG(comment) + " 'index($0, c) > 0 {print $NF}')",
-		"  for handle in $handles; do",
-		"    nft delete rule ip megavpn_backhaul postrouting handle \"$handle\" >/dev/null 2>&1 || true",
-		"  done",
-		"fi",
 	}
+	for _, label := range labels {
+		comment := "megavpn:backhaul:" + slug + ":" + label
+		lines = append(lines,
+			"  handles=$(nft -a list chain ip megavpn_backhaul postrouting 2>/dev/null | awk -v c="+shellQuotePG(comment)+" 'index($0, c) > 0 {print $NF}')",
+			"  for handle in $handles; do",
+			"    nft delete rule ip megavpn_backhaul postrouting handle \"$handle\" >/dev/null 2>&1 || true",
+			"  done",
+		)
+	}
+	lines = append(lines, "fi")
 	if strings.TrimSpace(transportStopCmd) != "" {
 		lines = append(lines, transportStopCmd+" >/dev/null 2>&1 || true")
 	}

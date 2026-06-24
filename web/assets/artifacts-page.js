@@ -192,6 +192,7 @@
         expires: link.expires_at,
         downloads: link.download_count || 0,
         token: link.token || '',
+        token_hint: link.token_hint || '',
         url: shareLinkURL(link.token || ''),
       }));
       el('content').innerHTML = tableCard('Share Links', rows, [
@@ -200,9 +201,9 @@
         { title: 'Status', key: 'status', render: (row) => statusTag(row.status) },
         { title: 'Downloads', key: 'downloads' },
         { title: 'Expires', key: 'expires', render: (row) => formatDate(row.expires) },
-        { title: 'Token', key: 'token', render: (row) => `<code>${escapeHTML(row.token)}</code>` },
-        { title: 'URL', key: 'url', render: (row) => row.url === 'n/a' ? 'n/a' : `<code>${escapeHTML(row.url)}</code>` },
-        { title: 'Actions', key: 'id', render: (row) => `<div class="inline-actions compact-actions"><button class="secondary-btn sharelink-open-btn" type="button" data-url="${escapeHTML(row.url)}">Open</button><button class="danger-btn sharelink-revoke-btn" type="button" data-client-id="${escapeHTML(row.client_id)}" data-link-id="${escapeHTML(row.id)}">Revoke</button></div>` },
+        { title: 'Token hint', key: 'token_hint', render: (row) => `<code>${escapeHTML(row.token_hint || 'n/a')}</code>` },
+        { title: 'URL', key: 'url', render: (row) => row.url === 'n/a' ? 'one-time only' : `<code>${escapeHTML(row.url)}</code>` },
+        { title: 'Actions', key: 'id', render: (row) => `<div class="inline-actions compact-actions">${row.url === 'n/a' ? '' : `<button class="secondary-btn sharelink-open-btn" type="button" data-url="${escapeHTML(row.url)}">Open</button>`}<button class="danger-btn sharelink-revoke-btn" type="button" data-client-id="${escapeHTML(row.client_id)}" data-link-id="${escapeHTML(row.id)}">Revoke</button></div>` },
       ], '<button class="secondary-btn" type="button" id="shareLinkCreateBtn">Publish share link</button>');
       document.getElementById('shareLinkCreateBtn')?.addEventListener('click', () => openShareLinkPublishModal());
       document.querySelectorAll('.sharelink-open-btn').forEach((button) => {
@@ -354,7 +355,7 @@ path = ${escapeHTML(selectedArtifact.storage_path || 'n/a')}</div>`
         <div class="code-block">client = ${escapeHTML(clientByID(clientID)?.username || clientID || 'n/a')}
 link_id = ${escapeHTML(linkID || 'n/a')}
 status = ${escapeHTML(link?.status || 'unknown')}
-url = ${escapeHTML(shareLinkURL(link?.token || ''))}</div>
+token_hint = ${escapeHTML(link?.token_hint || 'n/a')}</div>
         <div class="modal-actions">
           <button class="secondary-btn" id="cancelRevokeShareLinkBtn" type="button">Cancel</button>
           <button class="danger-btn" id="confirmRevokeShareLinkBtn" type="button">Revoke link</button>

@@ -202,3 +202,44 @@ func TestRenderWireGuardBackhaulConfigUsesPointToPointPrefix(t *testing.T) {
 		t.Fatalf("egress config must not contain Endpoint:\n%s", egressConfig)
 	}
 }
+
+func TestRenderBackhaulIngressStartScriptAddsOutboundSNAT(t *testing.T) {
+	t.Parallel()
+
+	script := renderBackhaulIngressStartScript("link-wireguard-abcd", "mgbh1234567890", "/usr/bin/wg-quick up '/etc/megavpn/backhaul/link/wg.conf'")
+	for _, want := range []string{
+		"sysctl -w net.ipv4.ip_forward=1",
+		"megavpn:backhaul:link-wireguard-abcd:ingress-snat",
+		"nft add rule ip megavpn_backhaul postrouting oifname 'mgbh1234567890' masquerade",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("ingress start script missing %q:\n%s", want, script)
+		}
+	}
+}
+
+func TestRenderBackhaulEgressStartScriptKeepsInboundMasquerade(t *testing.T) {
+	t.Parallel()
+
+	script := renderBackhaulEgressStartScript("link-wireguard-abcd", "mgbh1234567890", "/usr/bin/wg-quick up '/etc/megavpn/backhaul/link/wg.conf'")
+	for _, want := range []string{
+		"megavpn:backhaul:link-wireguard-abcd:egress-masquerade",
+		"nft add rule ip megavpn_backhaul postrouting iifname 'mgbh1234567890' masquerade",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("egress start script missing %q:\n%s", want, script)
+		}
+	}
+}
+
+func TestRenderBackhaulStopScriptRemovesSelectedNATComments(t *testing.T) {
+	t.Parallel()
+
+	script := renderBackhaulStopScript("link-wireguard-abcd", "mgbh1234567890", "/usr/bin/wg-quick down '/etc/megavpn/backhaul/link/wg.conf'", "ingress-snat")
+	if !strings.Contains(script, "megavpn:backhaul:link-wireguard-abcd:ingress-snat") {
+		t.Fatalf("stop script missing ingress-snat cleanup:\n%s", script)
+	}
+	if strings.Contains(script, "egress-masquerade") {
+		t.Fatalf("ingress stop script should not remove egress NAT comment:\n%s", script)
+	}
+}

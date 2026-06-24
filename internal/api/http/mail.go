@@ -398,16 +398,14 @@ func (s *Server) deliverClientEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ttl := time.Duration(req.TTLHours) * time.Hour
+	shareLinks := []domain.ShareLink{}
 	if req.CreateShareLink || len(artifacts) == 0 {
-		if _, err := s.store.PublishShareLink(r.Context(), clientID, "", ttl); err != nil {
+		link, err := s.store.PublishShareLink(r.Context(), clientID, "", ttl)
+		if err != nil {
 			writeErr(w, 500, "share link create failed")
 			return
 		}
-	}
-	shareLinks, err := s.store.ListShareLinks(r.Context(), clientID)
-	if err != nil {
-		writeErr(w, 500, "list client share links failed")
-		return
+		shareLinks = append(shareLinks, link)
 	}
 	delivery := domain.ClientEmailDelivery{
 		ClientAccountID: clientID,
@@ -707,8 +705,8 @@ func buildClientAccessBody(client domain.Client, extraMessage string, artifacts 
 	if len(shareLinks) > 0 {
 		b.WriteString("\nTemporary links:\n")
 		for _, link := range shareLinks {
-			b.WriteString("- token: " + link.Token + " expires: " + link.ExpiresAt.Format(time.RFC3339))
-			if strings.TrimSpace(publicBaseURL) != "" {
+			b.WriteString("- token hint: " + firstNonEmpty(link.TokenHint, tokenHint(link.Token)) + " expires: " + link.ExpiresAt.Format(time.RFC3339))
+			if strings.TrimSpace(link.Token) != "" && strings.TrimSpace(publicBaseURL) != "" {
 				b.WriteString(" url: " + strings.TrimRight(publicBaseURL, "/") + "/share/" + link.Token)
 			}
 			b.WriteString("\n")

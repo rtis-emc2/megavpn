@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +15,8 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
+
+var managedNginxServerNamePattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$`)
 
 func (s *Store) GetInstanceWithSpec(ctx context.Context, instanceID string) (domain.Instance, error) {
 	instance, err := s.GetInstance(ctx, instanceID)
@@ -315,6 +319,9 @@ func (s *Store) renderXrayPayloadSpec(ctx context.Context, instance domain.Insta
 	}
 	unitName := firstString(spec["systemd_unit"], instance.SystemdUnit, serviceDefaultSystemdUnit("xray-core", instance.Slug))
 	configPath := firstString(spec["config_path"], xrayConfigPath(instance, spec))
+	if err := validateSystemdExecPathArg(configPath); err != nil {
+		return nil, err
+	}
 	configMode := firstString(spec["config_mode"], "0640")
 	files := []map[string]any{}
 	if strings.EqualFold(firstString(spec["security"]), "tls") {
@@ -352,6 +359,9 @@ func (s *Store) renderMTProtoPayloadSpec(ctx context.Context, instance domain.In
 	spec = cloneMap(spec)
 	unitName := firstString(spec["systemd_unit"], instance.SystemdUnit, serviceDefaultSystemdUnit("mtproto", instance.Slug))
 	configPath := firstString(spec["config_path"], mtprotoConfigPath(instance, spec))
+	if err := validateSystemdExecPathArg(configPath); err != nil {
+		return nil, err
+	}
 	configMode := firstString(spec["config_mode"], "0640")
 	config, err := buildMTProtoServerConfig(instance, spec)
 	if err != nil {
@@ -404,6 +414,9 @@ func (s *Store) renderHTTPProxyPayloadSpec(ctx context.Context, instance domain.
 	spec = cloneMap(spec)
 	unitName := firstString(spec["systemd_unit"], instance.SystemdUnit, serviceDefaultSystemdUnit("http_proxy", instance.Slug))
 	configPath := firstString(spec["config_path"], httpProxyConfigPath(instance, spec))
+	if err := validateSystemdExecPathArg(configPath); err != nil {
+		return nil, err
+	}
 	configMode := firstString(spec["config_mode"], "0644")
 	passwdPath := firstString(spec["passwd_path"], httpProxyPasswdPath(instance, spec))
 	passwdMode := firstString(spec["passwd_mode"], "0600")
@@ -601,6 +614,9 @@ func (s *Store) renderShadowsocksPayloadSpec(ctx context.Context, instance domai
 	spec = cloneMap(spec)
 	unitName := firstString(spec["systemd_unit"], instance.SystemdUnit, serviceDefaultSystemdUnit("shadowsocks", instance.Slug))
 	configPath := firstString(spec["config_path"], shadowsocksConfigPath(instance, spec))
+	if err := validateSystemdExecPathArg(configPath); err != nil {
+		return nil, err
+	}
 	configMode := firstString(spec["config_mode"], "0640")
 	config, err := buildShadowsocksServerConfig(instance, spec)
 	if err != nil {
@@ -1188,6 +1204,9 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 		listenPort = 8080
 	}
 	serverName := firstString(spec["server_name"], instance.EndpointHost, "_")
+	if err := validateNginxServerName(serverName); err != nil {
+		return "", err
+	}
 	lines := []string{"server {"}
 	if truthy(spec["tls_enabled"]) {
 		certPath := firstString(spec["tls_cert_path"])
@@ -1345,6 +1364,33 @@ func validateNginxLocationPath(path string) error {
 	}
 	if strings.ContainsAny(path, "{};\r\n\t ") {
 		return fmt.Errorf("nginx location_path contains unsafe characters")
+	}
+	return nil
+}
+
+func validateNginxServerName(serverName string) error {
+	serverName = strings.TrimSpace(serverName)
+	if serverName == "" {
+		return fmt.Errorf("nginx server_name is required")
+	}
+	if strings.ContainsAny(serverName, " \t\r\n;{}") {
+		return fmt.Errorf("nginx server_name contains unsafe directive characters")
+	}
+	if serverName == "_" {
+		return nil
+	}
+	ipLiteral := serverName
+	if strings.HasPrefix(serverName, "[") || strings.HasSuffix(serverName, "]") {
+		if !strings.HasPrefix(serverName, "[") || !strings.HasSuffix(serverName, "]") {
+			return fmt.Errorf("nginx server_name must be a DNS name, wildcard DNS name, IP literal, or _")
+		}
+		ipLiteral = strings.TrimPrefix(strings.TrimSuffix(serverName, "]"), "[")
+	}
+	if _, err := netip.ParseAddr(ipLiteral); err == nil {
+		return nil
+	}
+	if !managedNginxServerNamePattern.MatchString(serverName) {
+		return fmt.Errorf("nginx server_name must be a DNS name, wildcard DNS name, IP literal, or _")
 	}
 	return nil
 }
@@ -1694,7 +1740,7 @@ func buildMTProtoUnitFile(unitName, configPath string, instance domain.Instance)
 		"",
 		"[Service]",
 		"Type=simple",
-		"ExecStart=/bin/sh -c 'exec xray run -config " + configPath + "'",
+		"ExecStart=/usr/bin/env xray run -config " + configPath,
 		"Restart=on-failure",
 		"RestartSec=2s",
 		"LimitNOFILE=1048576",
@@ -1714,7 +1760,7 @@ func buildXrayUnitFile(unitName, configPath string, instance domain.Instance) st
 		"",
 		"[Service]",
 		"Type=simple",
-		"ExecStart=/bin/sh -c 'exec xray run -config " + configPath + "'",
+		"ExecStart=/usr/bin/env xray run -config " + configPath,
 		"Restart=on-failure",
 		"RestartSec=2s",
 		"LimitNOFILE=1048576",
@@ -1734,9 +1780,9 @@ func buildHTTPProxyUnitFile(unitName, configPath string, instance domain.Instanc
 		"",
 		"[Service]",
 		"Type=simple",
-		"ExecStart=/bin/sh -c 'exec squid -f " + configPath + " -N'",
-		"ExecReload=/bin/sh -c 'exec squid -k reconfigure -f " + configPath + "'",
-		"ExecStop=/bin/sh -c 'exec squid -k shutdown -f " + configPath + "'",
+		"ExecStart=/usr/bin/env squid -f " + configPath + " -N",
+		"ExecReload=/usr/bin/env squid -k reconfigure -f " + configPath,
+		"ExecStop=/usr/bin/env squid -k shutdown -f " + configPath,
 		"Restart=on-failure",
 		"RestartSec=2s",
 		"",
@@ -1755,7 +1801,7 @@ func buildShadowsocksUnitFile(unitName, configPath string, instance domain.Insta
 		"",
 		"[Service]",
 		"Type=simple",
-		"ExecStart=/bin/sh -c 'exec ss-server -c " + configPath + "'",
+		"ExecStart=/usr/bin/env ss-server -c " + configPath,
 		"Restart=on-failure",
 		"RestartSec=2s",
 		"",
@@ -1763,6 +1809,23 @@ func buildShadowsocksUnitFile(unitName, configPath string, instance domain.Insta
 		"WantedBy=multi-user.target",
 		"",
 	}, "\n")
+}
+
+func validateSystemdExecPathArg(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("systemd exec path is required")
+	}
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("systemd exec path must be absolute")
+	}
+	if strings.Contains(path, "\x00") || strings.Contains(path, "..") {
+		return fmt.Errorf("systemd exec path contains unsafe traversal")
+	}
+	if strings.ContainsAny(path, " \t\r\n'\"`$;|&()<>\\") {
+		return fmt.Errorf("systemd exec path contains unsafe shell token")
+	}
+	return nil
 }
 
 func cloneMap(src map[string]any) map[string]any {
