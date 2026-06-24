@@ -74,6 +74,25 @@ func TestUniqueBackhaulTunnelCIDRDoesNotReuseSelectedCIDR(t *testing.T) {
 	}
 }
 
+func TestBackhaulEndpointPortIsStableAndDriverScoped(t *testing.T) {
+	t.Parallel()
+
+	first := backhaulEndpointPort("link-1", backhaul.DriverWireGuard, 51830, 0)
+	second := backhaulEndpointPort("link-2", backhaul.DriverWireGuard, 51830, 0)
+	if first < 51830 || first >= 52830 {
+		t.Fatalf("wireguard endpoint port = %d, want 51830..52829", first)
+	}
+	if first != backhaulEndpointPort("link-1", backhaul.DriverWireGuard, 51830, 0) {
+		t.Fatal("wireguard endpoint port must be stable")
+	}
+	if first == second {
+		t.Fatalf("wireguard endpoint ports should vary by link, both got %d", first)
+	}
+	if got := backhaulEndpointPort("link-1", backhaul.DriverOpenVPNUDP, 1194, 0); got != 1194 {
+		t.Fatalf("openvpn endpoint port = %d, want default 1194", got)
+	}
+}
+
 func TestNormalizeBackhaulProbeHealthPreservesDegradedReason(t *testing.T) {
 	t.Parallel()
 

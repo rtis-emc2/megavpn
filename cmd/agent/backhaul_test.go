@@ -106,17 +106,36 @@ func TestBackhaulManifestMatchesLinkAndRole(t *testing.T) {
 	t.Parallel()
 
 	manifest := map[string]any{
-		"link_id": "link-1",
-		"role":    "Ingress",
+		"link_id":   "link-1",
+		"link_name": "edge-a-to-edge-b",
+		"role":      "Ingress",
 	}
-	if !backhaulManifestMatches(manifest, "link-1", "ingress") {
+	if !backhaulManifestMatches(manifest, "link-1", "another-name", "ingress") {
 		t.Fatal("expected manifest to match same link and role")
 	}
-	if backhaulManifestMatches(manifest, "link-2", "ingress") {
+	if !backhaulManifestMatches(manifest, "link-2", "edge-a-to-edge-b", "ingress") {
+		t.Fatal("expected manifest to match same link name and role")
+	}
+	if backhaulManifestMatches(manifest, "link-2", "other-name", "ingress") {
 		t.Fatal("manifest must not match another link")
 	}
-	if backhaulManifestMatches(manifest, "link-1", "egress") {
+	if backhaulManifestMatches(manifest, "link-1", "edge-a-to-edge-b", "egress") {
 		t.Fatal("manifest must not match another role")
+	}
+}
+
+func TestParseWireGuardListenPorts(t *testing.T) {
+	t.Parallel()
+
+	got := parseWireGuardListenPorts("mgbhold 51830\nwg0 not-a-port\nmgbhnew 51831\n")
+	if got["mgbhold"] != 51830 {
+		t.Fatalf("mgbhold port = %d, want 51830", got["mgbhold"])
+	}
+	if got["mgbhnew"] != 51831 {
+		t.Fatalf("mgbhnew port = %d, want 51831", got["mgbhnew"])
+	}
+	if _, ok := got["wg0"]; ok {
+		t.Fatal("invalid listen-port line must be skipped")
 	}
 }
 

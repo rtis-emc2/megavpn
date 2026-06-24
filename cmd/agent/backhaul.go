@@ -129,7 +129,7 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 			result["error"] = err.Error()
 			return "failed", result
 		}
-		staleCleanup, err := cleanupSiblingBackhaulRuntime(ctx, outputPath, linkID, role, unit, iface, changed)
+		staleCleanup, err := cleanupSiblingBackhaulRuntime(ctx, outputPath, linkID, stringify(j.Payload["link_name"]), role, unit, iface, changed)
 		if len(staleCleanup) > 0 {
 			result["stale_runtime_cleanup"] = staleCleanup
 		}
@@ -152,6 +152,16 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 			return "failed", result
 		}
 		result["interface_cleanup"] = ifaceCleanup
+		if driver == "wireguard" && role == "egress" {
+			listenerCleanup, err := cleanupConflictingBackhaulWireGuardListeners(ctx, iface, intFromPayload(j.Payload["endpoint_port"], 0))
+			if len(listenerCleanup) > 0 {
+				result["wireguard_listener_cleanup"] = listenerCleanup
+			}
+			if err != nil {
+				result["error"] = err.Error()
+				return "failed", result
+			}
+		}
 		if info, err := os.Stat(backhaulUnitFilePath(unit)); err != nil || info.IsDir() {
 			health := backhaulSystemdFailureHealth("systemd unit file is missing after materialization", unit)
 			health["unit_path"] = backhaulUnitFilePath(unit)
@@ -593,9 +603,10 @@ func cleanupPreviousBackhaulRuntime(ctx context.Context, previous map[string]any
 	return result, nil
 }
 
-func cleanupSiblingBackhaulRuntime(ctx context.Context, currentOutputPath, linkID, role, currentUnit, currentIface string, currentPaths []string) ([]map[string]any, error) {
+func cleanupSiblingBackhaulRuntime(ctx context.Context, currentOutputPath, linkID, linkName, role, currentUnit, currentIface string, currentPaths []string) ([]map[string]any, error) {
 	currentOutputPath = cleanAbsPath(currentOutputPath)
 	linkID = strings.TrimSpace(linkID)
+	linkName = strings.TrimSpace(linkName)
 	role = strings.ToLower(strings.TrimSpace(role))
 	if currentOutputPath == "" || linkID == "" || role == "" {
 		return nil, nil
@@ -612,7 +623,7 @@ func cleanupSiblingBackhaulRuntime(ctx context.Context, currentOutputPath, linkI
 			continue
 		}
 		manifest := readBackhaulManifest(path)
-		if !backhaulManifestMatches(manifest, linkID, role) {
+		if !backhaulManifestMatches(manifest, linkID, linkName, role) {
 			continue
 		}
 		cleanup, err := cleanupPreviousBackhaulRuntime(ctx, manifest, currentUnit, currentIface, currentPaths)
@@ -639,12 +650,66 @@ func cleanupSiblingBackhaulRuntime(ctx context.Context, currentOutputPath, linkI
 	return out, nil
 }
 
-func backhaulManifestMatches(manifest map[string]any, linkID, role string) bool {
+func backhaulManifestMatches(manifest map[string]any, linkID, linkName, role string) bool {
 	if len(manifest) == 0 {
 		return false
 	}
-	return strings.TrimSpace(stringify(manifest["link_id"])) == strings.TrimSpace(linkID) &&
-		strings.ToLower(strings.TrimSpace(stringify(manifest["role"]))) == strings.ToLower(strings.TrimSpace(role))
+	manifestRole := strings.ToLower(strings.TrimSpace(stringify(manifest["role"])))
+	if manifestRole != strings.ToLower(strings.TrimSpace(role)) {
+		return false
+	}
+	manifestLinkID := strings.TrimSpace(stringify(manifest["link_id"]))
+	if manifestLinkID != "" && manifestLinkID == strings.TrimSpace(linkID) {
+		return true
+	}
+	manifestLinkName := strings.TrimSpace(stringify(manifest["link_name"]))
+	return manifestLinkName != "" && manifestLinkName == strings.TrimSpace(linkName)
+}
+
+func cleanupConflictingBackhaulWireGuardListeners(ctx context.Context, currentIface string, endpointPort int) ([]map[string]any, error) {
+	if endpointPort <= 0 {
+		return nil, nil
+	}
+	code, out := runInstallCommand(ctx, "wg", "show", "all", "listen-port")
+	if code != 0 {
+		return []map[string]any{{
+			"status":        "skipped",
+			"reason":        "wg listen-port inspection failed",
+			"endpoint_port": endpointPort,
+			"output":        truncate(out, 1000),
+		}}, nil
+	}
+	currentIface = strings.TrimSpace(currentIface)
+	items := []map[string]any{}
+	for iface, port := range parseWireGuardListenPorts(out) {
+		if port != endpointPort || iface == currentIface || !isSafeBackhaulInterface(iface) {
+			continue
+		}
+		cleanup, err := cleanupBackhaulInterface(ctx, iface)
+		cleanup["endpoint_port"] = endpointPort
+		cleanup["reason"] = "stale managed WireGuard listener uses requested endpoint port"
+		items = append(items, cleanup)
+		if err != nil {
+			return items, err
+		}
+	}
+	return items, nil
+}
+
+func parseWireGuardListenPorts(out string) map[string]int {
+	result := map[string]int{}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 {
+			continue
+		}
+		port, err := strconv.Atoi(fields[1])
+		if err != nil {
+			continue
+		}
+		result[fields[0]] = port
+	}
+	return result
 }
 
 func backhaulManifestFilePaths(manifest map[string]any) []string {

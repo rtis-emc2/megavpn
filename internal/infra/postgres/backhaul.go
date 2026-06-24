@@ -975,6 +975,7 @@ func (s *Store) buildBackhaulTransport(ctx context.Context, link domain.Backhaul
 	if err != nil {
 		return domain.BackhaulTransport{}, err
 	}
+	endpointPort := backhaulEndpointPort(link.ID, def.Code, def.DefaultPort, idx)
 	secretRefs := map[string]any{}
 	config := map[string]any{
 		"activation_mode":        def.ActivationMode,
@@ -1057,7 +1058,7 @@ func (s *Store) buildBackhaulTransport(ctx context.Context, link domain.Backhaul
 		Priority:       (idx + 1) * 10,
 		Status:         "planned",
 		EndpointHost:   endpointHost,
-		EndpointPort:   def.DefaultPort,
+		EndpointPort:   endpointPort,
 		Protocol:       def.DefaultProtocol,
 		InterfaceName:  defaultBackhaulInterface(link.ID, def.Code),
 		TunnelCIDR:     tunnelCIDR,
@@ -1067,6 +1068,18 @@ func (s *Store) buildBackhaulTransport(ctx context.Context, link domain.Backhaul
 		SecretRefs:     secretRefs,
 		Health:         map[string]any{"status": "unknown"},
 	}, nil
+}
+
+func backhaulEndpointPort(linkID, driver string, defaultPort, idx int) int {
+	if defaultPort <= 0 {
+		return 0
+	}
+	if driver != backhaul.DriverWireGuard {
+		return defaultPort
+	}
+	sum := sha256.Sum256([]byte("backhaul-endpoint-port:" + strings.TrimSpace(linkID) + ":" + strings.TrimSpace(driver) + ":" + strconv.Itoa(idx)))
+	offset := int(sum[0])<<8 | int(sum[1])
+	return defaultPort + (offset % 1000)
 }
 
 func (s *Store) listBackhaulTransports(ctx context.Context, linkID string) ([]domain.BackhaulTransport, error) {
