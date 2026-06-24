@@ -1500,7 +1500,7 @@ func renderBackhaulNATStartScript(slug, iface, transportStartCmd, direction, lab
 		"  nft list table ip megavpn_backhaul >/dev/null 2>&1 || nft add table ip megavpn_backhaul",
 		"  nft list chain ip megavpn_backhaul postrouting >/dev/null 2>&1 || nft add chain ip megavpn_backhaul postrouting '{ type nat hook postrouting priority srcnat; policy accept; }'",
 		"  if ! nft list chain ip megavpn_backhaul postrouting | grep -Fq " + shellQuotePG(comment) + "; then",
-		"    nft add rule ip megavpn_backhaul postrouting " + direction + " " + shellQuotePG(iface) + " masquerade comment " + shellQuotePG(comment),
+		"    nft add rule ip megavpn_backhaul postrouting " + direction + " " + shellQuotePG(iface) + " masquerade comment " + shellQuotePG(nftStringLiteral(comment)),
 		"  fi",
 		"fi",
 		"",
@@ -1862,4 +1862,10 @@ func shortID(value string) string {
 
 func shellQuotePG(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func nftStringLiteral(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	return `"` + value + `"`
 }

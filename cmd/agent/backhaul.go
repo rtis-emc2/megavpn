@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -127,6 +129,14 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 			result["error"] = err.Error()
 			return "failed", result
 		}
+		staleCleanup, err := cleanupSiblingBackhaulRuntime(ctx, outputPath, linkID, role, unit, iface, changed)
+		if len(staleCleanup) > 0 {
+			result["stale_runtime_cleanup"] = staleCleanup
+		}
+		if err != nil {
+			result["error"] = err.Error()
+			return "failed", result
+		}
 		if !backhaulUnitNotFound(unit) {
 			stopCode, stopOut := runInstallCommand(ctx, "systemctl", "stop", unit)
 			result["pre_start_stop_output"] = truncate(stopOut, 2000)
@@ -179,6 +189,7 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 		result["active_state"] = currentUnitState(unit)
 		if code != 0 {
 			health := backhaulReadinessHealth(ctx, stringify(j.Payload["interface_name"]), unit, true)
+			recordBackhaulActivationCleanup(ctx, result, iface, "systemd_enable_failed")
 			result["error"] = backhaulHealthError("backhaul systemd activation failed", health)
 			result["health"] = health
 			addBackhaulHealthFields(result, health)
@@ -188,6 +199,9 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 		result["health"] = health
 		addBackhaulHealthFields(result, health)
 		if stringify(health["status"]) == "unhealthy" {
+			if stringify(health["active_state"]) != "active" {
+				recordBackhaulActivationCleanup(ctx, result, iface, "readiness_failed")
+			}
 			result["error"] = backhaulHealthError("backhaul service readiness check failed", health)
 			return "failed", result
 		}
@@ -579,6 +593,60 @@ func cleanupPreviousBackhaulRuntime(ctx context.Context, previous map[string]any
 	return result, nil
 }
 
+func cleanupSiblingBackhaulRuntime(ctx context.Context, currentOutputPath, linkID, role, currentUnit, currentIface string, currentPaths []string) ([]map[string]any, error) {
+	currentOutputPath = cleanAbsPath(currentOutputPath)
+	linkID = strings.TrimSpace(linkID)
+	role = strings.ToLower(strings.TrimSpace(role))
+	if currentOutputPath == "" || linkID == "" || role == "" {
+		return nil, nil
+	}
+	matches, err := filepath.Glob(filepath.Join(strings.TrimRight(defaultBackhaulRoot, "/"), "*", "*-manifest.json"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(matches)
+	out := []map[string]any{}
+	for _, candidate := range matches {
+		path := cleanAbsPath(candidate)
+		if path == "" || path == currentOutputPath || !isSafeBackhaulManagedPath(path) {
+			continue
+		}
+		manifest := readBackhaulManifest(path)
+		if !backhaulManifestMatches(manifest, linkID, role) {
+			continue
+		}
+		cleanup, err := cleanupPreviousBackhaulRuntime(ctx, manifest, currentUnit, currentIface, currentPaths)
+		if cleanup == nil {
+			cleanup = map[string]any{}
+		}
+		cleanup["manifest_path"] = path
+		removed, removeErr := removeManagedPath(path, false)
+		if removeErr != nil {
+			cleanup["manifest_status"] = "failed"
+			out = append(out, cleanup)
+			return out, removeErr
+		}
+		if removed {
+			cleanup["manifest_status"] = "removed"
+		} else {
+			cleanup["manifest_status"] = "not found - skip"
+		}
+		out = append(out, cleanup)
+		if err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+func backhaulManifestMatches(manifest map[string]any, linkID, role string) bool {
+	if len(manifest) == 0 {
+		return false
+	}
+	return strings.TrimSpace(stringify(manifest["link_id"])) == strings.TrimSpace(linkID) &&
+		strings.ToLower(strings.TrimSpace(stringify(manifest["role"]))) == strings.ToLower(strings.TrimSpace(role))
+}
+
 func backhaulManifestFilePaths(manifest map[string]any) []string {
 	items, ok := manifest["files"].([]any)
 	if !ok {
@@ -965,6 +1033,18 @@ func addBackhaulHealthFields(result, health map[string]any) {
 		if value, ok := health[key]; ok {
 			result["health_"+key] = value
 		}
+	}
+}
+
+func recordBackhaulActivationCleanup(ctx context.Context, result map[string]any, iface, reason string) {
+	if result == nil {
+		return
+	}
+	cleanup, err := cleanupBackhaulInterface(ctx, iface)
+	cleanup["reason"] = strings.TrimSpace(reason)
+	result["activation_failure_cleanup"] = cleanup
+	if err != nil {
+		result["activation_failure_cleanup_error"] = err.Error()
 	}
 }
 

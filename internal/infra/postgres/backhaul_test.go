@@ -257,7 +257,7 @@ func TestRenderBackhaulIngressStartScriptAddsOutboundSNAT(t *testing.T) {
 	for _, want := range []string{
 		"sysctl -w net.ipv4.ip_forward=1",
 		"megavpn:backhaul:link-wireguard-abcd:ingress-snat",
-		"nft add rule ip megavpn_backhaul postrouting oifname 'mgbh1234567890' masquerade",
+		"nft add rule ip megavpn_backhaul postrouting oifname 'mgbh1234567890' masquerade comment '\"megavpn:backhaul:link-wireguard-abcd:ingress-snat\"'",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("ingress start script missing %q:\n%s", want, script)
@@ -271,7 +271,7 @@ func TestRenderBackhaulEgressStartScriptKeepsInboundMasquerade(t *testing.T) {
 	script := renderBackhaulEgressStartScript("link-wireguard-abcd", "mgbh1234567890", "/usr/bin/wg-quick up '/etc/megavpn/backhaul/link/wg.conf'")
 	for _, want := range []string{
 		"megavpn:backhaul:link-wireguard-abcd:egress-masquerade",
-		"nft add rule ip megavpn_backhaul postrouting iifname 'mgbh1234567890' masquerade",
+		"nft add rule ip megavpn_backhaul postrouting iifname 'mgbh1234567890' masquerade comment '\"megavpn:backhaul:link-wireguard-abcd:egress-masquerade\"'",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("egress start script missing %q:\n%s", want, script)

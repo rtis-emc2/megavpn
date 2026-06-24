@@ -102,6 +102,24 @@ func TestBackhaulManifestFilePaths(t *testing.T) {
 	}
 }
 
+func TestBackhaulManifestMatchesLinkAndRole(t *testing.T) {
+	t.Parallel()
+
+	manifest := map[string]any{
+		"link_id": "link-1",
+		"role":    "Ingress",
+	}
+	if !backhaulManifestMatches(manifest, "link-1", "ingress") {
+		t.Fatal("expected manifest to match same link and role")
+	}
+	if backhaulManifestMatches(manifest, "link-2", "ingress") {
+		t.Fatal("manifest must not match another link")
+	}
+	if backhaulManifestMatches(manifest, "link-1", "egress") {
+		t.Fatal("manifest must not match another role")
+	}
+}
+
 func TestMissingSystemdUnitOutputDetection(t *testing.T) {
 	t.Parallel()
 
