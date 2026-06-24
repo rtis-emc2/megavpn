@@ -12,6 +12,7 @@
       nodeExecutionLabel,
       nodeAgentChannelStatus,
       nodeLifecycleStatus,
+      requestJSON,
       sendJSON,
       refresh,
       openModal,
@@ -33,6 +34,7 @@
       typeof nodeExecutionLabel !== 'function' ||
       typeof nodeAgentChannelStatus !== 'function' ||
       typeof nodeLifecycleStatus !== 'function' ||
+      typeof requestJSON !== 'function' ||
       typeof sendJSON !== 'function' ||
       typeof refresh !== 'function' ||
       typeof openModal !== 'function' ||
@@ -77,16 +79,30 @@
       return typeof hasPermission !== 'function' || hasPermission('node.bootstrap');
     }
 
-    function agentNeedsUpgrade(node) {
+    function agentIsUpdateCandidate(node) {
       if (!node || node.status === 'retired' || node.kind === 'local') return false;
-      if (!canBootstrapAgents()) return false;
+      if (!targetAgentVersion()) return false;
       return compareAgentVersions(node.agent_version, targetAgentVersion()) < 0;
+    }
+
+    function agentUpdateBlockReason(node) {
+      if (!node) return 'Node is not available.';
+      if (node.status === 'retired') return 'Retired nodes cannot be updated.';
+      if (node.kind === 'local') return 'Local control-plane nodes are updated by the control-plane release process.';
+      if (!targetAgentVersion()) return 'Control Plane did not publish an agent target version.';
+      if (!agentIsUpdateCandidate(node)) return '';
+      if (!canBootstrapAgents()) return 'Your role is missing the node.bootstrap permission.';
+      return '';
+    }
+
+    function agentNeedsUpgrade(node) {
+      return agentIsUpdateCandidate(node) && !agentUpdateBlockReason(node);
     }
 
     function renderAgentVersion(row) {
       const current = row.agent_version || 'unknown';
       const target = targetAgentVersion();
-      const update = agentNeedsUpgrade(row);
+      const update = agentIsUpdateCandidate(row);
       return `
         <div class="stacked-cell">
           ${statusTag(update ? 'update available' : current)}
@@ -94,12 +110,36 @@
         </div>`;
     }
 
+    function normalizeAccessMethods(data) {
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data?.items)) return data.items;
+      if (Array.isArray(data?.methods)) return data.methods;
+      return [];
+    }
+
+    function hasEnabledSSHAccess(methods) {
+      return normalizeAccessMethods(methods).some((method) => (
+        String(method?.method || '').toLowerCase() === 'ssh' && method?.is_enabled === true
+      ));
+    }
+
+    async function ensureSSHBootstrapReady(node) {
+      const methods = await requestJSON(`/api/v1/nodes/${encodeURIComponent(node.id)}/access-methods`);
+      if (!hasEnabledSSHAccess(methods)) {
+        throw new Error('Enabled SSH access method is required. Open Manage -> Bootstrap, save SSH access, then run Update again.');
+      }
+    }
+
     async function queueAgentUpgrade(nodeID) {
       const node = (state.nodes || []).find((item) => item.id === nodeID);
       if (!node) return;
-      openModal('Update agent', node.name || 'node', '<div id="agentUpgradeResult"><span class="tag warn">queueing</span></div>');
+      openModal('Update agent', node.name || 'node', '<div id="agentUpgradeResult"><span class="tag warn">checking ssh access</span></div>');
       const target = document.getElementById('agentUpgradeResult');
       try {
+        const blocked = agentUpdateBlockReason(node);
+        if (blocked) throw new Error(blocked);
+        await ensureSSHBootstrapReady(node);
+        target.innerHTML = '<span class="tag warn">queueing</span>';
         const data = await sendJSON(`/api/v1/nodes/${encodeURIComponent(node.id)}/bootstrap`, 'POST', {
           bootstrap_mode: 'ssh_bootstrap',
           reinstall_agent: true,
@@ -116,12 +156,19 @@
     }
 
     async function queueAllAgentUpgrades(nodes) {
-      const targets = nodes.filter(agentNeedsUpgrade);
+      const targets = nodes.filter(agentIsUpdateCandidate);
       openModal('Update all agents', `${targets.length} node(s)`, '<div id="bulkAgentUpgradeResult"><span class="tag warn">queueing</span></div>', { wide: true });
       const target = document.getElementById('bulkAgentUpgradeResult');
       const results = [];
       for (const node of targets) {
         try {
+          const blocked = agentUpdateBlockReason(node);
+          if (blocked) {
+            results.push({ node: node.name || node.id, status: 'skipped', reason: blocked });
+            target.innerHTML = renderActionResponse({ target_version: targetAgentVersion(), results }, 'Agent update queue');
+            continue;
+          }
+          await ensureSSHBootstrapReady(node);
           const data = await sendJSON(`/api/v1/nodes/${encodeURIComponent(node.id)}/bootstrap`, 'POST', {
             bootstrap_mode: 'ssh_bootstrap',
             reinstall_agent: true,
@@ -140,10 +187,14 @@
     function render() {
       setTitle('Nodes');
       const rows = Array.isArray(state.nodes) ? state.nodes.filter((node) => node.status !== 'retired') : [];
-      const outdatedNodes = rows.filter(agentNeedsUpgrade);
+      const outdatedNodes = rows.filter(agentIsUpdateCandidate);
+      const upgradeableNodes = outdatedNodes.filter(agentNeedsUpgrade);
+      const updateAllReason = outdatedNodes.length && !upgradeableNodes.length
+        ? (outdatedNodes.map(agentUpdateBlockReason).find(Boolean) || 'No agent update can be queued from this session.')
+        : '';
       const actions = `
         <div class="inline-actions">
-          <button class="secondary-btn" id="updateAllAgentsBtn" type="button"${outdatedNodes.length ? '' : ' disabled'}>Update all agents</button>
+          <button class="secondary-btn" id="updateAllAgentsBtn" type="button"${upgradeableNodes.length ? '' : ' disabled'}${updateAllReason ? ` title="${escapeHTML(updateAllReason)}"` : ''}>Update all agents</button>
           <button class="secondary-btn" id="createNodeBtn" type="button">Add node</button>
         </div>`;
       el('content').innerHTML = `
@@ -158,7 +209,7 @@
           { title: 'Node state', key: 'status', render: (row) => statusTag(nodeLifecycleStatus(row)) },
           { title: 'Actions', key: 'id', render: (row) => `
             <div class="inline-actions">
-              ${agentNeedsUpgrade(row) ? `<button class="primary-btn update-agent-btn" type="button" data-node-id="${escapeHTML(row.id)}">Update</button>` : ''}
+              ${agentIsUpdateCandidate(row) ? `<button class="${agentNeedsUpgrade(row) ? 'primary-btn' : 'secondary-btn'} update-agent-btn" type="button" data-node-id="${escapeHTML(row.id)}"${agentNeedsUpgrade(row) ? '' : ' disabled'}${agentUpdateBlockReason(row) ? ` title="${escapeHTML(agentUpdateBlockReason(row))}"` : ''}>Update</button>` : ''}
               <button class="secondary-btn manage-node-btn" type="button" data-node-id="${escapeHTML(row.id)}">Manage</button>
               <button class="secondary-btn edit-node-btn" type="button" data-node-id="${escapeHTML(row.id)}">Edit</button>
               <button class="danger-btn delete-node-btn" type="button" data-node-id="${escapeHTML(row.id)}" data-node-name="${escapeHTML(row.name || 'node')}">Delete</button>

@@ -418,6 +418,7 @@
     nodeExecutionLabel,
     nodeAgentChannelStatus,
     nodeLifecycleStatus,
+    requestJSON,
     sendJSON,
     refresh,
     openModal,
