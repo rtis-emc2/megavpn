@@ -53,12 +53,30 @@ require_clean_static_scan() {
 }
 
 require_gofmt_clean() {
-  local unformatted
-  unformatted="$(gofmt -l cmd internal)"
+	local unformatted
+	unformatted="$(gofmt -l cmd internal)"
   if [[ -n "$unformatted" ]]; then
     printf '%s\n' "$unformatted" >&2
     return 1
-  fi
+	fi
+}
+
+require_version_tag_consistency() {
+	local code_version head_tag
+	code_version="$(sed -nE 's/^const Version = "([^"]+)"/\1/p' internal/platform/version/version.go)"
+	if [[ -z "$code_version" ]]; then
+		log "unable to read internal/platform/version.Version"
+		return 1
+	fi
+	head_tag="$(git tag --points-at HEAD | sort -V | tail -n 1)"
+	if [[ -z "$head_tag" ]]; then
+		log "HEAD is not tagged; code version is $code_version"
+		return 0
+	fi
+	if [[ "$head_tag" != "v$code_version" ]]; then
+		log "HEAD tag $head_tag does not match code version v$code_version"
+		return 1
+	fi
 }
 
 require_shell_syntax() {
@@ -121,6 +139,7 @@ run_service_matrix() {
 }
 
 run_gate "gofmt-clean" require_gofmt_clean
+run_gate "version-tag-consistency" require_version_tag_consistency
 run_gate "go-test" go test ./...
 if [[ "$RUN_RACE" == "1" || "$RUN_RACE" == "true" ]]; then
   run_gate "go-test-race" go test -race ./...

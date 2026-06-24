@@ -99,6 +99,24 @@ require_gofmt_clean() {
   fi
 }
 
+require_version_tag_consistency() {
+  local code_version head_tag
+  code_version="$(sed -nE 's/^const Version = "([^"]+)"/\1/p' internal/platform/version/version.go)"
+  if [[ -z "$code_version" ]]; then
+    printf 'unable to read internal/platform/version.Version\n' >&2
+    return 1
+  fi
+  head_tag="$(git tag --points-at HEAD | sort -V | tail -n 1)"
+  if [[ -z "$head_tag" ]]; then
+    printf 'HEAD is not tagged; code version is %s\n' "$code_version"
+    return 0
+  fi
+  if [[ "$head_tag" != "v$code_version" ]]; then
+    printf 'HEAD tag %s does not match code version v%s\n' "$head_tag" "$code_version" >&2
+    return 1
+  fi
+}
+
 require_go_test() {
   go test ./...
 }
@@ -310,6 +328,7 @@ write_report() {
 }
 
 run_check "gofmt-clean" "Go source formatting is clean" require_gofmt_clean
+run_check "version-tag-consistency" "HEAD tag matches internal/platform/version.Version when tagged" require_version_tag_consistency
 run_check "go-test" "All Go package tests pass" require_go_test
 run_check "go-test-race" "All Go package tests pass under race detector" require_go_race
 run_check "go-vet" "Go vet reports no issues" require_go_vet

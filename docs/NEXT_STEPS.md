@@ -1,8 +1,8 @@
 # Next steps
 
 Актуальный baseline: `ROADMAP_V1_AND_TZ.md`.
-Текущая точка фиксации: `0.6.10.16-alpha`.
-Следующая итерация: `0.6.10.17-alpha`.
+Текущая точка фиксации: `0.6.10.18-alpha`.
+Следующая итерация: `0.6.10.19-alpha`.
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`.
 
 1. На реальных ingress/egress nodes повторить Backhaul Apply profiles после обновления API/UI/agent: re-apply должен остановить obsolete managed unit из предыдущего manifest, удалить предыдущий/целевой `mgbh*` interface, поднять новый runtime-state и показать одинаковый `/30` profile на ingress/egress. После Delete Backhaul убедиться, что link ушел из активного списка и отображается в `Recently Deleted Backhaul` с cleanup summary. Если OpenVPN profile снова упадет, Jobs/Backhaul summary должен показать unit name, active state и первую полезную строку `systemctl status`/OpenVPN error; эту строку использовать как root cause для следующего исправления.
