@@ -75,6 +75,8 @@ Core API/UI:
 - Backhaul jobs are agent-only; the worker refuses to execute `node.backhaul.apply`, `node.backhaul.probe` and `node.backhaul.cleanup`.
 - Backhaul activation and route policy enforcement are separate jobs with separate audit/job results.
 - Managed L3 backhaul uses double NAT by default: ingress SNATs selected client traffic to the ingress tunnel address before it enters the backhaul, and egress masquerades traffic leaving the backhaul to the public/default route. This avoids unsafe broad reverse routes on egress nodes and keeps node-side return routing deterministic.
+- WireGuard/OpenVPN managed units are role-specific (`...-ingress.service` / `...-egress.service`) and bounded in length for systemd compatibility. Re-applying a profile after upgrade stops/disables the older common unit name from the previous manifest when present.
+- Agent apply results include systemd activation preflight, unit file path, `daemon-reload` output, `LoadState`, `ActiveState` and first useful `systemctl status` lines. `unit unknown` should be treated as a node-side systemd/load-state problem, not as a generic backhaul status.
 - Route policy enforcement is conservative: IPv4, `allow`, L3/L4 source identity, CIDR/IPv4 endpoint destination and explicit non-main route table are required.
 - Xray/IPsec profiles are not auto-enabled until transport-specific safety gates are implemented.
 

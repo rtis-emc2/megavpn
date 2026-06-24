@@ -682,7 +682,7 @@ func (s *Store) wireGuardBackhaulMaterial(ctx context.Context, link domain.Backh
 	egressPub := stringify(transport.Config["egress_public_key"])
 	slug := safeBackhaulSlug(link, transport)
 	configPath := "/etc/megavpn/backhaul/" + slug + "/" + transport.InterfaceName + ".conf"
-	unitName := "megavpn-backhaul-" + slug + ".service"
+	unitName := backhaulSystemdUnit(link, transport, role)
 	unitPath := "/etc/systemd/system/" + unitName
 	var config string
 	if role == "egress" {
@@ -759,7 +759,7 @@ func (s *Store) openVPNBackhaulMaterial(ctx context.Context, link domain.Backhau
 	configPath := "/etc/megavpn/backhaul/" + slug + "/openvpn.conf"
 	keyPath := "/etc/megavpn/backhaul/" + slug + "/openvpn.static.key"
 	profilePath := "/etc/megavpn/backhaul/" + slug + "/openvpn-profile-" + role + ".json"
-	unitName := "megavpn-backhaul-" + slug + ".service"
+	unitName := backhaulSystemdUnit(link, transport, role)
 	unitPath := "/etc/systemd/system/" + unitName
 	pidPath := "/run/" + unitName + ".pid"
 	proto := "udp"
@@ -944,7 +944,7 @@ func (s *Store) xrayBackhaulMaterial(ctx context.Context, link domain.BackhaulLi
 	slug := safeBackhaulSlug(link, transport)
 	configPath := "/etc/megavpn/backhaul/" + slug + "/xray-" + role + ".json"
 	profilePath := "/etc/megavpn/backhaul/" + slug + "/xray-profile-" + role + ".json"
-	unitName := "megavpn-backhaul-" + slug + "-" + role + ".service"
+	unitName := backhaulSystemdUnit(link, transport, role)
 	unitPath := "/etc/systemd/system/" + unitName
 	config := buildBackhaulXrayConfig(link, transport, role, def, uuid, realityPrivateKey)
 	configJSON, err := json.MarshalIndent(config, "", "  ")
@@ -1384,15 +1384,63 @@ func backhaulSystemdUnit(link domain.BackhaulLink, transport domain.BackhaulTran
 }
 
 func backhaulSystemdUnits(link domain.BackhaulLink, transport domain.BackhaulTransport, role string) []string {
-	slug := safeBackhaulSlug(link, transport)
 	switch transport.Driver {
 	case backhaul.DriverWireGuard, backhaul.DriverOpenVPNUDP, backhaul.DriverOpenVPNTCP443:
-		return []string{"megavpn-backhaul-" + slug + ".service"}
+		current := backhaulRoleSystemdUnit(link, transport, role)
+		legacy := legacyBackhaulSystemdUnit(link, transport)
+		if legacy == "" || legacy == current {
+			return []string{current}
+		}
+		return []string{current, legacy}
 	case backhaul.DriverXrayVLESSWS, backhaul.DriverXrayVLESSGRPC, backhaul.DriverXrayReality, backhaul.DriverXrayTUNVLESS:
-		return []string{"megavpn-backhaul-" + slug + "-" + role + ".service"}
+		return []string{backhaulRoleSystemdUnit(link, transport, role)}
 	default:
 		return nil
 	}
+}
+
+func backhaulRoleSystemdUnit(link domain.BackhaulLink, transport domain.BackhaulTransport, role string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role != "ingress" && role != "egress" {
+		role = "node"
+	}
+	const prefix = "megavpn-backhaul-"
+	const suffix = ".service"
+	roleSuffix := "-" + role
+	maxSlug := 128 - len(prefix) - len(roleSuffix) - len(suffix)
+	return prefix + boundedBackhaulUnitSlug(safeBackhaulSlug(link, transport), maxSlug) + roleSuffix + suffix
+}
+
+func legacyBackhaulSystemdUnit(link domain.BackhaulLink, transport domain.BackhaulTransport) string {
+	slug := safeBackhaulSlug(link, transport)
+	if slug == "" {
+		return ""
+	}
+	return "megavpn-backhaul-" + slug + ".service"
+}
+
+func boundedBackhaulUnitSlug(slug string, maxLen int) string {
+	slug = slugify(slug)
+	if slug == "" {
+		slug = "backhaul"
+	}
+	if maxLen < 16 {
+		maxLen = 16
+	}
+	if len(slug) <= maxLen {
+		return slug
+	}
+	sum := sha256.Sum256([]byte(slug))
+	digest := hex.EncodeToString(sum[:])[:8]
+	prefixLen := maxLen - len(digest) - 1
+	if prefixLen < 1 {
+		return digest[:maxLen]
+	}
+	prefix := strings.Trim(slug[:prefixLen], "-")
+	if prefix == "" {
+		prefix = "backhaul"
+	}
+	return prefix + "-" + digest
 }
 
 func backhaulCleanupPaths(link domain.BackhaulLink, transport domain.BackhaulTransport, role string) []string {

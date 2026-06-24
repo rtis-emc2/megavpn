@@ -203,6 +203,53 @@ func TestRenderWireGuardBackhaulConfigUsesPointToPointPrefix(t *testing.T) {
 	}
 }
 
+func TestBackhaulSystemdUnitIsRoleSpecificAndBounded(t *testing.T) {
+	t.Parallel()
+
+	link := domain.BackhaulLink{
+		Name: "backhaul-" + strings.Repeat("very-long-name-", 20),
+	}
+	transport := domain.BackhaulTransport{
+		ID:     "transport-1234567890",
+		Driver: backhaul.DriverWireGuard,
+	}
+
+	ingressUnit := backhaulSystemdUnit(link, transport, "ingress")
+	egressUnit := backhaulSystemdUnit(link, transport, "egress")
+	if ingressUnit == egressUnit {
+		t.Fatalf("ingress and egress units must differ: %q", ingressUnit)
+	}
+	for _, unit := range []string{ingressUnit, egressUnit} {
+		if !strings.HasPrefix(unit, "megavpn-backhaul-") || !strings.HasSuffix(unit, ".service") {
+			t.Fatalf("unexpected unit name %q", unit)
+		}
+		if len(unit) > 128 {
+			t.Fatalf("unit %q length = %d, want <= 128", unit, len(unit))
+		}
+	}
+}
+
+func TestBackhaulCleanupUnitsIncludeLegacyCommonUnit(t *testing.T) {
+	t.Parallel()
+
+	link := domain.BackhaulLink{Name: "edge-backhaul"}
+	transport := domain.BackhaulTransport{ID: "transport-abcdef12", Driver: backhaul.DriverOpenVPNUDP}
+	units := backhaulSystemdUnits(link, transport, "ingress")
+	if len(units) != 2 {
+		t.Fatalf("units = %#v, want current and legacy", units)
+	}
+	if !strings.Contains(units[0], "-ingress.service") {
+		t.Fatalf("first unit should be current ingress unit: %#v", units)
+	}
+	if strings.Contains(units[1], "-ingress.service") || strings.Contains(units[1], "-egress.service") {
+		t.Fatalf("second unit should be legacy common unit: %#v", units)
+	}
+	paths := backhaulCleanupPaths(link, transport, "ingress")
+	if len(paths) != 2 {
+		t.Fatalf("cleanup paths = %#v, want current and legacy unit paths", paths)
+	}
+}
+
 func TestRenderBackhaulIngressStartScriptAddsOutboundSNAT(t *testing.T) {
 	t.Parallel()
 

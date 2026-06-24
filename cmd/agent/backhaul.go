@@ -102,9 +102,21 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 			result["error"] = "backhaul systemd_unit is invalid"
 			return "failed", result
 		}
+		result["systemd_unit"] = unit
+		result["systemd_unit_path"] = backhaulUnitFilePath(unit)
 		iface := stringify(j.Payload["interface_name"])
 		if !isSafeBackhaulInterface(iface) {
 			result["error"] = "backhaul interface_name is invalid"
+			return "failed", result
+		}
+		systemdPreflight := ensureBackhaulSystemdActivationReady(ctx, unit)
+		result["systemd_preflight"] = systemdPreflight
+		if systemdPreflight["ok"] != true {
+			health := backhaulSystemdFailureHealth(firstNonEmptyAgentString(stringify(systemdPreflight["message"]), "systemd activation preflight failed"), unit)
+			health["load_state"] = stringify(systemdPreflight["load_state"])
+			result["error"] = backhaulHealthError("backhaul systemd activation preflight failed", health)
+			result["health"] = health
+			addBackhaulHealthFields(result, health)
 			return "failed", result
 		}
 		previousCleanup, err := cleanupPreviousBackhaulRuntime(ctx, previousManifest, unit, iface, changed)
@@ -130,9 +142,39 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 			return "failed", result
 		}
 		result["interface_cleanup"] = ifaceCleanup
-		_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+		if info, err := os.Stat(backhaulUnitFilePath(unit)); err != nil || info.IsDir() {
+			health := backhaulSystemdFailureHealth("systemd unit file is missing after materialization", unit)
+			health["unit_path"] = backhaulUnitFilePath(unit)
+			if err != nil {
+				health["unit_file_error"] = err.Error()
+			}
+			result["error"] = backhaulHealthError("backhaul systemd activation failed", health)
+			result["health"] = health
+			addBackhaulHealthFields(result, health)
+			return "failed", result
+		}
+		reloadCode, reloadOut := runInstallCommand(ctx, "systemctl", "daemon-reload")
+		result["daemon_reload_exit_code"] = reloadCode
+		result["daemon_reload_output"] = truncate(reloadOut, 2000)
+		if reloadCode != 0 {
+			health := backhaulSystemdFailureHealth("systemd daemon-reload failed", unit)
+			health["daemon_reload_output"] = truncate(reloadOut, 2000)
+			result["error"] = backhaulHealthError("backhaul systemd activation failed", health)
+			result["health"] = health
+			addBackhaulHealthFields(result, health)
+			return "failed", result
+		}
+		loadState := currentUnitLoadState(unit)
+		result["load_state"] = loadState
+		if loadState == "" || loadState == "not-found" {
+			health := backhaulSystemdFailureHealth("systemd unit is not loaded after daemon-reload", unit)
+			health["load_state"] = loadState
+			result["error"] = backhaulHealthError("backhaul systemd activation failed", health)
+			result["health"] = health
+			addBackhaulHealthFields(result, health)
+			return "failed", result
+		}
 		code, out := runInstallCommand(ctx, "systemctl", "enable", "--now", unit)
-		result["systemd_unit"] = unit
 		result["systemd_output"] = truncate(out, 2000)
 		result["active_state"] = currentUnitState(unit)
 		if code != 0 {
@@ -650,6 +692,7 @@ func backhaulReadinessHealth(ctx context.Context, iface, unit string, activated 
 	if unit != "" && stringify(health["active_state"]) != "active" {
 		health["status"] = "unhealthy"
 		health["reason"] = "systemd unit is not active"
+		health["load_state"] = currentUnitLoadState(unit)
 		_, statusOut := runInstallCommand(ctx, "systemctl", "status", unit, "--no-pager", "-l")
 		health["unit_status_output"] = truncate(statusOut, 2000)
 		return health
@@ -682,6 +725,9 @@ func backhaulHealthError(prefix string, health map[string]any) string {
 	details := []string{}
 	if state := stringify(health["active_state"]); state != "" && state != "unknown" {
 		details = append(details, "active_state="+state)
+	}
+	if loadState := stringify(health["load_state"]); loadState != "" {
+		details = append(details, "load_state="+loadState)
 	}
 	if iface := stringify(health["interface"]); iface != "" {
 		details = append(details, "interface="+iface)
@@ -911,7 +957,10 @@ func addBackhaulHealthFields(result, health map[string]any) {
 		"ping_attempts",
 		"route_warning",
 		"active_state",
+		"load_state",
 		"unit_status_output",
+		"daemon_reload_output",
+		"unit_file_error",
 	} {
 		if value, ok := health[key]; ok {
 			result["health_"+key] = value
@@ -943,8 +992,90 @@ func isMissingSystemdUnitOutput(out string) bool {
 }
 
 func backhaulUnitNotFound(unit string) bool {
-	state := strings.ToLower(strings.TrimSpace(runOutput("systemctl", "show", unit, "-p", "LoadState", "--value")))
+	state := currentUnitLoadState(unit)
 	return state == "" || state == "not-found"
+}
+
+func currentUnitLoadState(unit string) string {
+	unit = strings.TrimSpace(unit)
+	if unit == "" || !isSafeBackhaulUnit(unit) {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(runOutput("systemctl", "show", unit, "-p", "LoadState", "--value")))
+}
+
+func backhaulUnitFilePath(unit string) string {
+	unit = strings.TrimSpace(unit)
+	if unit == "" {
+		return ""
+	}
+	return "/etc/systemd/system/" + unit
+}
+
+func ensureBackhaulSystemdActivationReady(ctx context.Context, unit string) map[string]any {
+	result := map[string]any{
+		"ok":           true,
+		"systemd_unit": unit,
+	}
+	if !isSafeBackhaulUnit(unit) {
+		result["ok"] = false
+		result["status"] = "failed"
+		result["message"] = "backhaul systemd_unit is invalid"
+		return result
+	}
+	result["unit_path"] = backhaulUnitFilePath(unit)
+	if os.Geteuid() != 0 {
+		result["ok"] = false
+		result["status"] = "failed"
+		result["message"] = "managed systemd activation requires the agent to run as root"
+		return result
+	}
+	systemctlPath := strings.TrimSpace(runOutput("which", "systemctl"))
+	if systemctlPath == "" {
+		result["ok"] = false
+		result["status"] = "failed"
+		result["message"] = "systemctl is not available on this node"
+		return result
+	}
+	result["systemctl_path"] = systemctlPath
+	if info, err := os.Stat("/run/systemd/system"); err != nil || !info.IsDir() {
+		result["ok"] = false
+		result["status"] = "failed"
+		result["message"] = "systemd is not available as the node service manager"
+		if err != nil {
+			result["systemd_runtime_error"] = err.Error()
+		}
+		return result
+	}
+	code, out := runInstallCommand(ctx, "systemctl", "--version")
+	result["systemctl_version_output"] = truncate(out, 1000)
+	if code != 0 {
+		result["ok"] = false
+		result["status"] = "failed"
+		result["message"] = "systemctl is present but not usable"
+		result["exit_code"] = code
+		return result
+	}
+	result["status"] = "succeeded"
+	result["message"] = "systemd activation preflight passed"
+	return result
+}
+
+func backhaulSystemdFailureHealth(reason, unit string) map[string]any {
+	health := map[string]any{
+		"status":       "unhealthy",
+		"activated":    true,
+		"probe_mode":   "service_readiness",
+		"reason":       strings.TrimSpace(reason),
+		"systemd_unit": unit,
+	}
+	if loadState := currentUnitLoadState(unit); loadState != "" {
+		health["load_state"] = loadState
+	}
+	if activeState := currentUnitState(unit); activeState != "" {
+		health["active_state"] = activeState
+	}
+	return health
 }
 
 func ensureBackhaulRuntimeCapability(ctx context.Context, driver, role string, activate bool) map[string]any {

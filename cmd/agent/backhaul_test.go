@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestBackhaulManagedPathSafety(t *testing.T) {
 	t.Parallel()
@@ -152,11 +155,32 @@ func TestBackhaulHealthErrorIncludesReadinessDetails(t *testing.T) {
 	got := backhaulHealthError("backhaul service readiness check failed", map[string]any{
 		"reason":       "systemd unit is not active",
 		"active_state": "failed",
+		"load_state":   "loaded",
 		"interface":    "mgbh123",
 	})
-	want := "backhaul service readiness check failed: systemd unit is not active (active_state=failed, interface=mgbh123)"
+	want := "backhaul service readiness check failed: systemd unit is not active (active_state=failed, load_state=loaded, interface=mgbh123)"
 	if got != want {
 		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestBackhaulUnitFilePath(t *testing.T) {
+	t.Parallel()
+
+	if got := backhaulUnitFilePath("megavpn-backhaul-link-ingress.service"); got != "/etc/systemd/system/megavpn-backhaul-link-ingress.service" {
+		t.Fatalf("unit path = %q", got)
+	}
+}
+
+func TestEnsureBackhaulSystemdActivationReadyRejectsInvalidUnit(t *testing.T) {
+	t.Parallel()
+
+	got := ensureBackhaulSystemdActivationReady(context.Background(), "ssh.service")
+	if got["ok"] == true {
+		t.Fatalf("invalid unit preflight must fail: %#v", got)
+	}
+	if got["message"] != "backhaul systemd_unit is invalid" {
+		t.Fatalf("message = %#v", got["message"])
 	}
 }
 
