@@ -152,16 +152,63 @@
       return [reason, metrics].filter(Boolean).join(' · ');
     }
 
-    function renderTunnelCell(transport) {
+    function endpointText(transport) {
       if (!transport) return 'n/a';
-      const network = firstText(transport.tunnel_cidr, 'n/a');
-      const ingress = firstText(transport.ingress_address, 'n/a');
-      const egress = firstText(transport.egress_address, 'n/a');
+      const host = firstText(transport.endpoint_host, 'n/a');
+      const port = firstText(transport.endpoint_port, 'n/a');
+      const protocol = firstText(transport.protocol);
+      return `${host}:${port}${protocol ? ` ${protocol}` : ''}`;
+    }
+
+    function renderBackhaulFact(label, value, className = '') {
       return `
-        <div class="stacked-status">
-          <strong>${escapeHTML(network)}</strong>
-          <small>ingress ${escapeHTML(ingress)}</small>
-          <small>egress ${escapeHTML(egress)}</small>
+        <div class="backhaul-fact ${className}">
+          <span>${escapeHTML(label)}</span>
+          <strong>${escapeHTML(firstText(value, 'n/a'))}</strong>
+        </div>`;
+    }
+
+    function renderBackhaulFactHTML(label, html, className = '') {
+      return `
+        <div class="backhaul-fact ${className}">
+          <span>${escapeHTML(label)}</span>
+          <strong>${html}</strong>
+        </div>`;
+    }
+
+    function renderRoleHealthLine(role, health = {}, applied = false) {
+      const status = firstText(health.status, applied ? 'unknown' : 'not applied');
+      const reason = firstText(health.reason, health.route_warning, health.error, applied ? '' : 'not applied');
+      const peer = firstText(health.peer);
+      const iface = firstText(health.interface);
+      const loss = formatPercent(health.packet_loss_percent);
+      const avg = optionalNumber(health.latency_avg_ms);
+      const active = firstText(health.active_state);
+      const metrics = [
+        avg == null ? '' : `${avg.toFixed(1)} ms avg`,
+        loss,
+        peer ? `peer ${peer}` : '',
+        iface ? `dev ${iface}` : '',
+        active ? `unit ${active}` : '',
+      ].filter(Boolean);
+      return `
+        <div class="backhaul-health-line">
+          <div class="backhaul-health-line-head">
+            <span class="backhaul-role">${escapeHTML(role)}</span>
+            ${statusTag(status)}
+          </div>
+          ${reason ? `<div class="backhaul-health-reason">${escapeHTML(reason)}</div>` : ''}
+          ${metrics.length ? `<div class="backhaul-health-metrics">${metrics.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}</div>` : ''}
+        </div>`;
+    }
+
+    function renderBackhaulHealthBlock(transport) {
+      if (!transport) return '<div class="backhaul-health-empty">unknown</div>';
+      const health = transportHealth(transport);
+      return `
+        <div class="backhaul-health-block">
+          ${renderRoleHealthLine('ingress', health.ingress, roleApplied(transport, 'ingress'))}
+          ${renderRoleHealthLine('egress', health.egress, roleApplied(transport, 'egress'))}
         </div>`;
     }
 
@@ -186,6 +233,112 @@
           </div>`;
       }
       return '<span class="tag">not applied</span>';
+    }
+
+    function renderBackhaulLinkCard(link) {
+      const ingress = nodeByID(link.ingress_node_id);
+      const egress = nodeByID(link.egress_node_id);
+      const transport = selectedTransport(link);
+      const blockReason = probeBlockReason(link, transport);
+      const selectedDriver = transport?.driver || link.desired_driver;
+      const route = `${ingress?.name || link.ingress_node_id || 'ingress'} -> ${egress?.name || link.egress_node_id || 'egress'}`;
+      const protocol = transport ? firstText(transport.protocol, 'n/a') : 'n/a';
+      const iface = transport ? firstText(transport.interface_name, 'n/a') : 'n/a';
+      return `
+        <article class="backhaul-row" data-link-id="${escapeHTML(link.id || '')}">
+          <div class="backhaul-row-head">
+            <div class="backhaul-title-block">
+              <h3>${escapeHTML(link.name || 'backhaul')}</h3>
+              <div class="backhaul-route">${escapeHTML(route)}</div>
+            </div>
+            <div class="backhaul-row-tags">
+              ${statusTag(link.status || 'unknown')}
+              <span class="tag">${escapeHTML(driverLabel(selectedDriver))}</span>
+              ${renderAppliedCell(transport)}
+            </div>
+          </div>
+          <div class="backhaul-row-grid">
+            <section class="backhaul-panel">
+              <div class="backhaul-panel-label">Transport</div>
+              <div class="backhaul-facts">
+                ${renderBackhaulFact('Endpoint', endpointText(transport), 'wide')}
+                ${renderBackhaulFact('Protocol', protocol)}
+                ${renderBackhaulFactHTML('Profiles', renderTransportTags(link))}
+              </div>
+            </section>
+            <section class="backhaul-panel">
+              <div class="backhaul-panel-label">Tunnel</div>
+              <div class="backhaul-facts">
+                ${renderBackhaulFact('CIDR', transport?.tunnel_cidr)}
+                ${renderBackhaulFact('Ingress IP', transport?.ingress_address)}
+                ${renderBackhaulFact('Egress IP', transport?.egress_address)}
+                ${renderBackhaulFact('Interface', iface)}
+              </div>
+            </section>
+            <section class="backhaul-panel backhaul-health-panel">
+              <div class="backhaul-panel-label">Health</div>
+              ${renderBackhaulHealthBlock(transport)}
+            </section>
+            <section class="backhaul-panel backhaul-actions-panel">
+              <div class="backhaul-panel-label">Actions</div>
+              <div class="backhaul-actions">
+                <button class="secondary-btn inspect-backhaul-btn" type="button" data-link-id="${escapeHTML(link.id || '')}">Manage</button>
+                <button class="primary-btn apply-backhaul-btn" type="button" data-link-id="${escapeHTML(link.id || '')}">Apply</button>
+                <button class="secondary-btn probe-backhaul-btn" type="button" data-link-id="${escapeHTML(link.id || '')}" title="${escapeHTML(blockReason || 'Test both directions')}"${blockReason ? ' disabled' : ''}>Test</button>
+                <button class="danger-btn delete-backhaul-btn" type="button" data-link-id="${escapeHTML(link.id || '')}" data-link-name="${escapeHTML(link.name || 'backhaul')}">Delete</button>
+              </div>
+            </section>
+          </div>
+        </article>`;
+    }
+
+    function renderBackhaulList(links) {
+      if (!links.length) return '<div class="empty backhaul-empty">Нет данных для отображения</div>';
+      return links.map(renderBackhaulLinkCard).join('');
+    }
+
+    function renderTransportProfilePanel(transport, link) {
+      const driver = driverDef(transport.driver) || {};
+      const selected = transport.id === link.selected_transport_id;
+      return `
+        <article class="backhaul-profile-row">
+          <div class="backhaul-profile-head">
+            <div>
+              <strong>${escapeHTML(driverLabel(transport.driver))}</strong>
+              <span>${escapeHTML(transport.interface_name || 'n/a')}</span>
+            </div>
+            <div class="backhaul-row-tags">
+              ${statusTag(transport.status || 'planned')}
+              ${selected ? '<span class="tag ok">selected</span>' : ''}
+              ${driverModeTag(driver)}
+            </div>
+          </div>
+          <div class="backhaul-row-grid compact">
+            <section class="backhaul-panel">
+              <div class="backhaul-panel-label">Transport</div>
+              <div class="backhaul-facts">
+                ${renderBackhaulFact('Endpoint', endpointText(transport), 'wide')}
+                ${renderBackhaulFact('Protocol', transport.protocol)}
+              </div>
+            </section>
+            <section class="backhaul-panel">
+              <div class="backhaul-panel-label">Tunnel</div>
+              <div class="backhaul-facts">
+                ${renderBackhaulFact('CIDR', transport.tunnel_cidr)}
+                ${renderBackhaulFact('Ingress IP', transport.ingress_address)}
+                ${renderBackhaulFact('Egress IP', transport.egress_address)}
+              </div>
+            </section>
+            <section class="backhaul-panel backhaul-health-panel">
+              <div class="backhaul-panel-label">Health</div>
+              ${renderBackhaulHealthBlock(transport)}
+            </section>
+            <section class="backhaul-panel">
+              <div class="backhaul-panel-label">Applied</div>
+              ${renderAppliedCell(transport)}
+            </section>
+          </div>
+        </article>`;
     }
 
     function cleanupRoleSummary(cleanup, role) {
@@ -218,29 +371,6 @@
       if (String(transport.status || '').toLowerCase() !== 'active') return 'Selected transport is not active yet.';
       if (!roleApplied(transport, 'ingress') || !roleApplied(transport, 'egress')) return 'Both ingress and egress sides must be applied before testing.';
       return '';
-    }
-
-    function renderHealthCell(transport) {
-      if (!transport) return '<span class="tag">unknown</span>';
-      const health = transportHealth(transport);
-      const latency = health.avgLatency == null ? '' : `<small>${escapeHTML(health.avgLatency.toFixed(1))} ms avg</small>`;
-      const ingressSummary = healthSummary(health.ingress);
-      const egressSummary = healthSummary(health.egress);
-      const details = [
-        ingressSummary ? `ingress: ${ingressSummary}` : '',
-        egressSummary ? `egress: ${egressSummary}` : '',
-        !roleApplied(transport, 'ingress') ? 'ingress: not applied' : '',
-        !roleApplied(transport, 'egress') ? 'egress: not applied' : '',
-      ].filter(Boolean).join(' | ');
-      return `
-        <div class="stacked-status">
-          <span class="inline-actions compact-inline">
-            ${statusTag(health.ingress.status || 'unknown')}
-            ${statusTag(health.egress.status || 'unknown')}
-          </span>
-          ${latency}
-          ${details ? `<small>${escapeHTML(details)}</small>` : ''}
-        </div>`;
     }
 
     function renderJobList(jobs) {
@@ -311,27 +441,6 @@
       const allLinks = Array.isArray(state.backhaulLinks) ? state.backhaulLinks : [];
       const links = allLinks.filter((link) => link.status !== 'deleted');
       const deletedLinks = allLinks.filter((link) => link.status === 'deleted');
-      const rows = links.map((link) => {
-        const ingress = nodeByID(link.ingress_node_id);
-        const egress = nodeByID(link.egress_node_id);
-        const transport = selectedTransport(link);
-        const blockReason = probeBlockReason(link, transport);
-        return {
-          id: link.id,
-          name: link.name || 'backhaul',
-          ingress: ingress?.name || link.ingress_node_id,
-          egress: egress?.name || link.egress_node_id,
-          driver: driverLabel(link.desired_driver),
-          endpoint: transport ? `${transport.endpoint_host || 'n/a'}:${transport.endpoint_port || 'n/a'} ${transport.protocol || ''}` : 'n/a',
-          status: link.status || 'unknown',
-          transports: renderTransportTags(link),
-          health: renderHealthCell(transport),
-          tunnel: renderTunnelCell(transport),
-          applied: renderAppliedCell(transport),
-          canProbe: blockReason === '',
-          probeTitle: blockReason,
-        };
-      });
       const deletedRows = deletedLinks.map((link) => {
         const ingress = nodeByID(link.ingress_node_id);
         const egress = nodeByID(link.egress_node_id);
@@ -345,25 +454,16 @@
         };
       });
       el('content').innerHTML = `
-        ${tableCard('Ingress to Egress Backhaul', rows, [
-          { title: 'Name', key: 'name' },
-          { title: 'Ingress', key: 'ingress' },
-          { title: 'Egress', key: 'egress' },
-          { title: 'Driver', key: 'driver' },
-          { title: 'Endpoint', key: 'endpoint' },
-          { title: 'Tunnel', key: 'tunnel', render: (row) => row.tunnel },
-          { title: 'Status', key: 'status', render: (row) => statusTag(row.status) },
-          { title: 'Health', key: 'health', render: (row) => row.health },
-          { title: 'Applied', key: 'applied', render: (row) => row.applied },
-          { title: 'Profiles', key: 'transports', render: (row) => row.transports },
-          { title: 'Actions', key: 'id', render: (row) => `
-            <div class="inline-actions">
-              <button class="secondary-btn inspect-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Manage</button>
-              <button class="primary-btn apply-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}">Apply profiles</button>
-              <button class="secondary-btn probe-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}" title="${escapeHTML(row.probeTitle || 'Test both directions')}"${row.canProbe ? '' : ' disabled'}>Test</button>
-              <button class="danger-btn delete-backhaul-btn" type="button" data-link-id="${escapeHTML(row.id)}" data-link-name="${escapeHTML(row.name)}">Delete</button>
-            </div>` },
-        ], '<button class="secondary-btn" id="createBackhaulBtn" type="button">Create backhaul</button>')}
+        <section class="table-card backhaul-overview">
+          <div class="table-head backhaul-overview-head">
+            <h2>Ingress to Egress Backhaul</h2>
+            <div class="table-tools">
+              <span class="tag">${escapeHTML(String(links.length))} active</span>
+              <button class="secondary-btn" id="createBackhaulBtn" type="button">Create backhaul</button>
+            </div>
+          </div>
+          <div class="backhaul-list">${renderBackhaulList(links)}</div>
+        </section>
         ${deletedRows.length ? tableCard('Recently Deleted Backhaul', deletedRows, [
           { title: 'Name', key: 'name' },
           { title: 'Ingress', key: 'ingress' },
@@ -541,23 +641,8 @@
           <div class="card"><div class="mini-label">Preferred driver</div><div class="metric-caption">${escapeHTML(driverLabel(link.desired_driver))}</div></div>
           <div class="card"><div class="mini-label">Status</div><div class="metric-caption">${statusTag(link.status || 'unknown')}</div></div>
         </div>
-        <div class="table-wrap" style="margin-top:16px">
-          <table>
-            <thead><tr><th>Driver</th><th>Status</th><th>Mode</th><th>Endpoint</th><th>Interface</th><th>Tunnel</th><th>Health</th><th>Applied</th></tr></thead>
-            <tbody>
-              ${transports.length ? transports.map((transport) => `
-                <tr>
-                  <td>${escapeHTML(driverLabel(transport.driver))}</td>
-                  <td>${statusTag(transport.status || 'planned')}</td>
-                  <td>${driverModeTag(driverDef(transport.driver) || {})}</td>
-                  <td>${escapeHTML(transport.endpoint_host || 'n/a')}:${escapeHTML(transport.endpoint_port || 'n/a')} ${escapeHTML(transport.protocol || '')}</td>
-                  <td>${escapeHTML(transport.interface_name || 'n/a')}</td>
-                  <td>${renderTunnelCell(transport)}</td>
-                  <td>${renderHealthCell(transport)}</td>
-                  <td>${renderAppliedCell(transport)}</td>
-                </tr>`).join('') : '<tr><td colspan="8"><div class="empty">No transport profiles.</div></td></tr>'}
-            </tbody>
-          </table>
+        <div class="backhaul-profile-list">
+          ${transports.length ? transports.map((transport) => renderTransportProfilePanel(transport, link)).join('') : '<div class="empty">No transport profiles.</div>'}
         </div>
         <div class="modal-actions">
           <button class="secondary-btn" id="closeBackhaulDetailsBtn" type="button">Close</button>
