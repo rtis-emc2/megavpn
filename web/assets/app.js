@@ -1,4 +1,6 @@
 (() => {
+  // Composition root only: bootstrap state, dependency wiring, routing and refresh loop stay here.
+  // Page workflows, shell rendering and reusable UI primitives belong in dedicated web/assets modules.
   function escapeBootstrapHTML(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
   }
@@ -240,21 +242,9 @@
     return Array.isArray(state.authRoles) && state.authRoles.includes(code);
   }
 
-  function metric(label, value, caption, targetPage = '') {
-    const attrs = targetPage ? ` role="button" tabindex="0" data-page-target="${escapeHTML(targetPage)}"` : '';
-    return `<div class="card metric-card${targetPage ? ' dashboard-nav-tile' : ''}"${attrs}><div class="mini-label">${escapeHTML(label)}</div><div class="metric-value">${escapeHTML(value)}</div><div class="metric-caption">${escapeHTML(caption)}</div></div>`;
-  }
-
-  function tableCard(title, rows, columns, tools = '') {
-    const body = rows.length
-      ? rows.map((row) => `<tr>${columns.map((c) => `<td>${c.render ? c.render(row) : escapeHTML(row[c.key])}</td>`).join('')}</tr>`).join('')
-      : `<tr><td colspan="${columns.length}"><div class="empty">Нет данных для отображения</div></td></tr>`;
-    return `
-      <section class="table-card">
-        <div class="table-head"><h2>${title}</h2><div class="table-tools">${tools}</div></div>
-        <div class="table-wrap"><table><thead><tr>${columns.map((c) => `<th>${c.title}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div>
-      </section>`;
-  }
+  const uiPrimitives = window.MegaVPNUIPrimitives?.create?.({ escapeHTML });
+  if (!uiPrimitives) throw new Error('MegaVPNUIPrimitives is not loaded');
+  const { metric, tableCard } = uiPrimitives;
 
   let authWorkflows = null;
   const shellUI = window.MegaVPNShellUI?.create?.({

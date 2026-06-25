@@ -826,6 +826,120 @@ tr:hover td { background: #f8fafc; }
 .tag.danger { border-color: rgba(220, 38, 38, 0.22); color: #991b1b; background: #fff1f2; }
 .tag.stub { border-color: rgba(29, 78, 216, 0.18); color: #1e3a8a; background: #eff6ff; }
 
+.table-card {
+  min-width: 0;
+}
+.table-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.table-head h2 {
+  min-width: 0;
+  line-height: 1.25;
+}
+.table-tools {
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.table-tools .inline-actions {
+  justify-content: flex-end;
+}
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-wrap table {
+  min-width: 860px;
+}
+.table-wrap th,
+.table-wrap td {
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.table-wrap th {
+  white-space: nowrap;
+}
+.table-wrap td {
+  line-height: 1.42;
+}
+.table-wrap .compact-actions {
+  min-width: 190px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.table-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  align-items: stretch;
+  min-width: 104px;
+}
+.table-actions .primary-btn,
+.table-actions .secondary-btn,
+.table-actions .danger-btn {
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.node-table-actions {
+  min-width: 96px;
+}
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+.ssh-console {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  gap: 14px;
+  align-items: stretch;
+}
+.ssh-console-screen {
+  min-height: 360px;
+  padding: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.22);
+  border-radius: 14px;
+  background: #0f172a;
+  color: #d1fae5;
+  font-family: var(--mono);
+  overflow: auto;
+}
+.ssh-console-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.ssh-console-line.muted {
+  color: #93a4bd;
+}
+.ssh-console-line.error {
+  color: #fecdd3;
+}
+.ssh-console-side {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+.ssh-console-side p {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+.ssh-console-actions {
+  align-items: stretch;
+}
+.ssh-console-actions > * {
+  width: 100%;
+}
+
 .metric-value {
   font-size: 24px;
   line-height: 1.08;
@@ -1466,6 +1580,7 @@ tr:hover td { background: #f8fafc; }
   .node-modal-grid { grid-template-columns: 1fr; }
   .node-console-layout { grid-template-columns: 1fr; }
   .node-console-nav { position: static; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .ssh-console { grid-template-columns: 1fr; }
   .auth-gate .login-shell { grid-template-columns: 1fr; }
   .auth-gate .login-hero, .auth-gate .auth-card { min-height: auto; }
   .certificate-choice-grid, .certificate-manage-layout, .certificate-preview-grid, .choice-list { grid-template-columns: 1fr; }
@@ -1528,5 +1643,16 @@ tr:hover td { background: #f8fafc; }
   }
   .instance-row-tags {
     justify-content: flex-start;
+  }
+  .table-head,
+  .table-tools,
+  .table-tools .inline-actions {
+    justify-content: flex-start;
+  }
+  .table-wrap table {
+    min-width: 760px;
+  }
+  .ssh-console-screen {
+    min-height: 280px;
   }
 }
