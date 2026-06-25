@@ -180,6 +180,7 @@ type Server struct {
 	sessionCookieSecureSet bool
 	webRoot                string
 	rateLimiter            *rateLimiter
+	terminalSessions       *terminalSessionStore
 	trustProxyHeaders      bool
 	maxRequestBytes        int64
 	secretStorageReady     bool
@@ -225,6 +226,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 		sessionCookieSecureSet: opts.SessionCookieSecureSet,
 		webRoot:                strings.TrimSpace(opts.WebRoot),
 		rateLimiter:            newRateLimiter(),
+		terminalSessions:       newTerminalSessionStore(),
 		trustProxyHeaders:      opts.TrustProxyHeaders,
 		maxRequestBytes:        opts.MaxRequestBytes,
 		secretStorageReady:     opts.SecretStorageReady,
@@ -301,6 +303,8 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/nodes/{id}/diagnostics/clear-stale-rotation", "node.bootstrap", s.clearNodeStaleRotation)
 	protected("GET /api/v1/nodes/{id}/access-methods", "node.read", s.listNodeAccessMethods)
 	protected("PUT /api/v1/nodes/{id}/access-methods", "node.bootstrap", s.replaceNodeAccessMethods)
+	protected("POST /api/v1/nodes/{id}/ssh/sessions", "node.bootstrap", s.createNodeSSHTerminalSession)
+	protected("GET /api/v1/nodes/{id}/ssh/terminal", "node.bootstrap", s.nodeSSHTerminal)
 	protected("POST /api/v1/nodes/{id}/bootstrap", "node.bootstrap", s.createNodeBootstrapJob)
 	protected("GET /api/v1/nodes/{id}/bootstrap-runs", "node.read", s.listNodeBootstrapRuns)
 	protected("GET /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle", "node.bootstrap", s.getNodeBootstrapBundle)

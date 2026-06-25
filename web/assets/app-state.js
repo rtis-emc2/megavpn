@@ -39,6 +39,7 @@
       revisionsInstanceID: localStorage.getItem('megavpn.revisionsInstanceID') || '',
       nodeManageID: '',
       nodeManageData: null,
+      nodeTerminalActive: false,
       refreshSeq: 0,
       refreshInFlight: false,
       refreshInFlightSeq: 0,

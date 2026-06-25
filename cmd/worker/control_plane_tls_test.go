@@ -53,3 +53,23 @@ func TestValidateControlPlaneTLSApplySettingsRejectsMalformedIPLiteral(t *testin
 		t.Fatalf("error = %v, want malformed server_name rejection", err)
 	}
 }
+
+func TestRenderControlPlaneNginxConfigSupportsWebSocketUpgrade(t *testing.T) {
+	t.Parallel()
+
+	conf := renderControlPlaneNginxConfig(domain.ControlPlaneTLSSettings{
+		ServerName:  "control.example.com",
+		ListenPort:  58765,
+		UpstreamURL: "http://127.0.0.1:8080",
+	}, "/etc/megavpn/fullchain.pem", "/etc/megavpn/privkey.pem")
+	for _, want := range []string{
+		"map $http_upgrade $megavpn_control_plane_connection_upgrade",
+		"proxy_http_version 1.1;",
+		"proxy_set_header Upgrade $http_upgrade;",
+		"proxy_set_header Connection $megavpn_control_plane_connection_upgrade;",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("rendered nginx config does not contain %q:\n%s", want, conf)
+		}
+	}
+}

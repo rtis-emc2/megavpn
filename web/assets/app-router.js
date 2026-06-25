@@ -108,6 +108,7 @@
       const isAuthenticated = Boolean(state.authUser);
       setShellMode(isAuthenticated);
       if (!isAuthenticated) {
+        nodeWorkflows.disconnectNodeTerminal?.();
         if (state.inviteToken) {
           authWorkflows.renderInviteAcceptScreen();
           return;
@@ -124,6 +125,9 @@
 
     function setPage(page) {
       if (page !== 'nodeManage') {
+        nodeWorkflows.disconnectNodeTerminal?.();
+      }
+      if (page !== 'nodeManage') {
         state.nodeManageID = '';
         state.nodeManageData = null;
       }
@@ -135,6 +139,7 @@
     }
 
     function autoRefreshEnabledForCurrentPage() {
+      if (state.page === 'nodeManage' && state.nodeTerminalActive) return false;
       return autoRefreshPages.has(state.page);
     }
 

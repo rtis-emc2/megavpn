@@ -94,6 +94,161 @@
       return Array.isArray(value) ? value : [];
     }
 
+    let activeTerminalSocket = null;
+
+    function enabledSSHMethod(methods) {
+      return arrayOrEmpty(methods).find((item) => item.method === 'ssh' && item.is_enabled === true) || null;
+    }
+
+    function terminalEndpointLabel(method) {
+      if (!method) return 'not configured';
+      return `${method.ssh_user || 'user'}@${method.ssh_host || 'host'}:${method.ssh_port || 22}`;
+    }
+
+    function terminalWebSocketURL(nodeID, sessionID) {
+      const base = `${state.apiBase || ''}/api/v1/nodes/${encodeURIComponent(nodeID)}/ssh/terminal?session=${encodeURIComponent(sessionID)}`;
+      const url = new URL(base, window.location.href);
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      return url.toString();
+    }
+
+    function terminalOutputElement() {
+      return document.getElementById('nodeTerminalOutput');
+    }
+
+    function setTerminalStatus(value, kind = 'stub') {
+      const target = document.getElementById('nodeTerminalStatus');
+      if (!target) return;
+      target.innerHTML = `<span class="tag ${kind}">${escapeHTML(value)}</span>`;
+    }
+
+    function appendTerminalOutput(value) {
+      const output = terminalOutputElement();
+      if (!output) return;
+      output.textContent += String(value || '');
+      if (output.textContent.length > 220000) {
+        output.textContent = output.textContent.slice(-180000);
+      }
+      output.parentElement?.scrollTo({ top: output.parentElement.scrollHeight });
+    }
+
+    function terminalKeyData(event) {
+      if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1) {
+        const code = event.key.toUpperCase().charCodeAt(0);
+        if (code >= 64 && code <= 95) return String.fromCharCode(code - 64);
+      }
+      if (event.metaKey || event.altKey) return '';
+      switch (event.key) {
+      case 'Enter': return '\r';
+      case 'Backspace': return '\x7f';
+      case 'Tab': return '\t';
+      case 'Escape': return '\x1b';
+      case 'ArrowUp': return '\x1b[A';
+      case 'ArrowDown': return '\x1b[B';
+      case 'ArrowRight': return '\x1b[C';
+      case 'ArrowLeft': return '\x1b[D';
+      case 'Delete': return '\x1b[3~';
+      case 'Home': return '\x1b[H';
+      case 'End': return '\x1b[F';
+      case 'PageUp': return '\x1b[5~';
+      case 'PageDown': return '\x1b[6~';
+      default:
+        return event.key.length === 1 ? event.key : '';
+      }
+    }
+
+    function sendTerminalInput(data) {
+      if (!activeTerminalSocket || activeTerminalSocket.readyState !== WebSocket.OPEN || !data) return;
+      activeTerminalSocket.send(JSON.stringify({ type: 'input', data }));
+    }
+
+    async function startNodeTerminal(node) {
+      if (!node?.id) return;
+      disconnectNodeTerminal();
+      const startButton = document.getElementById('startNodeTerminalBtn');
+      if (startButton) startButton.disabled = true;
+      setTerminalStatus('opening', 'warn');
+      appendTerminalOutput(`\n[megavpn] opening ssh terminal for ${node.name || node.id}\n`);
+      try {
+        const ticket = await sendJSON(`/api/v1/nodes/${encodeURIComponent(node.id)}/ssh/sessions`, 'POST', {});
+        const socket = new WebSocket(terminalWebSocketURL(node.id, ticket.session_id));
+        activeTerminalSocket = socket;
+        state.nodeTerminalActive = true;
+        socket.addEventListener('open', () => {
+          setTerminalStatus('connected', 'ok');
+          document.getElementById('disconnectNodeTerminalBtn')?.removeAttribute('disabled');
+          document.getElementById('nodeTerminalSurface')?.focus();
+        });
+        socket.addEventListener('message', (event) => {
+          let msg = null;
+          try {
+            msg = JSON.parse(event.data);
+          } catch (_) {
+            appendTerminalOutput(String(event.data || ''));
+            return;
+          }
+          if (msg.type === 'output') appendTerminalOutput(msg.data || '');
+          if (msg.type === 'status') setTerminalStatus(msg.message || 'connected', 'ok');
+          if (msg.type === 'error') {
+            setTerminalStatus('error', 'danger');
+            appendTerminalOutput(`\n[megavpn] ${msg.message || 'terminal error'}\n`);
+          }
+          if (msg.type === 'exit') {
+            setTerminalStatus('closed', 'stub');
+            appendTerminalOutput(`\n[megavpn] ${msg.message || 'ssh session closed'}\n`);
+          }
+        });
+        socket.addEventListener('close', () => {
+          if (activeTerminalSocket === socket) activeTerminalSocket = null;
+          state.nodeTerminalActive = false;
+          setTerminalStatus('disconnected', 'stub');
+          if (startButton) startButton.disabled = false;
+          document.getElementById('disconnectNodeTerminalBtn')?.setAttribute('disabled', 'disabled');
+        });
+        socket.addEventListener('error', () => {
+          setTerminalStatus('connection error', 'danger');
+        });
+      } catch (err) {
+        state.nodeTerminalActive = false;
+        setTerminalStatus('failed', 'danger');
+        appendTerminalOutput(`\n[megavpn] ${err.message}\n`);
+        if (startButton) startButton.disabled = false;
+      }
+    }
+
+    function disconnectNodeTerminal() {
+      if (activeTerminalSocket && activeTerminalSocket.readyState === WebSocket.OPEN) {
+        activeTerminalSocket.send(JSON.stringify({ type: 'close' }));
+      }
+      if (activeTerminalSocket) {
+        activeTerminalSocket.close();
+      }
+      activeTerminalSocket = null;
+      state.nodeTerminalActive = false;
+    }
+
+    function bindNodeTerminal(node) {
+      const surface = document.getElementById('nodeTerminalSurface');
+      document.getElementById('startNodeTerminalBtn')?.addEventListener('click', () => startNodeTerminal(node));
+      document.getElementById('disconnectNodeTerminalBtn')?.addEventListener('click', disconnectNodeTerminal);
+      document.getElementById('clearNodeTerminalBtn')?.addEventListener('click', () => {
+        const output = terminalOutputElement();
+        if (output) output.textContent = '';
+      });
+      surface?.addEventListener('keydown', (event) => {
+        const data = terminalKeyData(event);
+        if (!data) return;
+        event.preventDefault();
+        sendTerminalInput(data);
+      });
+      surface?.addEventListener('paste', (event) => {
+        const text = event.clipboardData?.getData('text/plain') || '';
+        if (!text) return;
+        event.preventDefault();
+        sendTerminalInput(text);
+      });
+    }
+
     function openCreateNodeModal() {
       openModal('Add node', 'Onboarding wizard', `
         <form id="createNodeForm" class="form-grid">
@@ -409,6 +564,7 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
       const discoverySummary = diag?.discovery_summary || { total: 0, available: 0, imported: 0, ignored: 0, by_service: {} };
       const recentDiscoveries = Array.isArray(diag?.recent_discoveries) ? diag.recent_discoveries : [];
       const agent = diag?.agent || {};
+      const terminalMethod = enabledSSHMethod(methods);
       const methodRows = methods.length
         ? methods.map((item) => `
             <tr>
@@ -458,7 +614,7 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
       const activeTab = defaultNodeConsoleTab(diag);
       const setupLabel = nodeExecutionLabel(node.execution_mode || 'unknown');
       const communicationState = diag?.communication_state || 'unknown';
-      const accessStatus = sshMethod?.is_enabled ? 'configured' : 'missing';
+      const accessStatus = terminalMethod ? 'configured' : 'missing';
       const publicURL = platformPublicBaseURL() || 'not configured';
       const agentNextStepPanel = String(diag?.communication_state || '') === 'awaiting_enrollment'
         ? `<div class="fact-card emphasis-card node-next-step">
@@ -488,6 +644,7 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
           <nav class="node-console-nav" aria-label="Node management sections">
             ${nodeConsoleTabButton('overview', 'Overview', 'profile and actions', activeTab)}
             ${nodeConsoleTabButton('bootstrap', 'Bootstrap', 'SSH, tokens, jobs', activeTab)}
+            ${nodeConsoleTabButton('terminal', 'Terminal', 'browser SSH', activeTab)}
             ${nodeConsoleTabButton('agent', 'Agent channel', 'health and trust', activeTab)}
             ${nodeConsoleTabButton('inventory', 'Inventory', 'host snapshot', activeTab)}
             ${nodeConsoleTabButton('services', 'Services', 'discovery results', activeTab)}
@@ -521,6 +678,7 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
                   <div class="section-body">
                     <div class="operator-action-grid">
                       <button class="operator-action" id="editNodeFromManageBtn" type="button"><strong>Edit profile</strong><span>Name, role, address, setup method.</span></button>
+                      <button class="operator-action" id="openNodeTerminalBtn" type="button"><strong>SSH terminal</strong><span>${escapeHTML(terminalEndpointLabel(terminalMethod))}</span></button>
                       <button class="operator-action" id="refreshNodeRuntimeBtn" type="button"><strong>Refresh diagnostics</strong><span>Reload current runtime state.</span></button>
                       <button class="operator-action" id="nodeMaintenanceToggleBtn" type="button"><strong>${node.status === 'maintenance' ? 'Disable maintenance' : 'Enable maintenance'}</strong><span>Control scheduling state for this node.</span></button>
                       <button class="operator-action danger-action" id="deleteNodeFromManageBtn" type="button"><strong>Delete node</strong><span>Retire node after instances are moved or removed.</span></button>
@@ -529,6 +687,38 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
                   </div>
                 </section>
               </div>
+            </section>
+            <section class="node-tab-panel${activeTab === 'terminal' ? ' is-active' : ''}" data-node-panel="terminal">
+              <div class="node-panel-head">
+                <div><div class="eyebrow">SSH Terminal</div><h2>Browser Console</h2></div>
+                <div class="section-meta">
+                  ${statusTag(terminalMethod ? 'configured' : 'missing')}
+                  ${terminalMethod ? `<span class="tag">${escapeHTML(terminalMethod.auth_type || 'ssh_key')}</span>` : ''}
+                </div>
+              </div>
+              <section class="section-card web-terminal-card">
+                <div class="section-head">
+                  <div>
+                    <div class="mini-label">Endpoint</div>
+                    <h2>${escapeHTML(terminalEndpointLabel(terminalMethod))}</h2>
+                  </div>
+                  <div id="nodeTerminalStatus">${statusTag('disconnected')}</div>
+                </div>
+                <div class="section-body">
+                  <div class="section-actions">
+                    <button class="primary-btn" id="startNodeTerminalBtn" type="button"${terminalMethod ? '' : ' disabled'}>Start terminal</button>
+                    <button class="secondary-btn" id="disconnectNodeTerminalBtn" type="button" disabled>Disconnect</button>
+                    <button class="secondary-btn" id="clearNodeTerminalBtn" type="button">Clear</button>
+                    <button class="secondary-btn" id="openTerminalBootstrapBtn" type="button">SSH settings</button>
+                  </div>
+                  <div class="web-terminal" id="nodeTerminalSurface" tabindex="0" spellcheck="false" aria-label="Node SSH terminal">
+                    <pre id="nodeTerminalOutput">MegaVPN web terminal
+node: ${escapeHTML(node.name || node.id)}
+endpoint: ${escapeHTML(terminalEndpointLabel(terminalMethod))}
+</pre>
+                  </div>
+                </div>
+              </section>
             </section>
             <section class="node-tab-panel${activeTab === 'agent' ? ' is-active' : ''}" data-node-panel="agent">
             <section class="section-card">
@@ -702,6 +892,9 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       document.getElementById('refreshNodeBootstrapBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Bootstrap state refreshed.'));
       document.getElementById('editNodeFromManageBtn').addEventListener('click', () => openEditNodeModal(node.id));
       document.getElementById('deleteNodeFromManageBtn').addEventListener('click', () => openDeleteNodeModal(node.id, node.name));
+      document.getElementById('openNodeTerminalBtn')?.addEventListener('click', () => switchNodeConsoleTab('terminal'));
+      document.getElementById('openTerminalBootstrapBtn')?.addEventListener('click', () => switchNodeConsoleTab('bootstrap'));
+      bindNodeTerminal(node);
       document.getElementById('openBootstrapFromAgentBtn')?.addEventListener('click', () => switchNodeConsoleTab('bootstrap'));
       document.getElementById('editSetupFromAgentBtn')?.addEventListener('click', () => openEditNodeModal(node.id));
       document.querySelectorAll('.bootstrap-run-view-btn').forEach((button) => {
@@ -710,6 +903,9 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
     }
 
     async function reloadNodeControlModal(nodeID, flash) {
+      if (state.nodeTerminalActive) {
+        disconnectNodeTerminal();
+      }
       const [node, diag, methods, runs, tokens] = await Promise.all([
         requestJSON(`/api/v1/nodes/${nodeID}`),
         requestJSON(`/api/v1/nodes/${nodeID}/diagnostics`),
@@ -1012,6 +1208,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       openEditNodeModal,
       openDeleteNodeModal,
       openNodeControlModal,
+      disconnectNodeTerminal,
       renderNodeManagePage,
       reloadNodeControlModal,
       saveSSHAccess,

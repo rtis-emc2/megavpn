@@ -123,134 +123,6 @@
       ));
     }
 
-    function selectEnabledSSHAccess(methods) {
-      return normalizeAccessMethods(methods).find((method) => (
-        String(method?.method || '').toLowerCase() === 'ssh' && method?.is_enabled === true
-      )) || null;
-    }
-
-    function sshTarget(method) {
-      const user = String(method?.ssh_user || '').trim();
-      const host = String(method?.ssh_host || '').trim();
-      if (!user || !host) return '';
-      return `${user}@${host}`;
-    }
-
-    function shellSingleQuote(value) {
-      return `'${String(value).replace(/'/g, `'\\''`)}'`;
-    }
-
-    function sshPort(method) {
-      const port = Number(method?.ssh_port || 22);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) return 22;
-      return port;
-    }
-
-    function sshCommand(method) {
-      const target = sshTarget(method);
-      if (!target) return '';
-      return `ssh -p ${sshPort(method)} -- ${shellSingleQuote(target)}`;
-    }
-
-    function sshURL(method) {
-      const user = encodeURIComponent(String(method?.ssh_user || '').trim());
-      const host = String(method?.ssh_host || '').trim();
-      const port = sshPort(method);
-      if (!user || !host) return '';
-      const normalizedHost = host.startsWith('[') && host.endsWith(']')
-        ? host
-        : (host.includes(':') ? `[${host}]` : host);
-      return `ssh://${user}@${normalizedHost}${port !== 22 ? `:${port}` : ''}`;
-    }
-
-    async function copySSHCommand(command, targetID = 'sshConsoleResult') {
-      const target = document.getElementById(targetID);
-      try {
-        await navigator.clipboard.writeText(command);
-        if (target) target.innerHTML = '<span class="tag ok">command copied</span>';
-      } catch (err) {
-        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message || 'copy failed')}</span>`;
-      }
-    }
-
-    async function openSSHConsoleModal(nodeID) {
-      const node = (state.nodes || []).find((item) => item.id === nodeID);
-      if (!node) return;
-      openModal(`SSH: ${node.name || 'node'}`, 'Node access launcher', '<div id="sshConsoleBody"><span class="tag warn">loading access methods</span></div>', { wide: true });
-      const body = document.getElementById('sshConsoleBody');
-      try {
-        const methods = await requestJSON(`/api/v1/nodes/${encodeURIComponent(node.id)}/access-methods`);
-        const method = selectEnabledSSHAccess(methods);
-        if (!method) {
-          body.innerHTML = `
-            <div class="ssh-console">
-              <div class="ssh-console-screen">
-                <div class="ssh-console-line muted">$ ssh ${escapeHTML(node.name || node.address || 'node')}</div>
-                <div class="ssh-console-line error">enabled SSH access method is not configured</div>
-              </div>
-              <div class="ssh-console-side">
-                <div class="fact-card">
-                  <div class="mini-label">Next step</div>
-                  <div class="metric-caption strong">Configure SSH access in node bootstrap settings.</div>
-                  <p>SSH secrets are not exposed to the browser. The control plane stores them only for bootstrap jobs.</p>
-                </div>
-                <div class="inline-actions">
-                  <button class="primary-btn" id="sshOpenManageBtn" type="button">Open Manage</button>
-                  <button class="secondary-btn" id="sshCloseBtn" type="button">Close</button>
-                </div>
-              </div>
-            </div>`;
-          document.getElementById('sshOpenManageBtn')?.addEventListener('click', () => {
-            closeModal();
-            openNodeControlModal(node.id);
-          });
-          document.getElementById('sshCloseBtn')?.addEventListener('click', closeModal);
-          return;
-        }
-        const command = sshCommand(method);
-        if (!command) {
-          throw new Error('Enabled SSH access is missing ssh_user or ssh_host.');
-        }
-        const url = sshURL(method);
-        const fingerprint = method.ssh_host_key_sha256 || 'not pinned';
-        body.innerHTML = `
-          <div class="ssh-console">
-            <div class="ssh-console-screen" role="region" aria-label="SSH command">
-              <div class="ssh-console-line muted"># ${escapeHTML(node.name || node.id)} · ${escapeHTML(node.address || 'no node address')}</div>
-              <div class="ssh-console-line">$ ${escapeHTML(command)}</div>
-              <div class="ssh-console-line muted"># pinned host key fingerprint</div>
-              <div class="ssh-console-line">${escapeHTML(fingerprint)}</div>
-            </div>
-            <div class="ssh-console-side">
-              <div class="fact-card">
-                <div class="mini-label">Endpoint</div>
-                <div class="metric-caption strong">${escapeHTML(method.ssh_host || 'n/a')}:${escapeHTML(String(method.ssh_port || 22))}</div>
-                <div class="metric-caption">${escapeHTML(method.ssh_user || 'n/a')} · ${escapeHTML(method.auth_type || 'ssh_key')}</div>
-              </div>
-              <div class="fact-card">
-                <div class="mini-label">Security boundary</div>
-                <p>The browser never receives the stored SSH private key or password. Use a local key, agent or approved bastion profile with the command above.</p>
-              </div>
-              <div class="inline-actions ssh-console-actions">
-                <button class="primary-btn" id="copySSHCommandBtn" type="button">Copy command</button>
-                ${url ? `<a class="secondary-btn button-link" href="${escapeHTML(url)}">Open SSH app</a>` : ''}
-                <button class="secondary-btn" id="sshManageBtn" type="button">Manage access</button>
-                <button class="secondary-btn" id="sshCloseBtn" type="button">Close</button>
-              </div>
-              <div id="sshConsoleResult" class="form-result"></div>
-            </div>
-          </div>`;
-        document.getElementById('copySSHCommandBtn')?.addEventListener('click', () => copySSHCommand(command));
-        document.getElementById('sshManageBtn')?.addEventListener('click', () => {
-          closeModal();
-          openNodeControlModal(node.id);
-        });
-        document.getElementById('sshCloseBtn')?.addEventListener('click', closeModal);
-      } catch (err) {
-        body.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-      }
-    }
-
     async function ensureSSHBootstrapReady(node) {
       const methods = await requestJSON(`/api/v1/nodes/${encodeURIComponent(node.id)}/access-methods`);
       if (!hasEnabledSSHAccess(methods)) {
@@ -337,7 +209,6 @@
           { title: 'Node state', key: 'status', render: (row) => statusTag(nodeLifecycleStatus(row)) },
           { title: 'Actions', key: 'id', render: (row) => `
             <div class="table-actions node-table-actions">
-              <button class="secondary-btn ssh-node-btn" type="button" data-node-id="${escapeHTML(row.id)}">SSH</button>
               ${agentIsUpdateCandidate(row) ? `<button class="${agentNeedsUpgrade(row) ? 'primary-btn' : 'secondary-btn'} update-agent-btn" type="button" data-node-id="${escapeHTML(row.id)}"${agentNeedsUpgrade(row) ? '' : ' disabled'}${agentUpdateBlockReason(row) ? ` title="${escapeHTML(agentUpdateBlockReason(row))}"` : ''}>Update</button>` : ''}
               <button class="secondary-btn manage-node-btn" type="button" data-node-id="${escapeHTML(row.id)}">Manage</button>
               <button class="secondary-btn edit-node-btn" type="button" data-node-id="${escapeHTML(row.id)}">Edit</button>
@@ -348,9 +219,6 @@
       document.getElementById('updateAllAgentsBtn')?.addEventListener('click', () => queueAllAgentUpgrades(rows));
       document.querySelectorAll('.update-agent-btn').forEach((button) => {
         button.addEventListener('click', () => queueAgentUpgrade(button.dataset.nodeId));
-      });
-      document.querySelectorAll('.ssh-node-btn').forEach((button) => {
-        button.addEventListener('click', () => openSSHConsoleModal(button.dataset.nodeId));
       });
       document.querySelectorAll('.manage-node-btn').forEach((button) => {
         button.addEventListener('click', () => openNodeControlModal(button.dataset.nodeId));

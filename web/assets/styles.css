@@ -347,7 +347,7 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 .node-console-layout { display: grid; grid-template-columns: 1fr; gap: 14px; align-items: start; margin-top: 16px; }
 .node-console-nav {
   display: grid;
-  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
   gap: 8px;
   padding: 10px;
   border: 1px solid var(--line);
@@ -440,6 +440,34 @@ tr:hover td { background: rgba(148,163,184,0.04); }
   background: #fff7f7;
 }
 .operator-action.danger-action strong { color: #991b1b; }
+.web-terminal-card {
+  overflow: hidden;
+}
+.web-terminal {
+  min-height: 520px;
+  max-height: 68vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.22);
+  border-radius: 12px;
+  background: #07111f;
+  color: #d1fae5;
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+.web-terminal:focus {
+  border-color: rgba(29, 78, 216, 0.46);
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+.web-terminal pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: inherit;
+}
 .node-next-step { margin-bottom: 16px; }
 .compact-section-actions { margin-bottom: 0; }
 .stack { display: grid; gap: 16px; }
@@ -896,50 +924,6 @@ tr:hover td { background: #f8fafc; }
   justify-content: center;
   text-decoration: none;
 }
-.ssh-console {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
-  gap: 14px;
-  align-items: stretch;
-}
-.ssh-console-screen {
-  min-height: 360px;
-  padding: 18px;
-  border: 1px solid rgba(15, 23, 42, 0.22);
-  border-radius: 14px;
-  background: #0f172a;
-  color: #d1fae5;
-  font-family: var(--mono);
-  overflow: auto;
-}
-.ssh-console-line {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  line-height: 1.6;
-}
-.ssh-console-line.muted {
-  color: #93a4bd;
-}
-.ssh-console-line.error {
-  color: #fecdd3;
-}
-.ssh-console-side {
-  display: grid;
-  align-content: start;
-  gap: 12px;
-  min-width: 0;
-}
-.ssh-console-side p {
-  margin: 6px 0 0;
-  font-size: 13px;
-}
-.ssh-console-actions {
-  align-items: stretch;
-}
-.ssh-console-actions > * {
-  width: 100%;
-}
-
 .metric-value {
   font-size: 24px;
   line-height: 1.08;
@@ -1579,8 +1563,7 @@ tr:hover td { background: #f8fafc; }
   .node-manage-grid { grid-template-columns: 1fr; }
   .node-modal-grid { grid-template-columns: 1fr; }
   .node-console-layout { grid-template-columns: 1fr; }
-  .node-console-nav { position: static; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .ssh-console { grid-template-columns: 1fr; }
+  .node-console-nav { position: static; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .auth-gate .login-shell { grid-template-columns: 1fr; }
   .auth-gate .login-hero, .auth-gate .auth-card { min-height: auto; }
   .certificate-choice-grid, .certificate-manage-layout, .certificate-preview-grid, .choice-list { grid-template-columns: 1fr; }
@@ -1652,7 +1635,8 @@ tr:hover td { background: #f8fafc; }
   .table-wrap table {
     min-width: 760px;
   }
-  .ssh-console-screen {
-    min-height: 280px;
+  .web-terminal {
+    min-height: 360px;
+    max-height: 62vh;
   }
 }

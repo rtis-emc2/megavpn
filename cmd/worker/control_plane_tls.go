@@ -169,6 +169,11 @@ func resolveControlPlaneTLSMaterial(ctx context.Context, store *postgres.Store, 
 
 func renderControlPlaneNginxConfig(settings domain.ControlPlaneTLSSettings, certPath, keyPath string) string {
 	return strings.TrimSpace(fmt.Sprintf(`
+map $http_upgrade $megavpn_control_plane_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
 server {
     listen %d ssl http2;
     server_name %s;
@@ -186,6 +191,8 @@ server {
     location / {
         proxy_pass %s;
         proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $megavpn_control_plane_connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
