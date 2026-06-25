@@ -223,16 +223,7 @@
     nodeAgentChannelStatus,
     nodeLifecycleStatus,
     nodeHeartbeatStatus,
-    bootstrapRunReason,
-    defaultNodeConsoleTab,
-    nodeConsoleTabButton,
-    bindNodeConsoleTabs,
-    switchNodeConsoleTab,
-    inventoryLabel,
-    diagnosticsAgentState,
-    commMetricLine,
     renderInventoryFact,
-    renderInventorySnapshotPanel,
   } = nodeUI;
 
   function toMillis(value) {
@@ -301,14 +292,13 @@
   const nodeWorkflows = window.MegaVPNNodeWorkflows?.create?.({
     state,
     nodeUI,
+    setTitle,
+    el,
     requestJSON,
     sendJSON,
     fetchJSON,
     refresh,
-    loadNodeManagePageData,
     loadCore,
-    renderNodeManagePage,
-    renderNodeControlModal,
     setPage,
     openModal,
     closeModal,
@@ -320,6 +310,9 @@
     escapeHTML,
     toMillis,
     formatDate,
+    formatRelativeDate,
+    formatDurationSeconds,
+    platformPublicBaseURL,
   });
   if (!nodeWorkflows) throw new Error('MegaVPNNodeWorkflows is not loaded');
 
@@ -1449,408 +1442,6 @@
     });
   }
 
-  function renderNodeManagePage() {
-    const nodeID = state.nodeManageID;
-    const cachedNode = state.nodes.find((item) => item.id === nodeID) || null;
-    const data = state.nodeManageData;
-    const node = data?.node || cachedNode || null;
-    setTitle(node ? `Node: ${node.name || 'node'}` : 'Node Management');
-    if (!nodeID) {
-      el('content').innerHTML = `
-        <section class="card">
-          <h2>Node not selected</h2>
-          <p>Return to Nodes and choose a managed node.</p>
-          <div class="modal-actions"><button class="primary-btn" id="nodeManageBackBtn" type="button">Back to Nodes</button></div>
-        </section>`;
-      document.getElementById('nodeManageBackBtn')?.addEventListener('click', () => {
-        state.nodeManageID = '';
-        state.nodeManageData = null;
-        setPage('nodes');
-      });
-      return;
-    }
-
-    el('content').innerHTML = `
-      <section class="node-workspace">
-        <div class="node-workspace-head">
-          <div>
-            <div class="eyebrow">Node management</div>
-            <h2>${escapeHTML(node?.name || 'Loading node...')}</h2>
-            <p>${escapeHTML(node?.address || 'Loading runtime state and bootstrap controls.')}</p>
-          </div>
-          <div class="node-workspace-actions">
-            <button class="secondary-btn" id="nodeManageBackBtn" type="button">Back to Nodes</button>
-            <button class="secondary-btn" id="nodeManageRefreshBtn" type="button">Refresh</button>
-            ${node ? '<button class="primary-btn" id="nodeManageEditBtn" type="button">Edit profile</button>' : ''}
-          </div>
-        </div>
-        <div id="nodeManageBody">
-          <section class="card"><div class="empty">Loading node management workspace...</div></section>
-        </div>
-      </section>`;
-
-    document.getElementById('nodeManageBackBtn')?.addEventListener('click', () => {
-      state.nodeManageID = '';
-      state.nodeManageData = null;
-      setPage('nodes');
-    });
-    document.getElementById('nodeManageRefreshBtn')?.addEventListener('click', () => {
-      void loadNodeManagePageData(nodeID, 'Node state refreshed.');
-    });
-    document.getElementById('nodeManageEditBtn')?.addEventListener('click', () => nodeWorkflows.openEditNodeModal(nodeID));
-
-    if (!data || data.nodeID !== nodeID) {
-      void loadNodeManagePageData(nodeID);
-      return;
-    }
-    renderNodeControlModal(data.node, data.diag, data.methods, data.runs, data.tokens, data.flash, 'nodeManageBody');
-  }
-
-  async function loadNodeManagePageData(nodeID, flash = '') {
-    const node = state.nodes.find((item) => item.id === nodeID);
-    try {
-      const [freshNode, diag, methods, runs, tokens] = await Promise.all([
-        requestJSON(`/api/v1/nodes/${nodeID}`),
-        requestJSON(`/api/v1/nodes/${nodeID}/diagnostics`),
-        requestJSON(`/api/v1/nodes/${nodeID}/access-methods`),
-        requestJSON(`/api/v1/nodes/${nodeID}/bootstrap-runs`),
-        requestJSON(`/api/v1/nodes/${nodeID}/enrollment-tokens`),
-      ]);
-      state.nodeManageData = {
-        nodeID,
-        node: diag?.node || freshNode || node,
-        diag: diag || {},
-        methods: arrayOrEmpty(methods),
-        runs: arrayOrEmpty(runs),
-        tokens: arrayOrEmpty(tokens),
-        flash,
-      };
-      if (state.page === 'nodeManage' && state.nodeManageID === nodeID) {
-        renderNodeManagePage();
-      }
-    } catch (err) {
-      state.nodeManageData = null;
-      if (state.page === 'nodeManage') {
-        const body = el('nodeManageBody');
-        if (body) body.innerHTML = `<section class="card"><div class="empty">Failed to load node details: ${escapeHTML(err.message)}</div></section>`;
-      } else {
-        el('modalBody').innerHTML = `<div class="empty">Failed to load node details: ${escapeHTML(err.message)}</div>`;
-      }
-    }
-  }
-
-  function renderNodeControlModal(node, diag, methods, runs, tokens, flash, targetID = 'modalBody') {
-    methods = arrayOrEmpty(methods);
-    runs = arrayOrEmpty(runs);
-    tokens = arrayOrEmpty(tokens);
-    const heartbeatStatus = diag?.heartbeat_state || nodeHeartbeatStatus(node);
-    const heartbeatDrift = diag?.heartbeat_drift_seconds;
-    const sshMethod = methods.find((item) => item.method === 'ssh') || null;
-    const latestInventory = diag?.latest_inventory || null;
-    const inventoryPayload = latestInventory?.payload || {};
-    const discoverySummary = diag?.discovery_summary || { total: 0, available: 0, imported: 0, ignored: 0, by_service: {} };
-    const recentDiscoveries = Array.isArray(diag?.recent_discoveries) ? diag.recent_discoveries : [];
-    const agent = diag?.agent || {};
-    const methodRows = methods.length
-      ? methods.map((item) => `
-          <tr>
-            <td>${escapeHTML(item.method || 'unknown')}</td>
-            <td>${escapeHTML(item.ssh_host || 'n/a')}${item.ssh_port ? `:${escapeHTML(String(item.ssh_port))}` : ''}</td>
-            <td>${escapeHTML(item.ssh_user || 'n/a')}</td>
-            <td>${escapeHTML(item.auth_type || 'n/a')}</td>
-            <td><code>${escapeHTML(item.ssh_host_key_sha256 || 'n/a')}</code></td>
-            <td>${statusTag(item.is_enabled ? 'enabled' : 'disabled')}</td>
-          </tr>`).join('')
-      : '<tr><td colspan="6"><div class="empty compact-empty">Access methods are not configured yet.</div></td></tr>';
-    const runRows = runs.length
-      ? runs.slice(0, 8).map((item) => `
-          <tr>
-            <td>${escapeHTML(item.bootstrap_mode || 'unknown')}</td>
-            <td>${statusTag(item.status || 'unknown')}</td>
-            <td>${formatDate(item.started_at || item.created_at)}</td>
-            <td>${escapeHTML(bootstrapRunReason(item))}</td>
-            <td><button class="secondary-btn bootstrap-run-view-btn" type="button" data-run-id="${escapeHTML(item.id)}" data-job-id="${escapeHTML(item.job_id || '')}">Details</button></td>
-          </tr>`).join('')
-      : '<tr><td colspan="5"><div class="empty compact-empty">No bootstrap runs yet.</div></td></tr>';
-    const tokenRows = tokens.length
-      ? tokens.slice(0, 8).map((item) => `
-          <tr>
-            <td><code>${escapeHTML(item.token_hint || item.token || 'n/a')}</code></td>
-            <td>${statusTag(item.status || 'active')}</td>
-            <td>${formatDate(item.expires_at)}</td>
-            <td>${formatDate(item.used_at)}</td>
-          </tr>`).join('')
-      : '<tr><td colspan="4"><div class="empty compact-empty">No enrollment tokens created yet.</div></td></tr>';
-    const recentDiscoveryRows = recentDiscoveries.length
-      ? recentDiscoveries.map((item) => `
-          <tr>
-            <td>${escapeHTML(item.service_code)}</td>
-            <td>${escapeHTML(item.name)}</td>
-            <td>${statusTag(item.status)}</td>
-            <td>${escapeHTML(item.endpoint_host || 'n/a')}${item.endpoint_port ? `:${escapeHTML(String(item.endpoint_port))}` : ''}</td>
-            <td>${formatDate(item.detected_at)}</td>
-          </tr>`).join('')
-      : '<tr><td colspan="5"><div class="empty">Service discovery has not reported anything yet.</div></td></tr>';
-    const serviceMix = Object.entries(discoverySummary.by_service || {}).length
-      ? Object.entries(discoverySummary.by_service || {}).map(([code, total]) => `${code}: ${total}`).join(' · ')
-      : 'none';
-    const inventoryCollectedAt = inventoryPayload.collected_at || latestInventory?.created_at || null;
-    const canRequeueStuckJob = String(diag?.communication_state || '') === 'job_result_stalled' && agent.last_job_claim_job_id;
-    const canClearStaleRotation = String(agent.token_rotation_status || '') === 'rotating';
-    const activeTab = defaultNodeConsoleTab(diag);
-    const setupLabel = nodeExecutionLabel(node.execution_mode || 'unknown');
-    const communicationState = diag?.communication_state || 'unknown';
-    const accessStatus = sshMethod?.is_enabled ? 'configured' : 'missing';
-    const publicURL = platformPublicBaseURL() || 'not configured';
-    const agentNextStepPanel = String(diag?.communication_state || '') === 'awaiting_enrollment'
-      ? `<div class="fact-card emphasis-card node-next-step">
-          <div class="mini-label">Next step</div>
-          <div class="metric-caption strong">Agent enrollment is still pending.</div>
-          <p>Install/start <code>megavpn-agent</code> with an active enrollment token, or use SSH bootstrap from the Bootstrap tab.</p>
-          <div class="section-actions compact-section-actions">
-            <button class="primary-btn" id="openBootstrapFromAgentBtn" type="button">Open Bootstrap</button>
-            <button class="secondary-btn" id="editSetupFromAgentBtn" type="button">Edit setup method</button>
-          </div>
-        </div>`
-      : '';
-
-    const target = el(targetID);
-    if (!target) return;
-    target.innerHTML = `
-      <div class="node-console-summary node-manage-summary">
-        <div class="fact-card emphasis-card"><div class="mini-label">Node</div><div class="metric-caption strong">${escapeHTML(node.name || 'node')}</div><div class="metric-caption">${escapeHTML(node.address || 'n/a')}</div></div>
-        <div class="fact-card"><div class="mini-label">Lifecycle</div><div class="metric-caption strong">${statusTag(node.status || 'draft')}</div><div class="metric-caption">${escapeHTML(node.kind || 'remote')} · ${escapeHTML(node.role || 'egress')}</div></div>
-        <div class="fact-card"><div class="mini-label">Agent</div><div class="metric-caption strong">${statusTag(diagnosticsAgentState(diag))}</div><div class="metric-caption">${escapeHTML(communicationState)}</div></div>
-        <div class="fact-card"><div class="mini-label">Heartbeat</div><div class="metric-caption strong">${escapeHTML(heartbeatStatus)}</div><div class="metric-caption">${escapeHTML(heartbeatDrift == null ? formatRelativeDate(node.last_heartbeat_at) : formatDurationSeconds(heartbeatDrift))}</div></div>
-        <div class="fact-card"><div class="mini-label">Bootstrap</div><div class="metric-caption strong">${statusTag(diag?.last_bootstrap?.status || 'not started')}</div><div class="metric-caption">SSH access ${escapeHTML(accessStatus)}</div></div>
-        <div class="fact-card"><div class="mini-label">Inventory</div><div class="metric-caption strong">${escapeHTML(formatRelativeDate(inventoryCollectedAt))}</div><div class="metric-caption">${escapeHTML(inventoryLabel(inventoryPayload, 'os.pretty_name', `${node.os_family || 'linux'} ${node.os_version || ''}`))}</div></div>
-      </div>
-      ${flash ? `<div class="notice subtle-notice">${escapeHTML(flash)}</div>` : ''}
-      <div class="node-console-layout">
-        <nav class="node-console-nav" aria-label="Node management sections">
-          ${nodeConsoleTabButton('overview', 'Overview', 'profile and actions', activeTab)}
-          ${nodeConsoleTabButton('bootstrap', 'Bootstrap', 'SSH, tokens, jobs', activeTab)}
-          ${nodeConsoleTabButton('agent', 'Agent channel', 'health and trust', activeTab)}
-          ${nodeConsoleTabButton('inventory', 'Inventory', 'host snapshot', activeTab)}
-          ${nodeConsoleTabButton('services', 'Services', 'discovery results', activeTab)}
-        </nav>
-        <div class="node-console-content">
-          <section class="node-tab-panel${activeTab === 'overview' ? ' is-active' : ''}" data-node-panel="overview">
-            <div class="node-panel-head">
-              <div><div class="eyebrow">Runtime Profile</div><h2>Node Overview</h2></div>
-              <div class="section-meta">${statusTag(node.status || 'draft')}</div>
-            </div>
-            <div class="node-manage-grid">
-              <section class="section-card node-profile-card">
-                <div class="section-head">
-                  <div><div class="eyebrow">Profile</div><h2>Core settings</h2></div>
-                </div>
-                <div class="section-body">
-                  <div class="node-detail-list">
-                    <div><span>Name</span><strong>${escapeHTML(node.name || 'n/a')}</strong></div>
-                    <div><span>Address</span><strong>${escapeHTML(node.address || 'n/a')}</strong></div>
-                    <div><span>Role</span><strong>${escapeHTML(node.role || 'egress')}</strong></div>
-                    <div><span>Kind</span><strong>${escapeHTML(node.kind || 'remote')}</strong></div>
-                    <div><span>Setup method</span><strong>${escapeHTML(setupLabel)}</strong></div>
-                    <div><span>Public control URL</span><strong>${escapeHTML(publicURL)}</strong></div>
-                  </div>
-                </div>
-              </section>
-              <section class="section-card">
-                <div class="section-head">
-                  <div><div class="eyebrow">Operations</div><h2>Node actions</h2></div>
-                </div>
-                <div class="section-body">
-                  <div class="operator-action-grid">
-                    <button class="operator-action" id="editNodeFromManageBtn" type="button"><strong>Edit profile</strong><span>Name, role, address, setup method.</span></button>
-                    <button class="operator-action" id="refreshNodeRuntimeBtn" type="button"><strong>Refresh diagnostics</strong><span>Reload current runtime state.</span></button>
-                    <button class="operator-action" id="nodeMaintenanceToggleBtn" type="button"><strong>${node.status === 'maintenance' ? 'Disable maintenance' : 'Enable maintenance'}</strong><span>Control scheduling state for this node.</span></button>
-                    <button class="operator-action danger-action" id="deleteNodeFromManageBtn" type="button"><strong>Delete node</strong><span>Retire node after instances are moved or removed.</span></button>
-                  </div>
-                  <div id="nodeRuntimeActionResult" class="form-result"></div>
-                </div>
-              </section>
-            </div>
-          </section>
-          <section class="node-tab-panel${activeTab === 'agent' ? ' is-active' : ''}" data-node-panel="agent">
-          <section class="section-card">
-            <div class="section-head">
-              <div>
-                <div class="eyebrow">Agent Diagnostics</div>
-                <h2>Communication Health</h2>
-              </div>
-              <div class="section-meta">
-                ${statusTag(diag?.communication_state || 'unknown')}
-                ${statusTag(agent.token_rotation_status || 'missing')}
-              </div>
-            </div>
-            <div class="section-body">
-              ${agentNextStepPanel}
-              <div class="grid cols-3">
-                <div class="card"><div class="mini-label">Communication</div><div class="metric-caption">${statusTag(communicationState)}</div><div class="metric-caption">${escapeHTML(diag?.communication_hint || 'n/a')}</div></div>
-                ${commMetricLine('Last job poll', agent.last_job_poll_at, 'agent/jobs/next')}
-                ${commMetricLine('Last inventory sync', agent.last_inventory_sync_at, 'agent/inventory')}
-                ${commMetricLine('Last discovery sync', agent.last_discovery_sync_at, 'service discovery')}
-                ${commMetricLine('Last auth failure', agent.last_auth_failure_at, agent.last_auth_failure_reason || 'none')}
-                ${commMetricLine('Registered', agent.registered_at, `version ${agent.agent_version || 'n/a'}`)}
-              </div>
-              <div class="section-divider"></div>
-              <div class="section-actions">
-                <button class="secondary-btn" id="retryInventorySyncBtn" type="button">Retry inventory sync</button>
-                <button class="secondary-btn" id="retryDiscoverySyncBtn" type="button">Retry discovery sync</button>
-                <button class="secondary-btn" id="probeNodeChannelBtn" type="button">Channel probe</button>
-                <button class="secondary-btn" id="syncRoutePolicyBtn" type="button">Sync route policy</button>
-                <button class="secondary-btn" id="requeueStuckNodeJobBtn" type="button"${canRequeueStuckJob ? '' : ' disabled'}>Requeue stuck job</button>
-                <button class="secondary-btn" id="clearStaleRotationBtn" type="button"${canClearStaleRotation ? '' : ' disabled'}>Clear stale pending rotation</button>
-              </div>
-              <div id="nodeDiagnosticsActionResult" class="form-result"></div>
-              <details class="details-block">
-                <summary>Technical job identifiers</summary>
-                <div class="code-block">claim_job_id = ${escapeHTML(agent.last_job_claim_job_id || 'n/a')}
-result_job_id = ${escapeHTML(agent.last_job_result_job_id || 'n/a')}
-claim_type = ${escapeHTML(agent.last_job_claim_type || 'n/a')}
-result_type = ${escapeHTML(agent.last_job_result_type || 'n/a')}
-result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
-              </details>
-            </div>
-          </section>
-          <section class="section-card">
-            <div class="section-head">
-              <div><div class="eyebrow">Trust Plane</div><h2>Agent Trust Lifecycle</h2></div>
-            </div>
-            <div class="section-body">
-              <p>Use these actions only for controlled token rotation, re-enrollment or incident response.</p>
-              <div class="section-actions">
-                <button class="secondary-btn" id="rotateAgentTokenBtn" type="button">Rotate agent token</button>
-                <button class="secondary-btn" id="rotateEnrollmentTokenBtn" type="button">Rotate enrollment token</button>
-                <button class="danger-btn" id="revokeAgentIdentityBtn" type="button">Revoke agent identity</button>
-              </div>
-              <div id="nodeTrustResult" class="form-result"></div>
-            </div>
-          </section>
-          </section>
-          <section class="node-tab-panel${activeTab === 'inventory' ? ' is-active' : ''}" data-node-panel="inventory">
-          ${renderInventorySnapshotPanel(latestInventory, node)}
-          </section>
-          <section class="node-tab-panel${activeTab === 'services' ? ' is-active' : ''}" data-node-panel="services">
-          <section class="table-card compact-card">
-            <div class="table-head"><h2>Discovered Services</h2><div class="table-tools"><span class="tag">${escapeHTML(String(recentDiscoveries.length))} visible</span><span class="tag">${escapeHTML(serviceMix)}</span></div></div>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Service</th><th>Name</th><th>Status</th><th>Endpoint</th><th>Detected</th></tr></thead>
-                <tbody>${recentDiscoveryRows}</tbody>
-              </table>
-            </div>
-          </section>
-          </section>
-          <section class="node-tab-panel node-bootstrap-panel${activeTab === 'bootstrap' ? ' is-active' : ''}" data-node-panel="bootstrap">
-            <div class="node-panel-head">
-              <div><div class="eyebrow">Bootstrap Pipeline</div><h2>SSH Access, Tokens and Jobs</h2></div>
-              <div class="section-meta">${statusTag(diag?.last_bootstrap?.status || 'not_started')}</div>
-            </div>
-            <div class="node-modal-grid compact-node-grid">
-              <div class="stack">
-                <section class="section-card">
-                  <div class="section-head">
-                    <div><div class="eyebrow">Access</div><h2>SSH Bootstrap Access</h2></div>
-                  </div>
-                  <div class="section-body">
-                    <form id="sshAccessForm" class="form-grid">
-                      <div class="field"><label>SSH host</label><input name="ssh_host" required value="${escapeHTML(sshMethod?.ssh_host || node.address || '')}" /></div>
-                      <div class="field"><label>SSH user</label><input name="ssh_user" required value="${escapeHTML(sshMethod?.ssh_user || 'root')}" /></div>
-                      <div class="field"><label>SSH port</label><input name="ssh_port" type="number" min="1" max="65535" value="${escapeHTML(String(sshMethod?.ssh_port || 22))}" /></div>
-                      <div class="field"><label>Auth type</label><select name="auth_type"><option value="ssh_key"${sshMethod?.auth_type === 'ssh_key' ? ' selected' : ''}>ssh_key</option><option value="password"${sshMethod?.auth_type === 'password' ? ' selected' : ''}>password</option><option value="token"${sshMethod?.auth_type === 'token' ? ' selected' : ''}>token</option></select></div>
-                      <div class="field"><label>Secret type</label><select name="secret_type"><option value="ssh_key">ssh_key</option><option value="password">password</option><option value="api_token">api_token</option><option value="opaque">opaque</option></select></div>
-                      <div class="field"><label>Enabled</label><select name="is_enabled"><option value="true"${sshMethod?.is_enabled !== false ? ' selected' : ''}>true</option><option value="false"${sshMethod?.is_enabled === false ? ' selected' : ''}>false</option></select></div>
-                      <div class="field full"><label>SSH host key SHA256</label><input name="ssh_host_key_sha256" required value="${escapeHTML(sshMethod?.ssh_host_key_sha256 || '')}" placeholder="SHA256:..." /></div>
-                      <div class="field full"><label>Secret value</label><textarea name="secret_value" rows="5" placeholder="${sshMethod?.secret_ref_id ? 'Leave empty to keep existing secret_ref_id.' : 'Paste SSH private key, password or token.'}"></textarea></div>
-                      <div class="field full inline-actions">
-                        <button class="primary-btn" type="submit">Save SSH access</button>
-                        <button class="secondary-btn" type="button" id="cancelSshAccessBtn">Cancel changes</button>
-                        <button class="danger-btn" type="button" id="removeSshAccessBtn">Remove SSH access</button>
-                      </div>
-                    </form>
-                    <div id="sshAccessResult" class="form-result"></div>
-                  </div>
-                </section>
-                <section class="table-card compact-card">
-                  <div class="table-head"><h2>Access Methods</h2><span class="tag">${escapeHTML(String(methods.length))} configured</span></div>
-                  <div class="table-wrap">
-                    <table>
-                      <thead><tr><th>Method</th><th>Endpoint</th><th>User</th><th>Auth</th><th>Host key</th><th>Status</th></tr></thead>
-                      <tbody>${methodRows}</tbody>
-                    </table>
-                  </div>
-                </section>
-              </div>
-              <div class="stack">
-                <section class="section-card">
-                  <div class="section-head">
-                    <div><div class="eyebrow">Run</div><h2>Bootstrap Job</h2></div>
-                  </div>
-                  <div class="section-body">
-                    <div class="form-grid">
-                      <div class="field"><label>Bootstrap mode</label><select id="bootstrapMode"><option value="ssh_bootstrap">ssh_bootstrap</option><option value="manual_bundle">manual_bundle</option></select></div>
-                      <div class="field inline-actions align-end"><button class="primary-btn" id="queueBootstrapBtn" type="button">Queue bootstrap</button><button class="secondary-btn" id="reinstallAgentBtn" type="button">Reinstall agent</button><button class="secondary-btn" id="reenrollAgentBtn" type="button">Re-enroll agent</button><button class="secondary-btn" id="refreshNodeBootstrapBtn" type="button">Refresh</button></div>
-                    </div>
-                    <div id="bootstrapJobResult" class="form-result"></div>
-                  </div>
-                </section>
-                <section class="section-card">
-                  <div class="section-head">
-                    <div><div class="eyebrow">Enrollment</div><h2>Enrollment Tokens</h2></div>
-                  </div>
-                  <div class="section-body">
-                    <div class="form-grid">
-                      <div class="field"><label>TTL hours</label><input id="enrollmentTtlHours" type="number" min="1" max="720" value="24" /></div>
-                      <div class="field inline-actions align-end"><button class="secondary-btn" id="createEnrollmentTokenBtn" type="button">Create token</button></div>
-                    </div>
-                    <div id="enrollmentTokenResult" class="form-result"></div>
-                  </div>
-                </section>
-              </div>
-            </div>
-            <section class="table-card compact-card">
-              <div class="table-head"><h2>Enrollment Tokens</h2><span class="tag">${escapeHTML(String(tokens.length))}</span></div>
-              <div class="table-wrap"><table><thead><tr><th>Token</th><th>Status</th><th>Expires</th><th>Used</th></tr></thead><tbody>${tokenRows}</tbody></table></div>
-            </section>
-            <section class="table-card compact-card">
-              <div class="table-head"><h2>Bootstrap Runs</h2><span class="tag">${escapeHTML(String(runs.length))}</span></div>
-              <div class="table-wrap"><table><thead><tr><th>Mode</th><th>Status</th><th>Started</th><th>Result</th><th>Actions</th></tr></thead><tbody>${runRows}</tbody></table></div>
-            </section>
-          </section>
-        </div>
-      </div>`;
-
-    bindNodeConsoleTabs();
-    document.getElementById('sshAccessForm').addEventListener('submit', (event) => nodeWorkflows.saveSSHAccess(event, node, methods));
-    document.getElementById('cancelSshAccessBtn').addEventListener('click', () => nodeWorkflows.reloadNodeControlModal(node.id, 'Unsaved SSH access changes discarded.'));
-    document.getElementById('removeSshAccessBtn').addEventListener('click', () => nodeWorkflows.removeSSHAccess(node, methods));
-    document.getElementById('retryInventorySyncBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'inventory'));
-    document.getElementById('retryDiscoverySyncBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'discover'));
-    document.getElementById('probeNodeChannelBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'probe'));
-    document.getElementById('syncRoutePolicyBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'routes'));
-    document.getElementById('requeueStuckNodeJobBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'requeue'));
-    document.getElementById('clearStaleRotationBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'clear_rotation'));
-    document.getElementById('nodeMaintenanceToggleBtn').addEventListener('click', () => nodeWorkflows.toggleNodeMaintenance(node));
-    document.getElementById('createEnrollmentTokenBtn').addEventListener('click', () => nodeWorkflows.createEnrollmentToken(node));
-    document.getElementById('rotateEnrollmentTokenBtn').addEventListener('click', () => nodeWorkflows.rotateEnrollmentToken(node));
-    document.getElementById('queueBootstrapBtn').addEventListener('click', () => nodeWorkflows.queueBootstrap(node));
-    document.getElementById('reinstallAgentBtn').addEventListener('click', () => nodeWorkflows.queueBootstrap(node, { reinstall_agent: true }));
-    document.getElementById('reenrollAgentBtn').addEventListener('click', () => nodeWorkflows.queueBootstrap(node, { reinstall_agent: true, force_reenroll: true }));
-    document.getElementById('rotateAgentTokenBtn').addEventListener('click', () => nodeWorkflows.rotateAgentToken(node));
-    document.getElementById('revokeAgentIdentityBtn').addEventListener('click', () => nodeWorkflows.revokeAgentIdentity(node));
-    document.getElementById('refreshNodeRuntimeBtn').addEventListener('click', () => nodeWorkflows.reloadNodeControlModal(node.id, 'Node runtime state refreshed.'));
-    document.getElementById('refreshNodeBootstrapBtn').addEventListener('click', () => nodeWorkflows.reloadNodeControlModal(node.id, 'Bootstrap state refreshed.'));
-    document.getElementById('editNodeFromManageBtn').addEventListener('click', () => nodeWorkflows.openEditNodeModal(node.id));
-    document.getElementById('deleteNodeFromManageBtn').addEventListener('click', () => nodeWorkflows.openDeleteNodeModal(node.id, node.name));
-    document.getElementById('openBootstrapFromAgentBtn')?.addEventListener('click', () => switchNodeConsoleTab('bootstrap'));
-    document.getElementById('editSetupFromAgentBtn')?.addEventListener('click', () => nodeWorkflows.openEditNodeModal(node.id));
-    document.querySelectorAll('.bootstrap-run-view-btn').forEach((button) => {
-      button.addEventListener('click', () => nodeWorkflows.viewBootstrapRun(node.id, button.dataset.runId, button.dataset.jobId));
-    });
-  }
-
   async function login(event) {
     event.preventDefault();
     const target = document.getElementById('loginResult');
@@ -2162,7 +1753,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
     renderNotice();
     if (state.page === 'dashboard') renderDashboard();
     else if (state.page === 'nodes') renderNodes();
-    else if (state.page === 'nodeManage') renderNodeManagePage();
+    else if (state.page === 'nodeManage') nodeWorkflows.renderNodeManagePage();
     else if (state.page === 'services') renderServices();
     else if (state.page === 'instances') renderInstances();
     else if (state.page === 'clients') renderClients();
