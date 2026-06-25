@@ -1,11 +1,14 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
+	"net"
 	nethttp "net/http"
 	"os"
 	"path/filepath"
@@ -1767,7 +1770,7 @@ func securityHeaders(enableHSTS bool, next nethttp.Handler) nethttp.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		if enableHSTS {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -1787,6 +1790,19 @@ func (w *lrw) Write(b []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(b)
 	w.bytes += n
 	return n, err
+}
+func (w *lrw) Unwrap() nethttp.ResponseWriter { return w.ResponseWriter }
+func (w *lrw) Flush() {
+	if flusher, ok := w.ResponseWriter.(nethttp.Flusher); ok {
+		flusher.Flush()
+	}
+}
+func (w *lrw) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(nethttp.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("http hijacker is not supported")
+	}
+	return hijacker.Hijack()
 }
 func requestLogger(log *slog.Logger, next nethttp.Handler) nethttp.Handler {
 	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

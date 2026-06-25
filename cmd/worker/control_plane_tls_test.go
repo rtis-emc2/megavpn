@@ -67,6 +67,9 @@ func TestRenderControlPlaneNginxConfigSupportsWebSocketUpgrade(t *testing.T) {
 		"proxy_http_version 1.1;",
 		"proxy_set_header Upgrade $http_upgrade;",
 		"proxy_set_header Connection $megavpn_control_plane_connection_upgrade;",
+		"proxy_buffering off;",
+		"proxy_read_timeout 2h;",
+		"proxy_send_timeout 2h;",
 	} {
 		if !strings.Contains(conf, want) {
 			t.Fatalf("rendered nginx config does not contain %q:\n%s", want, conf)
