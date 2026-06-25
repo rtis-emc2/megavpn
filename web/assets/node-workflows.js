@@ -121,6 +121,7 @@
     }
 
     let activeTerminalSocket = null;
+    let activeTerminalView = null;
 
     function enabledSSHMethod(methods) {
       return arrayOrEmpty(methods).find((item) => item.method === 'ssh' && item.is_enabled === true) || null;
@@ -142,6 +143,10 @@
       return document.getElementById('nodeTerminalOutput');
     }
 
+    function terminalSurfaceElement() {
+      return document.getElementById('nodeTerminalSurface');
+    }
+
     function setTerminalStatus(value, kind = 'stub') {
       const target = document.getElementById('nodeTerminalStatus');
       if (!target) return;
@@ -149,13 +154,13 @@
     }
 
     function appendTerminalOutput(value) {
+      if (activeTerminalView) {
+        activeTerminalView.write(value);
+        return;
+      }
       const output = terminalOutputElement();
       if (!output) return;
       output.textContent += String(value || '');
-      if (output.textContent.length > 220000) {
-        output.textContent = output.textContent.slice(-180000);
-      }
-      output.parentElement?.scrollTo({ top: output.parentElement.scrollHeight });
     }
 
     function terminalKeyData(event) {
@@ -203,7 +208,7 @@
         socket.addEventListener('open', () => {
           setTerminalStatus('connected', 'ok');
           document.getElementById('disconnectNodeTerminalBtn')?.removeAttribute('disabled');
-          document.getElementById('nodeTerminalSurface')?.focus();
+          terminalSurfaceElement()?.focus();
         });
         socket.addEventListener('message', (event) => {
           let msg = null;
@@ -253,14 +258,23 @@
       state.nodeTerminalActive = false;
     }
 
-    function bindNodeTerminal(node) {
-      const surface = document.getElementById('nodeTerminalSurface');
+    function bindNodeTerminal(node, terminalMethod) {
+      const surface = terminalSurfaceElement();
+      const output = terminalOutputElement();
+      if (surface && output && window.MegaVPNWebTerminal?.create) {
+        activeTerminalView = window.MegaVPNWebTerminal.create({ surface, output });
+        activeTerminalView.reset(`MegaVPN web terminal\r\nnode: ${node.name || node.id}\r\nendpoint: ${terminalEndpointLabel(terminalMethod)}\r\n`);
+      }
       document.getElementById('startNodeTerminalBtn')?.addEventListener('click', () => startNodeTerminal(node));
       document.getElementById('disconnectNodeTerminalBtn')?.addEventListener('click', disconnectNodeTerminal);
       document.getElementById('clearNodeTerminalBtn')?.addEventListener('click', () => {
-        const output = terminalOutputElement();
+        if (activeTerminalView) {
+          activeTerminalView.clear();
+          return;
+        }
         if (output) output.textContent = '';
       });
+      surface?.addEventListener('click', () => surface.focus());
       surface?.addEventListener('keydown', (event) => {
         const data = terminalKeyData(event);
         if (!data) return;
@@ -738,10 +752,7 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
                     <button class="secondary-btn" id="openTerminalBootstrapBtn" type="button">SSH settings</button>
                   </div>
                   <div class="web-terminal" id="nodeTerminalSurface" tabindex="0" spellcheck="false" aria-label="Node SSH terminal">
-                    <pre id="nodeTerminalOutput">MegaVPN web terminal
-node: ${escapeHTML(node.name || node.id)}
-endpoint: ${escapeHTML(terminalEndpointLabel(terminalMethod))}
-</pre>
+                    <pre id="nodeTerminalOutput"></pre>
                   </div>
                 </div>
               </section>
@@ -920,7 +931,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       document.getElementById('deleteNodeFromManageBtn').addEventListener('click', () => openDeleteNodeModal(node.id, node.name));
       document.getElementById('openNodeTerminalBtn')?.addEventListener('click', () => switchNodeConsoleTab('terminal'));
       document.getElementById('openTerminalBootstrapBtn')?.addEventListener('click', () => switchNodeConsoleTab('bootstrap'));
-      bindNodeTerminal(node);
+      bindNodeTerminal(node, terminalMethod);
       document.getElementById('openBootstrapFromAgentBtn')?.addEventListener('click', () => switchNodeConsoleTab('bootstrap'));
       document.getElementById('editSetupFromAgentBtn')?.addEventListener('click', () => openEditNodeModal(node.id));
       document.querySelectorAll('.bootstrap-run-view-btn').forEach((button) => {

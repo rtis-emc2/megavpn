@@ -444,9 +444,11 @@ tr:hover td { background: rgba(148,163,184,0.04); }
   overflow: hidden;
 }
 .web-terminal {
-  min-height: 520px;
-  max-height: 68vh;
+  height: clamp(380px, 58vh, 640px);
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  tab-size: 8;
   padding: 16px;
   border: 1px solid rgba(15, 23, 42, 0.22);
   border-radius: 12px;
@@ -461,12 +463,13 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 }
 .web-terminal pre {
   margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
+  overflow-wrap: normal;
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.45;
   color: inherit;
+  min-width: max-content;
 }
 .node-next-step { margin-bottom: 16px; }
 .compact-section-actions { margin-bottom: 0; }
@@ -805,6 +808,26 @@ p { color: var(--muted); }
 .secondary-btn:hover, .ghost-btn:hover, .icon-btn:hover {
   border-color: rgba(29, 78, 216, 0.34);
   background: #f8fafc;
+}
+.primary-btn:disabled,
+.secondary-btn:disabled,
+.ghost-btn:disabled,
+.icon-btn:disabled,
+.danger-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  transform: none;
+  background: #e5e7eb;
+  border-color: #cbd5e1;
+  color: #64748b;
+}
+.primary-btn:disabled:hover,
+.secondary-btn:disabled:hover,
+.ghost-btn:disabled:hover,
+.icon-btn:disabled:hover,
+.danger-btn:disabled:hover {
+  background: #e5e7eb;
+  border-color: #cbd5e1;
 }
 .danger-btn {
   background: #fff1f2;
@@ -1636,7 +1659,6 @@ tr:hover td { background: #f8fafc; }
     min-width: 760px;
   }
   .web-terminal {
-    min-height: 360px;
-    max-height: 62vh;
+    height: 420px;
   }
 }
