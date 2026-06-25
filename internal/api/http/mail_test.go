@@ -128,7 +128,7 @@ func TestSystemMailHTMLUsesModernSharedLayout(t *testing.T) {
 		time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC),
 	)
 	for name, body := range map[string]string{"invite": invite, "test": testMail} {
-		if !strings.Contains(body, "NLGate MegaVPN") {
+		if !strings.Contains(body, "RTIS MegaVPN") {
 			t.Fatalf("%s email should include updated product branding:\n%s", name, body)
 		}
 		if !strings.Contains(body, `table role="presentation"`) {

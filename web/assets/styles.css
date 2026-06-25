@@ -904,6 +904,10 @@ tr:hover td { background: #f8fafc; }
 .table-wrap table {
   min-width: 860px;
 }
+.table-wrap table.resizable-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
 .table-wrap th,
 .table-wrap td {
   vertical-align: top;
@@ -911,10 +915,41 @@ tr:hover td { background: #f8fafc; }
   overflow-wrap: anywhere;
 }
 .table-wrap th {
+  position: relative;
   white-space: nowrap;
+  user-select: none;
 }
 .table-wrap td {
   line-height: 1.42;
+}
+.table-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  z-index: 2;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+.table-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 4px;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+}
+.table-wrap th:hover .table-resize-handle::after,
+.table-resize-handle:hover::after,
+.table-resizing .table-resize-handle::after {
+  background: rgba(29, 78, 216, 0.36);
+}
+.table-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 .table-wrap .compact-actions {
   min-width: 190px;
@@ -942,7 +977,7 @@ tr:hover td { background: #f8fafc; }
   overflow: hidden;
 }
 .jobs-table-wrap table.jobs-table {
-  min-width: 760px;
+  min-width: 1040px;
   table-layout: fixed;
 }
 .jobs-table th,
@@ -952,11 +987,11 @@ tr:hover td { background: #f8fafc; }
 .jobs-table td {
   height: 54px;
 }
-.jobs-col-id { width: 118px; }
-.jobs-col-type { width: 128px; }
-.jobs-col-scope { width: 150px; }
-.jobs-col-created { width: 92px; }
-.jobs-col-status { width: 54px; }
+.jobs-col-id { width: 142px; }
+.jobs-col-type { width: 136px; }
+.jobs-col-scope { width: 190px; }
+.jobs-col-created { width: 116px; }
+.jobs-col-status { width: 72px; }
 .jobs-col-result { width: auto; }
 .mono-clip,
 .job-date,

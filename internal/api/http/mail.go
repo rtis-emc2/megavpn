@@ -647,7 +647,7 @@ func buildMailLayout(layout mailLayout) string {
                     <div style="width:44px;height:44px;border-radius:12px;background:#b91c1c;color:#ffffff;font-weight:800;font-size:13px;line-height:44px;text-align:center;letter-spacing:0.04em;">NL</div>
                   </td>
                   <td valign="middle">
-                    <div style="font-size:15px;font-weight:800;color:#111827;line-height:1.3;">NLGate MegaVPN</div>
+                    <div style="font-size:15px;font-weight:800;color:#111827;line-height:1.3;">RTIS MegaVPN</div>
                     <div style="font-size:11px;line-height:1.4;color:#64748b;text-transform:uppercase;letter-spacing:0.10em;">Control Plane Notification</div>
                   </td>
                 </tr>
@@ -679,7 +679,7 @@ func buildMailLayout(layout mailLayout) string {
           </tr>
           <tr>
             <td align="center" style="padding:16px 8px 0;color:#94a3b8;font-size:12px;line-height:1.6;">
-              NLGate MegaVPN · secure operations notification
+              RTIS MegaVPN · secure operations notification
             </td>
           </tr>
         </table>
