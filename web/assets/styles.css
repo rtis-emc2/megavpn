@@ -938,6 +938,126 @@ tr:hover td { background: #f8fafc; }
   font-size: 12px;
   line-height: 1.2;
 }
+.jobs-table-card {
+  overflow: hidden;
+}
+.jobs-table-wrap table.jobs-table {
+  min-width: 760px;
+  table-layout: fixed;
+}
+.jobs-table th,
+.jobs-table td {
+  padding: 11px 12px;
+}
+.jobs-table td {
+  height: 54px;
+}
+.jobs-col-id { width: 118px; }
+.jobs-col-type { width: 128px; }
+.jobs-col-scope { width: 150px; }
+.jobs-col-created { width: 92px; }
+.jobs-col-status { width: 54px; }
+.jobs-col-result { width: auto; }
+.mono-clip,
+.job-date,
+.job-result-line,
+.job-type-chip {
+  max-width: 100%;
+  min-width: 0;
+}
+.mono-clip,
+.job-date {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-type-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-status-cell {
+  text-align: center;
+}
+.status-light {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  vertical-align: middle;
+}
+.status-light-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted-2);
+}
+.status-light.ok {
+  border-color: rgba(4, 120, 87, 0.22);
+  background: #ecfdf5;
+}
+.status-light.ok .status-light-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px rgba(4, 120, 87, 0.10);
+}
+.status-light.warn {
+  border-color: rgba(180, 83, 9, 0.24);
+  background: #fffbeb;
+}
+.status-light.warn .status-light-dot {
+  background: var(--warn);
+  box-shadow: 0 0 0 4px rgba(180, 83, 9, 0.10);
+}
+.status-light.danger {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: #fff1f2;
+}
+.status-light.danger .status-light-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.10);
+}
+.status-light.stub .status-light-dot {
+  background: var(--muted-2);
+  box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.10);
+}
+.status-light-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.job-result-line {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.42;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .node-table-actions {
   min-width: 96px;
 }
