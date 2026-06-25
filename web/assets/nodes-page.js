@@ -6,7 +6,6 @@
       state,
       setTitle,
       el,
-      tableCard,
       statusTag,
       escapeHTML,
       nodeExecutionLabel,
@@ -28,7 +27,6 @@
       !state ||
       typeof setTitle !== 'function' ||
       typeof el !== 'function' ||
-      typeof tableCard !== 'function' ||
       typeof statusTag !== 'function' ||
       typeof escapeHTML !== 'function' ||
       typeof nodeExecutionLabel !== 'function' ||
@@ -104,10 +102,108 @@
       const target = targetAgentVersion();
       const update = agentIsUpdateCandidate(row);
       return `
-        <div class="stacked-cell">
+        <div class="node-version-block">
           ${statusTag(update ? 'update available' : current)}
-          <span class="metric-caption">${escapeHTML(current)}${target ? ` -> ${escapeHTML(target)}` : ''}</span>
+          <span>${escapeHTML(current)}${target ? ` -> ${escapeHTML(target)}` : ''}</span>
         </div>`;
+    }
+
+    function nodeStatusClass(node) {
+      const channel = nodeAgentChannelStatus(node);
+      const lifecycle = nodeLifecycleStatus(node);
+      const channelState = String(channel).toLowerCase();
+      const lifecycleState = String(lifecycle).toLowerCase();
+      if (['offline', 'failed', 'retired'].includes(channelState) || ['offline', 'failed', 'retired'].includes(lifecycleState)) return 'danger';
+      if (agentIsUpdateCandidate(node)) return 'warning';
+      if (channelState === 'online' && lifecycleState === 'online') return 'healthy';
+      return 'neutral';
+    }
+
+    function nodeSummaryFacts(nodes, outdatedNodes) {
+      const online = nodes.filter((node) => String(nodeAgentChannelStatus(node)).toLowerCase() === 'online').length;
+      const remote = nodes.filter((node) => String(node.kind || '').toLowerCase() === 'remote').length;
+      return `
+        <div class="node-fleet-summary">
+          <div class="node-fleet-fact"><span>Total</span><strong>${escapeHTML(String(nodes.length))}</strong><small>managed nodes</small></div>
+          <div class="node-fleet-fact"><span>Online</span><strong>${escapeHTML(String(online))}</strong><small>agent channel healthy</small></div>
+          <div class="node-fleet-fact"><span>Remote</span><strong>${escapeHTML(String(remote))}</strong><small>agent-managed hosts</small></div>
+          <div class="node-fleet-fact ${outdatedNodes.length ? 'warn' : ''}"><span>Updates</span><strong>${escapeHTML(String(outdatedNodes.length))}</strong><small>${escapeHTML(targetAgentVersion() || 'no target version')}</small></div>
+        </div>`;
+    }
+
+    function nodeFact(label, value, detail = '') {
+      return `
+        <div class="node-card-fact">
+          <span>${escapeHTML(label)}</span>
+          <strong>${escapeHTML(value || 'n/a')}</strong>
+          ${detail ? `<small>${escapeHTML(detail)}</small>` : ''}
+        </div>`;
+    }
+
+    function renderNodeActions(node) {
+      const updateCandidate = agentIsUpdateCandidate(node);
+      const needsUpgrade = agentNeedsUpgrade(node);
+      const reason = agentUpdateBlockReason(node);
+      return `
+        <div class="node-card-actions">
+          <button class="primary-btn manage-node-btn" type="button" data-node-id="${escapeHTML(node.id)}">Manage</button>
+          ${updateCandidate ? `<button class="${needsUpgrade ? 'secondary-btn' : 'ghost-btn'} update-agent-btn" type="button" data-node-id="${escapeHTML(node.id)}"${needsUpgrade ? '' : ' disabled'}${reason ? ` title="${escapeHTML(reason)}"` : ''}>Update agent</button>` : ''}
+          <button class="secondary-btn edit-node-btn" type="button" data-node-id="${escapeHTML(node.id)}">Edit</button>
+          <button class="danger-btn delete-node-btn" type="button" data-node-id="${escapeHTML(node.id)}" data-node-name="${escapeHTML(node.name || 'node')}">Delete</button>
+        </div>`;
+    }
+
+    function renderNodeCard(node) {
+      const role = node.role || 'egress';
+      const kind = node.kind || 'local';
+      const channel = nodeAgentChannelStatus(node);
+      const lifecycle = nodeLifecycleStatus(node);
+      return `
+        <article class="node-card ${nodeStatusClass(node)}">
+          <div class="node-card-main">
+            <div class="node-card-head">
+              <div class="node-card-title">
+                <h3>${escapeHTML(node.name || 'node')}</h3>
+                <p>${escapeHTML(node.address || 'address n/a')}</p>
+              </div>
+              <div class="node-card-tags">
+                <span class="tag">${escapeHTML(role)}</span>
+                <span class="tag">${escapeHTML(kind)}</span>
+              </div>
+            </div>
+            <div class="node-card-grid">
+              ${nodeFact('Execution', nodeExecutionLabel(node.execution_mode), kind)}
+              <div class="node-card-fact">
+                <span>Agent channel</span>
+                <strong>${statusTag(channel)}</strong>
+                <small>control plane communication</small>
+              </div>
+              <div class="node-card-fact">
+                <span>Agent version</span>
+                ${renderAgentVersion(node)}
+                <small>${escapeHTML(agentIsUpdateCandidate(node) ? 'upgrade recommended' : 'matches target')}</small>
+              </div>
+              <div class="node-card-fact">
+                <span>Node state</span>
+                <strong>${statusTag(lifecycle)}</strong>
+                <small>scheduler lifecycle</small>
+              </div>
+            </div>
+          </div>
+          ${renderNodeActions(node)}
+        </article>`;
+    }
+
+    function renderNodeList(nodes) {
+      if (!nodes.length) {
+        return `
+          <div class="nodes-empty-state">
+            <strong>No managed nodes</strong>
+            <span>Add a node to start agent enrollment and service placement.</span>
+            <button class="primary-btn" id="createNodeEmptyBtn" type="button">Add node</button>
+          </div>`;
+      }
+      return `<div class="node-card-list">${nodes.map(renderNodeCard).join('')}</div>`;
     }
 
     function normalizeAccessMethods(data) {
@@ -193,29 +289,24 @@
         ? (outdatedNodes.map(agentUpdateBlockReason).find(Boolean) || 'No agent update can be queued from this session.')
         : '';
       const actions = `
-        <div class="inline-actions">
+        <div class="node-page-actions">
           <button class="secondary-btn" id="updateAllAgentsBtn" type="button"${upgradeableNodes.length ? '' : ' disabled'}${updateAllReason ? ` title="${escapeHTML(updateAllReason)}"` : ''}>Update all agents</button>
-          <button class="secondary-btn" id="createNodeBtn" type="button">Add node</button>
+          <button class="primary-btn" id="createNodeBtn" type="button">Add node</button>
         </div>`;
       el('content').innerHTML = `
-        ${tableCard('Managed Nodes', rows, [
-          { title: 'Name', key: 'name' },
-          { title: 'Role', key: 'role', render: (row) => `<span class="tag">${escapeHTML(row.role || 'egress')}</span>` },
-          { title: 'Kind', key: 'kind', render: (row) => `<span class="tag">${escapeHTML(row.kind || 'local')}</span>` },
-          { title: 'Address', key: 'address' },
-          { title: 'Execution', key: 'execution_mode', render: (row) => escapeHTML(nodeExecutionLabel(row.execution_mode)) },
-          { title: 'Agent channel', key: 'agent_status', render: (row) => statusTag(nodeAgentChannelStatus(row)) },
-          { title: 'Agent version', key: 'agent_version', render: renderAgentVersion },
-          { title: 'Node state', key: 'status', render: (row) => statusTag(nodeLifecycleStatus(row)) },
-          { title: 'Actions', key: 'id', render: (row) => `
-            <div class="table-actions node-table-actions">
-              ${agentIsUpdateCandidate(row) ? `<button class="${agentNeedsUpgrade(row) ? 'primary-btn' : 'secondary-btn'} update-agent-btn" type="button" data-node-id="${escapeHTML(row.id)}"${agentNeedsUpgrade(row) ? '' : ' disabled'}${agentUpdateBlockReason(row) ? ` title="${escapeHTML(agentUpdateBlockReason(row))}"` : ''}>Update</button>` : ''}
-              <button class="secondary-btn manage-node-btn" type="button" data-node-id="${escapeHTML(row.id)}">Manage</button>
-              <button class="secondary-btn edit-node-btn" type="button" data-node-id="${escapeHTML(row.id)}">Edit</button>
-              <button class="danger-btn delete-node-btn" type="button" data-node-id="${escapeHTML(row.id)}" data-node-name="${escapeHTML(row.name || 'node')}">Delete</button>
-            </div>` },
-        ], actions)}`;
+        <section class="nodes-workspace">
+          <div class="nodes-workspace-head">
+            <div>
+              <div class="eyebrow">Node Fleet</div>
+              <h2>Managed Nodes</h2>
+            </div>
+            ${actions}
+          </div>
+          ${nodeSummaryFacts(rows, outdatedNodes)}
+          ${renderNodeList(rows)}
+        </section>`;
       document.getElementById('createNodeBtn')?.addEventListener('click', openCreateNodeModal);
+      document.getElementById('createNodeEmptyBtn')?.addEventListener('click', openCreateNodeModal);
       document.getElementById('updateAllAgentsBtn')?.addEventListener('click', () => queueAllAgentUpgrades(rows));
       document.querySelectorAll('.update-agent-btn').forEach((button) => {
         button.addEventListener('click', () => queueAgentUpgrade(button.dataset.nodeId));
