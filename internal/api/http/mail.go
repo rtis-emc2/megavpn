@@ -428,6 +428,7 @@ func (s *Server) deliverClientEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	attachments, attachmentNotes := collectArtifactAttachments(artifacts)
 	body := buildClientAccessBody(clientRecord, req.Message, artifacts, shareLinks, attachmentNotes, s.publicBaseURL)
+	htmlBody := buildClientAccessHTML(clientRecord, req.Message, artifacts, shareLinks, attachmentNotes, s.publicBaseURL)
 	err = s.sendPlatformMail(r.Context(), settings, mail.Message{
 		FromEmail:   settings.FromEmail,
 		FromName:    settings.FromName,
@@ -435,6 +436,7 @@ func (s *Server) deliverClientEmail(w http.ResponseWriter, r *http.Request) {
 		To:          []string{clientRecord.Email},
 		Subject:     delivery.Subject,
 		TextBody:    body,
+		HTMLBody:    htmlBody,
 		Attachments: attachments,
 	})
 	status := "sent"
@@ -505,83 +507,40 @@ func buildOperatorInviteText(user domain.PlatformUserRecord, invitedBy domain.Pl
 func buildOperatorInviteHTML(user domain.PlatformUserRecord, invitedBy domain.PlatformUser, link string, expiresAt time.Time) string {
 	invitee := firstNonEmpty(user.DisplayName, user.Username)
 	operator := firstNonEmpty(invitedBy.DisplayName, invitedBy.Username, invitedBy.Email, "RTIS MegaVPN operator")
-	rows := []string{
-		buildMailMetaRow("Invited user", invitee),
-		buildMailMetaRow("Username", firstNonEmpty(user.Username, "n/a")),
-		buildMailMetaRow("Email", firstNonEmpty(user.Email, "n/a")),
-		buildMailMetaRow("Roles", firstNonEmpty(strings.Join(user.RoleCodes, ", "), "n/a")),
-		buildMailMetaRow("Invited by", operator),
-		buildMailMetaRow("Expires at", expiresAt.Format(time.RFC3339)),
+	sections := []string{
+		buildMailSection("Activation steps", buildMailOrderedList([]string{
+			"Open the one-time invitation link.",
+			"Set your operator password.",
+			"Sign in to MegaVPN Control Plane.",
+		})),
+		buildMailSection("Invitation details", buildMailMetaTable([]mailMetaRow{
+			{"Invited user", invitee},
+			{"Username", firstNonEmpty(user.Username, "n/a")},
+			{"Email", firstNonEmpty(user.Email, "n/a")},
+			{"Roles", firstNonEmpty(strings.Join(user.RoleCodes, ", "), "n/a")},
+			{"Invited by", operator},
+			{"Expires at", expiresAt.Format(time.RFC3339)},
+		})),
+		buildMailNotice("If this invitation is unexpected or the link has expired, contact the MegaVPN administrator and request a new invite."),
 	}
-	return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>RTIS MegaVPN operator invitation</title>
-</head>
-<body style="margin:0;padding:0;background:#07111a;font-family:'Segoe UI',Inter,Arial,sans-serif;color:#e7edf5;">
-  <div style="padding:32px 18px;background:
-    radial-gradient(circle at 14% 0%, rgba(238,26,45,0.18), transparent 26%),
-    radial-gradient(circle at 86% 18%, rgba(255,107,120,0.11), transparent 24%),
-    linear-gradient(145deg, #04090f, #07111a 46%, #08131c);">
-    <div style="max-width:760px;margin:0 auto;">
-      <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
-        <div style="min-width:56px;height:46px;padding:0 12px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,#ee1a2d,#b20f22);color:#fff6f7;font-weight:900;letter-spacing:0.04em;">RTIS</div>
-        <div>
-          <div style="font-size:18px;font-weight:800;color:#e7edf5;">RTIS</div>
-          <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;">MegaVPN Operator Invitation</div>
-        </div>
-      </div>
-      <div style="border:1px solid rgba(148,163,184,0.16);border-radius:20px;overflow:hidden;background:linear-gradient(180deg, rgba(17,31,45,0.92), rgba(13,23,34,0.9));box-shadow:0 24px 80px rgba(0,0,0,0.42);">
-        <div style="padding:22px 24px;border-bottom:1px solid rgba(148,163,184,0.16);">
-          <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;">Access Onboarding</div>
-          <h1 style="margin:8px 0 10px;font-size:28px;line-height:1.1;letter-spacing:-0.04em;color:#e7edf5;">You have been invited to RTIS MegaVPN Control Plane</h1>
-          <p style="margin:0;color:#9aa9b9;line-height:1.6;">An administrator created an operator invitation for you. Use the one-time activation link below to set your password and start working in the control plane.</p>
-        </div>
-        <div style="padding:24px;">
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:18px;">
-            <div style="border:1px solid rgba(238,26,45,0.28);background:rgba(238,26,45,0.08);border-radius:16px;padding:16px;">
-              <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;">Invited User</div>
-              <div style="margin-top:8px;font-size:24px;font-weight:800;color:#f8fafc;">` + html.EscapeString(invitee) + `</div>
-              <div style="margin-top:4px;color:#9aa9b9;font-size:13px;">Operator profile prepared for activation.</div>
-            </div>
-            <div style="border:1px solid rgba(148,163,184,0.16);background:rgba(7,16,24,0.28);border-radius:16px;padding:16px;">
-              <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;">Invited By</div>
-              <div style="margin-top:8px;font-size:18px;font-weight:700;color:#e7edf5;">` + html.EscapeString(operator) + `</div>
-              <div style="margin-top:4px;color:#9aa9b9;font-size:13px;">Operator who issued this invitation.</div>
-            </div>
-            <div style="border:1px solid rgba(52,211,153,0.32);background:rgba(52,211,153,0.08);border-radius:16px;padding:16px;">
-              <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;">Expires</div>
-              <div style="margin-top:8px;font-size:18px;font-weight:700;color:#bbf7d0;">` + html.EscapeString(expiresAt.Format(time.RFC3339)) + `</div>
-              <div style="margin-top:4px;color:#9aa9b9;font-size:13px;">The activation link is single-use and time-limited.</div>
-            </div>
-          </div>
-          <div style="margin-bottom:18px;border:1px solid rgba(148,163,184,0.16);background:rgba(7,16,24,0.28);border-radius:18px;padding:18px;text-align:center;">
-            <a href="` + html.EscapeString(link) + `" style="display:inline-block;padding:14px 22px;border-radius:14px;background:linear-gradient(135deg,#ee1a2d,#b20f22);color:#fff6f7;text-decoration:none;font-weight:800;letter-spacing:0.01em;">Open Invitation Link</a>
-            <div style="margin-top:12px;color:#9aa9b9;font-size:13px;line-height:1.6;">If the button does not open, copy and paste this link into your browser:<br /><span style="color:#d8e3ef;word-break:break-all;">` + html.EscapeString(link) + `</span></div>
-          </div>
-          <div style="display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,0.85fr);gap:16px;">
-            <div style="border:1px solid rgba(148,163,184,0.16);background:rgba(7,16,24,0.28);border-radius:18px;padding:18px;">
-              <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;margin-bottom:10px;">Activation Steps</div>
-              <ol style="margin:0;padding-left:18px;color:#d8e3ef;line-height:1.8;">
-                <li>Open the one-time invitation link.</li>
-                <li>Set your operator password.</li>
-                <li>Sign in to RTIS MegaVPN Control Plane.</li>
-              </ol>
-            </div>
-            <div style="border:1px solid rgba(148,163,184,0.16);background:rgba(7,16,24,0.28);border-radius:18px;padding:18px;">
-              <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;margin-bottom:10px;">Invitation Details</div>
-              <table style="width:100%;border-collapse:collapse;">` + strings.Join(rows, "") + `</table>
-            </div>
-          </div>
-          <div style="margin-top:18px;color:#9aa9b9;font-size:13px;line-height:1.7;">If this invitation is unexpected or the link has expired, contact the RTIS MegaVPN administrator and request a new invite.</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`
+	return buildMailLayout(mailLayout{
+		Title:     "MegaVPN operator invitation",
+		Preheader: "You have been invited to MegaVPN Control Plane.",
+		Eyebrow:   "Operator onboarding",
+		Heading:   "You have been invited to MegaVPN Control Plane",
+		Intro:     "An administrator created an operator invitation for you. Use the one-time activation link below to set your password and start working in the control plane.",
+		Badges: []mailBadge{
+			{Label: "Invited user", Value: invitee, Detail: "Operator profile prepared for activation."},
+			{Label: "Invited by", Value: operator, Detail: "Operator who issued this invitation."},
+			{Label: "Expires", Value: expiresAt.Format(time.RFC3339), Detail: "Single-use and time-limited."},
+		},
+		Action: &mailAction{
+			Label: "Open invitation",
+			URL:   link,
+			Hint:  "If the button does not open, copy and paste the link into your browser.",
+		},
+		Sections: sections,
+	})
 }
 
 func buildPlatformMailTestText(user domain.PlatformUser, settings domain.PlatformMailSettings, recipient string, testedAt time.Time) string {
@@ -608,78 +567,317 @@ func buildPlatformMailTestText(user domain.PlatformUser, settings domain.Platfor
 
 func buildPlatformMailTestHTML(user domain.PlatformUser, settings domain.PlatformMailSettings, recipient string, testedAt time.Time) string {
 	operator := firstNonEmpty(user.DisplayName, user.Username, user.Email, "operator")
-	rows := []string{
-		buildMailMetaRow("Requested by", operator),
-		buildMailMetaRow("Operator username", firstNonEmpty(user.Username, "n/a")),
-		buildMailMetaRow("Operator email", firstNonEmpty(user.Email, "n/a")),
-		buildMailMetaRow("Recipient", firstNonEmpty(recipient, "n/a")),
-		buildMailMetaRow("Sent at", testedAt.Format(time.RFC3339)),
-		buildMailMetaRow("SMTP host", firstNonEmpty(settings.SMTPHost, "n/a")+":"+strconv.Itoa(settings.SMTPPort)),
-		buildMailMetaRow("TLS mode", firstNonEmpty(settings.SMTPTLSMode, "n/a")),
-		buildMailMetaRow("Auth mode", firstNonEmpty(settings.SMTPAuthMode, "n/a")),
-		buildMailMetaRow("From", firstNonEmpty(settings.FromName, "RTIS MegaVPN")+" <"+settings.FromEmail+">"),
-	}
+	return buildMailLayout(mailLayout{
+		Title:     "MegaVPN mail delivery test",
+		Preheader: "SMTP delivery from MegaVPN Control Plane is working.",
+		Eyebrow:   "Delivery validation",
+		Heading:   "SMTP test delivered successfully",
+		Intro:     "MegaVPN mail settings are configured correctly. This message confirms that the control plane can deliver outbound SMTP mail from the current profile.",
+		Badges: []mailBadge{
+			{Label: "Status", Value: "Delivered", Detail: "Outbound SMTP check completed."},
+			{Label: "Recipient", Value: firstNonEmpty(recipient, "n/a"), Detail: "Test message target mailbox."},
+			{Label: "Requested by", Value: operator, Detail: "Operator who triggered the delivery test."},
+		},
+		Sections: []string{
+			buildMailSection("Test metadata", buildMailMetaTable([]mailMetaRow{
+				{"Requested by", operator},
+				{"Operator username", firstNonEmpty(user.Username, "n/a")},
+				{"Operator email", firstNonEmpty(user.Email, "n/a")},
+				{"Recipient", firstNonEmpty(recipient, "n/a")},
+				{"Sent at", testedAt.Format(time.RFC3339)},
+				{"SMTP host", firstNonEmpty(settings.SMTPHost, "n/a") + ":" + strconv.Itoa(settings.SMTPPort)},
+				{"TLS mode", firstNonEmpty(settings.SMTPTLSMode, "n/a")},
+				{"Auth mode", firstNonEmpty(settings.SMTPAuthMode, "n/a")},
+				{"From", firstNonEmpty(settings.FromName, "MegaVPN") + " <" + settings.FromEmail + ">"},
+			})),
+		},
+	})
+}
+
+type mailLayout struct {
+	Title     string
+	Preheader string
+	Eyebrow   string
+	Heading   string
+	Intro     string
+	Badges    []mailBadge
+	Action    *mailAction
+	Sections  []string
+}
+
+type mailBadge struct {
+	Label  string
+	Value  string
+	Detail string
+}
+
+type mailAction struct {
+	Label string
+	URL   string
+	Hint  string
+}
+
+type mailMetaRow struct {
+	Label string
+	Value string
+}
+
+func buildMailLayout(layout mailLayout) string {
+	title := firstNonEmpty(layout.Title, "MegaVPN notification")
+	sections := strings.Join(layout.Sections, "")
 	return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>RTIS MegaVPN mail test</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>` + html.EscapeString(title) + `</title>
 </head>
-<body style="margin:0;padding:0;background:#07111a;font-family:'Segoe UI',Inter,Arial,sans-serif;color:#e7edf5;">
-  <div style="padding:32px 18px;background:
-    radial-gradient(circle at 14% 0%, rgba(238,26,45,0.18), transparent 26%),
-    radial-gradient(circle at 86% 18%, rgba(255,107,120,0.11), transparent 24%),
-    linear-gradient(145deg, #04090f, #07111a 46%, #08131c);">
-    <div style="max-width:760px;margin:0 auto;">
-      <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
-        <div style="min-width:56px;height:46px;padding:0 12px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,#ee1a2d,#b20f22);color:#fff6f7;font-weight:900;letter-spacing:0.04em;">RTIS</div>
-        <div>
-          <div style="font-size:18px;font-weight:800;color:#e7edf5;">RTIS</div>
-          <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;">MegaVPN Mail Check</div>
-        </div>
-      </div>
-      <div style="border:1px solid rgba(148,163,184,0.16);border-radius:20px;overflow:hidden;background:linear-gradient(180deg, rgba(17,31,45,0.92), rgba(13,23,34,0.9));box-shadow:0 24px 80px rgba(0,0,0,0.42);">
-        <div style="padding:22px 24px;border-bottom:1px solid rgba(148,163,184,0.16);">
-          <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;">Delivery Validation</div>
-          <h1 style="margin:8px 0 10px;font-size:28px;line-height:1.1;letter-spacing:-0.04em;color:#e7edf5;">SMTP test delivered successfully</h1>
-          <p style="margin:0;color:#9aa9b9;line-height:1.6;">RTIS MegaVPN mail settings are configured correctly. This message confirms that the control plane can deliver outbound SMTP mail from the current profile.</p>
-        </div>
-        <div style="padding:24px;">
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:18px;">
-            <div style="border:1px solid rgba(52,211,153,0.32);background:rgba(52,211,153,0.08);border-radius:16px;padding:16px;">
-              <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;">Status</div>
-              <div style="margin-top:8px;font-size:24px;font-weight:800;color:#bbf7d0;">Delivered</div>
-              <div style="margin-top:4px;color:#9aa9b9;font-size:13px;">Outbound SMTP check completed.</div>
-            </div>
-            <div style="border:1px solid rgba(148,163,184,0.16);background:rgba(7,16,24,0.28);border-radius:16px;padding:16px;">
-              <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;">Recipient</div>
-              <div style="margin-top:8px;font-size:18px;font-weight:700;color:#e7edf5;">` + html.EscapeString(firstNonEmpty(recipient, "n/a")) + `</div>
-              <div style="margin-top:4px;color:#9aa9b9;font-size:13px;">Test message target mailbox.</div>
-            </div>
-            <div style="border:1px solid rgba(148,163,184,0.16);background:rgba(7,16,24,0.28);border-radius:16px;padding:16px;">
-              <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;">Requested By</div>
-              <div style="margin-top:8px;font-size:18px;font-weight:700;color:#e7edf5;">` + html.EscapeString(operator) + `</div>
-              <div style="margin-top:4px;color:#9aa9b9;font-size:13px;">Operator who triggered the delivery test.</div>
-            </div>
-          </div>
-          <div style="border:1px solid rgba(148,163,184,0.16);background:rgba(7,16,24,0.28);border-radius:18px;padding:18px;">
-            <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#74869a;margin-bottom:10px;">Test Metadata</div>
-            <table style="width:100%;border-collapse:collapse;">` + strings.Join(rows, "") + `</table>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+<body style="margin:0;padding:0;background:#eef2f7;color:#111827;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">` + html.EscapeString(layout.Preheader) + `</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;background:#eef2f7;">
+    <tr>
+      <td align="center" style="padding:28px 14px;">
+        <table role="presentation" width="680" cellspacing="0" cellpadding="0" style="width:100%;max-width:680px;border-collapse:collapse;">
+          <tr>
+            <td style="padding:0 4px 16px 4px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                <tr>
+                  <td width="58" valign="middle" style="width:58px;">
+                    <div style="width:48px;height:48px;border-radius:14px;background:#b91c1c;color:#ffffff;font-weight:900;font-size:14px;line-height:48px;text-align:center;letter-spacing:0.04em;">NL</div>
+                  </td>
+                  <td valign="middle">
+                    <div style="font-size:16px;font-weight:800;color:#111827;line-height:1.25;">NLGate MegaVPN</div>
+                    <div style="font-size:11px;line-height:1.4;color:#64748b;text-transform:uppercase;letter-spacing:0.12em;">Control Plane Notification</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#ffffff;border:1px solid #d9e2ec;border-radius:18px;overflow:hidden;box-shadow:0 18px 50px rgba(15,23,42,0.10);">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                <tr>
+                  <td style="padding:26px 30px 22px;border-bottom:1px solid #e5e7eb;background:#ffffff;">
+                    <div style="font-size:11px;font-weight:800;color:#b91c1c;text-transform:uppercase;letter-spacing:0.14em;">` + html.EscapeString(layout.Eyebrow) + `</div>
+                    <h1 style="margin:9px 0 10px;font-size:28px;line-height:1.18;color:#111827;font-weight:850;letter-spacing:0;">` + html.EscapeString(layout.Heading) + `</h1>
+                    <p style="margin:0;font-size:15px;line-height:1.65;color:#475569;">` + html.EscapeString(layout.Intro) + `</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:24px 30px 28px;background:#ffffff;">
+                    ` + buildMailBadges(layout.Badges) + `
+                    ` + buildMailAction(layout.Action) + `
+                    ` + sections + `
+                    <div style="margin-top:22px;padding-top:18px;border-top:1px solid #e5e7eb;color:#64748b;font-size:12px;line-height:1.65;">
+                      This is an automated message from MegaVPN Control Plane. Do not forward links or attached access materials to unauthorized recipients.
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:16px 8px 0;color:#94a3b8;font-size:12px;line-height:1.6;">
+              NLGate MegaVPN · secure operations notification
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`
 }
 
-func buildMailMetaRow(label, value string) string {
-	return `<tr>
-  <td style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,0.10);color:#74869a;font-size:12px;text-transform:uppercase;letter-spacing:0.12em;">` + html.EscapeString(label) + `</td>
-  <td style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,0.10);color:#e7edf5;font-size:14px;text-align:right;">` + html.EscapeString(value) + `</td>
-</tr>`
+func buildMailBadges(badges []mailBadge) string {
+	if len(badges) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin:0 0 18px;">`)
+	for i, badge := range badges {
+		if i%3 == 0 {
+			b.WriteString("<tr>")
+		}
+		b.WriteString(`<td valign="top" style="width:33.333%;padding:0 6px 12px 0;">`)
+		b.WriteString(`<div style="border:1px solid #dbe4ee;background:#f8fafc;border-radius:14px;padding:14px;">`)
+		b.WriteString(`<div style="font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.12em;">` + html.EscapeString(badge.Label) + `</div>`)
+		b.WriteString(`<div style="margin-top:7px;font-size:18px;line-height:1.25;font-weight:800;color:#111827;word-break:break-word;">` + html.EscapeString(badge.Value) + `</div>`)
+		if strings.TrimSpace(badge.Detail) != "" {
+			b.WriteString(`<div style="margin-top:5px;font-size:12px;line-height:1.45;color:#64748b;">` + html.EscapeString(badge.Detail) + `</div>`)
+		}
+		b.WriteString(`</div></td>`)
+		if i%3 == 2 || i == len(badges)-1 {
+			b.WriteString("</tr>")
+		}
+	}
+	b.WriteString(`</table>`)
+	return b.String()
+}
+
+func buildMailAction(action *mailAction) string {
+	if action == nil || strings.TrimSpace(action.URL) == "" {
+		return ""
+	}
+	hint := firstNonEmpty(action.Hint, "If the button does not open, copy and paste the link into your browser.")
+	return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin:0 0 20px;">
+  <tr>
+    <td align="center" style="padding:18px;border:1px solid #fecdd3;background:#fff1f2;border-radius:16px;">
+      <a href="` + html.EscapeString(action.URL) + `" style="display:inline-block;background:#b91c1c;color:#ffffff;text-decoration:none;font-size:15px;font-weight:800;line-height:1;padding:14px 22px;border-radius:12px;">` + html.EscapeString(action.Label) + `</a>
+      <div style="margin-top:12px;color:#64748b;font-size:12px;line-height:1.6;">` + html.EscapeString(hint) + `<br><span style="color:#334155;word-break:break-all;">` + html.EscapeString(action.URL) + `</span></div>
+    </td>
+  </tr>
+</table>`
+}
+
+func buildMailSection(title, body string) string {
+	if strings.TrimSpace(body) == "" {
+		return ""
+	}
+	return `<div style="margin-top:16px;border:1px solid #e2e8f0;border-radius:16px;background:#ffffff;overflow:hidden;">
+  <div style="padding:14px 16px;border-bottom:1px solid #e2e8f0;background:#f8fafc;font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.12em;">` + html.EscapeString(title) + `</div>
+  <div style="padding:16px;color:#334155;font-size:14px;line-height:1.65;">` + body + `</div>
+</div>`
+}
+
+func buildMailNotice(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return `<div style="margin-top:16px;padding:14px 16px;border:1px solid #fde68a;background:#fffbeb;border-radius:14px;color:#92400e;font-size:13px;line-height:1.6;">` + html.EscapeString(text) + `</div>`
+}
+
+func buildMailMetaTable(rows []mailMetaRow) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;">`)
+	for _, row := range rows {
+		b.WriteString(`<tr><td valign="top" style="padding:10px 10px 10px 0;border-bottom:1px solid #e5e7eb;color:#64748b;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;">`)
+		b.WriteString(html.EscapeString(row.Label))
+		b.WriteString(`</td><td valign="top" align="right" style="padding:10px 0;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;font-weight:700;word-break:break-word;">`)
+		b.WriteString(html.EscapeString(row.Value))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table>`)
+	return b.String()
+}
+
+func buildMailOrderedList(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<ol style="margin:0;padding-left:22px;color:#334155;">`)
+	for _, item := range items {
+		if strings.TrimSpace(item) == "" {
+			continue
+		}
+		b.WriteString(`<li style="margin:0 0 8px;">` + html.EscapeString(item) + `</li>`)
+	}
+	b.WriteString(`</ol>`)
+	return b.String()
+}
+
+func buildMailUnorderedList(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<ul style="margin:0;padding-left:22px;color:#334155;">`)
+	for _, item := range items {
+		if strings.TrimSpace(item) == "" {
+			continue
+		}
+		b.WriteString(`<li style="margin:0 0 8px;">` + html.EscapeString(item) + `</li>`)
+	}
+	b.WriteString(`</ul>`)
+	return b.String()
+}
+
+func buildMailParagraphs(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	parts := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	var b strings.Builder
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		b.WriteString(`<p style="margin:0 0 10px;color:#334155;font-size:14px;line-height:1.65;">` + html.EscapeString(part) + `</p>`)
+	}
+	return b.String()
+}
+
+func shareLinkPublicURL(link domain.ShareLink, publicBaseURL string) string {
+	if strings.TrimSpace(link.Token) == "" || strings.TrimSpace(publicBaseURL) == "" {
+		return ""
+	}
+	return strings.TrimRight(publicBaseURL, "/") + "/share/" + strings.TrimSpace(link.Token)
+}
+
+func buildClientAccessHTML(client domain.Client, extraMessage string, artifacts []domain.Artifact, shareLinks []domain.ShareLink, attachmentNotes []string, publicBaseURL string) string {
+	clientName := firstNonEmpty(client.DisplayName, client.Username, "client")
+	sections := []string{}
+	if strings.TrimSpace(extraMessage) != "" {
+		sections = append(sections, buildMailSection("Operator message", buildMailParagraphs(extraMessage)))
+	}
+	if len(attachmentNotes) > 0 {
+		sections = append(sections, buildMailSection("Attachments", buildMailUnorderedList(attachmentNotes)))
+	}
+	if len(artifacts) > 0 {
+		items := make([]string, 0, len(artifacts))
+		for _, artifact := range artifacts {
+			items = append(items, firstNonEmpty(artifact.ArtifactType, "artifact")+" ["+firstNonEmpty(artifact.Status, "unknown")+"]")
+		}
+		sections = append(sections, buildMailSection("Prepared artifacts", buildMailUnorderedList(items)))
+	}
+	if len(shareLinks) > 0 {
+		rows := make([]mailMetaRow, 0, len(shareLinks)*2)
+		for i, link := range shareLinks {
+			label := "Temporary link"
+			if len(shareLinks) > 1 {
+				label = label + " " + strconv.Itoa(i+1)
+			}
+			url := shareLinkPublicURL(link, publicBaseURL)
+			rows = append(rows, mailMetaRow{label, firstNonEmpty(url, "one-time token not visible after creation")})
+			rows = append(rows, mailMetaRow{"Token hint", firstNonEmpty(link.TokenHint, tokenHint(link.Token), "n/a")})
+			rows = append(rows, mailMetaRow{"Expires at", link.ExpiresAt.Format(time.RFC3339)})
+		}
+		sections = append(sections, buildMailSection("Temporary access links", buildMailMetaTable(rows)))
+	}
+	sections = append(sections, buildMailNotice("Treat attached profiles, configuration files and temporary links as secrets. Do not publish or forward them outside the intended recipient."))
+
+	var action *mailAction
+	for _, link := range shareLinks {
+		if url := shareLinkPublicURL(link, publicBaseURL); url != "" {
+			action = &mailAction{
+				Label: "Open access package",
+				URL:   url,
+				Hint:  "This temporary link is time-limited. Keep it private.",
+			}
+			break
+		}
+	}
+	return buildMailLayout(mailLayout{
+		Title:     "MegaVPN access package",
+		Preheader: "Your MegaVPN access package is ready.",
+		Eyebrow:   "Client access package",
+		Heading:   "Your VPN access package is ready",
+		Intro:     "MegaVPN access materials have been prepared for your account. Use the attached profiles or the temporary access link below according to your administrator's instructions.",
+		Badges: []mailBadge{
+			{Label: "Client", Value: clientName, Detail: firstNonEmpty(client.Email, "Recipient account")},
+			{Label: "Attachments", Value: strconv.Itoa(len(attachmentNotes)), Detail: "Files included with this message."},
+			{Label: "Links", Value: strconv.Itoa(len(shareLinks)), Detail: "Temporary access links generated."},
+		},
+		Action:   action,
+		Sections: sections,
+	})
 }
 
 func buildClientAccessBody(client domain.Client, extraMessage string, artifacts []domain.Artifact, shareLinks []domain.ShareLink, attachmentNotes []string, publicBaseURL string) string {
