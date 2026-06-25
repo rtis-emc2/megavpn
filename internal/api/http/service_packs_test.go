@@ -45,6 +45,48 @@ func TestDefaultServicePacksAreCreateReady(t *testing.T) {
 	}
 }
 
+func TestDefaultAccessSuiteHasExpectedComponentsWithoutInlineSecrets(t *testing.T) {
+	pack, found := findServicePack("default_access_suite")
+	if !found {
+		t.Fatal("default_access_suite service pack is required")
+	}
+	expected := []struct {
+		serviceCode string
+		presetKey   string
+		port        int
+	}{
+		{"xray-core", "reality_tcp", 443},
+		{"openvpn", "tcp_11994", 11994},
+		{"xray-core", "reality_tcp", 8443},
+		{"openvpn", "udp_1194", 1194},
+		{"shadowsocks", "chacha_full", 8388},
+		{"wireguard", "roadwarrior", 51820},
+	}
+	if len(pack.Components) != len(expected) {
+		t.Fatalf("component count = %d, want %d", len(pack.Components), len(expected))
+	}
+	for idx, want := range expected {
+		component := pack.Components[idx]
+		if component.ServiceCode != want.serviceCode || component.PresetKey != want.presetKey || component.EndpointPort != want.port {
+			t.Fatalf("component %d = %s/%s/%d, want %s/%s/%d", idx, component.ServiceCode, component.PresetKey, component.EndpointPort, want.serviceCode, want.presetKey, want.port)
+		}
+		for _, secretKey := range []string{
+			"password",
+			"server_password",
+			"server_private_key",
+			"reality_private_key",
+			"short_id",
+			"short_ids",
+			"psk",
+			"private_key",
+		} {
+			if _, exists := component.Spec[secretKey]; exists {
+				t.Fatalf("component %d must not include inline secret key %q", idx, secretKey)
+			}
+		}
+	}
+}
+
 func TestInterpolatePackSpecReplacesNestedPlaceholders(t *testing.T) {
 	spec := map[string]any{
 		"server_name": "{{endpoint_host}}",

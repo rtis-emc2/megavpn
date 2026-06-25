@@ -612,6 +612,11 @@ func (s *Store) renderXL2TPDPayloadSpec(ctx context.Context, instance domain.Ins
 
 func (s *Store) renderShadowsocksPayloadSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
 	spec = cloneMap(spec)
+	if password, err := s.resolveSecretText(ctx, firstString(spec["server_password_secret_ref_id"], spec["password_secret_ref_id"]), firstString(spec["server_password"], spec["password"])); err != nil {
+		return nil, err
+	} else if password != "" {
+		spec["server_password"] = password
+	}
 	unitName := firstString(spec["systemd_unit"], instance.SystemdUnit, serviceDefaultSystemdUnit("shadowsocks", instance.Slug))
 	configPath := firstString(spec["config_path"], shadowsocksConfigPath(instance, spec))
 	if err := validateSystemdExecPathArg(configPath); err != nil {

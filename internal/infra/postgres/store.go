@@ -848,7 +848,10 @@ func (s *Store) CreateInstance(ctx context.Context, x domain.Instance) (domain.I
 	spec["name"] = x.Name
 	spec["endpoint_host"] = x.EndpointHost
 	spec["endpoint_port"] = x.EndpointPort
-	_, _ = s.createInstanceRevision(ctx, x.ID, "system", "validated", spec)
+	if _, err := s.createInstanceRevision(ctx, x.ID, "system", "validated", spec); err != nil {
+		_, _ = s.db.Exec(ctx, `delete from instances where id=$1`, x.ID)
+		return x, err
+	}
 	payload, payloadErr := s.buildInstanceJobPayload(ctx, x, "apply")
 	if payloadErr == nil {
 		if job, err := s.CreateJob(ctx, domain.Job{Type: "instance.apply", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload}); err == nil {
@@ -2450,6 +2453,10 @@ func (s *Store) createInstanceRevision(ctx context.Context, instanceID, source, 
 	}
 	if status == "" {
 		status = "draft"
+	}
+	spec, err = s.materializeInstanceDriverSpecDefaults(ctx, instance, spec)
+	if err != nil {
+		return domain.InstanceRevision{}, err
 	}
 	renderedHash := ""
 	validationErrors := []any{}

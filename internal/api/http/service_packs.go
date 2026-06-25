@@ -38,6 +38,31 @@ type createServicePackRequest struct {
 func servicePackDefinitions() []servicePackDefinition {
 	return []servicePackDefinition{
 		{
+			Key:                  "default_access_suite",
+			Label:                "Default Remote Access Suite",
+			Description:          "Создает базовый multi-protocol remote-access набор: VLESS + OpenVPN TCP pair, отдельный VLESS, OpenVPN UDP, Shadowsocks и WireGuard.",
+			BaseNameTemplate:     "edge-access",
+			EndpointHint:         "access.example.com",
+			RequiresEndpointHost: true,
+			PlatformNotes: []string{
+				"Template не хранит runtime secrets: Reality keys, WireGuard private key и Shadowsocks password генерируются при создании revision/apply и сохраняются как secret refs.",
+				"Компоненты используют разные listen ports, чтобы pack можно было создать на одной ноде и одном endpoint host.",
+			},
+			Recommendations: []string{
+				"Перед production rollout проверь DNS, firewall/NAT и conflict-free ports на выбранной ноде.",
+				"Держи WireGuard/OpenVPN address pools уникальными между service instances.",
+				"Для публичного VLESS на 443 используй корректный endpoint host/SNI; второй VLESS вынесен на 8443, чтобы не конфликтовать с основным transport.",
+			},
+			Components: []servicePackComponent{
+				{Label: "VLESS TCP Edge", Description: "VLESS/Reality component для пары VLESS + OpenVPN TCP.", ServiceCode: "xray-core", PresetKey: "reality_tcp", NameSuffix: "vless-tcp-edge", SlugSuffix: "vless-tcp-edge", EndpointPort: 443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "reality_tcp", "security": "reality", "network": "tcp", "dest": "www.cloudflare.com:443", "fingerprint": "chrome", "auto_generate_reality_keys": true, "config_mode": "0640"}},
+				{Label: "OpenVPN TCP Companion", Description: "OpenVPN TCP component для пары VLESS + OpenVPN TCP.", ServiceCode: "openvpn", PresetKey: "tcp_11994", NameSuffix: "openvpn-tcp", SlugSuffix: "openvpn-tcp", EndpointPort: 11994, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "tcp_11994", "pki_scope": "platform", "pki_profile": "default", "proto": "tcp", "dev": "tun", "server_network": "10.8.0.0", "server_netmask": "255.255.255.0", "config_mode": "0644"}},
+				{Label: "VLESS Standalone", Description: "Отдельный VLESS/Reality instance на альтернативном TCP-порту.", ServiceCode: "xray-core", PresetKey: "reality_tcp", NameSuffix: "vless", SlugSuffix: "vless", EndpointPort: 8443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "reality_tcp", "security": "reality", "network": "tcp", "dest": "www.cloudflare.com:443", "fingerprint": "chrome", "auto_generate_reality_keys": true, "config_mode": "0640"}},
+				{Label: "OpenVPN UDP", Description: "Классический OpenVPN UDP baseline.", ServiceCode: "openvpn", PresetKey: "udp_1194", NameSuffix: "openvpn-udp", SlugSuffix: "openvpn-udp", EndpointPort: 1194, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "udp_1194", "pki_scope": "platform", "pki_profile": "default", "proto": "udp", "dev": "tun", "server_network": "10.9.0.0", "server_netmask": "255.255.255.0", "config_mode": "0644"}},
+				{Label: "Shadowsocks", Description: "Standalone Shadowsocks chacha20-ietf-poly1305 baseline.", ServiceCode: "shadowsocks", PresetKey: "chacha_full", NameSuffix: "shadowsocks", SlugSuffix: "shadowsocks", EndpointPort: 8388, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "chacha_full", "method": "chacha20-ietf-poly1305", "mode": "tcp_and_udp", "timeout": 300, "auto_generate_server_password": true, "config_mode": "0640"}},
+				{Label: "WireGuard", Description: "Standalone WireGuard road-warrior baseline.", ServiceCode: "wireguard", PresetKey: "roadwarrior", NameSuffix: "wireguard", SlugSuffix: "wireguard", EndpointPort: 51820, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "roadwarrior", "network_cidr": "10.66.0.0/24", "server_address": "10.66.0.1/24", "client_allowed_ips": "0.0.0.0/0, ::/0", "client_dns": "1.1.1.1, 1.0.0.1", "persistent_keepalive": 25, "auto_generate_server_key": true, "config_mode": "0600"}},
+			},
+		},
+		{
 			Key:                  "ipsec_xl2tpd_access",
 			Label:                "IPsec + XL2TPD Access",
 			Description:          "Создает transport instance IPsec / IKEv2 и companion instance XL2TPD для L2TP remote-access на одном endpoint.",
