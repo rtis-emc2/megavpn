@@ -1,0 +1,118 @@
+(function (window) {
+  'use strict';
+
+  function createCoreLoader(ctx = {}) {
+    const {
+      state,
+      fetchJSON,
+      hasPermission,
+      updateReadyPill,
+      renderNotice,
+    } = ctx;
+    if (
+      !state ||
+      typeof fetchJSON !== 'function' ||
+      typeof hasPermission !== 'function' ||
+      typeof updateReadyPill !== 'function' ||
+      typeof renderNotice !== 'function'
+    ) {
+      throw new Error('MegaVPNCoreLoader requires loader dependencies');
+    }
+
+    function resetAuthenticatedState() {
+      state.dashboard = null;
+      state.nodes = [];
+      state.instances = [];
+      state.instanceRuntimeStates = [];
+      state.clients = [];
+      state.jobs = [];
+      state.artifacts = [];
+      state.shareLinks = [];
+      state.backhaulLinks = [];
+      state.backhaulDrivers = [];
+      state.servicesCatalog = [];
+      state.servicePacks = [];
+      state.servicePackCatalog = [];
+      state.serviceInstallers = [];
+      state.serviceCapabilitiesByNode = {};
+      state.serviceInstallEventsByNode = {};
+      state.mailSettings = null;
+      state.controlPlaneTLSSettings = null;
+      state.platformCertificates = [];
+      state.platformInvites = [];
+      state.platformPKIRoots = [];
+    }
+
+    function persistSelectedIDs() {
+      if (!state.servicesNodeID || !state.nodes.some((node) => node.id === state.servicesNodeID)) {
+        state.servicesNodeID = state.nodes[0]?.id || '';
+        if (state.servicesNodeID) {
+          localStorage.setItem('megavpn.servicesNodeID', state.servicesNodeID);
+        } else {
+          localStorage.removeItem('megavpn.servicesNodeID');
+        }
+      }
+      if (!state.revisionsInstanceID || !state.instances.some((instance) => instance.id === state.revisionsInstanceID)) {
+        state.revisionsInstanceID = state.instances[0]?.id || '';
+        if (state.revisionsInstanceID) {
+          localStorage.setItem('megavpn.revisionsInstanceID', state.revisionsInstanceID);
+        } else {
+          localStorage.removeItem('megavpn.revisionsInstanceID');
+        }
+      }
+    }
+
+    async function loadCore() {
+      state.ready = await fetchJSON('/api/v1/ready', { status: 'not_ready' });
+      state.versionInfo = await fetchJSON('/api/v1/version', null);
+      if (!state.authUser) {
+        resetAuthenticatedState();
+        updateReadyPill();
+        renderNotice();
+        return;
+      }
+      state.dashboard = await fetchJSON('/api/v1/dashboard', null);
+      const nodes = await fetchJSON('/api/v1/nodes', []);
+      const instances = await fetchJSON('/api/v1/instances', []);
+      const instanceRuntimeStates = hasPermission('instance.read') ? await fetchJSON('/api/v1/instances/runtime-states', []) : [];
+      const clients = await fetchJSON('/api/v1/clients', []);
+      const jobs = await fetchJSON('/api/v1/jobs?limit=50', []);
+      const artifacts = await fetchJSON('/api/v1/artifacts', []);
+      const shareLinks = await fetchJSON('/api/v1/share-links', []);
+      const backhaulLinks = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul-links', []) : [];
+      const backhaulDrivers = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul/drivers', []) : [];
+      const servicesCatalog = await fetchJSON('/api/v1/services', []);
+      const servicePacks = await fetchJSON('/api/v1/service-packs', []);
+      const servicePackCatalog = hasPermission('settings.manage')
+        ? await fetchJSON('/api/v1/service-packs?include_inactive=1', servicePacks)
+        : servicePacks;
+      const serviceInstallers = await fetchJSON('/api/v1/services/installers', []);
+      const platformCertificates = (hasPermission('instance.read') || hasPermission('settings.manage')) ? await fetchJSON('/api/v1/platform/certificates', []) : [];
+      const platformPKIRoots = hasPermission('instance.read') ? await fetchJSON('/api/v1/platform/pki-roots', []) : [];
+      const controlPlaneTLSSettings = hasPermission('settings.manage') ? await fetchJSON('/api/v1/settings/control-plane-tls', null) : state.controlPlaneTLSSettings;
+      state.nodes = Array.isArray(nodes) ? nodes.filter((node) => node.status !== 'retired') : [];
+      state.instances = Array.isArray(instances) ? instances : [];
+      state.instanceRuntimeStates = Array.isArray(instanceRuntimeStates) ? instanceRuntimeStates : [];
+      state.clients = Array.isArray(clients) ? clients : [];
+      state.jobs = Array.isArray(jobs) ? jobs : [];
+      state.artifacts = Array.isArray(artifacts) ? artifacts : [];
+      state.shareLinks = Array.isArray(shareLinks) ? shareLinks : [];
+      state.backhaulLinks = Array.isArray(backhaulLinks) ? backhaulLinks : [];
+      state.backhaulDrivers = Array.isArray(backhaulDrivers) ? backhaulDrivers : [];
+      state.servicesCatalog = Array.isArray(servicesCatalog) ? servicesCatalog : [];
+      state.servicePacks = Array.isArray(servicePacks) ? servicePacks : [];
+      state.servicePackCatalog = Array.isArray(servicePackCatalog) ? servicePackCatalog : state.servicePacks;
+      state.serviceInstallers = Array.isArray(serviceInstallers) ? serviceInstallers : [];
+      state.platformCertificates = Array.isArray(platformCertificates) ? platformCertificates : [];
+      state.platformPKIRoots = Array.isArray(platformPKIRoots) ? platformPKIRoots : [];
+      state.controlPlaneTLSSettings = controlPlaneTLSSettings || null;
+      persistSelectedIDs();
+      updateReadyPill();
+      renderNotice();
+    }
+
+    return { loadCore };
+  }
+
+  window.MegaVPNCoreLoader = { create: createCoreLoader };
+})(window);

@@ -1,6 +1,6 @@
 (() => {
-  // Composition root only: bootstrap state, dependency wiring, routing and refresh loop stay here.
-  // Page workflows, shell rendering and reusable UI primitives belong in dedicated web/assets modules.
+  // Composition root only: bootstrap state, dependency wiring, lifecycle binding and refresh loop stay here.
+  // Page workflows, shell rendering, routing and reusable UI primitives belong in dedicated web/assets modules.
   function escapeBootstrapHTML(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
   }
@@ -27,48 +27,8 @@
   window.addEventListener('error', (event) => renderBootstrapError(event.error || event.message));
   window.addEventListener('unhandledrejection', (event) => renderBootstrapError(event.reason || 'Unhandled frontend promise rejection'));
 
-  const state = {
-    page: 'dashboard',
-    apiBase: localStorage.getItem('megavpn.apiBase') || '',
-    inviteToken: new URLSearchParams(window.location.search).get('invite_token') || '',
-    invitePreview: null,
-    authUser: null,
-    authSession: null,
-    authRoles: [],
-    authPermissions: [],
-    dashboard: null,
-    ready: null,
-    versionInfo: null,
-    nodes: [],
-    instances: [],
-    instanceRuntimeStates: [],
-    clients: [],
-    jobs: [],
-    artifacts: [],
-    shareLinks: [],
-    backhaulLinks: [],
-    backhaulDrivers: [],
-    servicesCatalog: [],
-    servicePacks: [],
-    servicePackCatalog: [],
-    serviceInstallers: [],
-    serviceCapabilitiesByNode: {},
-    serviceInstallEventsByNode: {},
-    runtimePreflight: null,
-    mailSettings: null,
-    controlPlaneTLSSettings: null,
-    platformCertificates: [],
-    platformInvites: [],
-    platformPKIRoots: [],
-    servicesNodeID: localStorage.getItem('megavpn.servicesNodeID') || '',
-    revisionsInstanceID: localStorage.getItem('megavpn.revisionsInstanceID') || '',
-    nodeManageID: '',
-    nodeManageData: null,
-    refreshSeq: 0,
-    refreshInFlight: false,
-    refreshInFlightSeq: 0,
-    lastError: null,
-  };
+  const state = window.MegaVPNAppState?.createInitialState?.();
+  if (!state) throw new Error('MegaVPNAppState is not loaded');
 
   localStorage.removeItem('megavpn.authToken');
 
@@ -88,82 +48,27 @@
   if (!apiClient) throw new Error('MegaVPNAPIClient is not loaded');
   const { requestJSON, sendJSON, fetchJSON } = apiClient;
 
-  function platformPublicBaseURL() {
-    return String(state.versionInfo?.public_base_url || '').trim().replace(/\/$/, '');
-  }
-
-  function publicURLHostname(value) {
-    try {
-      return new URL(value || '').hostname;
-    } catch (_) {
-      return '';
-    }
-  }
-
-  function publicURLPort(value) {
-    try {
-      const url = new URL(value || '');
-      if (url.port) return Number(url.port);
-      return url.protocol === 'https:' ? 443 : 80;
-    } catch (_) {
-      return 0;
-    }
-  }
-
-  function agentEndpointURL(path) {
-    const base = platformPublicBaseURL();
-    if (!base) return 'n/a';
-    return `${base}${path}`;
-  }
-
-  function isLoopbackURL(value) {
-    try {
-      const hostname = new URL(value).hostname.toLowerCase();
-      return hostname === 'localhost' || hostname === '::1' || hostname === '[::1]' || hostname.startsWith('127.');
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function publicBaseURLStatusTag() {
-    const value = platformPublicBaseURL();
-    if (!value) return statusTag('missing');
-    if (isLoopbackURL(value)) return statusTag('loopback-only');
-    return statusTag('configured');
-  }
-
-  function escapeHTML(value) {
-    return String(value ?? '').replace(/[&<>'"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
-  }
-
-  function arrayOrEmpty(value) {
-    return Array.isArray(value) ? value : [];
-  }
-
-  function parseCSVList(value) {
-    return String(value || '')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
-  function clsStatus(status) {
-    const normalized = String(status || '').toLowerCase();
-    if (['ok', 'ready', 'active', 'healthy', 'succeeded', 'online', 'configured', 'enabled', 'sent', 'delivered', 'in_sync'].includes(normalized)) return 'ok';
-    if (['stub', 'planned', 'draft', 'pending', 'unknown', 'maintenance', 'skipped', 'stopped', 'materialized'].includes(normalized)) return 'stub';
-    if (['degraded', 'warning', 'retrying', 'queued', 'running', 'starting', 'bootstrapping', 'waiting heartbeat', 'awaiting heartbeat', 'provisioning', 'inactive', 'pending_apply', 'update available'].includes(normalized)) return 'warn';
-    if (['failed', 'blocked', 'offline', 'error', 'disabled', 'cancelled', 'revoked', 'missing', 'loopback-only', 'delivery_failed', 'expired', 'invalid', 'deleted', 'unhealthy', 'drifted'].includes(normalized)) return 'danger';
-    return 'stub';
-  }
-
-  function statusTag(value) {
-    return `<span class="tag ${clsStatus(value)}"><span class="dot ${clsStatus(value) === 'stub' ? 'unknown' : clsStatus(value)}"></span>${escapeHTML(value)}</span>`;
-  }
-
-  function renderActionResponse(data, title = 'Operation result') {
-    if (responseView?.render) return responseView.render(data, { title });
-    return `<div class="code-block">${escapeHTML(JSON.stringify(data, null, 2))}</div>`;
-  }
+  const appRuntime = window.MegaVPNAppRuntime?.create?.({ state, responseView });
+  if (!appRuntime) throw new Error('MegaVPNAppRuntime is not loaded');
+  const {
+    escapeHTML,
+    arrayOrEmpty,
+    parseCSVList,
+    statusTag,
+    renderActionResponse,
+    formatDate,
+    formatRelativeDate,
+    formatDurationSeconds,
+    toMillis,
+    hasPermission,
+    hasRole,
+    platformPublicBaseURL,
+    publicURLHostname,
+    publicURLPort,
+    agentEndpointURL,
+    isLoopbackURL,
+    publicBaseURLStatusTag,
+  } = appRuntime;
 
   const nodeExecutionModes = appConfig.nodeExecutionModes || {};
 
@@ -178,40 +83,6 @@
     normalizeInstanceServiceCode,
     stringValue,
   } = domainUI;
-
-  function formatDate(value) {
-    if (!value) return 'n/a';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return escapeHTML(value);
-    return escapeHTML(date.toLocaleString('ru-RU'));
-  }
-
-  function formatRelativeDate(value) {
-    if (!value) return 'n/a';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return escapeHTML(value);
-    const diffMs = Date.now() - date.getTime();
-    const diffSec = Math.floor(diffMs / 1000);
-    if (diffSec < 60) return `${diffSec}s ago`;
-    const diffMin = Math.floor(diffSec / 60);
-    if (diffMin < 60) return `${diffMin}m ago`;
-    const diffHours = Math.floor(diffMin / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-    const diffDays = Math.floor(diffHours / 24);
-    return `${diffDays}d ago`;
-  }
-
-  function formatDurationSeconds(value) {
-    const seconds = Number(value);
-    if (!Number.isFinite(seconds) || seconds < 0) return 'n/a';
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ${minutes % 60}m`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ${hours % 24}h`;
-  }
 
   const nodeUI = window.MegaVPNNodeUI?.create?.({
     nodeExecutionModes,
@@ -228,25 +99,29 @@
     renderInventoryFact,
   } = nodeUI;
 
-  function toMillis(value) {
-    if (!value) return 0;
-    const ms = Date.parse(value);
-    return Number.isFinite(ms) ? ms : 0;
-  }
-
-  function hasPermission(code) {
-    return Array.isArray(state.authPermissions) && state.authPermissions.includes(code);
-  }
-
-  function hasRole(code) {
-    return Array.isArray(state.authRoles) && state.authRoles.includes(code);
-  }
-
   const uiPrimitives = window.MegaVPNUIPrimitives?.create?.({ escapeHTML });
   if (!uiPrimitives) throw new Error('MegaVPNUIPrimitives is not loaded');
   const { metric, tableCard } = uiPrimitives;
 
   let authWorkflows = null;
+  let appRouter = null;
+  function setPage(page) {
+    if (!appRouter) {
+      state.page = page;
+      return;
+    }
+    appRouter.setPage(page);
+  }
+
+  function render() {
+    if (!appRouter) return;
+    appRouter.render();
+  }
+
+  function autoRefreshEnabledForCurrentPage() {
+    return Boolean(appRouter?.autoRefreshEnabledForCurrentPage?.());
+  }
+
   const shellUI = window.MegaVPNShellUI?.create?.({
     state,
     navGroups,
@@ -271,6 +146,16 @@
     openActionOutcomeModal,
     openUnavailableAction,
   } = shellUI;
+
+  const coreLoader = window.MegaVPNCoreLoader?.create?.({
+    state,
+    fetchJSON,
+    hasPermission,
+    updateReadyPill,
+    renderNotice,
+  });
+  if (!coreLoader) throw new Error('MegaVPNCoreLoader is not loaded');
+  const { loadCore } = coreLoader;
 
   const jobWorkflows = window.MegaVPNJobWorkflows?.create?.({
     state,
@@ -586,213 +471,34 @@
   });
   if (!certificatesPage) throw new Error('MegaVPNCertificatesPage is not loaded');
 
-  function setPage(page) {
-    if (page !== 'nodeManage') {
-      state.nodeManageID = '';
-      state.nodeManageData = null;
-    }
-    state.page = page;
-    render();
-    if (page === 'services' && state.authUser) {
-      void servicesPage.loadData();
-    }
-  }
-
-  async function loadCore() {
-    state.ready = await fetchJSON('/api/v1/ready', { status: 'not_ready' });
-    state.versionInfo = await fetchJSON('/api/v1/version', null);
-    if (!state.authUser) {
-      state.dashboard = null;
-      state.nodes = [];
-      state.instances = [];
-      state.instanceRuntimeStates = [];
-      state.clients = [];
-      state.jobs = [];
-      state.artifacts = [];
-      state.shareLinks = [];
-      state.backhaulLinks = [];
-      state.backhaulDrivers = [];
-      state.servicesCatalog = [];
-      state.servicePacks = [];
-      state.servicePackCatalog = [];
-      state.serviceInstallers = [];
-      state.serviceCapabilitiesByNode = {};
-      state.serviceInstallEventsByNode = {};
-      state.mailSettings = null;
-      state.controlPlaneTLSSettings = null;
-      state.platformCertificates = [];
-      state.platformInvites = [];
-      state.platformPKIRoots = [];
-      updateReadyPill();
-      renderNotice();
-      return;
-    }
-    state.dashboard = await fetchJSON('/api/v1/dashboard', null);
-    const nodes = await fetchJSON('/api/v1/nodes', []);
-    const instances = await fetchJSON('/api/v1/instances', []);
-    const instanceRuntimeStates = hasPermission('instance.read') ? await fetchJSON('/api/v1/instances/runtime-states', []) : [];
-    const clients = await fetchJSON('/api/v1/clients', []);
-    const jobs = await fetchJSON('/api/v1/jobs?limit=50', []);
-    const artifacts = await fetchJSON('/api/v1/artifacts', []);
-    const shareLinks = await fetchJSON('/api/v1/share-links', []);
-    const backhaulLinks = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul-links', []) : [];
-    const backhaulDrivers = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul/drivers', []) : [];
-    const servicesCatalog = await fetchJSON('/api/v1/services', []);
-    const servicePacks = await fetchJSON('/api/v1/service-packs', []);
-    const servicePackCatalog = hasPermission('settings.manage')
-      ? await fetchJSON('/api/v1/service-packs?include_inactive=1', servicePacks)
-      : servicePacks;
-    const serviceInstallers = await fetchJSON('/api/v1/services/installers', []);
-    const platformCertificates = (hasPermission('instance.read') || hasPermission('settings.manage')) ? await fetchJSON('/api/v1/platform/certificates', []) : [];
-    const platformPKIRoots = hasPermission('instance.read') ? await fetchJSON('/api/v1/platform/pki-roots', []) : [];
-    const controlPlaneTLSSettings = hasPermission('settings.manage') ? await fetchJSON('/api/v1/settings/control-plane-tls', null) : state.controlPlaneTLSSettings;
-    state.nodes = Array.isArray(nodes) ? nodes.filter((node) => node.status !== 'retired') : [];
-    state.instances = Array.isArray(instances) ? instances : [];
-    state.instanceRuntimeStates = Array.isArray(instanceRuntimeStates) ? instanceRuntimeStates : [];
-    state.clients = Array.isArray(clients) ? clients : [];
-    state.jobs = Array.isArray(jobs) ? jobs : [];
-    state.artifacts = Array.isArray(artifacts) ? artifacts : [];
-    state.shareLinks = Array.isArray(shareLinks) ? shareLinks : [];
-    state.backhaulLinks = Array.isArray(backhaulLinks) ? backhaulLinks : [];
-    state.backhaulDrivers = Array.isArray(backhaulDrivers) ? backhaulDrivers : [];
-    state.servicesCatalog = Array.isArray(servicesCatalog) ? servicesCatalog : [];
-    state.servicePacks = Array.isArray(servicePacks) ? servicePacks : [];
-    state.servicePackCatalog = Array.isArray(servicePackCatalog) ? servicePackCatalog : state.servicePacks;
-    state.serviceInstallers = Array.isArray(serviceInstallers) ? serviceInstallers : [];
-    state.platformCertificates = Array.isArray(platformCertificates) ? platformCertificates : [];
-    state.platformPKIRoots = Array.isArray(platformPKIRoots) ? platformPKIRoots : [];
-    state.controlPlaneTLSSettings = controlPlaneTLSSettings || null;
-    if (!state.servicesNodeID || !state.nodes.some((node) => node.id === state.servicesNodeID)) {
-      state.servicesNodeID = state.nodes[0]?.id || '';
-      if (state.servicesNodeID) {
-        localStorage.setItem('megavpn.servicesNodeID', state.servicesNodeID);
-      } else {
-        localStorage.removeItem('megavpn.servicesNodeID');
-      }
-    }
-    if (!state.revisionsInstanceID || !state.instances.some((instance) => instance.id === state.revisionsInstanceID)) {
-      state.revisionsInstanceID = state.instances[0]?.id || '';
-      if (state.revisionsInstanceID) {
-        localStorage.setItem('megavpn.revisionsInstanceID', state.revisionsInstanceID);
-      } else {
-        localStorage.removeItem('megavpn.revisionsInstanceID');
-      }
-    }
-    updateReadyPill();
-    renderNotice();
-  }
-
-  function renderNodes() {
-    nodesPage.render();
-  }
-
-  function renderInstances() {
-    instancesPage.render();
-  }
-
-  function renderServices() {
-    servicesPage.render();
-  }
-
-  function renderClients() {
-    clientsPage.render();
-  }
-
-  function renderArtifacts() {
-    artifactsPage.renderArtifacts();
-  }
-
-  function renderShareLinks() {
-    artifactsPage.renderShareLinks();
-  }
-
-  function renderBackhaul() {
-    backhaulPage.render();
-  }
-
-  async function renderAudit() {
-    return opsPages.renderAudit();
-  }
-
-  function renderTelemetry() {
-    opsPages.renderTelemetry();
-  }
-
-  function renderRevisions() {
-    return revisionsPage.render();
-  }
-
-  function renderUnknownPage(key) {
-    setTitle('Unknown Page');
-    el('content').innerHTML = `
-      <section class="card">
-        <h2>Unknown route</h2>
-        <p>Page "${escapeHTML(key)}" is not registered in the current Control Plane UI.</p>
-      </section>`;
-  }
-
-  function renderSettings() {
-    settingsPage.render();
-  }
-
-  function renderCertificates() {
-    certificatesPage.render();
-  }
-
-
-  function renderCreateAction() {
-    const btn = el('createActionBtn');
-    if (!state.authUser) {
-      btn.disabled = true;
-      btn.textContent = 'Login required';
-      btn.onclick = settingsWorkflows.openSettings;
-      return;
-    }
-    const handlers = {
-      nodes: nodeWorkflows.openCreateNodeModal,
-      instances: instanceWorkflows.openCreateInstanceChoiceModal,
-      certificates: certificateWorkflows.openCreateCertificateWizard,
-      clients: clientsPage.openCreateClientModal,
-      backhaul: backhaulPage.openCreateBackhaulModal,
-    };
-    const handler = handlers[state.page];
-    btn.disabled = !handler;
-    btn.textContent = handler ? 'Create' : 'No create action';
-    btn.onclick = handler || settingsWorkflows.openSettings;
-  }
-
-  function render() {
-    const isAuthenticated = Boolean(state.authUser);
-    setShellMode(isAuthenticated);
-    if (!isAuthenticated) {
-      if (state.inviteToken) {
-        authWorkflows.renderInviteAcceptScreen();
-        return;
-      }
-      authWorkflows.renderLoginScreen();
-      return;
-    }
-    renderNav();
-    renderAuthSlot();
-    renderCreateAction();
-    renderNotice();
-    if (state.page === 'dashboard') dashboardPage.render();
-    else if (state.page === 'nodes') renderNodes();
-    else if (state.page === 'nodeManage') nodeWorkflows.renderNodeManagePage();
-    else if (state.page === 'services') renderServices();
-    else if (state.page === 'instances') renderInstances();
-    else if (state.page === 'clients') renderClients();
-    else if (state.page === 'jobs') jobWorkflows.renderJobs();
-    else if (state.page === 'artifacts') renderArtifacts();
-    else if (state.page === 'shareLinks') renderShareLinks();
-    else if (state.page === 'backhaul') renderBackhaul();
-    else if (state.page === 'certificates') renderCertificates();
-    else if (state.page === 'revisions') renderRevisions();
-    else if (state.page === 'telemetry') renderTelemetry();
-    else if (state.page === 'audit') renderAudit();
-    else if (state.page === 'settings') renderSettings();
-    else renderUnknownPage(state.page);
-  }
+  appRouter = window.MegaVPNAppRouter?.create?.({
+    state,
+    el,
+    setShellMode,
+    renderNav,
+    renderAuthSlot,
+    renderNotice,
+    setTitle,
+    escapeHTML,
+    authWorkflows,
+    settingsWorkflows,
+    nodeWorkflows,
+    instanceWorkflows,
+    certificateWorkflows,
+    dashboardPage,
+    nodesPage,
+    instancesPage,
+    servicesPage,
+    clientsPage,
+    jobWorkflows,
+    artifactsPage,
+    backhaulPage,
+    certificatesPage,
+    revisionsPage,
+    opsPages,
+    settingsPage,
+  });
+  if (!appRouter) throw new Error('MegaVPNAppRouter is not loaded');
 
   async function refresh(options = {}) {
     if (options.auto && state.refreshInFlight) return;
@@ -831,21 +537,6 @@
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden && state.authUser && autoRefreshEnabledForCurrentPage()) void refresh({ auto: true });
     });
-  }
-
-  function autoRefreshEnabledForCurrentPage() {
-    return [
-      'dashboard',
-      'nodes',
-      'nodeManage',
-      'instances',
-      'jobs',
-      'backhaul',
-      'services',
-      'revisions',
-      'telemetry',
-      'audit',
-    ].includes(state.page);
   }
 
   function bind() {
