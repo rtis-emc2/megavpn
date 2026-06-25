@@ -303,14 +303,23 @@
     nodeUI,
     requestJSON,
     sendJSON,
+    fetchJSON,
     refresh,
     loadNodeManagePageData,
+    loadCore,
+    renderNodeManagePage,
+    renderNodeControlModal,
     setPage,
     openModal,
     closeModal,
     openActionOutcomeModal,
+    renderActionResponse,
+    watchJob,
+    waitForNodeDiagnostics,
     statusTag,
     escapeHTML,
+    toMillis,
+    formatDate,
   });
   if (!nodeWorkflows) throw new Error('MegaVPNNodeWorkflows is not loaded');
 
@@ -1814,345 +1823,32 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       </div>`;
 
     bindNodeConsoleTabs();
-    document.getElementById('sshAccessForm').addEventListener('submit', (event) => saveSSHAccess(event, node, methods));
-    document.getElementById('cancelSshAccessBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Unsaved SSH access changes discarded.'));
-    document.getElementById('removeSshAccessBtn').addEventListener('click', () => removeSSHAccess(node, methods));
-    document.getElementById('retryInventorySyncBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'inventory'));
-    document.getElementById('retryDiscoverySyncBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'discover'));
-    document.getElementById('probeNodeChannelBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'probe'));
-    document.getElementById('syncRoutePolicyBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'routes'));
-    document.getElementById('requeueStuckNodeJobBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'requeue'));
-    document.getElementById('clearStaleRotationBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'clear_rotation'));
-    document.getElementById('nodeMaintenanceToggleBtn').addEventListener('click', () => toggleNodeMaintenance(node));
-    document.getElementById('createEnrollmentTokenBtn').addEventListener('click', () => createEnrollmentToken(node));
-    document.getElementById('rotateEnrollmentTokenBtn').addEventListener('click', () => rotateEnrollmentToken(node));
-    document.getElementById('queueBootstrapBtn').addEventListener('click', () => queueBootstrap(node));
-    document.getElementById('reinstallAgentBtn').addEventListener('click', () => queueBootstrap(node, { reinstall_agent: true }));
-    document.getElementById('reenrollAgentBtn').addEventListener('click', () => queueBootstrap(node, { reinstall_agent: true, force_reenroll: true }));
-    document.getElementById('rotateAgentTokenBtn').addEventListener('click', () => rotateAgentToken(node));
-    document.getElementById('revokeAgentIdentityBtn').addEventListener('click', () => revokeAgentIdentity(node));
-    document.getElementById('refreshNodeRuntimeBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Node runtime state refreshed.'));
-    document.getElementById('refreshNodeBootstrapBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Bootstrap state refreshed.'));
+    document.getElementById('sshAccessForm').addEventListener('submit', (event) => nodeWorkflows.saveSSHAccess(event, node, methods));
+    document.getElementById('cancelSshAccessBtn').addEventListener('click', () => nodeWorkflows.reloadNodeControlModal(node.id, 'Unsaved SSH access changes discarded.'));
+    document.getElementById('removeSshAccessBtn').addEventListener('click', () => nodeWorkflows.removeSSHAccess(node, methods));
+    document.getElementById('retryInventorySyncBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'inventory'));
+    document.getElementById('retryDiscoverySyncBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'discover'));
+    document.getElementById('probeNodeChannelBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'probe'));
+    document.getElementById('syncRoutePolicyBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'routes'));
+    document.getElementById('requeueStuckNodeJobBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'requeue'));
+    document.getElementById('clearStaleRotationBtn').addEventListener('click', () => nodeWorkflows.runNodeDiagnosticsAction(node, 'clear_rotation'));
+    document.getElementById('nodeMaintenanceToggleBtn').addEventListener('click', () => nodeWorkflows.toggleNodeMaintenance(node));
+    document.getElementById('createEnrollmentTokenBtn').addEventListener('click', () => nodeWorkflows.createEnrollmentToken(node));
+    document.getElementById('rotateEnrollmentTokenBtn').addEventListener('click', () => nodeWorkflows.rotateEnrollmentToken(node));
+    document.getElementById('queueBootstrapBtn').addEventListener('click', () => nodeWorkflows.queueBootstrap(node));
+    document.getElementById('reinstallAgentBtn').addEventListener('click', () => nodeWorkflows.queueBootstrap(node, { reinstall_agent: true }));
+    document.getElementById('reenrollAgentBtn').addEventListener('click', () => nodeWorkflows.queueBootstrap(node, { reinstall_agent: true, force_reenroll: true }));
+    document.getElementById('rotateAgentTokenBtn').addEventListener('click', () => nodeWorkflows.rotateAgentToken(node));
+    document.getElementById('revokeAgentIdentityBtn').addEventListener('click', () => nodeWorkflows.revokeAgentIdentity(node));
+    document.getElementById('refreshNodeRuntimeBtn').addEventListener('click', () => nodeWorkflows.reloadNodeControlModal(node.id, 'Node runtime state refreshed.'));
+    document.getElementById('refreshNodeBootstrapBtn').addEventListener('click', () => nodeWorkflows.reloadNodeControlModal(node.id, 'Bootstrap state refreshed.'));
     document.getElementById('editNodeFromManageBtn').addEventListener('click', () => nodeWorkflows.openEditNodeModal(node.id));
     document.getElementById('deleteNodeFromManageBtn').addEventListener('click', () => nodeWorkflows.openDeleteNodeModal(node.id, node.name));
     document.getElementById('openBootstrapFromAgentBtn')?.addEventListener('click', () => switchNodeConsoleTab('bootstrap'));
     document.getElementById('editSetupFromAgentBtn')?.addEventListener('click', () => nodeWorkflows.openEditNodeModal(node.id));
     document.querySelectorAll('.bootstrap-run-view-btn').forEach((button) => {
-      button.addEventListener('click', () => viewBootstrapRun(node.id, button.dataset.runId, button.dataset.jobId));
+      button.addEventListener('click', () => nodeWorkflows.viewBootstrapRun(node.id, button.dataset.runId, button.dataset.jobId));
     });
-  }
-
-  async function reloadNodeControlModal(nodeID, flash) {
-    const [node, diag, methods, runs, tokens] = await Promise.all([
-      requestJSON(`/api/v1/nodes/${nodeID}`),
-      requestJSON(`/api/v1/nodes/${nodeID}/diagnostics`),
-      requestJSON(`/api/v1/nodes/${nodeID}/access-methods`),
-      requestJSON(`/api/v1/nodes/${nodeID}/bootstrap-runs`),
-      requestJSON(`/api/v1/nodes/${nodeID}/enrollment-tokens`),
-    ]);
-    await loadCore();
-    state.nodeManageData = {
-      nodeID,
-      node: diag?.node || node,
-      diag: diag || {},
-      methods: arrayOrEmpty(methods),
-      runs: arrayOrEmpty(runs),
-      tokens: arrayOrEmpty(tokens),
-      flash,
-    };
-    if (state.page === 'nodeManage' && state.nodeManageID === nodeID) {
-      renderNodeManagePage();
-      return;
-    }
-    renderNodeControlModal(diag?.node || node, diag || {}, arrayOrEmpty(methods), arrayOrEmpty(runs), arrayOrEmpty(tokens), flash);
-  }
-
-  async function saveSSHAccess(event, node, methods) {
-    event.preventDefault();
-    const result = document.getElementById('sshAccessResult');
-    result.innerHTML = '<span class="tag warn">saving</span>';
-    try {
-      const form = new FormData(event.currentTarget);
-      const existingSSH = methods.find((item) => item.method === 'ssh') || null;
-      let secretRefID = existingSSH?.secret_ref_id || null;
-      const secretValue = String(form.get('secret_value') || '').trim();
-      if (secretValue) {
-        const secretRef = await sendJSON('/api/v1/secret-refs', 'POST', {
-          secret_type: String(form.get('secret_type') || 'ssh_key'),
-          value: secretValue,
-          meta: {
-            node_id: node.id,
-            usage: 'node_access_method',
-            method: 'ssh',
-          },
-        });
-        secretRefID = secretRef.id;
-      }
-      if (!secretRefID) {
-        throw new Error('secret value is required for the first SSH access save');
-      }
-      const sshMethod = {
-        id: existingSSH?.id || '',
-        method: 'ssh',
-        is_enabled: String(form.get('is_enabled')) === 'true',
-        ssh_host: String(form.get('ssh_host') || '').trim(),
-        ssh_port: Number(form.get('ssh_port') || 22),
-        ssh_user: String(form.get('ssh_user') || '').trim(),
-        ssh_host_key_sha256: String(form.get('ssh_host_key_sha256') || '').trim(),
-        auth_type: String(form.get('auth_type') || 'ssh_key'),
-        secret_ref_id: secretRefID,
-      };
-      const items = methods.filter((item) => item.method !== 'ssh').map((item) => ({ ...item }));
-      items.push(sshMethod);
-      await sendJSON(`/api/v1/nodes/${node.id}/access-methods`, 'PUT', { items });
-      await reloadNodeControlModal(node.id, 'SSH access updated.');
-    } catch (err) {
-      result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
-  }
-
-  async function removeSSHAccess(node, methods) {
-    const result = document.getElementById('sshAccessResult');
-    result.innerHTML = '<span class="tag warn">removing</span>';
-    try {
-      const items = methods.filter((item) => item.method !== 'ssh').map((item) => ({ ...item }));
-      await sendJSON(`/api/v1/nodes/${node.id}/access-methods`, 'PUT', { items });
-      await reloadNodeControlModal(node.id, 'SSH access removed.');
-    } catch (err) {
-      result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
-  }
-
-  async function createEnrollmentToken(node) {
-    const result = document.getElementById('enrollmentTokenResult');
-    result.innerHTML = '<span class="tag warn">creating</span>';
-    try {
-      const ttlHours = Math.max(1, Math.min(720, Number(document.getElementById('enrollmentTtlHours').value || 24)));
-      const token = await requestJSON(`/api/v1/nodes/${node.id}/enrollment-token?ttl_hours=${ttlHours}`, { method: 'POST' });
-      result.innerHTML = renderActionResponse(token, 'Enrollment token created');
-      await reloadNodeControlModal(node.id, 'Enrollment token created.');
-    } catch (err) {
-      result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
-  }
-
-  async function rotateEnrollmentToken(node) {
-    const result = document.getElementById('enrollmentTokenResult');
-    result.innerHTML = '<span class="tag warn">rotating</span>';
-    try {
-      const ttlHours = Math.max(1, Math.min(720, Number(document.getElementById('enrollmentTtlHours').value || 24)));
-      const token = await requestJSON(`/api/v1/nodes/${node.id}/enrollment-token/rotate?ttl_hours=${ttlHours}`, { method: 'POST' });
-      result.innerHTML = renderActionResponse(token, 'Enrollment token rotated');
-      await reloadNodeControlModal(node.id, 'Enrollment token rotated.');
-    } catch (err) {
-      result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
-  }
-
-  async function queueBootstrap(node, options = {}) {
-    const result = document.getElementById('bootstrapJobResult');
-    result.innerHTML = '<span class="tag warn">queueing</span>';
-    try {
-      const previousHeartbeat = toMillis(node.last_heartbeat_at);
-      const payload = {
-        bootstrap_mode: document.getElementById('bootstrapMode').value,
-        reinstall_agent: Boolean(options.reinstall_agent),
-        force_reenroll: Boolean(options.force_reenroll),
-      };
-      const data = await sendJSON(`/api/v1/nodes/${node.id}/bootstrap`, 'POST', payload);
-      result.innerHTML = renderActionResponse(data, 'Node bootstrap');
-      if (data?.job?.id) {
-        const finalJob = await watchJob(data.job.id, result, 'node bootstrap');
-        if (payload.force_reenroll && finalJob && String(finalJob.status || '').toLowerCase() === 'succeeded') {
-          await waitForNodeDiagnostics(node.id, result, 're-enroll heartbeat', (diag) => {
-            const heartbeatTs = toMillis(diag?.node?.last_heartbeat_at);
-            const tokenState = String(diag?.agent?.token_rotation_status || '');
-            return heartbeatTs > previousHeartbeat && ['online', 'degraded'].includes(String(diag?.heartbeat_state || '')) && tokenState === 'active';
-          });
-        }
-      }
-      const flash = payload.force_reenroll
-        ? 'Re-enroll workflow queued. Agent state will be cleared and enrollment will happen again.'
-        : payload.reinstall_agent
-          ? 'Reinstall workflow queued. Agent binary and unit will be replaced on the remote host.'
-          : 'Bootstrap workflow updated. Check heartbeat and agent status below.';
-      await reloadNodeControlModal(node.id, flash);
-    } catch (err) {
-      result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
-  }
-
-  async function rotateAgentToken(node) {
-    const target = document.getElementById('nodeTrustResult');
-    target.innerHTML = '<span class="tag warn">queueing token rotation</span>';
-    try {
-      const baseline = Math.max(Date.now(), toMillis(node.last_heartbeat_at));
-      const job = await requestJSON(`/api/v1/nodes/${node.id}/agent-token/rotate`, { method: 'POST' });
-      const finalJob = await watchJob(job.id, target, 'agent token rotate');
-      if (finalJob && String(finalJob.status || '').toLowerCase() === 'succeeded') {
-        await waitForNodeDiagnostics(node.id, target, 'post-rotation heartbeat', (diag) => {
-          const heartbeatTs = toMillis(diag?.node?.last_heartbeat_at);
-          return heartbeatTs > baseline && String(diag?.agent?.token_rotation_status || '') === 'active';
-        });
-      }
-      await reloadNodeControlModal(node.id, 'Agent token rotation finished.');
-    } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
-  }
-
-  async function revokeAgentIdentity(node) {
-    const target = document.getElementById('nodeTrustResult');
-    target.innerHTML = '<span class="tag warn">revoking identity</span>';
-    try {
-      const data = await requestJSON(`/api/v1/nodes/${node.id}/agent-identity/revoke`, { method: 'POST' });
-      target.innerHTML = renderActionResponse(data, 'Agent identity revoked');
-      await reloadNodeControlModal(node.id, 'Agent identity revoked. The node now requires a new enrollment/bootstrap path.');
-    } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
-  }
-
-  async function viewBootstrapRun(nodeID, runID, jobID) {
-    openModal(`Bootstrap run: ${runID}`, 'Node bootstrap result', '<div class="empty">Loading bootstrap run details...</div>');
-    try {
-      const runs = await requestJSON(`/api/v1/nodes/${nodeID}/bootstrap-runs`);
-      const run = (runs || []).find((item) => item.id === runID);
-      if (!run) {
-        el('modalBody').innerHTML = '<div class="empty">Bootstrap run not found.</div>';
-        return;
-      }
-      let logs = [];
-      if (jobID) {
-        logs = await fetchJSON(`/api/v1/jobs/${jobID}/logs?limit=50`, []);
-      }
-      const canRevealManualBundle = run.bootstrap_mode === 'manual_bundle' && run.result_payload?.agent_bootstrapenv_available;
-      const logLines = (logs || []).map((entry) => `${formatDate(entry.created_at)} [${String(entry.level || 'info').toUpperCase()}] ${entry.message}`).join('\n');
-      el('modalBody').innerHTML = `
-        <div class="grid cols-2">
-          <div class="card"><div class="mini-label">Mode</div><div class="metric-caption">${escapeHTML(run.bootstrap_mode || 'n/a')}</div></div>
-          <div class="card"><div class="mini-label">Status</div><div class="metric-caption">${statusTag(run.status || 'unknown')}</div></div>
-        </div>
-        <div class="card">
-          <h2>Request payload</h2>
-          <div class="code-block">${escapeHTML(JSON.stringify(run.request_payload || {}, null, 2))}</div>
-        </div>
-        <div class="card">
-          <h2>Result payload</h2>
-          ${renderActionResponse(run.result_payload || {}, 'Bootstrap result')}
-        </div>
-        ${canRevealManualBundle ? `
-        <div class="card">
-          <div class="table-head compact-head"><h2>Manual bundle</h2><button class="secondary-btn" type="button" id="manualBundleRevealBtn">Reveal bundle</button></div>
-          <div id="manualBundleRevealResult" class="form-result"></div>
-        </div>` : ''}
-        <div class="card">
-          <h2>Worker logs</h2>
-          <div class="code-block">${escapeHTML(logLines || 'No logs captured for this bootstrap job yet.')}</div>
-        </div>`;
-      document.getElementById('manualBundleRevealBtn')?.addEventListener('click', () => revealManualBootstrapBundle(nodeID, runID));
-    } catch (err) {
-      el('modalBody').innerHTML = `<div class="empty">Failed to load bootstrap run details: ${escapeHTML(err.message)}</div>`;
-    }
-  }
-
-  async function revealManualBootstrapBundle(nodeID, runID) {
-    const target = document.getElementById('manualBundleRevealResult');
-    if (!target) return;
-    target.innerHTML = '<span class="tag warn">revealing bundle</span>';
-    try {
-      const bundle = await requestJSON(`/api/v1/nodes/${nodeID}/bootstrap-runs/${runID}/bundle`);
-      target.innerHTML = `
-        <h3>agent.env</h3>
-        <div class="code-block">${escapeHTML(bundle.agent_env || '')}</div>
-        <h3>agent-bootstrap.env</h3>
-        <div class="code-block">${escapeHTML(bundle.agent_bootstrapenv || '')}</div>`;
-    } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
-  }
-
-  async function queueNodeRuntimeJob(node, action, targetID = 'nodeRuntimeActionResult', customPath = '') {
-    const target = document.getElementById(targetID);
-    target.innerHTML = `<span class="tag warn">queueing ${escapeHTML(action)}</span>`;
-    try {
-      const path = customPath || (action === 'discover'
-        ? `/api/v1/nodes/${node.id}/services/discover`
-        : `/api/v1/nodes/${node.id}/inventory/sync`);
-      const data = await requestJSON(path, { method: 'POST' });
-      const job = data?.job || data;
-      await watchJob(job.id, target, `node ${action}`);
-      await reloadNodeControlModal(node.id, `${action} job updated runtime state.`);
-    } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
-  }
-
-  async function runNodeDiagnosticsAction(node, action) {
-    const target = document.getElementById('nodeDiagnosticsActionResult');
-    const actions = {
-      inventory: {
-        label: 'inventory retry',
-        path: `/api/v1/nodes/${node.id}/diagnostics/retry-inventory`,
-        flash: 'Inventory retry queued from diagnostics.',
-      },
-      discover: {
-        label: 'discovery retry',
-        path: `/api/v1/nodes/${node.id}/diagnostics/retry-discovery`,
-        flash: 'Discovery retry queued from diagnostics.',
-      },
-      probe: {
-        label: 'channel probe',
-        path: `/api/v1/nodes/${node.id}/diagnostics/channel-probe`,
-        flash: 'Channel probe finished.',
-      },
-      routes: {
-        label: 'route policy sync',
-        path: `/api/v1/nodes/${node.id}/routes/apply`,
-        flash: 'Route policy snapshot applied.',
-      },
-      requeue: {
-        label: 'stuck job requeue',
-        path: `/api/v1/nodes/${node.id}/diagnostics/requeue-stuck-job`,
-        flash: 'Stale claimed job was requeued.',
-      },
-      clear_rotation: {
-        label: 'clear stale rotation',
-        path: `/api/v1/nodes/${node.id}/diagnostics/clear-stale-rotation`,
-        flash: 'Stale pending rotation was cleared.',
-      },
-    };
-    const cfg = actions[action];
-    if (!cfg) return;
-
-    target.innerHTML = `<span class="tag warn">running ${escapeHTML(cfg.label)}</span>`;
-    try {
-      const data = await requestJSON(cfg.path, { method: 'POST' });
-      const job = data?.job || null;
-      if (job?.id) {
-        await watchJob(job.id, target, cfg.label);
-      } else {
-        target.innerHTML = renderActionResponse(data, cfg.label);
-      }
-      await reloadNodeControlModal(node.id, cfg.flash);
-    } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
-  }
-
-  async function toggleNodeMaintenance(node) {
-    const target = document.getElementById('nodeRuntimeActionResult');
-    target.innerHTML = '<span class="tag warn">updating maintenance</span>';
-    try {
-      const path = node.status === 'maintenance'
-        ? `/api/v1/nodes/${node.id}/maintenance/disable`
-        : `/api/v1/nodes/${node.id}/maintenance/enable`;
-      const data = await requestJSON(path, { method: 'POST' });
-      target.innerHTML = renderActionResponse(data, 'Node maintenance');
-      await reloadNodeControlModal(node.id, 'Node maintenance state updated.');
-    } catch (err) {
-      target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-    }
   }
 
   async function login(event) {
