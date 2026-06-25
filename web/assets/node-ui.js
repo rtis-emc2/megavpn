@@ -108,10 +108,11 @@
         </button>`;
     }
 
-    function bindNodeConsoleTabs() {
+    function bindNodeConsoleTabs(onChange) {
       const buttons = Array.from(document.querySelectorAll('.node-tab-btn'));
       const panels = Array.from(document.querySelectorAll('.node-tab-panel'));
       const activate = (tabID) => {
+        if (!buttons.some((button) => button.dataset.nodeTab === tabID)) return;
         buttons.forEach((button) => {
           const active = button.dataset.nodeTab === tabID;
           button.classList.toggle('is-active', active);
@@ -120,6 +121,7 @@
         panels.forEach((panel) => {
           panel.classList.toggle('is-active', panel.dataset.nodePanel === tabID);
         });
+        if (typeof onChange === 'function') onChange(tabID);
       };
       buttons.forEach((button) => button.addEventListener('click', () => activate(button.dataset.nodeTab)));
     }

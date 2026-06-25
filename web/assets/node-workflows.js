@@ -94,6 +94,32 @@
       return Array.isArray(value) ? value : [];
     }
 
+    const nodeManageTabIDs = new Set(['overview', 'bootstrap', 'terminal', 'agent', 'inventory', 'services']);
+
+    function persistNodeManageTabs() {
+      try {
+        sessionStorage.setItem('megavpn.nodeManageActiveTabs', JSON.stringify(state.nodeManageActiveTabs || {}));
+      } catch (_) {
+        // Session storage is best-effort only; in-memory state still protects auto-refresh.
+      }
+    }
+
+    function setNodeManageActiveTab(nodeID, tabID) {
+      if (!nodeID || !nodeManageTabIDs.has(tabID)) return;
+      if (!state.nodeManageActiveTabs || typeof state.nodeManageActiveTabs !== 'object') {
+        state.nodeManageActiveTabs = {};
+      }
+      state.nodeManageActiveTabs[nodeID] = tabID;
+      persistNodeManageTabs();
+    }
+
+    function resolveNodeManageActiveTab(nodeID, diag) {
+      const saved = state.nodeManageActiveTabs?.[nodeID];
+      if (nodeManageTabIDs.has(saved)) return saved;
+      const fallback = defaultNodeConsoleTab(diag);
+      return nodeManageTabIDs.has(fallback) ? fallback : 'overview';
+    }
+
     let activeTerminalSocket = null;
 
     function enabledSSHMethod(methods) {
@@ -611,7 +637,7 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
       const inventoryCollectedAt = inventoryPayload.collected_at || latestInventory?.created_at || null;
       const canRequeueStuckJob = String(diag?.communication_state || '') === 'job_result_stalled' && agent.last_job_claim_job_id;
       const canClearStaleRotation = String(agent.token_rotation_status || '') === 'rotating';
-      const activeTab = defaultNodeConsoleTab(diag);
+      const activeTab = resolveNodeManageActiveTab(node.id, diag);
       const setupLabel = nodeExecutionLabel(node.execution_mode || 'unknown');
       const communicationState = diag?.communication_state || 'unknown';
       const accessStatus = terminalMethod ? 'configured' : 'missing';
@@ -870,7 +896,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
           </div>
         </div>`;
 
-      bindNodeConsoleTabs();
+      bindNodeConsoleTabs((tabID) => setNodeManageActiveTab(node.id, tabID));
       document.getElementById('sshAccessForm').addEventListener('submit', (event) => saveSSHAccess(event, node, methods));
       document.getElementById('cancelSshAccessBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Unsaved SSH access changes discarded.'));
       document.getElementById('removeSshAccessBtn').addEventListener('click', () => removeSSHAccess(node, methods));
