@@ -9,6 +9,7 @@ import (
 	nethttp "net/http"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
+	"github.com/rtis-emc2/megavpn/internal/rbac"
 )
 
 type servicePackComponent = domain.ServicePackComponent
@@ -22,6 +23,7 @@ type servicePackCatalogStore interface {
 
 type servicePackCatalogManageStore interface {
 	servicePackCatalogStore
+	ListServicePackCatalog(context.Context) ([]domain.ServicePackDefinition, error)
 	UpsertServicePack(context.Context, domain.ServicePackDefinition) (domain.ServicePackDefinition, error)
 	SetServicePackStatus(context.Context, string, string) (domain.ServicePackDefinition, error)
 }
@@ -214,6 +216,29 @@ func findServicePack(key string) (servicePackDefinition, bool) {
 }
 
 func (s *Server) listServicePacks(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if truthyQuery(r, "include_inactive") {
+		authCtx, ok := authFromRequest(r)
+		if !ok || !rbac.HasPermission(authCtx.PermissionCodes, "settings.manage") {
+			writeErr(w, 403, "settings.manage permission is required")
+			return
+		}
+		catalog, ok := s.store.(servicePackCatalogManageStore)
+		if !ok {
+			writeErr(w, 501, "service pack catalog management is not supported")
+			return
+		}
+		if err := catalog.EnsureDefaultServicePacks(r.Context(), servicePackDefinitions()); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		packs, err := catalog.ListServicePackCatalog(r.Context())
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, packs)
+		return
+	}
 	packs, err := s.availableServicePacks(r.Context())
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -480,4 +505,9 @@ func interpolatePackValue(value any, vars map[string]string) any {
 	default:
 		return value
 	}
+}
+
+func truthyQuery(r *nethttp.Request, key string) bool {
+	value := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key)))
+	return value == "1" || value == "true" || value == "yes" || value == "y" || value == "on"
 }

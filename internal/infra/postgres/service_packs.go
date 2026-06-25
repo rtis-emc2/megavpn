@@ -71,6 +71,26 @@ func (s *Store) ListServicePacks(ctx context.Context) ([]domain.ServicePackDefin
 	return out, rows.Err()
 }
 
+func (s *Store) ListServicePackCatalog(ctx context.Context) ([]domain.ServicePackDefinition, error) {
+	rows, err := s.db.Query(ctx, `select key,label,description,base_name_template,endpoint_hint,requires_endpoint_host,
+		platform_notes_json,recommendations_json,components_json,status,source,version,display_order
+		from service_pack_templates
+		order by case status when 'active' then 0 when 'disabled' then 1 else 2 end, display_order asc,label asc,key asc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ServicePackDefinition
+	for rows.Next() {
+		pack, err := scanServicePackRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, pack)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) GetServicePack(ctx context.Context, key string) (domain.ServicePackDefinition, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {

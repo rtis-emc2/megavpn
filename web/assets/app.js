@@ -48,6 +48,7 @@
     backhaulDrivers: [],
     servicesCatalog: [],
     servicePacks: [],
+    servicePackCatalog: [],
     serviceInstallers: [],
     serviceCapabilitiesByNode: {},
     serviceInstallEventsByNode: {},
@@ -62,12 +63,15 @@
     nodeManageID: '',
     nodeManageData: null,
     refreshSeq: 0,
+    refreshInFlight: false,
+    refreshInFlightSeq: 0,
     lastError: null,
   };
 
   localStorage.removeItem('megavpn.authToken');
 
   const appConfig = window.MegaVPNAppConfig || {};
+  const AUTO_REFRESH_INTERVAL_MS = Number(appConfig.autoRefreshIntervalMs || 5000);
   const navGroups = Array.isArray(appConfig.navGroups) ? appConfig.navGroups : [];
   const authView = window.MegaVPNAuthView || null;
   const responseView = window.MegaVPNResponseView || null;
@@ -297,6 +301,7 @@
     requestJSON,
     sendJSON,
     refresh,
+    hasPermission,
     openModal,
     closeModal,
     openActionOutcomeModal,
@@ -614,6 +619,7 @@
       state.backhaulDrivers = [];
       state.servicesCatalog = [];
       state.servicePacks = [];
+      state.servicePackCatalog = [];
       state.serviceInstallers = [];
       state.serviceCapabilitiesByNode = {};
       state.serviceInstallEventsByNode = {};
@@ -638,6 +644,9 @@
     const backhaulDrivers = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul/drivers', []) : [];
     const servicesCatalog = await fetchJSON('/api/v1/services', []);
     const servicePacks = await fetchJSON('/api/v1/service-packs', []);
+    const servicePackCatalog = hasPermission('settings.manage')
+      ? await fetchJSON('/api/v1/service-packs?include_inactive=1', servicePacks)
+      : servicePacks;
     const serviceInstallers = await fetchJSON('/api/v1/services/installers', []);
     const platformCertificates = (hasPermission('instance.read') || hasPermission('settings.manage')) ? await fetchJSON('/api/v1/platform/certificates', []) : [];
     const platformPKIRoots = hasPermission('instance.read') ? await fetchJSON('/api/v1/platform/pki-roots', []) : [];
@@ -653,6 +662,7 @@
     state.backhaulDrivers = Array.isArray(backhaulDrivers) ? backhaulDrivers : [];
     state.servicesCatalog = Array.isArray(servicesCatalog) ? servicesCatalog : [];
     state.servicePacks = Array.isArray(servicePacks) ? servicePacks : [];
+    state.servicePackCatalog = Array.isArray(servicePackCatalog) ? servicePackCatalog : state.servicePacks;
     state.serviceInstallers = Array.isArray(serviceInstallers) ? serviceInstallers : [];
     state.platformCertificates = Array.isArray(platformCertificates) ? platformCertificates : [];
     state.platformPKIRoots = Array.isArray(platformPKIRoots) ? platformPKIRoots : [];
@@ -3553,8 +3563,11 @@ key_secret_ref = ${escapeHTML(item.key_secret_ref_id || 'n/a')}</div>
     else renderUnknownPage(state.page);
   }
 
-  async function refresh() {
+  async function refresh(options = {}) {
+    if (options.auto && state.refreshInFlight) return;
     const seq = ++state.refreshSeq;
+    state.refreshInFlight = true;
+    state.refreshInFlightSeq = seq;
     try {
       if (!state.authUser && state.inviteToken) {
         await loadInvitePreview();
@@ -3568,9 +3581,40 @@ key_secret_ref = ${escapeHTML(item.key_secret_ref_id || 'n/a')}</div>
     } catch (err) {
       if (seq !== state.refreshSeq) return;
       state.lastError = err;
+    } finally {
+      if (state.refreshInFlightSeq === seq) {
+        state.refreshInFlight = false;
+        state.refreshInFlightSeq = 0;
+      }
     }
     if (seq !== state.refreshSeq) return;
     render();
+  }
+
+  function startAutoRefresh() {
+    if (!AUTO_REFRESH_INTERVAL_MS || AUTO_REFRESH_INTERVAL_MS < 1000) return;
+    window.setInterval(() => {
+      if (document.hidden || !state.authUser || !autoRefreshEnabledForCurrentPage()) return;
+      void refresh({ auto: true });
+    }, AUTO_REFRESH_INTERVAL_MS);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && state.authUser && autoRefreshEnabledForCurrentPage()) void refresh({ auto: true });
+    });
+  }
+
+  function autoRefreshEnabledForCurrentPage() {
+    return [
+      'dashboard',
+      'nodes',
+      'nodeManage',
+      'instances',
+      'jobs',
+      'backhaul',
+      'services',
+      'revisions',
+      'telemetry',
+      'audit',
+    ].includes(state.page);
   }
 
   function bind() {
@@ -3589,6 +3633,7 @@ key_secret_ref = ${escapeHTML(item.key_secret_ref_id || 'n/a')}</div>
     bind();
     render();
     refresh();
+    startAutoRefresh();
     window.__MegaVPNBootReady = true;
   } catch (err) {
     renderBootstrapError(err);

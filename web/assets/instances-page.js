@@ -11,6 +11,7 @@
       escapeHTML,
       sendJSON,
       refresh,
+      hasPermission,
       openModal,
       closeModal,
       openActionOutcomeModal,
@@ -28,6 +29,7 @@
       typeof escapeHTML !== 'function' ||
       typeof sendJSON !== 'function' ||
       typeof refresh !== 'function' ||
+      typeof hasPermission !== 'function' ||
       typeof openModal !== 'function' ||
       typeof closeModal !== 'function' ||
       typeof openActionOutcomeModal !== 'function' ||
@@ -80,6 +82,32 @@
       const normalized = String(code || '').trim();
       const service = (state.servicesCatalog || []).find((item) => String(item.code || '').trim() === normalized);
       return service?.label || service?.display_name || service?.name || normalized || 'unknown';
+    }
+
+    function canManageServicePacks() {
+      return hasPermission('settings.manage');
+    }
+
+    function servicePackCatalogItems() {
+      const source = canManageServicePacks()
+        ? (state.servicePackCatalog || state.servicePacks || [])
+        : (state.servicePacks || []);
+      return (Array.isArray(source) ? source : [])
+        .filter((pack) => pack && pack.key)
+        .slice()
+        .sort((left, right) => {
+          const leftStatus = String(left.status || 'active');
+          const rightStatus = String(right.status || 'active');
+          if (leftStatus !== rightStatus) return leftStatus.localeCompare(rightStatus, 'en');
+          return Number(left.display_order || 1000) - Number(right.display_order || 1000)
+            || String(left.label || left.key).localeCompare(String(right.label || right.key), 'en');
+        });
+    }
+
+    function servicePackComponentsLabel(pack) {
+      const components = Array.isArray(pack?.components) ? pack.components : [];
+      if (!components.length) return 'no components';
+      return components.map((component) => component.service_code || component.label || 'component').join(', ');
     }
 
     function primaryReason(values, fallback) {
@@ -240,6 +268,13 @@
     function bindActions() {
       document.getElementById('createInstanceBtn')?.addEventListener('click', openCreateInstanceModal);
       document.getElementById('createServicePackBtn')?.addEventListener('click', openCreateServicePackModal);
+      document.getElementById('addServicePackTemplateBtn')?.addEventListener('click', () => openServicePackEditor(''));
+      document.querySelectorAll('.service-pack-edit-btn').forEach((button) => {
+        button.addEventListener('click', () => openServicePackEditor(button.dataset.packKey));
+      });
+      document.querySelectorAll('.service-pack-status-btn').forEach((button) => {
+        button.addEventListener('click', () => setServicePackStatus(button.dataset.packKey, button.dataset.status));
+      });
       document.querySelectorAll('.instance-manage-btn').forEach((button) => {
         button.addEventListener('click', () => openInstanceManageModal(button.dataset.instanceId));
       });
@@ -267,8 +302,156 @@
             </div>
           </div>
           <div class="instances-list">${renderInstancesList(instances)}</div>
-        </section>`;
+        </section>
+        ${renderServicePackCatalog()}`;
       bindActions();
+    }
+
+    function renderServicePackCatalog() {
+      const packs = servicePackCatalogItems();
+      const manage = canManageServicePacks();
+      const rows = packs.length
+        ? packs.map((pack) => `
+          <tr>
+            <td>
+              <strong>${escapeHTML(pack.label || pack.key)}</strong>
+              <div class="metric-caption"><code>${escapeHTML(pack.key)}</code></div>
+            </td>
+            <td>${statusTag(pack.status || 'active')}</td>
+            <td>${escapeHTML(servicePackComponentsLabel(pack))}</td>
+            <td>${escapeHTML(pack.endpoint_hint || 'n/a')}</td>
+            <td>
+              <div class="inline-actions">
+                ${manage ? `<button class="secondary-btn service-pack-edit-btn" type="button" data-pack-key="${escapeHTML(pack.key)}">Edit</button>` : ''}
+                ${manage && (pack.status || 'active') !== 'active' ? `<button class="primary-btn service-pack-status-btn" type="button" data-pack-key="${escapeHTML(pack.key)}" data-status="active">Enable</button>` : ''}
+                ${manage && (pack.status || 'active') === 'active' ? `<button class="secondary-btn service-pack-status-btn" type="button" data-pack-key="${escapeHTML(pack.key)}" data-status="disabled">Disable</button>` : ''}
+                ${manage && (pack.status || 'active') !== 'deleted' ? `<button class="danger-btn service-pack-status-btn" type="button" data-pack-key="${escapeHTML(pack.key)}" data-status="deleted">Delete</button>` : ''}
+              </div>
+            </td>
+          </tr>`).join('')
+        : `<tr><td colspan="5"><div class="empty">No service pack templates loaded.</div></td></tr>`;
+      return `
+        <section class="table-card">
+          <div class="table-head">
+            <h2>Service pack catalog</h2>
+            <div class="table-tools">
+              <span class="tag">${escapeHTML(String(packs.length))} templates</span>
+              ${manage ? '<button class="secondary-btn" id="addServicePackTemplateBtn" type="button">Add pack</button>' : '<span class="tag">settings.manage required</span>'}
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Pack</th><th>Status</th><th>Components</th><th>Endpoint hint</th><th>Actions</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </section>`;
+    }
+
+    function servicePackEditorModel(packKey) {
+      const existing = servicePackCatalogItems().find((pack) => pack.key === packKey);
+      if (existing) return JSON.parse(JSON.stringify(existing));
+      return {
+        key: 'custom_wireguard_pack',
+        label: 'Custom WireGuard Pack',
+        description: 'Operator-managed service pack template.',
+        base_name_template: 'edge-wireguard',
+        endpoint_hint: 'wg.example.com',
+        requires_endpoint_host: true,
+        platform_notes: [],
+        recommendations: ['Keep address pools unique across WireGuard instances.'],
+        components: [
+          {
+            label: 'WireGuard Road Warrior',
+            description: 'Standalone WireGuard instance with managed peers.',
+            service_code: 'wireguard',
+            preset_key: 'roadwarrior',
+            name_suffix: 'wireguard',
+            slug_suffix: 'wireguard',
+            endpoint_port: 51820,
+            requires_endpoint_host: true,
+            spec: {
+              service_profile: 'roadwarrior',
+              network_cidr: '10.66.0.0/24',
+              server_address: '10.66.0.1/24',
+              client_allowed_ips: '0.0.0.0/0, ::/0',
+              client_dns: '1.1.1.1, 1.0.0.1',
+              persistent_keepalive: 25,
+              config_mode: '0600',
+            },
+          },
+        ],
+        status: 'active',
+        source: 'operator',
+        display_order: 500,
+      };
+    }
+
+    function openServicePackEditor(packKey) {
+      if (!canManageServicePacks()) {
+        openActionOutcomeModal('Service pack catalog', 'settings.manage required', 'failed', 'Your role cannot manage service pack templates.', []);
+        return;
+      }
+      const model = servicePackEditorModel(packKey);
+      openModal(packKey ? `Edit pack: ${model.label || packKey}` : 'Add service pack', 'Service pack catalog template', `
+        <form id="servicePackEditorForm" class="form-grid">
+          <div class="field full">
+            <label>Template JSON</label>
+            <textarea class="code-textarea" name="template_json" rows="24" spellcheck="false">${escapeHTML(JSON.stringify(model, null, 2))}</textarea>
+          </div>
+          <div class="field full inline-actions">
+            <button class="primary-btn" type="submit">Save pack</button>
+            <button class="secondary-btn" id="cancelServicePackEditorBtn" type="button">Cancel</button>
+          </div>
+        </form>
+        <div id="servicePackEditorResult" class="form-result"></div>`, { wide: true });
+      document.getElementById('cancelServicePackEditorBtn')?.addEventListener('click', closeModal);
+      document.getElementById('servicePackEditorForm')?.addEventListener('submit', submitServicePackEditor);
+    }
+
+    async function submitServicePackEditor(event) {
+      event.preventDefault();
+      const result = document.getElementById('servicePackEditorResult');
+      const textarea = event.currentTarget.querySelector('textarea[name="template_json"]');
+      let payload = null;
+      try {
+        payload = JSON.parse(String(textarea?.value || '').trim());
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">invalid JSON: ${escapeHTML(err.message)}</span>`;
+        return;
+      }
+      const key = String(payload?.key || '').trim();
+      if (!key) {
+        if (result) result.innerHTML = '<span class="tag danger">key is required</span>';
+        return;
+      }
+      if (result) result.innerHTML = '<span class="tag warn">saving</span>';
+      try {
+        const saved = await sendJSON(`/api/v1/service-packs/${encodeURIComponent(key)}`, 'PUT', payload);
+        if (textarea) textarea.value = JSON.stringify(saved, null, 2);
+        if (result) result.innerHTML = `<span class="tag ok">saved</span> <code>${escapeHTML(saved.key || key)}</code>`;
+        await refresh();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function setServicePackStatus(packKey, status) {
+      if (!packKey || !canManageServicePacks()) return;
+      if (status === 'deleted' && !window.confirm(`Delete service pack template ${packKey}?`)) return;
+      try {
+        if (status === 'deleted') {
+          await sendJSON(`/api/v1/service-packs/${encodeURIComponent(packKey)}`, 'DELETE', null);
+        } else {
+          await sendJSON(`/api/v1/service-packs/${encodeURIComponent(packKey)}/${encodeURIComponent(status === 'active' ? 'enable' : 'disable')}`, 'POST', {});
+        }
+        await refresh();
+      } catch (err) {
+        openActionOutcomeModal('Service pack catalog', 'Template status update failed', 'failed', err.message || 'Service pack status update failed.', [
+          { label: 'Pack', value: packKey },
+          { label: 'Target status', value: status },
+        ]);
+      }
     }
 
     function openDeleteInstanceModal(instanceID, instanceName) {
