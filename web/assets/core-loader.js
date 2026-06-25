@@ -62,6 +62,14 @@
       }
     }
 
+    function normalizeServicePackList(value) {
+      return Array.isArray(value) ? value : [];
+    }
+
+    function activeServicePacksFromCatalog(catalog) {
+      return normalizeServicePackList(catalog).filter((pack) => String(pack.status || 'active').toLowerCase() === 'active');
+    }
+
     async function loadCore() {
       state.ready = await fetchJSON('/api/v1/ready', { status: 'not_ready' });
       state.versionInfo = await fetchJSON('/api/v1/version', null);
@@ -100,8 +108,11 @@
       state.backhaulLinks = Array.isArray(backhaulLinks) ? backhaulLinks : [];
       state.backhaulDrivers = Array.isArray(backhaulDrivers) ? backhaulDrivers : [];
       state.servicesCatalog = Array.isArray(servicesCatalog) ? servicesCatalog : [];
-      state.servicePacks = Array.isArray(servicePacks) ? servicePacks : [];
-      state.servicePackCatalog = Array.isArray(servicePackCatalog) ? servicePackCatalog : state.servicePacks;
+      state.servicePackCatalog = normalizeServicePackList(servicePackCatalog);
+      state.servicePacks = normalizeServicePackList(servicePacks);
+      if (!state.servicePacks.length && state.servicePackCatalog.length) {
+        state.servicePacks = activeServicePacksFromCatalog(state.servicePackCatalog);
+      }
       state.serviceInstallers = Array.isArray(serviceInstallers) ? serviceInstallers : [];
       state.platformCertificates = Array.isArray(platformCertificates) ? platformCertificates : [];
       state.platformPKIRoots = Array.isArray(platformPKIRoots) ? platformPKIRoots : [];

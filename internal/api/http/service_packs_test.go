@@ -3,6 +3,8 @@ package http
 import (
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestDefaultServicePacksAreCreateReady(t *testing.T) {
@@ -84,6 +86,18 @@ func TestDefaultAccessSuiteHasExpectedComponentsWithoutInlineSecrets(t *testing.
 				t.Fatalf("component %d must not include inline secret key %q", idx, secretKey)
 			}
 		}
+	}
+}
+
+func TestServicePackCatalogUnavailableDetection(t *testing.T) {
+	if !isServicePackCatalogUnavailable(&pgconn.PgError{Code: "42P01", Message: "relation service_pack_templates does not exist"}) {
+		t.Fatal("expected undefined table to be treated as catalog unavailable")
+	}
+	if !isServicePackCatalogUnavailable(&pgconn.PgError{Code: "42703", Message: "column display_order does not exist"}) {
+		t.Fatal("expected undefined column to be treated as catalog unavailable")
+	}
+	if isServicePackCatalogUnavailable(&pgconn.PgError{Code: "23505", Message: "duplicate key"}) {
+		t.Fatal("duplicate key must not be treated as catalog unavailable")
 	}
 }
 

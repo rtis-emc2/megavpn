@@ -53,15 +53,16 @@
 
     function openCreateServicePackModal() {
       const initialPack = defaultServicePack();
+      const hasPack = Boolean(initialPack);
       openModal('Create instance from pack', 'POST /api/v1/service-packs/{key}/instances', `
         <form id="createServicePackForm" class="form-grid">
           <div class="field"><label>Node</label><select name="node_id" required>${nodeOptions()}</select></div>
-          <div class="field"><label>Service pack</label><select name="service_pack_key" required>${servicePackOptions(initialPack?.key || '')}</select></div>
+          <div class="field"><label>Service pack</label><select name="service_pack_key" required${hasPack ? '' : ' disabled'}>${servicePackOptions(initialPack?.key || '')}</select></div>
           <div class="field"><label>Base name</label><input name="base_name" required placeholder="${escapeHTML(initialPack?.base_name_template || 'edge-service-pack')}" /></div>
           <div class="field"><label>Endpoint host</label><input name="endpoint_host" placeholder="${escapeHTML(initialPack?.endpoint_hint || 'edge.example.com')}" /></div>
           <div class="field"><label>Managed certificate</label><select name="certificate_id">${certificateOptions('', true)}</select></div>
           <div id="servicePackFields" class="form-grid full"></div>
-          <div class="field full inline-actions"><button class="primary-btn" type="submit">Create from pack</button></div>
+          <div class="field full inline-actions"><button class="primary-btn" type="submit"${hasPack ? '' : ' disabled title="No active service pack is available"'}>Create from pack</button></div>
         </form>
         <div id="createServicePackResult" class="form-result"></div>`, { wide: true });
       const form = document.getElementById('createServicePackForm');
@@ -104,6 +105,9 @@
       try {
         const form = new FormData(event.currentTarget);
         const packKey = String(form.get('service_pack_key') || '').trim();
+        if (!packKey) {
+          throw new Error('No active service pack is available. Apply migrations or enable a pack in the catalog.');
+        }
         const payload = {
           node_id: String(form.get('node_id') || '').trim(),
           base_name: String(form.get('base_name') || '').trim(),

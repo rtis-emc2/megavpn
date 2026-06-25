@@ -28,7 +28,11 @@
     }
 
     function servicePackOptions(selectedKey = '') {
-      return availableServicePacks()
+      const packs = availableServicePacks();
+      if (!packs.length) {
+        return '<option value="">No service packs available</option>';
+      }
+      return packs
         .map((pack) => `<option value="${escapeHTML(pack.key)}"${pack.key === selectedKey ? ' selected' : ''}>${escapeHTML(pack.label || pack.key)}</option>`)
         .join('');
     }
@@ -938,7 +942,7 @@
 
     function renderServicePackProfilePanel(packKey) {
       const pack = servicePackByKey(packKey);
-      if (!pack) return '<div class="field full"><div class="empty">No service pack definition available.</div></div>';
+      if (!pack) return '<div class="field full"><div class="empty">No active service pack definition is available. Refresh after applying migrations, or enable a pack in the service pack catalog.</div></div>';
       const platformNotes = Array.isArray(pack.platform_notes) ? pack.platform_notes : [];
       const recommendations = Array.isArray(pack.recommendations) ? pack.recommendations : [];
       const components = Array.isArray(pack.components) ? pack.components : [];

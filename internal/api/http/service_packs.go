@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	nethttp "net/http"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
@@ -253,11 +254,19 @@ func (s *Server) listServicePacks(w nethttp.ResponseWriter, r *nethttp.Request) 
 			return
 		}
 		if err := catalog.EnsureDefaultServicePacks(r.Context(), servicePackDefinitions()); err != nil {
+			if isServicePackCatalogUnavailable(err) {
+				writeJSON(w, 200, servicePackDefinitions())
+				return
+			}
 			writeErr(w, 500, err.Error())
 			return
 		}
 		packs, err := catalog.ListServicePackCatalog(r.Context())
 		if err != nil {
+			if isServicePackCatalogUnavailable(err) {
+				writeJSON(w, 200, servicePackDefinitions())
+				return
+			}
 			writeErr(w, 500, err.Error())
 			return
 		}
@@ -420,9 +429,16 @@ func (s *Server) availableServicePacks(ctx context.Context) ([]domain.ServicePac
 	}
 	defaults := servicePackDefinitions()
 	if err := catalog.EnsureDefaultServicePacks(ctx, defaults); err != nil {
+		if isServicePackCatalogUnavailable(err) {
+			return defaults, nil
+		}
 		return nil, err
 	}
-	return catalog.ListServicePacks(ctx)
+	packs, err := catalog.ListServicePacks(ctx)
+	if isServicePackCatalogUnavailable(err) {
+		return defaults, nil
+	}
+	return packs, err
 }
 
 func (s *Server) getServicePack(ctx context.Context, key string) (domain.ServicePackDefinition, error) {
@@ -435,10 +451,41 @@ func (s *Server) getServicePack(ctx context.Context, key string) (domain.Service
 		}
 		return pack, nil
 	}
-	if err := catalog.EnsureDefaultServicePacks(ctx, servicePackDefinitions()); err != nil {
+	defaults := servicePackDefinitions()
+	if err := catalog.EnsureDefaultServicePacks(ctx, defaults); err != nil {
+		if isServicePackCatalogUnavailable(err) {
+			pack, found := findServicePack(key)
+			if !found {
+				return domain.ServicePackDefinition{}, domain.ErrServicePackNotFound
+			}
+			return pack, nil
+		}
 		return domain.ServicePackDefinition{}, err
 	}
-	return catalog.GetServicePack(ctx, key)
+	pack, err := catalog.GetServicePack(ctx, key)
+	if isServicePackCatalogUnavailable(err) {
+		fallback, found := findServicePack(key)
+		if !found {
+			return domain.ServicePackDefinition{}, domain.ErrServicePackNotFound
+		}
+		return fallback, nil
+	}
+	return pack, err
+}
+
+func isServicePackCatalogUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "42P01", "42703":
+			return true
+		}
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "service_pack_templates") && (strings.Contains(text, "does not exist") || strings.Contains(text, "undefined"))
 }
 
 func slugifyHTTP(value string) string {
