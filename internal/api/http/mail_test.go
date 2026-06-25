@@ -68,6 +68,47 @@ func TestBuildClientAccessHTMLIncludesNewlyCreatedShareURL(t *testing.T) {
 	}
 }
 
+func TestSystemMailTimestampsUseReadableUTCFormat(t *testing.T) {
+	t.Parallel()
+
+	expiresAt := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	readable := "24 Jun 2026, 12:00 UTC"
+	rfc3339 := "2026-06-24T12:00:00Z"
+
+	inviteText := buildOperatorInviteText(
+		domain.PlatformUserRecord{PlatformUser: domain.PlatformUser{Username: "operator-a"}},
+		domain.PlatformUser{Username: "admin"},
+		"https://control.example/?invite_token=secret",
+		expiresAt,
+	)
+	inviteHTML := buildOperatorInviteHTML(
+		domain.PlatformUserRecord{PlatformUser: domain.PlatformUser{Username: "operator-a"}},
+		domain.PlatformUser{Username: "admin"},
+		"https://control.example/?invite_token=secret",
+		expiresAt,
+	)
+	clientText := buildClientAccessBody(domain.Client{Username: "client-a"}, "", nil, []domain.ShareLink{
+		{Token: "plain-once-token", TokenHint: "plain-on...-token", ExpiresAt: expiresAt},
+	}, nil, "https://control.example")
+	clientHTML := buildClientAccessHTML(domain.Client{Username: "client-a"}, "", nil, []domain.ShareLink{
+		{Token: "plain-once-token", TokenHint: "plain-on...-token", ExpiresAt: expiresAt},
+	}, nil, "https://control.example")
+
+	for name, body := range map[string]string{
+		"invite text": inviteText,
+		"invite html": inviteHTML,
+		"client text": clientText,
+		"client html": clientHTML,
+	} {
+		if !strings.Contains(body, readable) {
+			t.Fatalf("%s should include readable UTC timestamp %q:\n%s", name, readable, body)
+		}
+		if strings.Contains(body, rfc3339) {
+			t.Fatalf("%s should not expose raw RFC3339 timestamp %q:\n%s", name, rfc3339, body)
+		}
+	}
+}
+
 func TestSystemMailHTMLUsesModernSharedLayout(t *testing.T) {
 	t.Parallel()
 
@@ -95,6 +136,9 @@ func TestSystemMailHTMLUsesModernSharedLayout(t *testing.T) {
 		}
 		if strings.Contains(body, "radial-gradient") || strings.Contains(body, "display:grid") {
 			t.Fatalf("%s email should not use old decorative/grid layout:\n%s", name, body)
+		}
+		if strings.Contains(body, `align="right"`) || strings.Contains(body, "text-align:right") || strings.Contains(body, "font-weight:850") {
+			t.Fatalf("%s email should use a restrained aligned typography system:\n%s", name, body)
 		}
 	}
 }

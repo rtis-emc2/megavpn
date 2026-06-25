@@ -493,7 +493,7 @@ func buildOperatorInviteText(user domain.PlatformUserRecord, invitedBy domain.Pl
 	b.WriteString("- Email: " + firstNonEmpty(user.Email, "n/a") + "\n")
 	b.WriteString("- Roles: " + firstNonEmpty(strings.Join(user.RoleCodes, ", "), "n/a") + "\n")
 	b.WriteString("- Invited by: " + operator + "\n")
-	b.WriteString("- Expires at: " + expiresAt.Format(time.RFC3339) + "\n\n")
+	b.WriteString("- Expires at: " + formatMailTime(expiresAt) + "\n\n")
 	b.WriteString("Activation link:\n")
 	b.WriteString(link + "\n\n")
 	b.WriteString("How to activate:\n")
@@ -519,7 +519,7 @@ func buildOperatorInviteHTML(user domain.PlatformUserRecord, invitedBy domain.Pl
 			{"Email", firstNonEmpty(user.Email, "n/a")},
 			{"Roles", firstNonEmpty(strings.Join(user.RoleCodes, ", "), "n/a")},
 			{"Invited by", operator},
-			{"Expires at", expiresAt.Format(time.RFC3339)},
+			{"Expires at", formatMailTime(expiresAt)},
 		})),
 		buildMailNotice("If this invitation is unexpected or the link has expired, contact the MegaVPN administrator and request a new invite."),
 	}
@@ -532,7 +532,7 @@ func buildOperatorInviteHTML(user domain.PlatformUserRecord, invitedBy domain.Pl
 		Badges: []mailBadge{
 			{Label: "Invited user", Value: invitee, Detail: "Operator profile prepared for activation."},
 			{Label: "Invited by", Value: operator, Detail: "Operator who issued this invitation."},
-			{Label: "Expires", Value: expiresAt.Format(time.RFC3339), Detail: "Single-use and time-limited."},
+			{Label: "Expires", Value: formatMailTime(expiresAt), Detail: "Single-use and time-limited."},
 		},
 		Action: &mailAction{
 			Label: "Open invitation",
@@ -557,7 +557,7 @@ func buildPlatformMailTestText(user domain.PlatformUser, settings domain.Platfor
 		b.WriteString("- Operator email: " + user.Email + "\n")
 	}
 	b.WriteString("- Recipient: " + recipient + "\n")
-	b.WriteString("- Sent at: " + testedAt.Format(time.RFC3339) + "\n")
+	b.WriteString("- Sent at: " + formatMailTime(testedAt) + "\n")
 	b.WriteString("- SMTP host: " + settings.SMTPHost + ":" + strconv.Itoa(settings.SMTPPort) + "\n")
 	b.WriteString("- TLS mode: " + settings.SMTPTLSMode + "\n")
 	b.WriteString("- Auth mode: " + settings.SMTPAuthMode + "\n")
@@ -584,7 +584,7 @@ func buildPlatformMailTestHTML(user domain.PlatformUser, settings domain.Platfor
 				{"Operator username", firstNonEmpty(user.Username, "n/a")},
 				{"Operator email", firstNonEmpty(user.Email, "n/a")},
 				{"Recipient", firstNonEmpty(recipient, "n/a")},
-				{"Sent at", testedAt.Format(time.RFC3339)},
+				{"Sent at", formatMailTime(testedAt)},
 				{"SMTP host", firstNonEmpty(settings.SMTPHost, "n/a") + ":" + strconv.Itoa(settings.SMTPPort)},
 				{"TLS mode", firstNonEmpty(settings.SMTPTLSMode, "n/a")},
 				{"Auth mode", firstNonEmpty(settings.SMTPAuthMode, "n/a")},
@@ -644,11 +644,11 @@ func buildMailLayout(layout mailLayout) string {
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
                 <tr>
                   <td width="58" valign="middle" style="width:58px;">
-                    <div style="width:48px;height:48px;border-radius:14px;background:#b91c1c;color:#ffffff;font-weight:900;font-size:14px;line-height:48px;text-align:center;letter-spacing:0.04em;">NL</div>
+                    <div style="width:44px;height:44px;border-radius:12px;background:#b91c1c;color:#ffffff;font-weight:800;font-size:13px;line-height:44px;text-align:center;letter-spacing:0.04em;">NL</div>
                   </td>
                   <td valign="middle">
-                    <div style="font-size:16px;font-weight:800;color:#111827;line-height:1.25;">NLGate MegaVPN</div>
-                    <div style="font-size:11px;line-height:1.4;color:#64748b;text-transform:uppercase;letter-spacing:0.12em;">Control Plane Notification</div>
+                    <div style="font-size:15px;font-weight:800;color:#111827;line-height:1.3;">NLGate MegaVPN</div>
+                    <div style="font-size:11px;line-height:1.4;color:#64748b;text-transform:uppercase;letter-spacing:0.10em;">Control Plane Notification</div>
                   </td>
                 </tr>
               </table>
@@ -659,9 +659,9 @@ func buildMailLayout(layout mailLayout) string {
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
                 <tr>
                   <td style="padding:26px 30px 22px;border-bottom:1px solid #e5e7eb;background:#ffffff;">
-                    <div style="font-size:11px;font-weight:800;color:#b91c1c;text-transform:uppercase;letter-spacing:0.14em;">` + html.EscapeString(layout.Eyebrow) + `</div>
-                    <h1 style="margin:9px 0 10px;font-size:28px;line-height:1.18;color:#111827;font-weight:850;letter-spacing:0;">` + html.EscapeString(layout.Heading) + `</h1>
-                    <p style="margin:0;font-size:15px;line-height:1.65;color:#475569;">` + html.EscapeString(layout.Intro) + `</p>
+                    <div style="font-size:11px;font-weight:800;color:#b91c1c;text-transform:uppercase;letter-spacing:0.10em;">` + html.EscapeString(layout.Eyebrow) + `</div>
+                    <h1 style="margin:8px 0 10px;font-size:24px;line-height:1.25;color:#111827;font-weight:800;letter-spacing:0;">` + html.EscapeString(layout.Heading) + `</h1>
+                    <p style="margin:0;font-size:14px;line-height:1.62;color:#475569;">` + html.EscapeString(layout.Intro) + `</p>
                   </td>
                 </tr>
                 <tr>
@@ -669,7 +669,7 @@ func buildMailLayout(layout mailLayout) string {
                     ` + buildMailBadges(layout.Badges) + `
                     ` + buildMailAction(layout.Action) + `
                     ` + sections + `
-                    <div style="margin-top:22px;padding-top:18px;border-top:1px solid #e5e7eb;color:#64748b;font-size:12px;line-height:1.65;">
+                    <div style="margin-top:22px;padding-top:18px;border-top:1px solid #e5e7eb;color:#64748b;font-size:12px;line-height:1.6;">
                       This is an automated message from MegaVPN Control Plane. Do not forward links or attached access materials to unauthorized recipients.
                     </div>
                   </td>
@@ -701,9 +701,9 @@ func buildMailBadges(badges []mailBadge) string {
 			b.WriteString("<tr>")
 		}
 		b.WriteString(`<td valign="top" style="width:33.333%;padding:0 6px 12px 0;">`)
-		b.WriteString(`<div style="border:1px solid #dbe4ee;background:#f8fafc;border-radius:14px;padding:14px;">`)
-		b.WriteString(`<div style="font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.12em;">` + html.EscapeString(badge.Label) + `</div>`)
-		b.WriteString(`<div style="margin-top:7px;font-size:18px;line-height:1.25;font-weight:800;color:#111827;word-break:break-word;">` + html.EscapeString(badge.Value) + `</div>`)
+		b.WriteString(`<div style="border:1px solid #dbe4ee;background:#f8fafc;border-radius:12px;padding:13px;min-height:88px;">`)
+		b.WriteString(`<div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;line-height:1.35;">` + html.EscapeString(badge.Label) + `</div>`)
+		b.WriteString(`<div style="margin-top:7px;font-size:15px;line-height:1.35;font-weight:800;color:#111827;word-break:break-word;">` + html.EscapeString(badge.Value) + `</div>`)
 		if strings.TrimSpace(badge.Detail) != "" {
 			b.WriteString(`<div style="margin-top:5px;font-size:12px;line-height:1.45;color:#64748b;">` + html.EscapeString(badge.Detail) + `</div>`)
 		}
@@ -724,7 +724,7 @@ func buildMailAction(action *mailAction) string {
 	return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin:0 0 20px;">
   <tr>
     <td align="center" style="padding:18px;border:1px solid #fecdd3;background:#fff1f2;border-radius:16px;">
-      <a href="` + html.EscapeString(action.URL) + `" style="display:inline-block;background:#b91c1c;color:#ffffff;text-decoration:none;font-size:15px;font-weight:800;line-height:1;padding:14px 22px;border-radius:12px;">` + html.EscapeString(action.Label) + `</a>
+      <a href="` + html.EscapeString(action.URL) + `" style="display:inline-block;background:#b91c1c;color:#ffffff;text-decoration:none;font-size:14px;font-weight:800;line-height:1;padding:13px 20px;border-radius:10px;">` + html.EscapeString(action.Label) + `</a>
       <div style="margin-top:12px;color:#64748b;font-size:12px;line-height:1.6;">` + html.EscapeString(hint) + `<br><span style="color:#334155;word-break:break-all;">` + html.EscapeString(action.URL) + `</span></div>
     </td>
   </tr>
@@ -736,8 +736,8 @@ func buildMailSection(title, body string) string {
 		return ""
 	}
 	return `<div style="margin-top:16px;border:1px solid #e2e8f0;border-radius:16px;background:#ffffff;overflow:hidden;">
-  <div style="padding:14px 16px;border-bottom:1px solid #e2e8f0;background:#f8fafc;font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.12em;">` + html.EscapeString(title) + `</div>
-  <div style="padding:16px;color:#334155;font-size:14px;line-height:1.65;">` + body + `</div>
+  <div style="padding:13px 16px;border-bottom:1px solid #e2e8f0;background:#f8fafc;font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;">` + html.EscapeString(title) + `</div>
+  <div style="padding:16px;color:#334155;font-size:14px;line-height:1.6;">` + body + `</div>
 </div>`
 }
 
@@ -755,9 +755,9 @@ func buildMailMetaTable(rows []mailMetaRow) string {
 	var b strings.Builder
 	b.WriteString(`<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;">`)
 	for _, row := range rows {
-		b.WriteString(`<tr><td valign="top" style="padding:10px 10px 10px 0;border-bottom:1px solid #e5e7eb;color:#64748b;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;">`)
+		b.WriteString(`<tr><td valign="top" width="34%" style="width:34%;padding:10px 14px 10px 0;border-bottom:1px solid #e5e7eb;color:#64748b;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;line-height:1.45;">`)
 		b.WriteString(html.EscapeString(row.Label))
-		b.WriteString(`</td><td valign="top" align="right" style="padding:10px 0;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;font-weight:700;word-break:break-word;">`)
+		b.WriteString(`</td><td valign="top" width="66%" style="width:66%;padding:10px 0;border-bottom:1px solid #e5e7eb;color:#111827;font-size:13px;font-weight:700;line-height:1.45;word-break:break-word;">`)
 		b.WriteString(html.EscapeString(row.Value))
 		b.WriteString(`</td></tr>`)
 	}
@@ -775,7 +775,7 @@ func buildMailOrderedList(items []string) string {
 		if strings.TrimSpace(item) == "" {
 			continue
 		}
-		b.WriteString(`<li style="margin:0 0 8px;">` + html.EscapeString(item) + `</li>`)
+		b.WriteString(`<li style="margin:0 0 8px;font-size:13px;line-height:1.55;">` + html.EscapeString(item) + `</li>`)
 	}
 	b.WriteString(`</ol>`)
 	return b.String()
@@ -791,7 +791,7 @@ func buildMailUnorderedList(items []string) string {
 		if strings.TrimSpace(item) == "" {
 			continue
 		}
-		b.WriteString(`<li style="margin:0 0 8px;">` + html.EscapeString(item) + `</li>`)
+		b.WriteString(`<li style="margin:0 0 8px;font-size:13px;line-height:1.55;">` + html.EscapeString(item) + `</li>`)
 	}
 	b.WriteString(`</ul>`)
 	return b.String()
@@ -809,7 +809,7 @@ func buildMailParagraphs(text string) string {
 		if part == "" {
 			continue
 		}
-		b.WriteString(`<p style="margin:0 0 10px;color:#334155;font-size:14px;line-height:1.65;">` + html.EscapeString(part) + `</p>`)
+		b.WriteString(`<p style="margin:0 0 10px;color:#334155;font-size:14px;line-height:1.6;">` + html.EscapeString(part) + `</p>`)
 	}
 	return b.String()
 }
@@ -819,6 +819,13 @@ func shareLinkPublicURL(link domain.ShareLink, publicBaseURL string) string {
 		return ""
 	}
 	return strings.TrimRight(publicBaseURL, "/") + "/share/" + strings.TrimSpace(link.Token)
+}
+
+func formatMailTime(value time.Time) string {
+	if value.IsZero() {
+		return "n/a"
+	}
+	return value.UTC().Format("02 Jan 2006, 15:04 MST")
 }
 
 func buildClientAccessHTML(client domain.Client, extraMessage string, artifacts []domain.Artifact, shareLinks []domain.ShareLink, attachmentNotes []string, publicBaseURL string) string {
@@ -847,7 +854,7 @@ func buildClientAccessHTML(client domain.Client, extraMessage string, artifacts 
 			url := shareLinkPublicURL(link, publicBaseURL)
 			rows = append(rows, mailMetaRow{label, firstNonEmpty(url, "one-time token not visible after creation")})
 			rows = append(rows, mailMetaRow{"Token hint", firstNonEmpty(link.TokenHint, tokenHint(link.Token), "n/a")})
-			rows = append(rows, mailMetaRow{"Expires at", link.ExpiresAt.Format(time.RFC3339)})
+			rows = append(rows, mailMetaRow{"Expires at", formatMailTime(link.ExpiresAt)})
 		}
 		sections = append(sections, buildMailSection("Temporary access links", buildMailMetaTable(rows)))
 	}
@@ -903,7 +910,7 @@ func buildClientAccessBody(client domain.Client, extraMessage string, artifacts 
 	if len(shareLinks) > 0 {
 		b.WriteString("\nTemporary links:\n")
 		for _, link := range shareLinks {
-			b.WriteString("- token hint: " + firstNonEmpty(link.TokenHint, tokenHint(link.Token)) + " expires: " + link.ExpiresAt.Format(time.RFC3339))
+			b.WriteString("- token hint: " + firstNonEmpty(link.TokenHint, tokenHint(link.Token)) + " expires: " + formatMailTime(link.ExpiresAt))
 			if strings.TrimSpace(link.Token) != "" && strings.TrimSpace(publicBaseURL) != "" {
 				b.WriteString(" url: " + strings.TrimRight(publicBaseURL, "/") + "/share/" + link.Token)
 			}
