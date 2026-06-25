@@ -80,14 +80,35 @@
         return;
       }
       const displayName = state.authUser.display_name || state.authUser.username || state.authUser.email;
+      const username = state.authUser.username || state.authUser.email || 'operator';
+      const roles = Array.isArray(state.authRoles) && state.authRoles.length ? state.authRoles.join(', ') : 'operator';
+      const email = state.authUser.email || '';
+      const secondary = email && email !== displayName && email !== username ? email : roles;
+      const initials = String(displayName || username || 'OP')
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((part) => part[0] || '')
+        .join('')
+        .toUpperCase()
+        .slice(0, 2) || 'OP';
       slot.innerHTML = `
-        <div class="auth-slot">
-          <div class="auth-identity">
-            <span class="tag ok">${escapeHTML(displayName)}</span>
-            <span class="auth-username">${escapeHTML(state.authUser.username || state.authUser.email || 'operator')}</span>
+        <details class="user-menu">
+          <summary class="user-menu-trigger">
+            <span class="user-avatar">${escapeHTML(initials)}</span>
+            <span class="user-menu-text">
+              <strong>${escapeHTML(displayName || username)}</strong>
+              <small>${escapeHTML(secondary)}</small>
+            </span>
+          </summary>
+          <div class="user-menu-panel">
+            <div class="user-menu-row"><span>Account</span><strong>${escapeHTML(username)}</strong></div>
+            ${email ? `<div class="user-menu-row"><span>Email</span><strong>${escapeHTML(email)}</strong></div>` : ''}
+            <div class="user-menu-row"><span>Roles</span><strong>${escapeHTML(roles)}</strong></div>
+            <div class="user-menu-row"><span>Permissions</span><strong>${escapeHTML(String((state.authPermissions || []).length))}</strong></div>
+            <button class="secondary-btn user-menu-logout" id="logoutBtn" type="button">Logout</button>
           </div>
-          <button class="secondary-btn" id="logoutBtn" type="button">Logout</button>
-        </div>`;
+        </details>`;
       const btn = document.getElementById('logoutBtn');
       const logout = getLogoutHandler();
       if (btn && typeof logout === 'function') btn.addEventListener('click', logout);

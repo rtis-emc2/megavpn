@@ -12,10 +12,7 @@
       setTitle,
       escapeHTML,
       authWorkflows,
-      settingsWorkflows,
       nodeWorkflows,
-      instanceWorkflows,
-      certificateWorkflows,
       dashboardPage,
       nodesPage,
       instancesPage,
@@ -64,27 +61,6 @@
         </section>`;
     }
 
-    function renderCreateAction() {
-      const btn = el('createActionBtn');
-      if (!state.authUser) {
-        btn.disabled = true;
-        btn.textContent = 'Login required';
-        btn.onclick = settingsWorkflows.openSettings;
-        return;
-      }
-      const handlers = {
-        nodes: nodeWorkflows.openCreateNodeModal,
-        instances: instanceWorkflows.openCreateInstanceChoiceModal,
-        certificates: certificateWorkflows.openCreateCertificateWizard,
-        clients: clientsPage.openCreateClientModal,
-        backhaul: backhaulPage.openCreateBackhaulModal,
-      };
-      const handler = handlers[state.page];
-      btn.disabled = !handler;
-      btn.textContent = handler ? 'Create' : 'No create action';
-      btn.onclick = handler || settingsWorkflows.openSettings;
-    }
-
     function renderRoute() {
       if (state.page === 'dashboard') return dashboardPage.render();
       if (state.page === 'nodes') return nodesPage.render();
@@ -118,7 +94,6 @@
       }
       renderNav();
       renderAuthSlot();
-      renderCreateAction();
       renderNotice();
       renderRoute();
     }
