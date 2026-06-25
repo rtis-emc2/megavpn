@@ -262,8 +262,8 @@
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(instances.length))} active</span>
               <span class="tag">${escapeHTML(String(runtimeReports))} runtime reports</span>
-              <button class="secondary-btn" id="createServicePackBtn" type="button">Create service pack</button>
-              <button class="secondary-btn" id="createInstanceBtn" type="button">Create instance</button>
+              <button class="secondary-btn" id="createServicePackBtn" type="button">Create from pack</button>
+              <button class="secondary-btn" id="createInstanceBtn" type="button">Manual instance</button>
             </div>
           </div>
           <div class="instances-list">${renderInstancesList(instances)}</div>

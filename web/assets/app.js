@@ -301,6 +301,7 @@
     closeModal,
     openActionOutcomeModal,
     openCreateInstanceModal,
+    openCreateInstanceChoiceModal,
     openCreateServicePackModal,
     openInstanceManageModal,
     queueInstanceAction,
@@ -2517,7 +2518,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
 
   function openCreateServicePackModal() {
     const initialPack = defaultServicePack();
-    openModal('Create service pack', 'POST /api/v1/service-packs/{key}/instances', `
+    openModal('Create instance from pack', 'POST /api/v1/service-packs/{key}/instances', `
       <form id="createServicePackForm" class="form-grid">
         <div class="field"><label>Node</label><select name="node_id" required>${nodeOptions()}</select></div>
         <div class="field"><label>Service pack</label><select name="service_pack_key" required>${servicePackOptions(initialPack?.key || '')}</select></div>
@@ -2525,7 +2526,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
         <div class="field"><label>Endpoint host</label><input name="endpoint_host" placeholder="${escapeHTML(initialPack?.endpoint_hint || 'edge.example.com')}" /></div>
         <div class="field"><label>Managed certificate</label><select name="certificate_id">${certificateOptions('', true)}</select></div>
         <div id="servicePackFields" class="form-grid full"></div>
-        <div class="field full inline-actions"><button class="primary-btn" type="submit">Create service pack</button></div>
+        <div class="field full inline-actions"><button class="primary-btn" type="submit">Create from pack</button></div>
       </form>
       <div id="createServicePackResult" class="form-result"></div>`, { wide: true });
     const form = document.getElementById('createServicePackForm');
@@ -2533,6 +2534,32 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
     syncCreateServicePackDefaults(form, packSelect.value);
     packSelect.addEventListener('change', () => syncCreateServicePackDefaults(form, packSelect.value));
     form.addEventListener('submit', createServicePack);
+  }
+
+  function openCreateInstanceChoiceModal() {
+    openModal('Create instance', 'Choose creation mode', `
+      <div class="response-grid">
+        <div class="card">
+          <div class="mini-label">Catalog model</div>
+          <h3>Create from pack</h3>
+          <p>Use an approved service pack template from the platform catalog.</p>
+          <button class="primary-btn" id="createFromPackChoiceBtn" type="button">Create from pack</button>
+        </div>
+        <div class="card">
+          <div class="mini-label">Custom model</div>
+          <h3>Manual instance</h3>
+          <p>Build one instance directly from service, endpoint, and runtime spec.</p>
+          <button class="secondary-btn" id="manualInstanceChoiceBtn" type="button">Manual instance</button>
+        </div>
+      </div>`, { wide: true });
+    document.getElementById('createFromPackChoiceBtn')?.addEventListener('click', () => {
+      closeModal();
+      setTimeout(openCreateServicePackModal, 0);
+    });
+    document.getElementById('manualInstanceChoiceBtn')?.addEventListener('click', () => {
+      closeModal();
+      setTimeout(openCreateInstanceModal, 0);
+    });
   }
 
   async function createServicePack(event) {
@@ -3482,7 +3509,7 @@ key_secret_ref = ${escapeHTML(item.key_secret_ref_id || 'n/a')}</div>
     }
     const handlers = {
       nodes: openCreateNodeModal,
-      instances: openCreateInstanceModal,
+      instances: openCreateInstanceChoiceModal,
       certificates: openCreateCertificateWizard,
       clients: clientsPage.openCreateClientModal,
       backhaul: backhaulPage.openCreateBackhaulModal,

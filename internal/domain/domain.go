@@ -1,6 +1,11 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var ErrServicePackNotFound = errors.New("service pack not found")
 
 type Node struct {
 	ID                   string     `json:"id"`
@@ -132,6 +137,34 @@ type ServiceDefinition struct {
 	SupportsInstances bool      `json:"supports_instances"`
 	Enabled           bool      `json:"enabled"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type ServicePackComponent struct {
+	Label                string         `json:"label"`
+	Description          string         `json:"description,omitempty"`
+	ServiceCode          string         `json:"service_code"`
+	PresetKey            string         `json:"preset_key"`
+	NameSuffix           string         `json:"name_suffix"`
+	SlugSuffix           string         `json:"slug_suffix"`
+	EndpointPort         int            `json:"endpoint_port"`
+	RequiresEndpointHost bool           `json:"requires_endpoint_host"`
+	Spec                 map[string]any `json:"spec"`
+}
+
+type ServicePackDefinition struct {
+	Key                  string                 `json:"key"`
+	Label                string                 `json:"label"`
+	Description          string                 `json:"description"`
+	BaseNameTemplate     string                 `json:"base_name_template"`
+	EndpointHint         string                 `json:"endpoint_hint"`
+	RequiresEndpointHost bool                   `json:"requires_endpoint_host"`
+	PlatformNotes        []string               `json:"platform_notes"`
+	Recommendations      []string               `json:"recommendations"`
+	Components           []ServicePackComponent `json:"components"`
+	Status               string                 `json:"status,omitempty"`
+	Source               string                 `json:"source,omitempty"`
+	Version              int                    `json:"version,omitempty"`
+	DisplayOrder         int                    `json:"display_order,omitempty"`
 }
 
 type Instance struct {

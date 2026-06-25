@@ -1,6 +1,8 @@
 package http
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -9,28 +11,19 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
-type servicePackComponent struct {
-	Label                string         `json:"label"`
-	Description          string         `json:"description,omitempty"`
-	ServiceCode          string         `json:"service_code"`
-	PresetKey            string         `json:"preset_key"`
-	NameSuffix           string         `json:"name_suffix"`
-	SlugSuffix           string         `json:"slug_suffix"`
-	EndpointPort         int            `json:"endpoint_port"`
-	RequiresEndpointHost bool           `json:"requires_endpoint_host"`
-	Spec                 map[string]any `json:"spec"`
+type servicePackComponent = domain.ServicePackComponent
+type servicePackDefinition = domain.ServicePackDefinition
+
+type servicePackCatalogStore interface {
+	EnsureDefaultServicePacks(context.Context, []domain.ServicePackDefinition) error
+	ListServicePacks(context.Context) ([]domain.ServicePackDefinition, error)
+	GetServicePack(context.Context, string) (domain.ServicePackDefinition, error)
 }
 
-type servicePackDefinition struct {
-	Key                  string                 `json:"key"`
-	Label                string                 `json:"label"`
-	Description          string                 `json:"description"`
-	BaseNameTemplate     string                 `json:"base_name_template"`
-	EndpointHint         string                 `json:"endpoint_hint"`
-	RequiresEndpointHost bool                   `json:"requires_endpoint_host"`
-	PlatformNotes        []string               `json:"platform_notes"`
-	Recommendations      []string               `json:"recommendations"`
-	Components           []servicePackComponent `json:"components"`
+type servicePackCatalogManageStore interface {
+	servicePackCatalogStore
+	UpsertServicePack(context.Context, domain.ServicePackDefinition) (domain.ServicePackDefinition, error)
+	SetServicePackStatus(context.Context, string, string) (domain.ServicePackDefinition, error)
 }
 
 type createServicePackRequest struct {
@@ -221,14 +214,81 @@ func findServicePack(key string) (servicePackDefinition, bool) {
 }
 
 func (s *Server) listServicePacks(w nethttp.ResponseWriter, r *nethttp.Request) {
-	writeJSON(w, 200, servicePackDefinitions())
+	packs, err := s.availableServicePacks(r.Context())
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, packs)
+}
+
+func (s *Server) upsertServicePack(w nethttp.ResponseWriter, r *nethttp.Request) {
+	catalog, ok := s.store.(servicePackCatalogManageStore)
+	if !ok {
+		writeErr(w, 501, "service pack catalog management is not supported")
+		return
+	}
+	key := strings.TrimSpace(r.PathValue("key"))
+	var pack domain.ServicePackDefinition
+	if !decode(r, &pack) {
+		writeErr(w, 400, "invalid service pack payload")
+		return
+	}
+	if key != "" {
+		pack.Key = key
+	}
+	if strings.TrimSpace(pack.Source) == "" {
+		pack.Source = "operator"
+	}
+	if strings.TrimSpace(pack.Status) == "" {
+		pack.Status = "active"
+	}
+	updated, err := catalog.UpsertServicePack(r.Context(), pack)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	authCtx, ok := authFromRequest(r)
+	if ok {
+		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "service_pack.upsert", "service_pack", nil, "service pack template upserted: "+updated.Key)
+	}
+	writeJSON(w, 200, updated)
+}
+
+func (s *Server) setServicePackStatus(status string) nethttp.HandlerFunc {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		catalog, ok := s.store.(servicePackCatalogManageStore)
+		if !ok {
+			writeErr(w, 501, "service pack catalog management is not supported")
+			return
+		}
+		key := strings.TrimSpace(r.PathValue("key"))
+		updated, err := catalog.SetServicePackStatus(r.Context(), key, status)
+		if errors.Is(err, domain.ErrServicePackNotFound) {
+			writeErr(w, 404, "service pack not found")
+			return
+		}
+		if err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		authCtx, ok := authFromRequest(r)
+		if ok {
+			_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "service_pack."+status, "service_pack", nil, "service pack template "+status+": "+updated.Key)
+		}
+		writeJSON(w, 200, updated)
+	}
 }
 
 func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp.Request) {
 	packKey := strings.TrimSpace(r.PathValue("key"))
-	pack, ok := findServicePack(packKey)
-	if !ok {
+	pack, err := s.getServicePack(r.Context(), packKey)
+	if errors.Is(err, domain.ErrServicePackNotFound) {
 		writeErr(w, 404, "service pack not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, 500, err.Error())
 		return
 	}
 	var req createServicePackRequest
@@ -301,6 +361,34 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 		"service_pack_key":  pack.Key,
 		"created_instances": created,
 	})
+}
+
+func (s *Server) availableServicePacks(ctx context.Context) ([]domain.ServicePackDefinition, error) {
+	catalog, ok := s.store.(servicePackCatalogStore)
+	if !ok {
+		return servicePackDefinitions(), nil
+	}
+	defaults := servicePackDefinitions()
+	if err := catalog.EnsureDefaultServicePacks(ctx, defaults); err != nil {
+		return nil, err
+	}
+	return catalog.ListServicePacks(ctx)
+}
+
+func (s *Server) getServicePack(ctx context.Context, key string) (domain.ServicePackDefinition, error) {
+	key = strings.TrimSpace(key)
+	catalog, ok := s.store.(servicePackCatalogStore)
+	if !ok {
+		pack, found := findServicePack(key)
+		if !found {
+			return domain.ServicePackDefinition{}, domain.ErrServicePackNotFound
+		}
+		return pack, nil
+	}
+	if err := catalog.EnsureDefaultServicePacks(ctx, servicePackDefinitions()); err != nil {
+		return domain.ServicePackDefinition{}, err
+	}
+	return catalog.GetServicePack(ctx, key)
 }
 
 func slugifyHTTP(value string) string {
