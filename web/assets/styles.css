@@ -1386,6 +1386,54 @@ tr:hover td { background: #f8fafc; }
   font-size: 12px;
   line-height: 1.2;
 }
+.service-pack-table {
+  min-width: 1120px;
+  table-layout: fixed;
+}
+.service-pack-table th:nth-child(1) { width: 28%; }
+.service-pack-table th:nth-child(2) { width: 19%; }
+.service-pack-table th:nth-child(3) { width: 28%; }
+.service-pack-table th:nth-child(4) { width: 15%; }
+.service-pack-table th:nth-child(5) { width: 120px; }
+.service-pack-table td {
+  height: 72px;
+}
+.template-availability {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  min-width: 0;
+}
+.template-availability strong,
+.template-availability small,
+.template-components {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.template-availability strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.template-availability small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.template-components {
+  white-space: normal;
+}
+.service-pack-actions {
+  min-width: 92px;
+}
+.service-pack-row-deleted {
+  opacity: 0.68;
+}
 .jobs-table-card {
   overflow: hidden;
 }
