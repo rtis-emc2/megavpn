@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	apihttp "github.com/rtis-emc2/megavpn/internal/api/http"
 	authn "github.com/rtis-emc2/megavpn/internal/auth"
 	"github.com/rtis-emc2/megavpn/internal/infra/postgres"
 	"github.com/rtis-emc2/megavpn/internal/platform/config"
@@ -27,6 +28,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "megavpn-admin: %v\n", err)
 			os.Exit(1)
 		}
+	case "seed-service-packs":
+		if err := seedServicePacks(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "megavpn-admin: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "--version", "-version":
 		fmt.Println(platformversion.Version)
 	case "help", "--help", "-h":
@@ -43,10 +49,13 @@ func usage() {
 
 Usage:
   megavpn-admin reset-password [flags]
+  megavpn-admin seed-service-packs [flags]
   megavpn-admin version
 
 Commands:
   reset-password  Reset an existing local platform user's password.
+  seed-service-packs
+                  Insert built-in service pack templates when the catalog table exists.
 
 `)
 }
@@ -112,5 +121,47 @@ func resetPassword(args []string) error {
 	}
 
 	fmt.Printf("password reset completed: username=%s user_id=%s status=%s activate=%t\n", record.User.Username, record.User.ID, record.User.Status, *activate)
+	return nil
+}
+
+func seedServicePacks(args []string) error {
+	fs := flag.NewFlagSet("seed-service-packs", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	var (
+		databaseDSN = fs.String("database-dsn", "", "PostgreSQL DSN; defaults to MEGAVPN_DATABASE_DSN")
+		timeout     = fs.Duration("timeout", 10*time.Second, "database operation timeout")
+	)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	dsn := strings.TrimSpace(*databaseDSN)
+	if dsn == "" {
+		dsn = strings.TrimSpace(config.Load().Database.DSN)
+	}
+	if dsn == "" {
+		return fmt.Errorf("database DSN is empty: set MEGAVPN_DATABASE_DSN or pass --database-dsn")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	db, err := database.Open(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
+	defer db.Close()
+
+	store := postgres.New(db.Pool)
+	defaults := apihttp.DefaultServicePackDefinitions()
+	if err := store.EnsureDefaultServicePacks(ctx, defaults); err != nil {
+		return fmt.Errorf("seed service pack templates: %w", err)
+	}
+	active, err := store.ListServicePacks(ctx)
+	if err != nil {
+		return fmt.Errorf("verify service pack templates: %w", err)
+	}
+
+	fmt.Printf("service pack defaults seeded: defaults=%d active=%d\n", len(defaults), len(active))
 	return nil
 }

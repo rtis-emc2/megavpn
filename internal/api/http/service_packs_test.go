@@ -89,6 +89,25 @@ func TestDefaultAccessSuiteHasExpectedComponentsWithoutInlineSecrets(t *testing.
 	}
 }
 
+func TestDefaultServicePackDefinitionsReturnsCopy(t *testing.T) {
+	first := DefaultServicePackDefinitions()
+	if len(first) == 0 || len(first[0].Components) == 0 {
+		t.Fatal("expected default service pack definitions")
+	}
+	originalLabel := first[0].Label
+	originalSpecValue := first[0].Components[0].Spec["service_profile"]
+	first[0].Label = "mutated"
+	first[0].Components[0].Spec["service_profile"] = "mutated"
+
+	second := DefaultServicePackDefinitions()
+	if second[0].Label != originalLabel {
+		t.Fatalf("default pack label was mutated: %q", second[0].Label)
+	}
+	if second[0].Components[0].Spec["service_profile"] != originalSpecValue {
+		t.Fatalf("default pack spec was mutated: %v", second[0].Components[0].Spec["service_profile"])
+	}
+}
+
 func TestServicePackCatalogUnavailableDetection(t *testing.T) {
 	if !isServicePackCatalogUnavailable(&pgconn.PgError{Code: "42P01", Message: "relation service_pack_templates does not exist"}) {
 		t.Fatal("expected undefined table to be treated as catalog unavailable")

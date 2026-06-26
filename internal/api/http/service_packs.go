@@ -232,8 +232,24 @@ func servicePackDefinitions() []servicePackDefinition {
 	}
 }
 
+func DefaultServicePackDefinitions() []domain.ServicePackDefinition {
+	defaults := servicePackDefinitions()
+	out := make([]domain.ServicePackDefinition, len(defaults))
+	for i, pack := range defaults {
+		out[i] = pack
+		out[i].PlatformNotes = append([]string(nil), pack.PlatformNotes...)
+		out[i].Recommendations = append([]string(nil), pack.Recommendations...)
+		out[i].Components = make([]domain.ServicePackComponent, len(pack.Components))
+		for j, component := range pack.Components {
+			out[i].Components[j] = component
+			out[i].Components[j].Spec = cloneMapHTTP(component.Spec)
+		}
+	}
+	return out
+}
+
 func findServicePack(key string) (servicePackDefinition, bool) {
-	for _, pack := range servicePackDefinitions() {
+	for _, pack := range DefaultServicePackDefinitions() {
 		if pack.Key == key {
 			return pack, true
 		}
@@ -253,9 +269,9 @@ func (s *Server) listServicePacks(w nethttp.ResponseWriter, r *nethttp.Request) 
 			writeErr(w, 501, "service pack catalog management is not supported")
 			return
 		}
-		if err := catalog.EnsureDefaultServicePacks(r.Context(), servicePackDefinitions()); err != nil {
+		if err := catalog.EnsureDefaultServicePacks(r.Context(), DefaultServicePackDefinitions()); err != nil {
 			if isServicePackCatalogUnavailable(err) {
-				writeJSON(w, 200, servicePackDefinitions())
+				writeJSON(w, 200, DefaultServicePackDefinitions())
 				return
 			}
 			writeErr(w, 500, err.Error())
@@ -264,7 +280,7 @@ func (s *Server) listServicePacks(w nethttp.ResponseWriter, r *nethttp.Request) 
 		packs, err := catalog.ListServicePackCatalog(r.Context())
 		if err != nil {
 			if isServicePackCatalogUnavailable(err) {
-				writeJSON(w, 200, servicePackDefinitions())
+				writeJSON(w, 200, DefaultServicePackDefinitions())
 				return
 			}
 			writeErr(w, 500, err.Error())
@@ -425,9 +441,9 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 func (s *Server) availableServicePacks(ctx context.Context) ([]domain.ServicePackDefinition, error) {
 	catalog, ok := s.store.(servicePackCatalogStore)
 	if !ok {
-		return servicePackDefinitions(), nil
+		return DefaultServicePackDefinitions(), nil
 	}
-	defaults := servicePackDefinitions()
+	defaults := DefaultServicePackDefinitions()
 	if err := catalog.EnsureDefaultServicePacks(ctx, defaults); err != nil {
 		if isServicePackCatalogUnavailable(err) {
 			return defaults, nil
@@ -451,7 +467,7 @@ func (s *Server) getServicePack(ctx context.Context, key string) (domain.Service
 		}
 		return pack, nil
 	}
-	defaults := servicePackDefinitions()
+	defaults := DefaultServicePackDefinitions()
 	if err := catalog.EnsureDefaultServicePacks(ctx, defaults); err != nil {
 		if isServicePackCatalogUnavailable(err) {
 			pack, found := findServicePack(key)
