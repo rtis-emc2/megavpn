@@ -15,6 +15,8 @@ type addressPoolStore interface {
 	EnsureDefaultAddressPoolSpaces(context.Context) error
 	AddressPoolInventory(context.Context) (domain.AddressPoolInventory, error)
 	CreateAddressPoolSpace(context.Context, domain.AddressPoolSpace) (domain.AddressPoolSpace, error)
+	UpdateAddressPoolSpace(context.Context, string, domain.AddressPoolSpace) (domain.AddressPoolSpace, error)
+	DeleteAddressPoolSpace(context.Context, string) (domain.AddressPoolSpace, error)
 	SetAddressPoolRouting(context.Context, string, bool) (domain.AddressPoolSpace, error)
 }
 
@@ -76,6 +78,49 @@ func (s *Server) createAddressPoolSpace(w nethttp.ResponseWriter, r *nethttp.Req
 		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "address_pool.create", "address_pool", &created.ID, "address pool space created: "+created.Key)
 	}
 	writeJSON(w, 201, created)
+}
+
+func (s *Server) updateAddressPoolSpace(w nethttp.ResponseWriter, r *nethttp.Request) {
+	store, ok := s.store.(addressPoolStore)
+	if !ok {
+		writeErr(w, 501, "address pool catalog is not supported")
+		return
+	}
+	var req domain.AddressPoolSpace
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid address pool payload")
+		return
+	}
+	poolID := strings.TrimSpace(r.PathValue("id"))
+	updated, err := store.UpdateAddressPoolSpace(r.Context(), poolID, req)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	authCtx, ok := authFromRequest(r)
+	if ok {
+		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "address_pool.update", "address_pool", &updated.ID, "address pool space updated: "+updated.Key)
+	}
+	writeJSON(w, 200, updated)
+}
+
+func (s *Server) deleteAddressPoolSpace(w nethttp.ResponseWriter, r *nethttp.Request) {
+	store, ok := s.store.(addressPoolStore)
+	if !ok {
+		writeErr(w, 501, "address pool catalog is not supported")
+		return
+	}
+	poolID := strings.TrimSpace(r.PathValue("id"))
+	deleted, err := store.DeleteAddressPoolSpace(r.Context(), poolID)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	authCtx, ok := authFromRequest(r)
+	if ok {
+		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "address_pool.delete", "address_pool", &deleted.ID, "address pool space deleted: "+deleted.Key)
+	}
+	writeJSON(w, 200, deleted)
 }
 
 func (s *Server) setAddressPoolRouting(w nethttp.ResponseWriter, r *nethttp.Request) {

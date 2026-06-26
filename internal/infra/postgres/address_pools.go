@@ -109,11 +109,8 @@ func (s *Store) CreateAddressPoolSpace(ctx context.Context, space domain.Address
 	if space.DisplayOrder == 0 {
 		space.DisplayOrder = 1000
 	}
-	if _, err := netip.ParsePrefix(space.BaseCIDR); err != nil {
-		return domain.AddressPoolSpace{}, fmt.Errorf("base_cidr is invalid: %w", err)
-	}
-	if _, err := netip.ParsePrefix(space.StartCIDR); err != nil {
-		return domain.AddressPoolSpace{}, fmt.Errorf("start_cidr is invalid: %w", err)
+	if err := validateAddressPoolSpaceCIDRs(space); err != nil {
+		return domain.AddressPoolSpace{}, err
 	}
 	if space.AllocationPrefix <= 0 {
 		space.AllocationPrefix = 24
@@ -142,6 +139,111 @@ func (s *Store) CreateAddressPoolSpace(ctx context.Context, space domain.Address
 	return created, nil
 }
 
+func (s *Store) UpdateAddressPoolSpace(ctx context.Context, poolID string, patch domain.AddressPoolSpace) (domain.AddressPoolSpace, error) {
+	poolID = strings.TrimSpace(poolID)
+	if poolID == "" {
+		return domain.AddressPoolSpace{}, fmt.Errorf("address pool id is required")
+	}
+	existing, err := s.getAddressPoolSpace(ctx, poolID)
+	if err != nil {
+		return domain.AddressPoolSpace{}, err
+	}
+	updated := existing
+	if strings.TrimSpace(patch.Label) != "" {
+		updated.Label = strings.TrimSpace(patch.Label)
+	}
+	updated.Description = strings.TrimSpace(patch.Description)
+	if strings.TrimSpace(patch.Family) != "" {
+		updated.Family = strings.TrimSpace(patch.Family)
+	}
+	if strings.TrimSpace(patch.BaseCIDR) != "" {
+		updated.BaseCIDR = strings.TrimSpace(patch.BaseCIDR)
+	}
+	if strings.TrimSpace(patch.StartCIDR) != "" {
+		updated.StartCIDR = strings.TrimSpace(patch.StartCIDR)
+	}
+	if patch.AllocationPrefix > 0 {
+		updated.AllocationPrefix = patch.AllocationPrefix
+	}
+	if strings.TrimSpace(patch.ServiceScope) != "" {
+		updated.ServiceScope = strings.TrimSpace(patch.ServiceScope)
+	}
+	if strings.TrimSpace(patch.Status) != "" {
+		updated.Status = strings.TrimSpace(patch.Status)
+	}
+	if patch.DisplayOrder != 0 {
+		updated.DisplayOrder = patch.DisplayOrder
+	}
+	updated.RoutingEnabled = patch.RoutingEnabled
+	if err := validateAddressPoolSpaceCIDRs(updated); err != nil {
+		return domain.AddressPoolSpace{}, err
+	}
+	activeAllocations, err := s.countActiveAddressPoolAllocations(ctx, existing.ID)
+	if err != nil {
+		return domain.AddressPoolSpace{}, err
+	}
+	structuralChange := existing.Family != updated.Family ||
+		existing.BaseCIDR != updated.BaseCIDR ||
+		existing.StartCIDR != updated.StartCIDR ||
+		existing.AllocationPrefix != updated.AllocationPrefix ||
+		existing.ServiceScope != updated.ServiceScope
+	if activeAllocations > 0 && structuralChange {
+		return domain.AddressPoolSpace{}, fmt.Errorf("address pool has %d active allocations; only label, description, status, routing and display order can be changed", activeAllocations)
+	}
+	row := s.db.QueryRow(ctx, `update address_pool_spaces
+		set label=$2,description=$3,family=$4,base_cidr=$5,start_cidr=$6,allocation_prefix=$7,
+		    service_scope=$8,routing_enabled=$9,status=$10,display_order=$11,updated_at=now()
+		where id::text=$1 or key=$1
+		returning id::text,key,label,description,family,base_cidr::text,start_cidr::text,allocation_prefix,service_scope,routing_enabled,status,display_order,created_at,updated_at`,
+		poolID,
+		updated.Label,
+		updated.Description,
+		updated.Family,
+		updated.BaseCIDR,
+		updated.StartCIDR,
+		updated.AllocationPrefix,
+		updated.ServiceScope,
+		updated.RoutingEnabled,
+		updated.Status,
+		updated.DisplayOrder,
+	)
+	out, err := scanAddressPoolSpace(row)
+	if err != nil {
+		return domain.AddressPoolSpace{}, err
+	}
+	_, _ = s.db.Exec(ctx, `update address_pool_allocations set route_export=$2,updated_at=now() where pool_space_id=$1 and status in ('reserved','active')`, out.ID, out.RoutingEnabled)
+	_, _ = s.CreateAudit(ctx, "system", "address_pool.update", "address_pool", &out.ID, "address pool space updated")
+	return out, nil
+}
+
+func (s *Store) DeleteAddressPoolSpace(ctx context.Context, poolID string) (domain.AddressPoolSpace, error) {
+	poolID = strings.TrimSpace(poolID)
+	if poolID == "" {
+		return domain.AddressPoolSpace{}, fmt.Errorf("address pool id is required")
+	}
+	existing, err := s.getAddressPoolSpace(ctx, poolID)
+	if err != nil {
+		return domain.AddressPoolSpace{}, err
+	}
+	activeAllocations, err := s.countActiveAddressPoolAllocations(ctx, existing.ID)
+	if err != nil {
+		return domain.AddressPoolSpace{}, err
+	}
+	if activeAllocations > 0 {
+		return domain.AddressPoolSpace{}, fmt.Errorf("address pool has %d active allocations; delete dependent instances or release allocations first", activeAllocations)
+	}
+	row := s.db.QueryRow(ctx, `update address_pool_spaces
+		set status='deleted',updated_at=now()
+		where id::text=$1
+		returning id::text,key,label,description,family,base_cidr::text,start_cidr::text,allocation_prefix,service_scope,routing_enabled,status,display_order,created_at,updated_at`, existing.ID)
+	deleted, err := scanAddressPoolSpace(row)
+	if err != nil {
+		return domain.AddressPoolSpace{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "address_pool.delete", "address_pool", &deleted.ID, "address pool space deleted")
+	return deleted, nil
+}
+
 func (s *Store) SetAddressPoolRouting(ctx context.Context, poolID string, enabled bool) (domain.AddressPoolSpace, error) {
 	poolID = strings.TrimSpace(poolID)
 	if poolID == "" {
@@ -159,6 +261,26 @@ func (s *Store) SetAddressPoolRouting(ctx context.Context, poolID string, enable
 	_, _ = s.db.Exec(ctx, `update address_pool_allocations set route_export=$2,updated_at=now() where pool_space_id=$1 and status in ('reserved','active')`, updated.ID, enabled)
 	_, _ = s.CreateAudit(ctx, "system", "address_pool.routing", "address_pool", &updated.ID, "address pool routing flag updated")
 	return updated, nil
+}
+
+func (s *Store) getAddressPoolSpace(ctx context.Context, poolID string) (domain.AddressPoolSpace, error) {
+	row := s.db.QueryRow(ctx, `select id::text,key,label,description,family,base_cidr::text,start_cidr::text,allocation_prefix,service_scope,routing_enabled,status,display_order,created_at,updated_at
+		from address_pool_spaces
+		where (id::text=$1 or key=$1) and status <> 'deleted'`, poolID)
+	space, err := scanAddressPoolSpace(row)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return domain.AddressPoolSpace{}, fmt.Errorf("address pool not found")
+		}
+		return domain.AddressPoolSpace{}, err
+	}
+	return space, nil
+}
+
+func (s *Store) countActiveAddressPoolAllocations(ctx context.Context, poolSpaceID string) (int, error) {
+	var count int
+	err := s.db.QueryRow(ctx, `select count(*) from address_pool_allocations where pool_space_id=$1 and status in ('reserved','active')`, poolSpaceID).Scan(&count)
+	return count, err
 }
 
 func (s *Store) listAddressPoolSpaces(ctx context.Context) ([]domain.AddressPoolSpace, error) {
@@ -511,6 +633,31 @@ func scanAddressPoolAllocation(row addressPoolScanner) (domain.AddressPoolAlloca
 		allocation.Metadata = map[string]any{}
 	}
 	return allocation, nil
+}
+
+func validateAddressPoolSpaceCIDRs(space domain.AddressPoolSpace) error {
+	base, err := netip.ParsePrefix(strings.TrimSpace(space.BaseCIDR))
+	if err != nil {
+		return fmt.Errorf("base_cidr is invalid: %w", err)
+	}
+	start, err := netip.ParsePrefix(strings.TrimSpace(space.StartCIDR))
+	if err != nil {
+		return fmt.Errorf("start_cidr is invalid: %w", err)
+	}
+	if !base.Addr().Is4() || !start.Addr().Is4() {
+		return fmt.Errorf("only IPv4 address pools are supported")
+	}
+	if !base.Contains(start.Masked().Addr()) {
+		return fmt.Errorf("start_cidr must be inside base_cidr")
+	}
+	prefix := space.AllocationPrefix
+	if prefix <= 0 {
+		prefix = 24
+	}
+	if prefix < base.Bits() || prefix > 32 {
+		return fmt.Errorf("allocation_prefix /%d must be between base prefix /%d and /32", prefix, base.Bits())
+	}
+	return nil
 }
 
 func addressPoolCapacity(baseCIDR, startCIDR string, allocationPrefix int) int {

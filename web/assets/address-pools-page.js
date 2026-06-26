@@ -39,30 +39,60 @@
       return Math.max(0, Math.min(100, Math.round((Number(space.used || 0) / capacity) * 100)));
     }
 
+    function poolByID(poolID) {
+      return (state.addressPoolSpaces || []).find((space) => space.id === poolID || space.key === poolID) || null;
+    }
+
+    function poolFact(label, value) {
+      return `<div><span>${escapeHTML(label)}</span><strong>${escapeHTML(String(value ?? '').trim() || 'n/a')}</strong></div>`;
+    }
+
     function renderPoolSpace(space) {
       const usedPct = utilization(space);
+      const canManage = hasPermission('settings.manage');
+      const deleteDisabled = Number(space.used || 0) > 0;
+      const status = space.routing_enabled ? 'routing enabled' : 'routing disabled';
       return `
         <article class="pool-space-card">
           <div class="pool-space-head">
             <div>
               <h3>${escapeHTML(space.label || space.key)}</h3>
-              <div class="metric-caption"><code>${escapeHTML(space.key || space.id)}</code> · ${escapeHTML(space.base_cidr || 'n/a')} · start ${escapeHTML(space.start_cidr || 'n/a')}</div>
+              <div class="metric-caption"><code>${escapeHTML(space.key || space.id)}</code> · ${escapeHTML(space.service_scope || 'remote_access')}</div>
             </div>
             ${statusTag(space.status || 'unknown')}
+          </div>
+          ${space.description ? `<p class="pool-description">${escapeHTML(space.description)}</p>` : ''}
+          <div class="pool-range-line">
+            <div>
+              <span>Supernet</span>
+              <strong>${escapeHTML(space.base_cidr || 'n/a')}</strong>
+            </div>
+            <div>
+              <span>Allocator starts at</span>
+              <strong>${escapeHTML(space.start_cidr || 'n/a')}</strong>
+            </div>
+            <div>
+              <span>Subnet size</span>
+              <strong>/${escapeHTML(String(space.allocation_prefix || 0))}</strong>
+            </div>
           </div>
           <div class="pool-meter">
             <div class="pool-meter-bar" style="width:${usedPct}%"></div>
           </div>
+          <div class="metric-caption">${escapeHTML(String(space.used || 0))} of ${escapeHTML(String(space.capacity || 0))} subnets allocated · ${escapeHTML(String(space.free || 0))} free</div>
           <div class="pool-facts">
-            <div><span>Prefix</span><strong>/${escapeHTML(String(space.allocation_prefix || 0))}</strong></div>
-            <div><span>Used</span><strong>${escapeHTML(String(space.used || 0))}</strong></div>
-            <div><span>Free</span><strong>${escapeHTML(String(space.free || 0))}</strong></div>
-            <div><span>Routing</span><strong>${escapeHTML(space.routing_enabled ? 'enabled' : 'disabled')}</strong></div>
+            ${poolFact('Used', space.used || 0)}
+            ${poolFact('Free', space.free || 0)}
+            ${poolFact('Routing', status)}
+            ${poolFact('Order', space.display_order || 1000)}
           </div>
-          <div class="inline-actions">
+          ${deleteDisabled ? '<div class="pool-lock-note">Delete is locked while this pool has active allocations.</div>' : ''}
+          <div class="pool-actions">
+            <button class="secondary-btn pool-edit-btn" type="button" data-pool-id="${escapeHTML(space.id || space.key)}"${canManage ? '' : ' disabled'}>Edit</button>
             <button class="secondary-btn pool-routing-btn" type="button" data-pool-id="${escapeHTML(space.id || space.key)}" data-routing="${space.routing_enabled ? 'false' : 'true'}"${hasPermission('settings.manage') ? '' : ' disabled'}>
-              ${space.routing_enabled ? 'Disable routing' : 'Enable routing'}
+              ${space.routing_enabled ? 'Routing off' : 'Routing on'}
             </button>
+            <button class="danger-btn pool-delete-btn" type="button" data-pool-id="${escapeHTML(space.id || space.key)}" data-pool-label="${escapeHTML(space.label || space.key)}"${canManage && !deleteDisabled ? '' : ' disabled'} title="${deleteDisabled ? 'Delete is blocked while active allocations exist.' : ''}">${deleteDisabled ? 'Locked' : 'Delete'}</button>
           </div>
         </article>`;
     }
@@ -91,12 +121,20 @@
       const allocations = Array.isArray(state.addressPoolAllocations) ? state.addressPoolAllocations : [];
       const used = spaces.reduce((sum, space) => sum + Number(space.used || 0), 0);
       const free = spaces.reduce((sum, space) => sum + Number(space.free || 0), 0);
+      const capacity = spaces.reduce((sum, space) => sum + Number(space.capacity || 0), 0);
+      const routed = allocations.filter((allocation) => allocation.route_export).length;
       el('content').innerHTML = `
+        <div class="pool-summary-grid">
+          <div class="pool-summary-card"><span>Spaces</span><strong>${escapeHTML(String(spaces.length))}</strong><small>configured supernets</small></div>
+          <div class="pool-summary-card"><span>Capacity</span><strong>${escapeHTML(String(capacity))}</strong><small>allocatable subnets</small></div>
+          <div class="pool-summary-card"><span>Used</span><strong>${escapeHTML(String(used))}</strong><small>active allocations</small></div>
+          <div class="pool-summary-card"><span>Routing export</span><strong>${escapeHTML(String(routed))}</strong><small>routed allocations</small></div>
+        </div>
         <section class="table-card address-pools-page">
           <div class="table-head">
             <div>
-              <h2>Address pool spaces</h2>
-              <div class="metric-caption">Allocator source for WireGuard, OpenVPN and L2TP service pools.</div>
+              <h2>Pool spaces</h2>
+              <div class="metric-caption">Supernets used by the allocator for WireGuard, OpenVPN and L2TP service pools.</div>
             </div>
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(spaces.length))} spaces</span>
@@ -125,25 +163,42 @@
     }
 
     function bindActions() {
-      document.getElementById('addAddressPoolBtn')?.addEventListener('click', openAddPoolModal);
+      document.getElementById('addAddressPoolBtn')?.addEventListener('click', () => openAddressPoolModal(''));
+      document.querySelectorAll('.pool-edit-btn').forEach((button) => {
+        button.addEventListener('click', () => openAddressPoolModal(button.dataset.poolId));
+      });
       document.querySelectorAll('.pool-routing-btn').forEach((button) => {
         button.addEventListener('click', () => togglePoolRouting(button.dataset.poolId, button.dataset.routing === 'true'));
       });
+      document.querySelectorAll('.pool-delete-btn').forEach((button) => {
+        if (button.disabled) return;
+        button.addEventListener('click', () => openDeleteAddressPoolModal(button.dataset.poolId, button.dataset.poolLabel));
+      });
     }
 
-    function openAddPoolModal() {
-      openModal('Add address pool', 'Address Pools', `
+    function openAddressPoolModal(poolID) {
+      const pool = poolByID(poolID) || {};
+      const editing = Boolean(pool.id || pool.key);
+      const locked = editing && Number(pool.used || 0) > 0;
+      openModal(editing ? `Edit pool: ${pool.label || pool.key}` : 'Add address pool', 'Address Pools', `
         <form id="addressPoolForm" class="form-grid">
-          <div class="field"><label>Name</label><input name="label" required placeholder="Remote Access EU" /></div>
-          <div class="field"><label>Key</label><input name="key" placeholder="remote_access_eu" /></div>
-          <div class="field"><label>Base CIDR</label><input name="base_cidr" required value="172.16.0.0/12" /></div>
-          <div class="field"><label>Start CIDR</label><input name="start_cidr" required value="172.16.112.0/24" /></div>
-          <div class="field"><label>Allocation prefix</label><input name="allocation_prefix" type="number" min="16" max="32" value="24" required /></div>
-          <div class="field"><label>Scope</label><input name="service_scope" value="remote_access" /></div>
-          <div class="field full"><label>Description</label><textarea name="description" rows="3" placeholder="Where this pool should be used."></textarea></div>
-          <label class="field checkbox-line full"><input name="routing_enabled" type="checkbox" /> Enable route export between allocated pools</label>
+          <input type="hidden" name="pool_id" value="${escapeHTML(pool.id || pool.key || '')}">
+          <div class="field"><label>Name</label><input name="label" required value="${escapeHTML(pool.label || '')}" placeholder="Remote Access EU" /></div>
+          <div class="field"><label>Key</label><input name="key" value="${escapeHTML(pool.key || '')}" placeholder="remote_access_eu"${editing ? ' readonly' : ''} /></div>
+          <div class="field"><label>Base CIDR</label><input name="base_cidr" required value="${escapeHTML(pool.base_cidr || '172.16.0.0/12')}"${locked ? ' readonly' : ''} /></div>
+          <div class="field"><label>Start CIDR</label><input name="start_cidr" required value="${escapeHTML(pool.start_cidr || '172.16.112.0/24')}"${locked ? ' readonly' : ''} /></div>
+          <div class="field"><label>Allocation prefix</label><input name="allocation_prefix" type="number" min="16" max="32" value="${escapeHTML(pool.allocation_prefix || 24)}" required${locked ? ' readonly' : ''} /></div>
+          <div class="field"><label>Scope</label><input name="service_scope" value="${escapeHTML(pool.service_scope || 'remote_access')}"${locked ? ' readonly' : ''} /></div>
+          <div class="field"><label>Status</label><select name="status">
+            <option value="active"${pool.status !== 'disabled' ? ' selected' : ''}>active</option>
+            <option value="disabled"${pool.status === 'disabled' ? ' selected' : ''}>disabled</option>
+          </select></div>
+          <div class="field"><label>Display order</label><input name="display_order" type="number" value="${escapeHTML(pool.display_order || 1000)}" /></div>
+          <div class="field full"><label>Description</label><textarea name="description" rows="3" placeholder="Where this pool should be used.">${escapeHTML(pool.description || '')}</textarea></div>
+          <label class="field checkbox-line full"><input name="routing_enabled" type="checkbox"${pool.routing_enabled ? ' checked' : ''} /> Enable route export between allocated pools</label>
+          ${editing && Number(pool.used || 0) > 0 ? '<div class="field full"><div class="empty">This pool has active allocations. Supernet, start CIDR, prefix and scope are locked until allocations are released.</div></div>' : ''}
           <div class="field full inline-actions">
-            <button class="primary-btn" type="submit">Create pool</button>
+            <button class="primary-btn" type="submit">${editing ? 'Save pool' : 'Create pool'}</button>
             <button class="secondary-btn" id="cancelAddressPoolBtn" type="button">Cancel</button>
           </div>
         </form>
@@ -152,9 +207,32 @@
       document.getElementById('addressPoolForm')?.addEventListener('submit', submitAddressPool);
     }
 
+    function openDeleteAddressPoolModal(poolID, label) {
+      const pool = poolByID(poolID) || {};
+      const poolLabel = label || pool.label || pool.key || poolID;
+      openModal(`Delete pool: ${poolLabel}`, 'Address Pools', `
+        <div class="response-grid">
+          <div><span>Pool</span><strong>${escapeHTML(poolLabel || 'n/a')}</strong></div>
+          <div><span>Supernet</span><strong>${escapeHTML(pool.base_cidr || 'n/a')}</strong></div>
+          <div><span>Allocated</span><strong>${escapeHTML(String(pool.used || 0))}</strong></div>
+          <div><span>Routing</span><strong>${escapeHTML(pool.routing_enabled ? 'enabled' : 'disabled')}</strong></div>
+        </div>
+        <div class="notice">
+          Delete only removes an unused pool definition. Existing allocations are never removed implicitly.
+        </div>
+        <div class="inline-actions">
+          <button class="danger-btn" id="confirmAddressPoolDeleteBtn" type="button">Delete pool</button>
+          <button class="secondary-btn" id="cancelAddressPoolDeleteBtn" type="button">Cancel</button>
+        </div>
+        <div id="addressPoolDeleteResult" class="form-result"></div>`, { wide: false });
+      document.getElementById('cancelAddressPoolDeleteBtn')?.addEventListener('click', closeModal);
+      document.getElementById('confirmAddressPoolDeleteBtn')?.addEventListener('click', (event) => deleteAddressPool(poolID, poolLabel, event.currentTarget));
+    }
+
     async function submitAddressPool(event) {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
+      const poolID = String(form.get('pool_id') || '').trim();
       const payload = {
         key: String(form.get('key') || '').trim(),
         label: String(form.get('label') || '').trim(),
@@ -165,12 +243,17 @@
         allocation_prefix: Number(form.get('allocation_prefix') || 24),
         service_scope: String(form.get('service_scope') || 'remote_access').trim() || 'remote_access',
         routing_enabled: Boolean(form.get('routing_enabled')),
-        status: 'active',
+        status: String(form.get('status') || 'active').trim() || 'active',
+        display_order: Number(form.get('display_order') || 1000),
       };
       const result = document.getElementById('addressPoolResult');
-      if (result) result.innerHTML = '<span class="tag warn">creating</span>';
+      if (result) result.innerHTML = `<span class="tag warn">${poolID ? 'saving' : 'creating'}</span>`;
       try {
-        await sendJSON('/api/v1/address-pools/spaces', 'POST', payload);
+        if (poolID) {
+          await sendJSON(`/api/v1/address-pools/spaces/${encodeURIComponent(poolID)}`, 'PUT', payload);
+        } else {
+          await sendJSON('/api/v1/address-pools/spaces', 'POST', payload);
+        }
         closeModal();
         await refresh();
       } catch (err) {
@@ -185,6 +268,30 @@
       } catch (err) {
         openActionOutcomeModal('Address pool routing', 'Routing flag update failed', 'failed', err.message || 'Address pool routing update failed.', [
           { label: 'Pool', value: poolID || 'n/a' },
+        ]);
+      }
+    }
+
+    async function deleteAddressPool(poolID, label, button) {
+      if (!poolID) return;
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Deleting...';
+      }
+      const result = document.getElementById('addressPoolDeleteResult');
+      if (result) result.innerHTML = '<span class="tag warn">deleting</span>';
+      try {
+        await sendJSON(`/api/v1/address-pools/spaces/${encodeURIComponent(poolID)}`, 'DELETE', null);
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Delete pool';
+        }
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        openActionOutcomeModal('Address pool delete', 'Delete blocked', 'failed', err.message || 'Address pool delete failed.', [
+          { label: 'Pool', value: label || poolID },
         ]);
       }
     }

@@ -93,6 +93,8 @@ type Store interface {
 	EnsureDefaultAddressPoolSpaces(context.Context) error
 	AddressPoolInventory(context.Context) (domain.AddressPoolInventory, error)
 	CreateAddressPoolSpace(context.Context, domain.AddressPoolSpace) (domain.AddressPoolSpace, error)
+	UpdateAddressPoolSpace(context.Context, string, domain.AddressPoolSpace) (domain.AddressPoolSpace, error)
+	DeleteAddressPoolSpace(context.Context, string) (domain.AddressPoolSpace, error)
 	SetAddressPoolRouting(context.Context, string, bool) (domain.AddressPoolSpace, error)
 	ListInstanceRuntimeStates(context.Context) ([]domain.InstanceRuntimeState, error)
 	GetInstanceRuntimeState(context.Context, string) (domain.InstanceRuntimeState, error)
@@ -342,6 +344,8 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("GET /api/v1/instances/runtime-states", "instance.read", s.listInstanceRuntimeStates)
 	protected("GET /api/v1/address-pools", "instance.read", s.listAddressPools)
 	protected("POST /api/v1/address-pools/spaces", "settings.manage", s.createAddressPoolSpace)
+	protected("PUT /api/v1/address-pools/spaces/{id}", "settings.manage", s.updateAddressPoolSpace)
+	protected("DELETE /api/v1/address-pools/spaces/{id}", "settings.manage", s.deleteAddressPoolSpace)
 	protected("POST /api/v1/address-pools/spaces/{id}/routing", "settings.manage", s.setAddressPoolRouting)
 	protected("POST /api/v1/instances", "instance.write", s.createInstance)
 	protected("POST /api/v1/service-packs/{key}/instances", "instance.write", s.createServicePackInstances)
