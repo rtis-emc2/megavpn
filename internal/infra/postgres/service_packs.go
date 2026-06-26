@@ -262,6 +262,15 @@ func normalizeServicePackTemplate(pack domain.ServicePackDefinition, idx int) (d
 	if pack.DisplayOrder <= 0 {
 		pack.DisplayOrder = (idx + 1) * 10
 	}
+	if pack.PlatformNotes == nil {
+		pack.PlatformNotes = []string{}
+	}
+	if pack.Recommendations == nil {
+		pack.Recommendations = []string{}
+	}
+	if pack.Components == nil {
+		pack.Components = []domain.ServicePackComponent{}
+	}
 	for i := range pack.PlatformNotes {
 		pack.PlatformNotes[i] = strings.TrimSpace(pack.PlatformNotes[i])
 	}
