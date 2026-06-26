@@ -373,8 +373,8 @@
             config_mode: stringValue(spec.config_mode, '0644'),
             ovpn_proto: stringValue(spec.proto, 'tcp'),
             ovpn_dev: stringValue(spec.dev, 'tun'),
-            ovpn_server_network: stringValue(spec.server_network, '10.8.0.0'),
-            ovpn_server_netmask: stringValue(spec.server_netmask, '255.255.255.0'),
+            ovpn_server_network: stringValue(spec.server_network),
+            ovpn_server_netmask: stringValue(spec.server_netmask),
             ovpn_cipher: stringValue(spec.cipher),
             ovpn_auth: stringValue(spec.auth),
             ovpn_runtime_dir: stringValue(spec.runtime_dir),
@@ -391,8 +391,8 @@
             endpoint_port: numberValue(instance?.endpoint_port, spec.listen_port, spec.server_port, 51820),
             config_path: stringValue(spec.config_path, `/etc/wireguard/${wgSlug}.conf`),
             config_mode: stringValue(spec.config_mode, '0600'),
-            wg_network_cidr: stringValue(spec.network_cidr, '10.66.0.0/24'),
-            wg_server_address: stringValue(spec.server_address, '10.66.0.1/24'),
+            wg_network_cidr: stringValue(spec.network_cidr),
+            wg_server_address: stringValue(spec.server_address),
             wg_client_address_start: numberValue(spec.client_address_start, 10),
             wg_client_allowed_ips: stringValue(spec.client_allowed_ips, '0.0.0.0/0, ::/0'),
             wg_client_dns: stringValue(spec.client_dns, '1.1.1.1, 1.0.0.1'),
@@ -472,9 +472,9 @@
             config_mode: stringValue(spec.config_mode, '0644'),
             xl2tpd_options_path: stringValue(spec.options_path, '/etc/ppp/options.xl2tpd'),
             xl2tpd_chap_secrets_path: stringValue(spec.chap_secrets_path, '/etc/ppp/chap-secrets'),
-            xl2tpd_local_ip: stringValue(spec.local_ip, '10.20.0.1'),
-            xl2tpd_ip_range_start: stringValue(spec.ip_range_start, '10.20.0.10'),
-            xl2tpd_ip_range_end: stringValue(spec.ip_range_end, '10.20.0.200'),
+            xl2tpd_local_ip: stringValue(spec.local_ip),
+            xl2tpd_ip_range_start: stringValue(spec.ip_range_start),
+            xl2tpd_ip_range_end: stringValue(spec.ip_range_end),
             xl2tpd_dns_primary: stringValue(spec.ppp_dns_primary, '1.1.1.1'),
             xl2tpd_dns_secondary: stringValue(spec.ppp_dns_secondary, '1.0.0.1'),
             xl2tpd_default_username: stringValue(spec.default_username),
@@ -542,8 +542,8 @@
               <option value="udp"${draft.ovpn_proto === 'udp' ? ' selected' : ''}>udp</option>
             </select></div>
             <div class="field"><label>Device</label><input name="ovpn_dev" value="${escapeHTML(draft.ovpn_dev || 'tun')}" /></div>
-            <div class="field"><label>Server network</label><input name="ovpn_server_network" value="${escapeHTML(draft.ovpn_server_network || '10.8.0.0')}" /></div>
-            <div class="field"><label>Server netmask</label><input name="ovpn_server_netmask" value="${escapeHTML(draft.ovpn_server_netmask || '255.255.255.0')}" /></div>
+            <div class="field"><label>Server network</label><input name="ovpn_server_network" value="${escapeHTML(draft.ovpn_server_network || '')}" placeholder="auto from Address Pools" /></div>
+            <div class="field"><label>Server netmask</label><input name="ovpn_server_netmask" value="${escapeHTML(draft.ovpn_server_netmask || '')}" placeholder="auto" /></div>
             <div class="field"><label>Cipher</label><input name="ovpn_cipher" value="${escapeHTML(draft.ovpn_cipher || '')}" placeholder="AES-256-GCM" /></div>
             <div class="field"><label>Auth</label><input name="ovpn_auth" value="${escapeHTML(draft.ovpn_auth || '')}" placeholder="SHA256" /></div>
             <div class="field"><label>Runtime dir</label><input name="ovpn_runtime_dir" value="${escapeHTML(draft.ovpn_runtime_dir || '')}" placeholder="/etc/openvpn/server/megavpn-edge" /></div>
@@ -561,8 +561,8 @@
             <div class="field full"><label>Advanced server config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated OpenVPN server config.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
         case 'wireguard':
           return `${intro}
-            <div class="field"><label>Network CIDR</label><input name="wg_network_cidr" value="${escapeHTML(draft.wg_network_cidr || '10.66.0.0/24')}" placeholder="10.66.0.0/24" /></div>
-            <div class="field"><label>Server address</label><input name="wg_server_address" value="${escapeHTML(draft.wg_server_address || '10.66.0.1/24')}" placeholder="10.66.0.1/24" /></div>
+            <div class="field"><label>Network CIDR</label><input name="wg_network_cidr" value="${escapeHTML(draft.wg_network_cidr || '')}" placeholder="auto from Address Pools" /></div>
+            <div class="field"><label>Server address</label><input name="wg_server_address" value="${escapeHTML(draft.wg_server_address || '')}" placeholder="auto first usable address" /></div>
             <div class="field"><label>Client address start</label><input name="wg_client_address_start" type="number" min="2" max="250" value="${escapeHTML(draft.wg_client_address_start || 10)}" /></div>
             <div class="field"><label>Client allowed IPs</label><input name="wg_client_allowed_ips" value="${escapeHTML(draft.wg_client_allowed_ips || '0.0.0.0/0, ::/0')}" placeholder="0.0.0.0/0, ::/0" /></div>
             <div class="field"><label>Client DNS</label><input name="wg_client_dns" value="${escapeHTML(draft.wg_client_dns || '1.1.1.1, 1.0.0.1')}" placeholder="1.1.1.1, 1.0.0.1" /></div>
@@ -635,9 +635,9 @@
             <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated squid.conf.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
         case 'xl2tpd':
           return `${intro}
-            <div class="field"><label>Local IP</label><input name="xl2tpd_local_ip" value="${escapeHTML(draft.xl2tpd_local_ip || '10.20.0.1')}" /></div>
-            <div class="field"><label>Range start</label><input name="xl2tpd_ip_range_start" value="${escapeHTML(draft.xl2tpd_ip_range_start || '10.20.0.10')}" /></div>
-            <div class="field"><label>Range end</label><input name="xl2tpd_ip_range_end" value="${escapeHTML(draft.xl2tpd_ip_range_end || '10.20.0.200')}" /></div>
+            <div class="field"><label>Local IP</label><input name="xl2tpd_local_ip" value="${escapeHTML(draft.xl2tpd_local_ip || '')}" placeholder="auto from Address Pools" /></div>
+            <div class="field"><label>Range start</label><input name="xl2tpd_ip_range_start" value="${escapeHTML(draft.xl2tpd_ip_range_start || '')}" placeholder="auto" /></div>
+            <div class="field"><label>Range end</label><input name="xl2tpd_ip_range_end" value="${escapeHTML(draft.xl2tpd_ip_range_end || '')}" placeholder="auto" /></div>
             <div class="field"><label>DNS primary</label><input name="xl2tpd_dns_primary" value="${escapeHTML(draft.xl2tpd_dns_primary || '1.1.1.1')}" /></div>
             <div class="field"><label>DNS secondary</label><input name="xl2tpd_dns_secondary" value="${escapeHTML(draft.xl2tpd_dns_secondary || '1.0.0.1')}" /></div>
             <div class="field"><label>Default username</label><input name="xl2tpd_default_username" value="${escapeHTML(draft.xl2tpd_default_username || '')}" placeholder="vpnuser" /></div>
@@ -740,8 +740,17 @@
         spec.server_port = Number(form.get('endpoint_port') || endpointPort || 1194) || 1194;
         spec.proto = String(form.get('ovpn_proto') || 'tcp').trim();
         spec.dev = String(form.get('ovpn_dev') || 'tun').trim();
-        spec.server_network = String(form.get('ovpn_server_network') || '10.8.0.0').trim();
-        spec.server_netmask = String(form.get('ovpn_server_netmask') || '255.255.255.0').trim();
+        const ovpnServerNetwork = String(form.get('ovpn_server_network') || '').trim();
+        const ovpnServerNetmask = String(form.get('ovpn_server_netmask') || '').trim();
+        if (ovpnServerNetwork) {
+          spec.server_network = ovpnServerNetwork;
+          spec.server_netmask = ovpnServerNetmask || '255.255.255.0';
+          spec.address_pool_mode = 'manual';
+        } else {
+          delete spec.server_network;
+          delete spec.server_netmask;
+          spec.address_pool_mode = 'auto';
+        }
         spec.cipher = String(form.get('ovpn_cipher') || '').trim();
         spec.auth = String(form.get('ovpn_auth') || '').trim();
         spec.runtime_dir = String(form.get('ovpn_runtime_dir') || '').trim();
@@ -777,8 +786,17 @@
         }
         spec.listen_port = Number(form.get('endpoint_port') || endpointPort || 51820) || 51820;
         spec.server_port = spec.listen_port;
-        spec.network_cidr = String(form.get('wg_network_cidr') || '10.66.0.0/24').trim();
-        spec.server_address = String(form.get('wg_server_address') || '').trim();
+        const wgNetworkCIDR = String(form.get('wg_network_cidr') || '').trim();
+        const wgServerAddress = String(form.get('wg_server_address') || '').trim();
+        if (wgNetworkCIDR) {
+          spec.network_cidr = wgNetworkCIDR;
+          spec.server_address = wgServerAddress;
+          spec.address_pool_mode = 'manual';
+        } else {
+          delete spec.network_cidr;
+          delete spec.server_address;
+          spec.address_pool_mode = 'auto';
+        }
         spec.client_address_start = Number(form.get('wg_client_address_start') || 10) || 10;
         spec.client_allowed_ips = String(form.get('wg_client_allowed_ips') || '0.0.0.0/0, ::/0').trim();
         spec.client_dns = String(form.get('wg_client_dns') || '').trim();
@@ -885,9 +903,20 @@
       if (normalized === 'xl2tpd') {
         spec.listen_port = Number(form.get('endpoint_port') || endpointPort || 1701) || 1701;
         spec.server_port = spec.listen_port;
-        spec.local_ip = String(form.get('xl2tpd_local_ip') || '').trim();
-        spec.ip_range_start = String(form.get('xl2tpd_ip_range_start') || '').trim();
-        spec.ip_range_end = String(form.get('xl2tpd_ip_range_end') || '').trim();
+        const l2tpLocalIP = String(form.get('xl2tpd_local_ip') || '').trim();
+        const l2tpRangeStart = String(form.get('xl2tpd_ip_range_start') || '').trim();
+        const l2tpRangeEnd = String(form.get('xl2tpd_ip_range_end') || '').trim();
+        if (l2tpLocalIP || l2tpRangeStart || l2tpRangeEnd) {
+          spec.local_ip = l2tpLocalIP;
+          spec.ip_range_start = l2tpRangeStart;
+          spec.ip_range_end = l2tpRangeEnd;
+          spec.address_pool_mode = 'manual';
+        } else {
+          delete spec.local_ip;
+          delete spec.ip_range_start;
+          delete spec.ip_range_end;
+          spec.address_pool_mode = 'auto';
+        }
         spec.ppp_dns_primary = String(form.get('xl2tpd_dns_primary') || '').trim();
         spec.ppp_dns_secondary = String(form.get('xl2tpd_dns_secondary') || '').trim();
         spec.default_username = String(form.get('xl2tpd_default_username') || '').trim();

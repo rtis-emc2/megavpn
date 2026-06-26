@@ -26,6 +26,8 @@
       nodes: [],
       instances: [],
       instanceRuntimeStates: [],
+      addressPoolSpaces: [],
+      addressPoolAllocations: [],
       clients: [],
       jobs: [],
       artifacts: [],

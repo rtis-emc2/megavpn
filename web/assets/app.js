@@ -341,6 +341,22 @@
   });
   if (!opsPages) throw new Error('MegaVPNOpsPages is not loaded');
 
+  const addressPoolsPage = window.MegaVPNAddressPoolsPage?.create?.({
+    state,
+    setTitle,
+    el,
+    statusTag,
+    escapeHTML,
+    formatDate,
+    hasPermission,
+    sendJSON,
+    refresh,
+    openModal,
+    closeModal,
+    openActionOutcomeModal,
+  });
+  if (!addressPoolsPage) throw new Error('MegaVPNAddressPoolsPage is not loaded');
+
   const revisionsPage = window.MegaVPNRevisionsPage?.create?.({
     state,
     setTitle,
@@ -489,6 +505,7 @@
     dashboardPage,
     nodesPage,
     instancesPage,
+    addressPoolsPage,
     servicesPage,
     clientsPage,
     jobWorkflows,

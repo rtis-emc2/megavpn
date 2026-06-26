@@ -849,6 +849,7 @@ func (s *Store) CreateInstance(ctx context.Context, x domain.Instance) (domain.I
 	spec["endpoint_host"] = x.EndpointHost
 	spec["endpoint_port"] = x.EndpointPort
 	if _, err := s.createInstanceRevision(ctx, x.ID, "system", "validated", spec); err != nil {
+		s.releaseInstanceAddressPoolAllocations(ctx, x.ID)
 		_, _ = s.db.Exec(ctx, `delete from instances where id=$1`, x.ID)
 		return x, err
 	}
@@ -922,6 +923,7 @@ func (s *Store) DeleteInstance(ctx context.Context, instanceID string) (domain.I
 	if err != nil {
 		return domain.Instance{}, err
 	}
+	s.releaseInstanceAddressPoolAllocations(ctx, instanceID)
 	_, _ = s.CreateAudit(ctx, "system", "instance.delete", "instance", &instanceID, "instance soft deleted")
 	return s.GetInstance(ctx, instanceID)
 }

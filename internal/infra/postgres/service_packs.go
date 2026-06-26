@@ -28,7 +28,23 @@ func (s *Store) EnsureDefaultServicePacks(ctx context.Context, packs []domain.Se
 			key,label,description,base_name_template,endpoint_hint,requires_endpoint_host,
 			platform_notes_json,recommendations_json,components_json,status,source,version,display_order,created_at,updated_at
 		) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now(),now())
-		on conflict(key) do nothing`,
+		on conflict(key) do update set
+			label=excluded.label,
+			description=excluded.description,
+			base_name_template=excluded.base_name_template,
+			endpoint_hint=excluded.endpoint_hint,
+			requires_endpoint_host=excluded.requires_endpoint_host,
+			platform_notes_json=excluded.platform_notes_json,
+			recommendations_json=excluded.recommendations_json,
+			components_json=excluded.components_json,
+			status=case
+				when service_pack_templates.status in ('disabled','deleted') then service_pack_templates.status
+				else excluded.status
+			end,
+			version=excluded.version,
+			display_order=excluded.display_order,
+			updated_at=now()
+		where service_pack_templates.source='default'`,
 			normalized.Key,
 			normalized.Label,
 			normalized.Description,

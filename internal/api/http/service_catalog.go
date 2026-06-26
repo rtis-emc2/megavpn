@@ -76,8 +76,8 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 				"Не смешивать ручной PKI и platform-managed PKI в одном instance.",
 			},
 			Presets: []serviceCatalogPreset{
-				{Key: "tcp_11994", Label: "TCP 11994", Description: "Рекомендуемый baseline для совместимости и отдельного TCP-порта под OpenVPN.", Recommended: true, Draft: map[string]any{"endpoint_port": 11994, "ovpn_proto": "tcp", "ovpn_dev": "tun", "ovpn_server_network": "10.8.0.0", "ovpn_server_netmask": "255.255.255.0", "config_mode": "0644", "ovpn_pki_profile": "default"}},
-				{Key: "udp_1194", Label: "UDP 1194", Description: "Более классический профиль там, где throughput важнее camouflage.", Draft: map[string]any{"endpoint_port": 1194, "ovpn_proto": "udp", "ovpn_dev": "tun", "ovpn_server_network": "10.8.0.0", "ovpn_server_netmask": "255.255.255.0", "config_mode": "0644", "ovpn_pki_profile": "default"}},
+				{Key: "tcp_11994", Label: "TCP 11994", Description: "Рекомендуемый baseline для совместимости и отдельного TCP-порта под OpenVPN.", Recommended: true, Draft: map[string]any{"endpoint_port": 11994, "ovpn_proto": "tcp", "ovpn_dev": "tun", "address_pool_mode": "auto", "config_mode": "0644", "ovpn_pki_profile": "default"}},
+				{Key: "udp_1194", Label: "UDP 1194", Description: "Более классический профиль там, где throughput важнее camouflage.", Draft: map[string]any{"endpoint_port": 1194, "ovpn_proto": "udp", "ovpn_dev": "tun", "address_pool_mode": "auto", "config_mode": "0644", "ovpn_pki_profile": "default"}},
 			},
 		},
 		"wireguard": {
@@ -98,8 +98,8 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 				"Endpoint port обычно 51820, если нет требований camouflage.",
 			},
 			Presets: []serviceCatalogPreset{
-				{Key: "roadwarrior", Label: "Road Warrior", Description: "Рекомендуемый full-tunnel профиль для клиентов.", Recommended: true, Draft: map[string]any{"endpoint_port": 51820, "wg_network_cidr": "10.66.0.0/24", "wg_server_address": "10.66.0.1/24", "wg_client_allowed_ips": "0.0.0.0/0, ::/0", "wg_client_dns": "1.1.1.1, 1.0.0.1", "wg_keepalive": 25, "config_mode": "0600"}},
-				{Key: "split_tunnel", Label: "Split Tunnel", Description: "Профиль для корпоративных и частичных маршрутов.", Draft: map[string]any{"endpoint_port": 51820, "wg_network_cidr": "10.66.10.0/24", "wg_server_address": "10.66.10.1/24", "wg_client_allowed_ips": "10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16", "wg_client_dns": "1.1.1.1, 1.0.0.1", "wg_keepalive": 25, "config_mode": "0600"}},
+				{Key: "roadwarrior", Label: "Road Warrior", Description: "Рекомендуемый full-tunnel профиль для клиентов.", Recommended: true, Draft: map[string]any{"endpoint_port": 51820, "address_pool_mode": "auto", "wg_client_allowed_ips": "0.0.0.0/0, ::/0", "wg_client_dns": "1.1.1.1, 1.0.0.1", "wg_keepalive": 25, "config_mode": "0600"}},
+				{Key: "split_tunnel", Label: "Split Tunnel", Description: "Профиль для корпоративных и частичных маршрутов.", Draft: map[string]any{"endpoint_port": 51820, "address_pool_mode": "auto", "wg_client_allowed_ips": "10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16", "wg_client_dns": "1.1.1.1, 1.0.0.1", "wg_keepalive": 25, "config_mode": "0600"}},
 			},
 		},
 		"ipsec": {
@@ -145,7 +145,7 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 				"Не использовать без сопутствующего IPsec transport.",
 			},
 			Presets: []serviceCatalogPreset{
-				{Key: "remote_access", Label: "Remote Access", Description: "Рекомендуемый baseline для L2TP поверх IPsec.", Recommended: true, Draft: map[string]any{"endpoint_port": 1701, "xl2tpd_local_ip": "10.20.0.1", "xl2tpd_ip_range_start": "10.20.0.10", "xl2tpd_ip_range_end": "10.20.0.200", "xl2tpd_dns_primary": "1.1.1.1", "xl2tpd_dns_secondary": "1.0.0.1", "config_mode": "0644"}},
+				{Key: "remote_access", Label: "Remote Access", Description: "Рекомендуемый baseline для L2TP поверх IPsec.", Recommended: true, Draft: map[string]any{"endpoint_port": 1701, "address_pool_mode": "auto", "xl2tpd_dns_primary": "1.1.1.1", "xl2tpd_dns_secondary": "1.0.0.1", "config_mode": "0644"}},
 			},
 		},
 		"http_proxy": {

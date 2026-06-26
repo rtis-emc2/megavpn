@@ -51,16 +51,16 @@ func servicePackDefinitions() []servicePackDefinition {
 			},
 			Recommendations: []string{
 				"Перед production rollout проверь DNS, firewall/NAT и conflict-free ports на выбранной ноде.",
-				"Держи WireGuard/OpenVPN address pools уникальными между service instances.",
+				"WireGuard/OpenVPN/L2TP address pools выделяются автоматически из Address Pools catalog.",
 				"Для публичного VLESS на 443 используй корректный endpoint host/SNI; второй VLESS вынесен на 8443, чтобы не конфликтовать с основным transport.",
 			},
 			Components: []servicePackComponent{
 				{Label: "VLESS TCP Edge", Description: "VLESS/Reality component для пары VLESS + OpenVPN TCP.", ServiceCode: "xray-core", PresetKey: "reality_tcp", NameSuffix: "vless-tcp-edge", SlugSuffix: "vless-tcp-edge", EndpointPort: 443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "reality_tcp", "security": "reality", "network": "tcp", "dest": "www.cloudflare.com:443", "fingerprint": "chrome", "auto_generate_reality_keys": true, "config_mode": "0640"}},
-				{Label: "OpenVPN TCP Companion", Description: "OpenVPN TCP component для пары VLESS + OpenVPN TCP.", ServiceCode: "openvpn", PresetKey: "tcp_11994", NameSuffix: "openvpn-tcp", SlugSuffix: "openvpn-tcp", EndpointPort: 11994, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "tcp_11994", "pki_scope": "platform", "pki_profile": "default", "proto": "tcp", "dev": "tun", "server_network": "10.8.0.0", "server_netmask": "255.255.255.0", "config_mode": "0644"}},
+				{Label: "OpenVPN TCP Companion", Description: "OpenVPN TCP component для пары VLESS + OpenVPN TCP.", ServiceCode: "openvpn", PresetKey: "tcp_11994", NameSuffix: "openvpn-tcp", SlugSuffix: "openvpn-tcp", EndpointPort: 11994, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "tcp_11994", "pki_scope": "platform", "pki_profile": "default", "proto": "tcp", "dev": "tun", "address_pool_mode": "auto", "config_mode": "0644"}},
 				{Label: "VLESS Standalone", Description: "Отдельный VLESS/Reality instance на альтернативном TCP-порту.", ServiceCode: "xray-core", PresetKey: "reality_tcp", NameSuffix: "vless", SlugSuffix: "vless", EndpointPort: 8443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "reality_tcp", "security": "reality", "network": "tcp", "dest": "www.cloudflare.com:443", "fingerprint": "chrome", "auto_generate_reality_keys": true, "config_mode": "0640"}},
-				{Label: "OpenVPN UDP", Description: "Классический OpenVPN UDP baseline.", ServiceCode: "openvpn", PresetKey: "udp_1194", NameSuffix: "openvpn-udp", SlugSuffix: "openvpn-udp", EndpointPort: 1194, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "udp_1194", "pki_scope": "platform", "pki_profile": "default", "proto": "udp", "dev": "tun", "server_network": "10.9.0.0", "server_netmask": "255.255.255.0", "config_mode": "0644"}},
+				{Label: "OpenVPN UDP", Description: "Классический OpenVPN UDP baseline.", ServiceCode: "openvpn", PresetKey: "udp_1194", NameSuffix: "openvpn-udp", SlugSuffix: "openvpn-udp", EndpointPort: 1194, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "udp_1194", "pki_scope": "platform", "pki_profile": "default", "proto": "udp", "dev": "tun", "address_pool_mode": "auto", "config_mode": "0644"}},
 				{Label: "Shadowsocks", Description: "Standalone Shadowsocks chacha20-ietf-poly1305 baseline.", ServiceCode: "shadowsocks", PresetKey: "chacha_full", NameSuffix: "shadowsocks", SlugSuffix: "shadowsocks", EndpointPort: 8388, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "chacha_full", "method": "chacha20-ietf-poly1305", "mode": "tcp_and_udp", "timeout": 300, "auto_generate_server_password": true, "config_mode": "0640"}},
-				{Label: "WireGuard", Description: "Standalone WireGuard road-warrior baseline.", ServiceCode: "wireguard", PresetKey: "roadwarrior", NameSuffix: "wireguard", SlugSuffix: "wireguard", EndpointPort: 51820, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "roadwarrior", "network_cidr": "10.66.0.0/24", "server_address": "10.66.0.1/24", "client_allowed_ips": "0.0.0.0/0, ::/0", "client_dns": "1.1.1.1, 1.0.0.1", "persistent_keepalive": 25, "auto_generate_server_key": true, "config_mode": "0600"}},
+				{Label: "WireGuard", Description: "Standalone WireGuard road-warrior baseline.", ServiceCode: "wireguard", PresetKey: "roadwarrior", NameSuffix: "wireguard", SlugSuffix: "wireguard", EndpointPort: 51820, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "roadwarrior", "address_pool_mode": "auto", "client_allowed_ips": "0.0.0.0/0, ::/0", "client_dns": "1.1.1.1, 1.0.0.1", "persistent_keepalive": 25, "auto_generate_server_key": true, "config_mode": "0600"}},
 			},
 		},
 		{
@@ -76,7 +76,7 @@ func servicePackDefinitions() []servicePackDefinition {
 			},
 			Components: []servicePackComponent{
 				{Label: "IPsec / IKEv2", Description: "Transport/security layer для L2TP remote-access.", ServiceCode: "ipsec", PresetKey: "ikev2_psk", NameSuffix: "ipsec", SlugSuffix: "ipsec", EndpointPort: 1701, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "ikev2_psk", "left": "%defaultroute", "right": "%any", "ike": "aes256-sha1-modp1024", "esp": "aes256-sha1", "secrets_mode": "0600", "config_mode": "0644"}},
-				{Label: "L2TP Access", Description: "Companion access service на том же endpoint host.", ServiceCode: "xl2tpd", PresetKey: "remote_access", NameSuffix: "l2tp-access", SlugSuffix: "l2tp-access", EndpointPort: 1701, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "remote_access", "local_ip": "10.20.0.1", "ip_range_start": "10.20.0.10", "ip_range_end": "10.20.0.200", "ppp_dns_primary": "1.1.1.1", "ppp_dns_secondary": "1.0.0.1", "config_mode": "0644"}},
+				{Label: "L2TP Access", Description: "Companion access service на том же endpoint host.", ServiceCode: "xl2tpd", PresetKey: "remote_access", NameSuffix: "l2tp-access", SlugSuffix: "l2tp-access", EndpointPort: 1701, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "remote_access", "address_pool_mode": "auto", "ppp_dns_primary": "1.1.1.1", "ppp_dns_secondary": "1.0.0.1", "config_mode": "0644"}},
 			},
 		},
 		{
@@ -149,7 +149,7 @@ func servicePackDefinitions() []servicePackDefinition {
 				"Рекомендуемый baseline, если нужен более совместимый TCP transport.",
 			},
 			Components: []servicePackComponent{
-				{Label: "OpenVPN TCP", Description: "OpenVPN instance с platform-managed PKI.", ServiceCode: "openvpn", PresetKey: "tcp_11994", NameSuffix: "openvpn-tcp", SlugSuffix: "openvpn-tcp", EndpointPort: 11994, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "tcp_11994", "pki_scope": "platform", "pki_profile": "default", "proto": "tcp", "dev": "tun", "server_network": "10.8.0.0", "server_netmask": "255.255.255.0", "config_mode": "0644"}},
+				{Label: "OpenVPN TCP", Description: "OpenVPN instance с platform-managed PKI.", ServiceCode: "openvpn", PresetKey: "tcp_11994", NameSuffix: "openvpn-tcp", SlugSuffix: "openvpn-tcp", EndpointPort: 11994, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "tcp_11994", "pki_scope": "platform", "pki_profile": "default", "proto": "tcp", "dev": "tun", "address_pool_mode": "auto", "config_mode": "0644"}},
 			},
 		},
 		{
@@ -166,7 +166,7 @@ func servicePackDefinitions() []servicePackDefinition {
 				"Подходит там, где throughput важнее camouflage и firewall-path стабильнее.",
 			},
 			Components: []servicePackComponent{
-				{Label: "OpenVPN UDP", Description: "OpenVPN instance с platform-managed PKI.", ServiceCode: "openvpn", PresetKey: "udp_1194", NameSuffix: "openvpn-udp", SlugSuffix: "openvpn-udp", EndpointPort: 1194, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "udp_1194", "pki_scope": "platform", "pki_profile": "default", "proto": "udp", "dev": "tun", "server_network": "10.8.0.0", "server_netmask": "255.255.255.0", "config_mode": "0644"}},
+				{Label: "OpenVPN UDP", Description: "OpenVPN instance с platform-managed PKI.", ServiceCode: "openvpn", PresetKey: "udp_1194", NameSuffix: "openvpn-udp", SlugSuffix: "openvpn-udp", EndpointPort: 1194, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "udp_1194", "pki_scope": "platform", "pki_profile": "default", "proto": "udp", "dev": "tun", "address_pool_mode": "auto", "config_mode": "0644"}},
 			},
 		},
 		{
@@ -178,10 +178,10 @@ func servicePackDefinitions() []servicePackDefinition {
 			RequiresEndpointHost: true,
 			Recommendations: []string{
 				"Это канонический стартовый пакет для modern full-tunnel VPN-клиентов.",
-				"Проверяй network CIDR и не переиспользуй address pool между разными инстансами.",
+				"Network CIDR выделяется автоматически из Address Pools catalog.",
 			},
 			Components: []servicePackComponent{
-				{Label: "WireGuard Road Warrior", Description: "Standalone WireGuard instance с managed peers.", ServiceCode: "wireguard", PresetKey: "roadwarrior", NameSuffix: "wireguard", SlugSuffix: "wireguard", EndpointPort: 51820, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "roadwarrior", "network_cidr": "10.66.0.0/24", "server_address": "10.66.0.1/24", "client_allowed_ips": "0.0.0.0/0, ::/0", "client_dns": "1.1.1.1, 1.0.0.1", "persistent_keepalive": 25, "config_mode": "0600"}},
+				{Label: "WireGuard Road Warrior", Description: "Standalone WireGuard instance с managed peers.", ServiceCode: "wireguard", PresetKey: "roadwarrior", NameSuffix: "wireguard", SlugSuffix: "wireguard", EndpointPort: 51820, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "roadwarrior", "address_pool_mode": "auto", "client_allowed_ips": "0.0.0.0/0, ::/0", "client_dns": "1.1.1.1, 1.0.0.1", "persistent_keepalive": 25, "config_mode": "0600"}},
 			},
 		},
 		{

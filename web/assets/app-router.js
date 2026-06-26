@@ -16,6 +16,7 @@
       dashboardPage,
       nodesPage,
       instancesPage,
+      addressPoolsPage,
       servicesPage,
       clientsPage,
       jobWorkflows,
@@ -44,6 +45,7 @@
       'nodes',
       'nodeManage',
       'instances',
+      'addressPools',
       'jobs',
       'backhaul',
       'services',
@@ -67,6 +69,7 @@
       if (state.page === 'nodeManage') return nodeWorkflows.renderNodeManagePage();
       if (state.page === 'services') return servicesPage.render();
       if (state.page === 'instances') return instancesPage.render();
+      if (state.page === 'addressPools') return addressPoolsPage.render();
       if (state.page === 'clients') return clientsPage.render();
       if (state.page === 'jobs') return jobWorkflows.renderJobs();
       if (state.page === 'artifacts') return artifactsPage.renderArtifacts();

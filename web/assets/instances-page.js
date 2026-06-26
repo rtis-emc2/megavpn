@@ -618,7 +618,7 @@
         endpoint_hint: 'wg.example.com',
         requires_endpoint_host: true,
         platform_notes: [],
-        recommendations: ['Keep address pools unique across WireGuard instances.'],
+        recommendations: ['Address pool can be allocated automatically from the Address Pools catalog.'],
         components: [
           {
             label: 'WireGuard Road Warrior',
@@ -631,8 +631,7 @@
             requires_endpoint_host: true,
             spec: {
               service_profile: 'roadwarrior',
-              network_cidr: '10.66.0.0/24',
-              server_address: '10.66.0.1/24',
+              address_pool_mode: 'auto',
               client_allowed_ips: '0.0.0.0/0, ::/0',
               client_dns: '1.1.1.1, 1.0.0.1',
               persistent_keepalive: 25,

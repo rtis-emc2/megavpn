@@ -19,8 +19,12 @@ func (s *Store) materializeInstanceDriverSpecDefaults(ctx context.Context, insta
 	switch normalizeInstanceRuntimeCode(instance.ServiceCode) {
 	case "xray-core":
 		return s.materializeXrayDefaults(ctx, instance, spec)
+	case "openvpn":
+		return s.materializeOpenVPNDefaults(ctx, instance, spec)
 	case "wireguard":
 		return s.materializeWireGuardDefaults(ctx, instance, spec)
+	case "xl2tpd":
+		return s.materializeXL2TPDDefaults(ctx, instance, spec)
 	case "shadowsocks":
 		return s.materializeShadowsocksDefaults(ctx, instance, spec)
 	default:
@@ -97,6 +101,17 @@ func (s *Store) materializeWireGuardDefaults(ctx context.Context, instance domai
 		spec["server_public_key"] = publicKey
 		delete(spec, "server_private_key")
 	}
+	if shouldAllocateAddressPool(spec, "network_cidr") {
+		allocation, ok, err := s.ensureInstanceAddressPoolAllocation(ctx, instance, "wireguard")
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			spec["address_pool_allocation_id"] = allocation.ID
+			spec["network_cidr"] = allocation.CIDR
+			spec["route_export"] = allocation.RouteExport
+		}
+	}
 	if firstString(spec["network_cidr"]) == "" {
 		spec["network_cidr"] = "10.66.0.0/24"
 	}
@@ -115,6 +130,73 @@ func (s *Store) materializeWireGuardDefaults(ctx context.Context, instance domai
 	}
 	if firstIntValue(spec["persistent_keepalive"]) <= 0 {
 		spec["persistent_keepalive"] = 25
+	}
+	return spec, nil
+}
+
+func (s *Store) materializeOpenVPNDefaults(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
+	if shouldAllocateAddressPool(spec, "server_network") {
+		allocation, ok, err := s.ensureInstanceAddressPoolAllocation(ctx, instance, "openvpn")
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			network, netmask, err := ipv4NetworkAndNetmask(allocation.CIDR)
+			if err != nil {
+				return nil, err
+			}
+			spec["address_pool_allocation_id"] = allocation.ID
+			spec["address_pool_cidr"] = allocation.CIDR
+			spec["server_network"] = network
+			spec["server_netmask"] = netmask
+			spec["route_export"] = allocation.RouteExport
+		}
+	}
+	if firstString(spec["server_network"]) == "" {
+		spec["server_network"] = "10.8.0.0"
+	}
+	if firstString(spec["server_netmask"]) == "" {
+		spec["server_netmask"] = "255.255.255.0"
+	}
+	if firstIntValue(spec["server_port"], spec["port"]) <= 0 {
+		spec["server_port"] = firstIntValue(instance.EndpointPort, 1194)
+	}
+	if firstString(spec["proto"]) == "" {
+		spec["proto"] = "tcp"
+	}
+	if firstString(spec["dev"]) == "" {
+		spec["dev"] = "tun"
+	}
+	return spec, nil
+}
+
+func (s *Store) materializeXL2TPDDefaults(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
+	if shouldAllocateAddressPool(spec, "local_ip", "ip_range_start", "ip_range_end") {
+		allocation, ok, err := s.ensureInstanceAddressPoolAllocation(ctx, instance, "xl2tpd")
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			localIP, rangeStart, rangeEnd, err := l2tpPoolFromPrefix(allocation.CIDR)
+			if err != nil {
+				return nil, err
+			}
+			spec["address_pool_allocation_id"] = allocation.ID
+			spec["address_pool_cidr"] = allocation.CIDR
+			spec["local_ip"] = localIP
+			spec["ip_range_start"] = rangeStart
+			spec["ip_range_end"] = rangeEnd
+			spec["route_export"] = allocation.RouteExport
+		}
+	}
+	if firstString(spec["local_ip"]) == "" {
+		spec["local_ip"] = "10.20.0.1"
+	}
+	if firstString(spec["ip_range_start"]) == "" {
+		spec["ip_range_start"] = "10.20.0.10"
+	}
+	if firstString(spec["ip_range_end"]) == "" {
+		spec["ip_range_end"] = "10.20.0.200"
 	}
 	return spec, nil
 }
@@ -155,6 +237,22 @@ func (s *Store) materializeShadowsocksDefaults(ctx context.Context, instance dom
 		spec["timeout"] = 300
 	}
 	return spec, nil
+}
+
+func shouldAllocateAddressPool(spec map[string]any, fields ...string) bool {
+	mode := strings.ToLower(strings.TrimSpace(firstString(spec["address_pool_mode"], spec["pool_mode"])))
+	if mode == "manual" || mode == "static" || mode == "disabled" {
+		return false
+	}
+	if mode == "auto" {
+		return true
+	}
+	for _, field := range fields {
+		if firstString(spec[field]) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func wireGuardDefaultServerAddress(cidr string, hostIndex int) (string, error) {

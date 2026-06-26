@@ -24,6 +24,8 @@
       state.nodes = [];
       state.instances = [];
       state.instanceRuntimeStates = [];
+      state.addressPoolSpaces = [];
+      state.addressPoolAllocations = [];
       state.clients = [];
       state.jobs = [];
       state.artifacts = [];
@@ -83,6 +85,7 @@
       const nodes = await fetchJSON('/api/v1/nodes', []);
       const instances = await fetchJSON('/api/v1/instances', []);
       const instanceRuntimeStates = hasPermission('instance.read') ? await fetchJSON('/api/v1/instances/runtime-states', []) : [];
+      const addressPools = hasPermission('instance.read') ? await fetchJSON('/api/v1/address-pools', { spaces: [], allocations: [] }) : { spaces: [], allocations: [] };
       const clients = await fetchJSON('/api/v1/clients', []);
       const jobs = await fetchJSON('/api/v1/jobs?limit=50', []);
       const artifacts = await fetchJSON('/api/v1/artifacts', []);
@@ -101,6 +104,8 @@
       state.nodes = Array.isArray(nodes) ? nodes.filter((node) => node.status !== 'retired') : [];
       state.instances = Array.isArray(instances) ? instances : [];
       state.instanceRuntimeStates = Array.isArray(instanceRuntimeStates) ? instanceRuntimeStates : [];
+      state.addressPoolSpaces = Array.isArray(addressPools?.spaces) ? addressPools.spaces : [];
+      state.addressPoolAllocations = Array.isArray(addressPools?.allocations) ? addressPools.allocations : [];
       state.clients = Array.isArray(clients) ? clients : [];
       state.jobs = Array.isArray(jobs) ? jobs : [];
       state.artifacts = Array.isArray(artifacts) ? artifacts : [];

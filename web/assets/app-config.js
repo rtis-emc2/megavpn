@@ -12,6 +12,7 @@
       ]],
       ['Provisioning', [
         ['backhaul', 'Backhaul', '⇄'],
+        ['addressPools', 'Address pools', '▦'],
         ['artifacts', 'Artifacts', '▤'],
         ['shareLinks', 'Share links', '↗'],
       ]],

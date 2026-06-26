@@ -27,7 +27,7 @@ insert into service_pack_templates(
   ]$json$::jsonb,
   $json$[
     "Verify DNS, firewall/NAT and conflict-free ports on the selected node before production rollout.",
-    "Keep WireGuard/OpenVPN address pools unique across service instances.",
+    "WireGuard/OpenVPN address pools are allocated automatically from Address Pools catalog.",
     "Use a valid endpoint host/SNI for the public VLESS listener on 443; the second VLESS listener uses 8443 to avoid a port conflict."
   ]$json$::jsonb,
   $json$[
@@ -65,8 +65,7 @@ insert into service_pack_templates(
         "pki_profile": "default",
         "proto": "tcp",
         "dev": "tun",
-        "server_network": "10.8.0.0",
-        "server_netmask": "255.255.255.0",
+        "address_pool_mode": "auto",
         "config_mode": "0644"
       }
     },
@@ -104,8 +103,7 @@ insert into service_pack_templates(
         "pki_profile": "default",
         "proto": "udp",
         "dev": "tun",
-        "server_network": "10.9.0.0",
-        "server_netmask": "255.255.255.0",
+        "address_pool_mode": "auto",
         "config_mode": "0644"
       }
     },
@@ -138,8 +136,7 @@ insert into service_pack_templates(
       "requires_endpoint_host": true,
       "spec": {
         "service_profile": "roadwarrior",
-        "network_cidr": "10.66.0.0/24",
-        "server_address": "10.66.0.1/24",
+        "address_pool_mode": "auto",
         "client_allowed_ips": "0.0.0.0/0, ::/0",
         "client_dns": "1.1.1.1, 1.0.0.1",
         "persistent_keepalive": 25,
