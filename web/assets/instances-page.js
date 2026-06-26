@@ -92,60 +92,12 @@
       const source = canManageServicePacks()
         ? (state.servicePackCatalog || state.servicePacks || [])
         : (state.servicePacks || []);
-      const order = { active: 0, disabled: 1, deleted: 2 };
       return (Array.isArray(source) ? source : [])
         .filter((pack) => pack && pack.key)
+        .filter((pack) => String(pack.status || 'active').toLowerCase() === 'active')
         .slice()
-        .sort((left, right) => {
-          const leftStatus = servicePackLifecycle(left).status;
-          const rightStatus = servicePackLifecycle(right).status;
-          const leftOrder = order[leftStatus] ?? 99;
-          const rightOrder = order[rightStatus] ?? 99;
-          if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-          return Number(left.display_order || 1000) - Number(right.display_order || 1000)
-            || String(left.label || left.key).localeCompare(String(right.label || right.key), 'en');
-        });
-    }
-
-    function servicePackLifecycle(pack) {
-      const status = String(pack?.status || 'active').toLowerCase();
-      if (status === 'disabled') {
-        return {
-          status,
-          tone: 'warn',
-          label: 'Hidden',
-          caption: 'not offered for new instances',
-        };
-      }
-      if (status === 'deleted') {
-        return {
-          status,
-          tone: 'danger',
-          label: 'Archived',
-          caption: 'kept for audit and restore',
-        };
-      }
-      return {
-        status: 'active',
-        tone: 'ok',
-        label: 'Available',
-        caption: 'offered in Create from pack',
-      };
-    }
-
-    function renderServicePackAvailability(pack) {
-      const lifecycle = servicePackLifecycle(pack);
-      return `
-        <div class="template-availability">
-          <span class="status-light ${escapeHTML(lifecycle.tone)}" title="${escapeHTML(lifecycle.label)}">
-            <span class="status-light-dot"></span>
-            <span class="status-light-text">${escapeHTML(lifecycle.label)}</span>
-          </span>
-          <span>
-            <strong>${escapeHTML(lifecycle.label)}</strong>
-            <small>${escapeHTML(lifecycle.caption)}</small>
-          </span>
-        </div>`;
+        .sort((left, right) => Number(left.display_order || 1000) - Number(right.display_order || 1000)
+          || String(left.label || left.key).localeCompare(String(right.label || right.key), 'en'));
     }
 
     function servicePackComponentsLabel(pack) {
@@ -321,8 +273,8 @@
       document.querySelectorAll('.service-pack-edit-btn').forEach((button) => {
         button.addEventListener('click', () => openServicePackEditor(button.dataset.packKey));
       });
-      document.querySelectorAll('.service-pack-status-btn').forEach((button) => {
-        button.addEventListener('click', () => setServicePackStatus(button.dataset.packKey, button.dataset.status));
+      document.querySelectorAll('.service-pack-delete-btn').forEach((button) => {
+        button.addEventListener('click', () => deleteServicePackTemplate(button.dataset.packKey));
       });
       document.querySelectorAll('.instance-manage-btn').forEach((button) => {
         button.addEventListener('click', () => openInstanceManageModal(button.dataset.instanceId));
@@ -361,25 +313,22 @@
       const manage = canManageServicePacks();
       const rows = packs.length
         ? packs.map((pack) => `
-          <tr class="service-pack-row service-pack-row-${escapeHTML(servicePackLifecycle(pack).status)}">
+          <tr class="service-pack-row">
             <td>
               <strong>${escapeHTML(pack.label || pack.key)}</strong>
               <div class="metric-caption"><code>${escapeHTML(pack.key)}</code></div>
               <div class="metric-caption">${escapeHTML(pack.description || 'template')}</div>
             </td>
-            <td>${renderServicePackAvailability(pack)}</td>
             <td><span class="template-components">${escapeHTML(servicePackComponentsLabel(pack))}</span></td>
             <td><code class="mono-clip">${escapeHTML(pack.endpoint_hint || 'n/a')}</code></td>
             <td>
               <div class="table-actions service-pack-actions">
                 ${manage ? `<button class="secondary-btn service-pack-edit-btn" type="button" data-pack-key="${escapeHTML(pack.key)}">Edit</button>` : ''}
-                ${manage && servicePackLifecycle(pack).status !== 'active' ? `<button class="primary-btn service-pack-status-btn" type="button" data-pack-key="${escapeHTML(pack.key)}" data-status="active">Restore</button>` : ''}
-                ${manage && servicePackLifecycle(pack).status === 'active' ? `<button class="secondary-btn service-pack-status-btn" type="button" data-pack-key="${escapeHTML(pack.key)}" data-status="disabled">Hide</button>` : ''}
-                ${manage && servicePackLifecycle(pack).status !== 'deleted' ? `<button class="danger-btn service-pack-status-btn" type="button" data-pack-key="${escapeHTML(pack.key)}" data-status="deleted">Archive</button>` : ''}
+                ${manage ? `<button class="danger-btn service-pack-delete-btn" type="button" data-pack-key="${escapeHTML(pack.key)}">Delete</button>` : ''}
               </div>
             </td>
           </tr>`).join('')
-        : `<tr><td colspan="5"><div class="empty">No service pack templates loaded.</div></td></tr>`;
+        : `<tr><td colspan="4"><div class="empty">No service pack templates loaded.</div></td></tr>`;
       return `
         <section class="table-card">
           <div class="table-head">
@@ -391,7 +340,7 @@
           </div>
           <div class="table-wrap">
             <table class="service-pack-table">
-              <thead><tr><th>Pack</th><th>Availability</th><th>Components</th><th>Endpoint hint</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Pack</th><th>Components</th><th>Endpoint hint</th><th>Actions</th></tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div>
@@ -400,7 +349,13 @@
 
     function servicePackEditorModel(packKey) {
       const existing = servicePackCatalogItems().find((pack) => pack.key === packKey);
-      if (existing) return JSON.parse(JSON.stringify(existing));
+      if (existing) {
+        const model = JSON.parse(JSON.stringify(existing));
+        delete model.status;
+        delete model.source;
+        delete model.version;
+        return model;
+      }
       return {
         key: 'custom_wireguard_pack',
         label: 'Custom WireGuard Pack',
@@ -431,8 +386,6 @@
             },
           },
         ],
-        status: 'active',
-        source: 'operator',
         display_order: 500,
       };
     }
@@ -486,20 +439,15 @@
       }
     }
 
-    async function setServicePackStatus(packKey, status) {
+    async function deleteServicePackTemplate(packKey) {
       if (!packKey || !canManageServicePacks()) return;
-      if (status === 'deleted' && !window.confirm(`Archive service pack template ${packKey}? Existing instances are not changed.`)) return;
+      if (!window.confirm(`Delete service pack template ${packKey}? Existing instances are not changed.`)) return;
       try {
-        if (status === 'deleted') {
-          await sendJSON(`/api/v1/service-packs/${encodeURIComponent(packKey)}`, 'DELETE', null);
-        } else {
-          await sendJSON(`/api/v1/service-packs/${encodeURIComponent(packKey)}/${encodeURIComponent(status === 'active' ? 'enable' : 'disable')}`, 'POST', {});
-        }
+        await sendJSON(`/api/v1/service-packs/${encodeURIComponent(packKey)}`, 'DELETE', null);
         await refresh();
       } catch (err) {
-        openActionOutcomeModal('Service pack catalog', 'Template availability update failed', 'failed', err.message || 'Service pack availability update failed.', [
+        openActionOutcomeModal('Service pack catalog', 'Template delete failed', 'failed', err.message || 'Service pack template delete failed.', [
           { label: 'Pack', value: packKey },
-          { label: 'Target availability', value: status },
         ]);
       }
     }
