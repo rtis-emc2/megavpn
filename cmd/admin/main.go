@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -66,12 +67,16 @@ func resetPassword(args []string) error {
 
 	var (
 		databaseDSN = fs.String("database-dsn", "", "PostgreSQL DSN; defaults to MEGAVPN_DATABASE_DSN")
+		envFile     = fs.String("env-file", "/etc/megavpn/megavpn.env", "runtime environment file loaded before reading env vars; empty disables file loading")
 		login       = fs.String("login", "superadmin", "platform username or email")
 		passwordEnv = fs.String("password-env", "MEGAVPN_ADMIN_PASSWORD", "environment variable containing the new password")
 		activate    = fs.Bool("activate", false, "set the user status to active after reset")
 		timeout     = fs.Duration("timeout", 10*time.Second, "database operation timeout")
 	)
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := loadAdminEnvFile(*envFile); err != nil {
 		return err
 	}
 
@@ -89,12 +94,9 @@ func resetPassword(args []string) error {
 		return fmt.Errorf("hash password: %w", err)
 	}
 
-	dsn := strings.TrimSpace(*databaseDSN)
-	if dsn == "" {
-		dsn = strings.TrimSpace(config.Load().Database.DSN)
-	}
-	if dsn == "" {
-		return fmt.Errorf("database DSN is empty: set MEGAVPN_DATABASE_DSN or pass --database-dsn")
+	dsn, err := resolveAdminDatabaseDSN(*databaseDSN)
+	if err != nil {
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -130,18 +132,19 @@ func seedServicePacks(args []string) error {
 
 	var (
 		databaseDSN = fs.String("database-dsn", "", "PostgreSQL DSN; defaults to MEGAVPN_DATABASE_DSN")
+		envFile     = fs.String("env-file", "/etc/megavpn/megavpn.env", "runtime environment file loaded before reading env vars; empty disables file loading")
 		timeout     = fs.Duration("timeout", 10*time.Second, "database operation timeout")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-
-	dsn := strings.TrimSpace(*databaseDSN)
-	if dsn == "" {
-		dsn = strings.TrimSpace(config.Load().Database.DSN)
+	if err := loadAdminEnvFile(*envFile); err != nil {
+		return err
 	}
-	if dsn == "" {
-		return fmt.Errorf("database DSN is empty: set MEGAVPN_DATABASE_DSN or pass --database-dsn")
+
+	dsn, err := resolveAdminDatabaseDSN(*databaseDSN)
+	if err != nil {
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -164,4 +167,110 @@ func seedServicePacks(args []string) error {
 
 	fmt.Printf("service pack defaults seeded: defaults=%d active=%d\n", len(defaults), len(active))
 	return nil
+}
+
+func resolveAdminDatabaseDSN(flagValue string) (string, error) {
+	dsn := strings.TrimSpace(flagValue)
+	if dsn == "" {
+		dsn = strings.TrimSpace(config.Load().Database.DSN)
+	}
+	if dsn == "" {
+		return "", fmt.Errorf("database DSN is empty: set MEGAVPN_DATABASE_DSN, pass --database-dsn, or provide --env-file")
+	}
+	return dsn, nil
+}
+
+func loadAdminEnvFile(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("open env file %s: %w", path, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for lineNo := 1; scanner.Scan(); lineNo++ {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		key, raw, found := strings.Cut(line, "=")
+		if !found {
+			return fmt.Errorf("parse env file %s:%d: expected KEY=VALUE", path, lineNo)
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return fmt.Errorf("parse env file %s:%d: empty key", path, lineNo)
+		}
+		value, err := parseAdminEnvValue(raw)
+		if err != nil {
+			return fmt.Errorf("parse env file %s:%d: %w", path, lineNo, err)
+		}
+		if existing, exists := os.LookupEnv(key); !exists || strings.TrimSpace(existing) == "" {
+			if err := os.Setenv(key, value); err != nil {
+				return fmt.Errorf("set env %s from %s:%d: %w", key, path, lineNo, err)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read env file %s: %w", path, err)
+	}
+	return nil
+}
+
+func parseAdminEnvValue(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	var out strings.Builder
+	for i := 0; i < len(value); {
+		switch value[i] {
+		case '\'':
+			i++
+			start := i
+			for i < len(value) && value[i] != '\'' {
+				i++
+			}
+			if i >= len(value) {
+				return "", fmt.Errorf("unterminated single-quoted value")
+			}
+			out.WriteString(value[start:i])
+			i++
+		case '"':
+			i++
+			for i < len(value) && value[i] != '"' {
+				if value[i] == '\\' && i+1 < len(value) {
+					i++
+				}
+				out.WriteByte(value[i])
+				i++
+			}
+			if i >= len(value) {
+				return "", fmt.Errorf("unterminated double-quoted value")
+			}
+			i++
+		case '\\':
+			if i+1 >= len(value) {
+				return "", fmt.Errorf("dangling escape in value")
+			}
+			i++
+			out.WriteByte(value[i])
+			i++
+		case '#':
+			if strings.TrimSpace(value[:i]) == "" || value[i-1] == ' ' || value[i-1] == '\t' {
+				return strings.TrimSpace(out.String()), nil
+			}
+			out.WriteByte(value[i])
+			i++
+		default:
+			out.WriteByte(value[i])
+			i++
+		}
+	}
+	return strings.TrimSpace(out.String()), nil
 }
