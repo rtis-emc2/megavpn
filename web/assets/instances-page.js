@@ -9,6 +9,8 @@
       tableCard,
       statusTag,
       escapeHTML,
+      domainUI,
+      renderActionResponse,
       sendJSON,
       refresh,
       hasPermission,
@@ -16,7 +18,6 @@
       closeModal,
       openActionOutcomeModal,
       openCreateInstanceModal,
-      openCreateServicePackModal,
       openInstanceManageModal,
       queueInstanceAction,
     } = ctx;
@@ -27,6 +28,10 @@
       typeof tableCard !== 'function' ||
       typeof statusTag !== 'function' ||
       typeof escapeHTML !== 'function' ||
+      !domainUI ||
+      typeof domainUI.nodeOptions !== 'function' ||
+      typeof domainUI.certificateOptions !== 'function' ||
+      typeof renderActionResponse !== 'function' ||
       typeof sendJSON !== 'function' ||
       typeof refresh !== 'function' ||
       typeof hasPermission !== 'function' ||
@@ -34,12 +39,13 @@
       typeof closeModal !== 'function' ||
       typeof openActionOutcomeModal !== 'function' ||
       typeof openCreateInstanceModal !== 'function' ||
-      typeof openCreateServicePackModal !== 'function' ||
       typeof openInstanceManageModal !== 'function' ||
       typeof queueInstanceAction !== 'function'
     ) {
       throw new Error('MegaVPNInstancesPage requires page dependencies');
     }
+
+    const { certificateOptions, nodeOptions } = domainUI;
 
     function instanceEndpoint(instance) {
       const host = String(instance?.endpoint_host || '').trim();
@@ -266,9 +272,252 @@
         </div>`;
     }
 
+    function ensureCreatePackSelection(packs) {
+      const items = Array.isArray(packs) ? packs : servicePackCatalogItems();
+      if (!items.length) {
+        state.instancesCreatePackKey = '';
+        return null;
+      }
+      const selected = items.find((pack) => pack.key === state.instancesCreatePackKey);
+      if (selected) return selected;
+      state.instancesCreatePackKey = items[0].key;
+      return items[0];
+    }
+
+    function servicePackComponents(pack) {
+      return Array.isArray(pack?.components) ? pack.components : [];
+    }
+
+    function endpointRequirementLabel(pack) {
+      if (!pack) return 'n/a';
+      return pack.requires_endpoint_host ? 'required' : 'optional';
+    }
+
+    function renderCreatePackCard(pack, selectedKey) {
+      const key = String(pack.key || '').trim();
+      const selected = key === selectedKey;
+      return `
+        <button class="pack-choice-btn ${selected ? 'is-selected' : ''}" type="button" data-pack-key="${escapeHTML(key)}">
+          <strong>${escapeHTML(pack.label || key)}</strong>
+          <span>${escapeHTML(servicePackComponentsLabel(pack))}</span>
+          <small>${escapeHTML(pack.endpoint_hint || 'no endpoint hint')}</small>
+        </button>`;
+    }
+
+    function renderPackSummary(pack) {
+      if (!pack) return '';
+      const components = servicePackComponents(pack);
+      return `
+        <div class="pack-create-summary">
+          ${renderInstanceFact('Base name', pack.base_name_template || 'edge-service-pack')}
+          ${renderInstanceFact('Endpoint host', endpointRequirementLabel(pack))}
+          ${renderInstanceFact('Components', components.length)}
+        </div>`;
+    }
+
+    function renderPackComponent(component, index) {
+      const port = Number(component?.endpoint_port || 0);
+      const meta = [
+        component?.service_code || 'service',
+        component?.preset_key || 'default',
+        port ? `port ${port}` : '',
+      ].filter(Boolean).join(' · ');
+      return `
+        <article class="pack-component-card">
+          <div class="pack-component-index">${escapeHTML(String(index + 1))}</div>
+          <div>
+            <strong>${escapeHTML(component?.label || component?.service_code || `Component ${index + 1}`)}</strong>
+            <span>${escapeHTML(meta)}</span>
+            <p>${escapeHTML(component?.description || 'Instance component generated from the selected pack template.')}</p>
+          </div>
+        </article>`;
+    }
+
+    function renderPackDetails(pack) {
+      if (!pack) {
+        return '<div class="empty pack-create-empty">No service pack templates loaded.</div>';
+      }
+      const components = servicePackComponents(pack);
+      const recommendations = Array.isArray(pack.recommendations) ? pack.recommendations.filter(Boolean) : [];
+      const notes = Array.isArray(pack.platform_notes) ? pack.platform_notes.filter(Boolean) : [];
+      return `
+        <section class="pack-details-panel">
+          <div class="pack-details-head">
+            <div>
+              <div class="instance-panel-label">Selected pack</div>
+              <h3>${escapeHTML(pack.label || pack.key)}</h3>
+              <p>${escapeHTML(pack.description || 'Template for creating a managed service instance set.')}</p>
+            </div>
+            <span class="tag">${escapeHTML(String(components.length))} components</span>
+          </div>
+          ${renderPackSummary(pack)}
+          <div class="pack-component-grid">
+            ${components.length ? components.map(renderPackComponent).join('') : '<div class="empty">No components in this pack.</div>'}
+          </div>
+          ${recommendations.length || notes.length ? `
+            <div class="pack-notes">
+              ${recommendations.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}
+              ${notes.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}
+            </div>` : ''}
+        </section>`;
+    }
+
+    function renderCreatePackResult() {
+      const result = state.instancesCreateResult;
+      if (!result) return '';
+      if (result.status === 'running') {
+        return '<div class="form-result"><span class="tag warn">creating</span></div>';
+      }
+      if (result.status === 'succeeded') {
+        return `
+          <div class="form-result pack-create-result">
+            ${renderActionResponse(result.data, 'Service pack creation')}
+            <div class="inline-actions">
+              <button class="secondary-btn" id="openInstancesAfterPackCreateBtn" type="button">Open instances</button>
+              <button class="secondary-btn" id="createAnotherFromPackBtn" type="button">Create another</button>
+            </div>
+          </div>`;
+      }
+      return `<div class="form-result"><span class="tag danger">${escapeHTML(result.message || 'create failed')}</span></div>`;
+    }
+
+    function openCreateFromPackPage() {
+      state.instancesView = 'create-pack';
+      state.instancesCreateResult = null;
+      ensureCreatePackSelection(servicePackCatalogItems());
+      render();
+    }
+
+    function openInstancesListPage() {
+      state.instancesView = 'list';
+      state.instancesCreateResult = null;
+      render();
+    }
+
+    function renderCreateFromPackPage() {
+      setTitle('Create from pack');
+      const packs = servicePackCatalogItems();
+      const selectedPack = ensureCreatePackSelection(packs);
+      const nodeSelect = nodeOptions();
+      const certificateSelect = certificateOptions('', true);
+      const baseName = selectedPack?.base_name_template || 'edge-service-pack';
+      const endpointHint = selectedPack?.endpoint_hint || 'edge.example.com';
+      const endpointRequired = Boolean(selectedPack?.requires_endpoint_host);
+      el('content').innerHTML = `
+        <section class="table-card instance-create-page">
+          <div class="table-head instance-create-head">
+            <div>
+              <h2>Create from pack</h2>
+              <div class="metric-caption">Instances are created from a reusable service pack template.</div>
+            </div>
+            <div class="table-tools">
+              <button class="secondary-btn" id="backToInstancesBtn" type="button">Back to instances</button>
+              <button class="secondary-btn" id="createInstanceBtn" type="button">Manual instance</button>
+            </div>
+          </div>
+          <div class="pack-create-layout">
+            <aside class="pack-picker-panel">
+              <div class="instance-panel-label">Service pack</div>
+              <div class="pack-choice-list">
+                ${packs.length ? packs.map((pack) => renderCreatePackCard(pack, state.instancesCreatePackKey)).join('') : '<div class="empty">No templates loaded.</div>'}
+              </div>
+            </aside>
+            <div class="pack-create-main">
+              ${renderPackDetails(selectedPack)}
+              <form id="createServicePackPageForm" class="pack-create-form">
+                <input type="hidden" name="service_pack_key" value="${escapeHTML(selectedPack?.key || '')}">
+                <div class="pack-create-form-grid">
+                  <div class="field">
+                    <label>Node</label>
+                    <select name="node_id" required${nodeSelect ? '' : ' disabled'}>
+                      ${nodeSelect || '<option value="">No active nodes available</option>'}
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Managed certificate</label>
+                    <select name="certificate_id">${certificateSelect}</select>
+                  </div>
+                  <div class="field">
+                    <label>Base name</label>
+                    <input name="base_name" value="${escapeHTML(baseName)}" placeholder="${escapeHTML(baseName)}">
+                  </div>
+                  <div class="field">
+                    <label>Endpoint host</label>
+                    <input name="endpoint_host" placeholder="${escapeHTML(endpointHint)}"${endpointRequired ? ' required' : ''}>
+                  </div>
+                </div>
+                <div class="pack-create-actions">
+                  <button class="primary-btn" type="submit"${selectedPack && nodeSelect ? '' : ' disabled'}>Create instances</button>
+                  <button class="secondary-btn" id="resetPackCreateFormBtn" type="button">Reset form</button>
+                </div>
+              </form>
+              <div id="createServicePackPageResult">${renderCreatePackResult()}</div>
+            </div>
+          </div>
+        </section>`;
+      bindCreateFromPackPage();
+    }
+
+    function bindCreateFromPackPage() {
+      document.getElementById('backToInstancesBtn')?.addEventListener('click', openInstancesListPage);
+      document.getElementById('createInstanceBtn')?.addEventListener('click', openCreateInstanceModal);
+      document.getElementById('resetPackCreateFormBtn')?.addEventListener('click', () => {
+        state.instancesCreateResult = null;
+        renderCreateFromPackPage();
+      });
+      document.querySelectorAll('.pack-choice-btn').forEach((button) => {
+        button.addEventListener('click', () => {
+          state.instancesCreatePackKey = button.dataset.packKey || '';
+          state.instancesCreateResult = null;
+          renderCreateFromPackPage();
+        });
+      });
+      document.getElementById('createServicePackPageForm')?.addEventListener('submit', submitCreateFromPackPage);
+      document.getElementById('openInstancesAfterPackCreateBtn')?.addEventListener('click', openInstancesListPage);
+      document.getElementById('createAnotherFromPackBtn')?.addEventListener('click', () => {
+        state.instancesCreateResult = null;
+        renderCreateFromPackPage();
+      });
+    }
+
+    async function submitCreateFromPackPage(event) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector('button[type="submit"]');
+      const data = new FormData(form);
+      const packKey = String(data.get('service_pack_key') || state.instancesCreatePackKey || '').trim();
+      const payload = {
+        node_id: String(data.get('node_id') || '').trim(),
+        base_name: String(data.get('base_name') || '').trim(),
+        endpoint_host: String(data.get('endpoint_host') || '').trim(),
+        certificate_id: String(data.get('certificate_id') || '').trim(),
+      };
+      if (!packKey) {
+        state.instancesCreateResult = { status: 'failed', message: 'service pack is required' };
+        renderCreateFromPackPage();
+        return;
+      }
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Creating...';
+      }
+      state.instancesCreateResult = { status: 'running' };
+      const result = document.getElementById('createServicePackPageResult');
+      if (result) result.innerHTML = renderCreatePackResult();
+      try {
+        const created = await sendJSON(`/api/v1/service-packs/${encodeURIComponent(packKey)}/instances`, 'POST', payload);
+        state.instancesCreateResult = { status: 'succeeded', data: created };
+        await refresh();
+        renderCreateFromPackPage();
+      } catch (err) {
+        state.instancesCreateResult = { status: 'failed', message: err.message || 'service pack create failed' };
+        renderCreateFromPackPage();
+      }
+    }
+
     function bindActions() {
       document.getElementById('createInstanceBtn')?.addEventListener('click', openCreateInstanceModal);
-      document.getElementById('createServicePackBtn')?.addEventListener('click', openCreateServicePackModal);
+      document.getElementById('createServicePackBtn')?.addEventListener('click', openCreateFromPackPage);
       document.getElementById('addServicePackTemplateBtn')?.addEventListener('click', () => openServicePackEditor(''));
       document.querySelectorAll('.service-pack-edit-btn').forEach((button) => {
         button.addEventListener('click', () => openServicePackEditor(button.dataset.packKey));
@@ -288,6 +537,11 @@
     }
 
     function render() {
+      if (state.instancesView === 'create-pack') {
+        renderCreateFromPackPage();
+        return;
+      }
+      state.instancesView = 'list';
       setTitle('Instances');
       const instances = Array.isArray(state.instances) ? state.instances : [];
       const runtimeReports = Array.isArray(state.instanceRuntimeStates) ? state.instanceRuntimeStates.length : 0;

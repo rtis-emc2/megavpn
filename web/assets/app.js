@@ -281,6 +281,8 @@
     tableCard,
     statusTag,
     escapeHTML,
+    domainUI,
+    renderActionResponse,
     requestJSON,
     sendJSON,
     refresh,
@@ -290,7 +292,6 @@
     openActionOutcomeModal,
     openCreateInstanceModal: instanceWorkflows.openCreateInstanceModal,
     openCreateInstanceChoiceModal: instanceWorkflows.openCreateInstanceChoiceModal,
-    openCreateServicePackModal: instanceWorkflows.openCreateServicePackModal,
     openInstanceManageModal: instanceWorkflows.openInstanceManageModal,
     queueInstanceAction: instanceWorkflows.queueInstanceAction,
   });

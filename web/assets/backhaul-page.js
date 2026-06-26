@@ -495,7 +495,7 @@
     function nodeOptions(nodes, selectedID = '') {
       return nodes.map((node) => `
         <option value="${escapeHTML(node.id)}"${node.id === selectedID ? ' selected' : ''}>
-          ${escapeHTML(node.name || node.id)}${node.address ? ` · ${escapeHTML(node.address)}` : ''}
+          ${escapeHTML(node.name || node.id)} · ${escapeHTML(node.role || 'node')}${node.address ? ` · ${escapeHTML(node.address)}` : ''}
         </option>`).join('');
     }
 

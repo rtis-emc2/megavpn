@@ -120,7 +120,10 @@
 
     function nodeOptions() {
       return (state.nodes || [])
-        .map((node) => `<option value="${escapeHTML(node.id)}">${escapeHTML(node.name)} · ${escapeHTML(node.address || 'n/a')} · ${escapeHTML(node.agent_status || 'unknown')}</option>`)
+        .map((node) => {
+          const role = String(node.role || 'node').trim() || 'node';
+          return `<option value="${escapeHTML(node.id)}">${escapeHTML(node.name)} · ${escapeHTML(role)} · ${escapeHTML(node.address || 'n/a')} · ${escapeHTML(node.agent_status || 'unknown')}</option>`;
+        })
         .join('');
     }
 

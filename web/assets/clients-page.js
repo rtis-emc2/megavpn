@@ -55,7 +55,8 @@
       nodes.forEach((node) => {
         const selected = node.id === selectedID ? ' selected' : '';
         const address = node.address ? ` · ${node.address}` : '';
-        options.push(`<option value="${escapeHTML(node.id)}"${selected}>${escapeHTML(node.name || node.id)}${escapeHTML(address)}</option>`);
+        const role = String(node.role || 'node').trim() || 'node';
+        options.push(`<option value="${escapeHTML(node.id)}"${selected}>${escapeHTML(node.name || node.id)} · ${escapeHTML(role)}${escapeHTML(address)}</option>`);
       });
       return options.join('');
     }

@@ -115,6 +115,7 @@
 
     function autoRefreshEnabledForCurrentPage() {
       if (state.page === 'nodeManage' && state.nodeTerminalActive) return false;
+      if (state.page === 'instances' && state.instancesView === 'create-pack') return false;
       return autoRefreshPages.has(state.page);
     }
 
