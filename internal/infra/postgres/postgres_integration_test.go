@@ -241,7 +241,21 @@ func TestPostgresIntegrationBinaryRepositoryTicketLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create binary artifact: %v", err)
 	}
-	job, err := store.CreateNodeCapabilityInstallJob(ctx, node.ID, "xray-core", "", "")
+	instance, err := store.CreateInstanceDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "xray-" + suffix,
+		Slug:         "xray-" + suffix,
+		EndpointHost: "198.51.100.20",
+		EndpointPort: 8443,
+		Spec: map[string]any{
+			"config_json": map[string]any{"inbounds": []any{}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create dependent draft instance: %v", err)
+	}
+	job, err := store.CreateNodeCapabilityInstallJobWithDependents(ctx, node.ID, "xray-core", "", "", []string{instance.ID})
 	if err != nil {
 		t.Fatalf("create capability install job: %v", err)
 	}
@@ -258,6 +272,23 @@ func TestPostgresIntegrationBinaryRepositoryTicketLifecycle(t *testing.T) {
 	token := stringify(repo["download_token"])
 	if token == "" {
 		t.Fatal("download token must be present for the agent payload")
+	}
+	capabilities, err := store.ListNodeCapabilities(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("list node capabilities: %v", err)
+	}
+	if len(capabilities) != 1 || capabilities[0].CapabilityCode != "xray-core" || capabilities[0].Status != "installing" {
+		t.Fatalf("capabilities after queue = %#v, want xray-core installing", capabilities)
+	}
+	runtimeState, err := store.GetInstanceRuntimeState(ctx, instance.ID)
+	if err != nil {
+		t.Fatalf("get dependent runtime state: %v", err)
+	}
+	if runtimeState.LastJobID == nil || *runtimeState.LastJobID != job.ID || runtimeState.LastJobType != "node.capability.install" || runtimeState.LastJobStatus != "queued" {
+		t.Fatalf("dependent runtime job state = %#v, want queued capability install job %s", runtimeState, job.ID)
+	}
+	if runtimeState.RuntimeStatus != "provisioning" || runtimeState.HealthStatus != "provisioning" || runtimeState.DriftStatus != "pending_apply" {
+		t.Fatalf("dependent runtime projection = runtime:%s health:%s drift:%s, want provisioning/provisioning/pending_apply", runtimeState.RuntimeStatus, runtimeState.HealthStatus, runtimeState.DriftStatus)
 	}
 	ticket, resolved, err := store.ResolveBinaryDownloadTicket(ctx, token, artifact.ID, node.ID, job.ID)
 	if err != nil {

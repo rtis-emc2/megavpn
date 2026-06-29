@@ -143,7 +143,7 @@
       const value = String(status || 'unknown').toLowerCase();
       let cls = 'stub';
       if (['ok', 'ready', 'active', 'healthy', 'succeeded', 'online', 'configured', 'enabled', 'sent', 'delivered', 'in_sync'].includes(value)) cls = 'ok';
-      else if (['degraded', 'warning', 'retrying', 'queued', 'running', 'starting', 'bootstrapping', 'waiting heartbeat', 'awaiting heartbeat', 'provisioning', 'inactive', 'pending_apply', 'update available'].includes(value)) cls = 'warn';
+      else if (['degraded', 'warning', 'retrying', 'queued', 'running', 'starting', 'installing', 'bootstrapping', 'waiting heartbeat', 'awaiting heartbeat', 'provisioning', 'inactive', 'pending_apply', 'update available'].includes(value)) cls = 'warn';
       else if (['failed', 'blocked', 'offline', 'error', 'disabled', 'cancelled', 'revoked', 'missing', 'loopback-only', 'delivery_failed', 'expired', 'invalid', 'deleted', 'unhealthy', 'drifted'].includes(value)) cls = 'danger';
       return `<span class="status-light ${cls}" title="${escapeHTML(value)}" aria-label="${escapeHTML(value)}"><span class="status-light-dot"></span><span class="status-light-text">${escapeHTML(value)}</span></span>`;
     }

@@ -9,7 +9,7 @@
   function statusClass(status) {
     const normalized = String(status || '').toLowerCase();
     if (['ok', 'ready', 'active', 'healthy', 'succeeded', 'online', 'configured', 'enabled', 'sent', 'delivered', 'created', 'updated', 'in_sync'].includes(normalized)) return 'ok';
-    if (['queued', 'running', 'retrying', 'pending', 'provisioning', 'bootstrapping', 'waiting', 'accepted', 'degraded', 'warning', 'pending_apply'].includes(normalized)) return 'warn';
+    if (['queued', 'running', 'retrying', 'pending', 'provisioning', 'installing', 'bootstrapping', 'waiting', 'accepted', 'degraded', 'warning', 'pending_apply'].includes(normalized)) return 'warn';
     if (['failed', 'blocked', 'offline', 'error', 'disabled', 'cancelled', 'revoked', 'missing', 'expired', 'invalid', 'deleted', 'unhealthy', 'drifted'].includes(normalized)) return 'danger';
     return 'stub';
   }

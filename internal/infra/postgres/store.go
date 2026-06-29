@@ -637,13 +637,18 @@ func (s *Store) CreateNodeCapabilityInstallJobWithDependents(ctx context.Context
 			return domain.Job{}, fmt.Errorf("binary repository download ticket create failed: %w", err)
 		}
 		payload["binary_repository"] = binaryRepositoryPayload(binaryArtifact, ticket)
-		return s.createCapabilityInstallJobWithBinaryTicket(ctx, domain.Job{ID: jobID, Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload}, ticket, nodeID, serviceCode, strategy)
+		j, err := s.createCapabilityInstallJobWithBinaryTicket(ctx, domain.Job{ID: jobID, Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload}, ticket, nodeID, serviceCode, strategy)
+		if err == nil {
+			s.markCapabilityInstallQueued(ctx, nodeID, serviceCode, j, dependentInstanceIDs)
+		}
+		return j, err
 	}
 	j, err := s.CreateJob(ctx, domain.Job{Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload})
 	if err != nil {
 		return j, err
 	}
 	_, _ = s.db.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,$5,'queued','capability install queued',$6,now())`, id.New(), nodeID, j.ID, serviceCode, strategy, mustJSON(redactSensitiveMapForStorage(payload)))
+	s.markCapabilityInstallQueued(ctx, nodeID, serviceCode, j, dependentInstanceIDs)
 	_, _ = s.CreateAudit(ctx, "system", "node.capability.install", "node", &nodeID, "capability install queued: "+serviceCode)
 	return j, nil
 }
@@ -674,6 +679,27 @@ func (s *Store) createCapabilityInstallJobWithBinaryTicket(ctx context.Context, 
 	_, _ = s.CreateAudit(ctx, "system", "job.create", "job", &j.ID, "job queued")
 	_, _ = s.CreateAudit(ctx, "system", "node.capability.install", "node", &nodeID, "capability install queued: "+serviceCode)
 	return j, nil
+}
+
+func (s *Store) markCapabilityInstallQueued(ctx context.Context, nodeID, serviceCode string, job domain.Job, dependentInstanceIDs []string) {
+	serviceCode = runtimeCapabilityCodeForService(serviceCode)
+	if nodeID == "" || serviceCode == "" {
+		return
+	}
+	_ = s.upsertNodeCapability(ctx, nodeID, serviceCode, "", "installing", "installer")
+	for _, instanceID := range normalizedStringSet(dependentInstanceIDs) {
+		instance, err := s.GetInstance(ctx, instanceID)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(instance.NodeID) != nodeID {
+			continue
+		}
+		if runtimeCapabilityCodeForService(instance.ServiceCode) != serviceCode {
+			continue
+		}
+		_ = s.upsertInstanceRuntimeStateForQueuedJob(ctx, instance.ID, job)
+	}
 }
 
 func binaryRepositoryPayload(artifact domain.BinaryArtifact, ticket domain.BinaryDownloadTicket) map[string]any {
