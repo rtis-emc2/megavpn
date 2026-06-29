@@ -833,8 +833,19 @@ func (s *Store) CreateInstance(ctx context.Context, x domain.Instance) (domain.I
 	if x.Slug == "" {
 		x.Slug = slugify(x.Name)
 	}
+	if x.ServiceCode == driver.WireGuard {
+		if x.Spec == nil {
+			x.Spec = map[string]any{}
+		}
+		if firstString(x.Spec["interface_name"]) == "" {
+			x.Spec["interface_name"] = driver.WireGuardInterfaceName(firstString(x.Slug, x.Name, x.ID))
+		}
+	}
 	if x.SystemdUnit == "" {
 		x.SystemdUnit = serviceDefaultSystemdUnit(x.ServiceCode, x.Slug)
+		if x.ServiceCode == driver.WireGuard {
+			x.SystemdUnit = "wg-quick@" + driver.WireGuardInterfaceName(firstString(x.Spec["interface_name"], x.Slug, x.Name, x.ID))
+		}
 	}
 	_, err := s.db.Exec(ctx, `insert into instances(id,node_id,service_definition_id,name,slug,systemd_unit,status,enabled,endpoint_host,endpoint_port,created_at,updated_at) values($1,$2,(select id from service_definitions where code=$3),$4,$5,$6,$7,$8,$9,nullif($10,0),$11,$12)`, x.ID, x.NodeID, x.ServiceCode, x.Name, x.Slug, x.SystemdUnit, x.Status, x.Enabled, x.EndpointHost, x.EndpointPort, x.CreatedAt, x.UpdatedAt)
 	if err != nil {

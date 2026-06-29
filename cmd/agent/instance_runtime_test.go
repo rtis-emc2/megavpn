@@ -71,6 +71,26 @@ func TestInstanceUnitPolicyAllowsDriverDefaultOnly(t *testing.T) {
 	}
 }
 
+func TestInstanceUnitPolicyAllowsWireGuardRuntimeInterfaceName(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{
+		ServiceCode:  driver.WireGuard,
+		Slug:         "portal-example-com-wireguard",
+		SystemdUnit:  "wg-quick@wg-edge",
+		Spec:         map[string]any{"interface_name": "wg-edge"},
+		InstanceID:   "instance-1",
+		EndpointPort: 51820,
+	}
+	if !isAllowedInstanceUnit(payload, payload.SystemdUnit) {
+		t.Fatalf("expected explicit wireguard runtime interface unit to be allowed")
+	}
+	payload.SystemdUnit = "wg-quick@portal-example-com-wireguard"
+	if isAllowedInstanceUnit(payload, payload.SystemdUnit) {
+		t.Fatalf("expected long legacy wireguard unit to be rejected for systemctl execution")
+	}
+}
+
 func TestInstanceOwnedRuntimeUnitPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -126,6 +146,16 @@ func TestManagedFilePolicyRejectsArbitraryContentForDefaultServiceUnit(t *testin
 	}
 }
 
+func TestManagedFilePolicyAllowsShadowsocksConfigFlag(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{ServiceCode: driver.Shadowsocks, Slug: "edge", SystemdUnit: "megavpn-shadowsocks-edge"}
+	file := managedFileSpec{Path: "/etc/systemd/system/megavpn-shadowsocks-edge.service", Content: "[Service]\nExecStart=/usr/bin/env ss-server -c /etc/shadowsocks-libev/edge.json\n", Mode: "0644"}
+	if err := validateManagedFilePolicy(payload, file); err != nil {
+		t.Fatalf("expected shadowsocks -c unit to be allowed: %v", err)
+	}
+}
+
 func TestManagedDeletePathPolicyAllowsMalformedGeneratedUnitPath(t *testing.T) {
 	t.Parallel()
 
@@ -135,6 +165,16 @@ func TestManagedDeletePathPolicyAllowsMalformedGeneratedUnitPath(t *testing.T) {
 	}
 	if err := validateManagedDeletePathPolicy(payload, "/etc/systemd/system/evil.service"); err == nil {
 		t.Fatal("expected arbitrary service unit path to remain rejected for delete")
+	}
+}
+
+func TestLegacyManagedDeletePathsIncludesOldWireGuardSlugConfig(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{ServiceCode: driver.WireGuard, Slug: "portal-example-com-wireguard", SystemdUnit: "wg-quick@portal-example-com-wireguard"}
+	paths := legacyManagedDeletePaths(payload)
+	if len(paths) != 1 || paths[0] != "/etc/wireguard/portal-example-com-wireguard.conf" {
+		t.Fatalf("legacy paths = %#v", paths)
 	}
 }
 

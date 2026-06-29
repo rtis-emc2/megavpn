@@ -1,6 +1,9 @@
 package driver
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeCodeAliases(t *testing.T) {
 	t.Parallel()
@@ -29,6 +32,13 @@ func TestContractDefaults(t *testing.T) {
 	}
 	if got := DefaultConfigPath(WireGuard, "wg-edge"); got != "/etc/wireguard/wg-edge.conf" {
 		t.Fatalf("wireguard config path = %q", got)
+	}
+	longWGUnit := DefaultSystemdUnit(WireGuard, "portal-example-com-wireguard")
+	if !strings.HasPrefix(longWGUnit, "wg-quick@") {
+		t.Fatalf("wireguard long unit = %q, want wg-quick unit", longWGUnit)
+	}
+	if iface := strings.TrimPrefix(longWGUnit, "wg-quick@"); len(iface) > 15 {
+		t.Fatalf("wireguard interface = %q length %d, want <= 15", iface, len(iface))
 	}
 	if got := DefaultConfigMode(WireGuard); got != "0600" {
 		t.Fatalf("wireguard config mode = %q", got)

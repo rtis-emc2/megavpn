@@ -240,7 +240,7 @@ func validateManagedDeletePathPolicy(payload instanceJobPayload, rawPath string)
 }
 
 func isAllowedManagedServiceFile(payload instanceJobPayload, content string) bool {
-	if strings.Contains(content, "/bin/sh") || strings.Contains(content, " -c ") {
+	if containsShellCommandExecution(content) {
 		return false
 	}
 	switch driver.NormalizeCode(payload.ServiceCode) {
@@ -255,6 +255,26 @@ func isAllowedManagedServiceFile(payload instanceJobPayload, content string) boo
 	default:
 		return false
 	}
+}
+
+func containsShellCommandExecution(content string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(content, "\t", " "))
+	blocked := []string{
+		"/bin/sh",
+		"/bin/bash",
+		"/usr/bin/sh",
+		"/usr/bin/bash",
+		" sh -c ",
+		" bash -c ",
+		"env sh -c ",
+		"env bash -c ",
+	}
+	for _, token := range blocked {
+		if strings.Contains(normalized, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func cleanAbsPath(path string) string {

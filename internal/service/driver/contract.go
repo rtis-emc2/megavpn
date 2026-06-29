@@ -1,6 +1,10 @@
 package driver
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
 
 const (
 	XrayCore    = "xray-core"
@@ -244,6 +248,9 @@ func DefaultSystemdUnit(code, slug string) string {
 	if !ok {
 		return ""
 	}
+	if NormalizeCode(code) == WireGuard {
+		return "wg-quick@" + WireGuardInterfaceName(slug)
+	}
 	return materializePattern(contract.DefaultUnitPattern, slug, fallbackSlug(contract.Code))
 }
 
@@ -251,6 +258,9 @@ func DefaultConfigPath(code, slug string) string {
 	contract, ok := ContractFor(code)
 	if !ok {
 		return ""
+	}
+	if NormalizeCode(code) == WireGuard {
+		return "/etc/wireguard/" + WireGuardInterfaceName(slug) + ".conf"
 	}
 	return materializePattern(contract.DefaultConfigPath, slug, fallbackSlug(contract.Code))
 }
@@ -293,4 +303,58 @@ func fallbackSlug(code string) string {
 	default:
 		return NormalizeCode(code)
 	}
+}
+
+func WireGuardInterfaceName(seed string) string {
+	seed = strings.TrimSpace(seed)
+	clean := sanitizeWireGuardInterface(seed)
+	if clean == "" {
+		clean = "wg0"
+	}
+	if isValidWireGuardInterface(clean) {
+		return clean
+	}
+	hashInput := seed
+	if hashInput == "" {
+		hashInput = clean
+	}
+	if hashInput == "" {
+		hashInput = "wg"
+	}
+	sum := sha256.Sum256([]byte(hashInput))
+	hash := hex.EncodeToString(sum[:])[:6]
+	prefix := strings.Trim(clean, "-_.+")
+	if prefix == "" {
+		prefix = "wg"
+	}
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	return strings.Trim(prefix, "-_.+") + "-" + hash
+}
+
+func isValidWireGuardInterface(value string) bool {
+	if value == "" || len(value) > 15 || value == "." || value == ".." {
+		return false
+	}
+	return sanitizeWireGuardInterface(value) == value
+}
+
+func sanitizeWireGuardInterface(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '.' || r == '+' || r == '-'
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }

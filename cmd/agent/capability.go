@@ -580,15 +580,16 @@ func verifyNginx(ctx context.Context) map[string]any {
 }
 
 func verifyXrayCore(ctx context.Context) map[string]any {
-	version := strings.TrimSpace(firstLine(runOutput("xray", "version")))
+	xrayPath := xrayExecutablePath()
+	version := strings.TrimSpace(firstLine(runOutput(xrayPath, "version")))
 	if version == "" {
-		version = strings.TrimSpace(firstLine(runOutput("xray", "--version")))
+		version = strings.TrimSpace(firstLine(runOutput(xrayPath, "--version")))
 	}
 	if version == "" {
 		return map[string]any{"ok": false, "message": "xray-core binary not found or version unavailable"}
 	}
 	active := strings.TrimSpace(runOutput("systemctl", "is-active", "xray"))
-	return map[string]any{"ok": true, "message": "xray-core capability verified", "version": version, "systemd_unit": "xray", "active_state": normalizeSystemctlState(active)}
+	return map[string]any{"ok": true, "message": "xray-core capability verified", "version": version, "binary_path": xrayPath, "systemd_unit": "xray", "active_state": normalizeSystemctlState(active)}
 }
 
 func verifyOpenVPN(ctx context.Context) map[string]any {

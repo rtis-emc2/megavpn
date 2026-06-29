@@ -67,9 +67,10 @@ func validateXrayConfig(ctx context.Context, payload instanceJobPayload, files [
 	if configPath == "" {
 		return nil
 	}
-	code, out := runInstallCommand(ctx, "xray", "run", "-test", "-config", configPath)
+	xrayPath := xrayExecutablePath()
+	code, out := runInstallCommand(ctx, xrayPath, "run", "-test", "-config", configPath)
 	if code != 0 {
-		code, out = runInstallCommand(ctx, "xray", "-test", "-config", configPath)
+		code, out = runInstallCommand(ctx, xrayPath, "-test", "-config", configPath)
 	}
 	if code != 0 {
 		return fmt.Errorf("xray config validation failed: %s", truncate(out, 3000))

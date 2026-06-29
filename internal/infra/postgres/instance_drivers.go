@@ -486,7 +486,19 @@ func (s *Store) renderOpenVPNPayloadSpec(ctx context.Context, instance domain.In
 
 func (s *Store) renderWireGuardPayloadSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
 	spec = cloneMap(spec)
-	configPath := firstString(spec["config_path"], "/etc/wireguard/"+firstString(spec["slug"], instance.Slug, "wg0")+".conf")
+	interfaceName := firstString(spec["interface_name"])
+	if interfaceName == "" && strings.HasPrefix(instance.SystemdUnit, "wg-quick@") {
+		interfaceName = strings.TrimPrefix(instance.SystemdUnit, "wg-quick@")
+	}
+	if interfaceName == "" {
+		interfaceName = driver.WireGuardInterfaceName(firstString(spec["slug"], instance.Slug, instance.Name, instance.ID))
+	}
+	interfaceName = driver.WireGuardInterfaceName(interfaceName)
+	spec["interface_name"] = interfaceName
+	if firstString(spec["systemd_unit"]) == "" {
+		spec["systemd_unit"] = "wg-quick@" + interfaceName
+	}
+	configPath := firstString(spec["config_path"], "/etc/wireguard/"+interfaceName+".conf")
 	configMode := firstString(spec["config_mode"], "0600")
 	config, err := s.buildWireGuardServerConfig(ctx, instance, spec)
 	if err != nil {
@@ -1745,6 +1757,7 @@ func buildMTProtoUnitFile(unitName, configPath string, instance domain.Instance)
 		"",
 		"[Service]",
 		"Type=simple",
+		"Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"ExecStart=/usr/bin/env xray run -config " + configPath,
 		"Restart=on-failure",
 		"RestartSec=2s",
@@ -1765,6 +1778,7 @@ func buildXrayUnitFile(unitName, configPath string, instance domain.Instance) st
 		"",
 		"[Service]",
 		"Type=simple",
+		"Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"ExecStart=/usr/bin/env xray run -config " + configPath,
 		"Restart=on-failure",
 		"RestartSec=2s",

@@ -29,6 +29,15 @@ func (e instanceRuntimeExecutor) Execute(ctx context.Context, payload instanceJo
 
 func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobPayload) (string, map[string]any) {
 	started := time.Now()
+	if err := preflightInstanceRuntime(payload); err != nil {
+		return "failed", map[string]any{
+			"error":        err.Error(),
+			"instance_id":  payload.InstanceID,
+			"service_code": payload.ServiceCode,
+			"action":       payload.Action,
+			"duration_ms":  time.Since(started).Milliseconds(),
+		}
+	}
 	files, err := materializeInstanceSpec(payload)
 	if err != nil {
 		return "failed", map[string]any{"error": err.Error(), "instance_id": payload.InstanceID, "service_code": payload.ServiceCode, "action": payload.Action}
@@ -106,6 +115,34 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 	return status, result
 }
 
+func preflightInstanceRuntime(payload instanceJobPayload) error {
+	type runtimeBinary struct {
+		name       string
+		candidates []string
+	}
+	var required []runtimeBinary
+	switch driver.NormalizeCode(payload.ServiceCode) {
+	case driver.XrayCore, driver.MTProto:
+		required = []runtimeBinary{{name: "xray", candidates: []string{"/usr/local/bin/xray", "/usr/bin/xray", "/opt/xray/xray"}}}
+	case driver.WireGuard:
+		required = []runtimeBinary{{name: "wg-quick", candidates: []string{"/usr/bin/wg-quick", "/usr/sbin/wg-quick"}}, {name: "wg", candidates: []string{"/usr/bin/wg", "/usr/sbin/wg"}}}
+	case driver.OpenVPN:
+		required = []runtimeBinary{{name: "openvpn", candidates: []string{"/usr/sbin/openvpn", "/usr/bin/openvpn"}}}
+	case driver.Shadowsocks:
+		required = []runtimeBinary{{name: "ss-server", candidates: []string{"/usr/bin/ss-server", "/usr/local/bin/ss-server"}}}
+	case driver.HTTPProxy:
+		required = []runtimeBinary{{name: "squid", candidates: []string{"/usr/sbin/squid", "/usr/bin/squid"}}}
+	case driver.Nginx:
+		required = []runtimeBinary{{name: "nginx", candidates: []string{"/usr/sbin/nginx", "/usr/bin/nginx"}}}
+	}
+	for _, item := range required {
+		if _, ok := resolveExecutable(item.name, item.candidates...); !ok {
+			return fmt.Errorf("capability missing: %s binary is not installed or not executable", item.name)
+		}
+	}
+	return nil
+}
+
 func (e instanceRuntimeExecutor) Systemd(ctx context.Context, payload instanceJobPayload, operation string) (string, map[string]any) {
 	started := time.Now()
 	if !isAllowedInstanceUnit(payload, payload.SystemdUnit) {
@@ -152,11 +189,8 @@ func (e instanceRuntimeExecutor) Delete(ctx context.Context, payload instanceJob
 	unit := strings.TrimSpace(payload.SystemdUnit)
 	if unit != "" {
 		if !isAllowedInstanceUnit(payload, unit) {
-			result["error"] = "systemd_unit is not allowed for instance delete"
-			result["duration_ms"] = time.Since(started).Milliseconds()
-			return "failed", result
-		}
-		if isInstanceOwnedRuntimeUnit(payload, unit) {
+			skippedItems = append(skippedItems, unit+": unit is not allowed for managed stop - skip")
+		} else if isInstanceOwnedRuntimeUnit(payload, unit) {
 			code, out := runInstallCommand(ctx, "systemctl", "disable", "--now", unit)
 			result["systemd_disable_output"] = truncate(out, 2000)
 			if code != 0 {
@@ -208,6 +242,26 @@ func (e instanceRuntimeExecutor) Delete(ctx context.Context, payload instanceJob
 			skippedItems = append(skippedItems, path+": not found - skip")
 		}
 	}
+	for _, path := range legacyManagedDeletePaths(payload) {
+		if path == "" || seen[path] {
+			continue
+		}
+		if err := validateManagedDeletePathPolicy(payload, path); err != nil {
+			warnings = append(warnings, "legacy cleanup path skipped: "+err.Error())
+			continue
+		}
+		seen[path] = true
+		removed, err := removeManagedPath(path, false)
+		if err != nil {
+			warnings = append(warnings, path+": "+err.Error())
+			continue
+		}
+		if removed {
+			removedPaths = append(removedPaths, path)
+		} else {
+			skippedItems = append(skippedItems, path+": not found - skip")
+		}
+	}
 	if unitFile := managedInstanceUnitFilePath(payload); unitFile != "" && !seen[unitFile] {
 		removed, err := removeManagedPath(unitFile, false)
 		if err != nil {
@@ -238,6 +292,24 @@ func (e instanceRuntimeExecutor) Delete(ctx context.Context, payload instanceJob
 	result["active_state"] = currentUnitState(unit)
 	result["duration_ms"] = time.Since(started).Milliseconds()
 	return "succeeded", result
+}
+
+func legacyManagedDeletePaths(payload instanceJobPayload) []string {
+	switch driver.NormalizeCode(payload.ServiceCode) {
+	case driver.WireGuard:
+		slug := strings.TrimSpace(first(payload.Slug, payload.Name, payload.InstanceID))
+		if slug == "" {
+			return nil
+		}
+		legacyPath := cleanAbsPath("/etc/wireguard/" + slug + ".conf")
+		currentPath := cleanAbsPath(driver.DefaultConfigPath(driver.WireGuard, slug))
+		if legacyPath == "" || legacyPath == currentPath {
+			return nil
+		}
+		return []string{legacyPath}
+	default:
+		return nil
+	}
 }
 
 func managedInstanceUnitFilePath(payload instanceJobPayload) string {
@@ -303,6 +375,16 @@ func isAllowedInstanceUnit(payload instanceJobPayload, unit string) bool {
 	serviceCode := driver.NormalizeCode(payload.ServiceCode)
 	if serviceCode == "" {
 		serviceCode = driver.NormalizeCode(payload.RuntimeServiceCode)
+	}
+	if serviceCode == driver.WireGuard {
+		expectedIface := driver.WireGuardInterfaceName(first(payload.Slug, payload.Name, payload.InstanceID, "wg0"))
+		if strings.HasPrefix(strings.TrimSpace(payload.SystemdUnit), "wg-quick@") {
+			expectedIface = driver.WireGuardInterfaceName(strings.TrimPrefix(strings.TrimSpace(payload.SystemdUnit), "wg-quick@"))
+		}
+		if iface := stringify(payload.Spec["interface_name"]); iface != "" {
+			expectedIface = driver.WireGuardInterfaceName(iface)
+		}
+		return unit == "wg-quick@"+expectedIface
 	}
 	expected := strings.TrimSuffix(driver.DefaultSystemdUnit(serviceCode, payload.Slug), ".service")
 	return expected != "" && unit == expected
