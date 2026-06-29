@@ -211,6 +211,10 @@
       return ['available', 'installed', 'detected'].includes(String(row.capabilityStatus || '').toLowerCase());
     }
 
+    function hasActiveInstanceJob(row) {
+      return ['queued', 'running', 'retrying'].includes(lowerStatus(row?.latestJob?.status));
+    }
+
     function isCapabilityMissingText(value) {
       return /capability missing|binary is not installed|not installed or not executable|runtime capability is not available/i.test(String(value || ''));
     }
@@ -251,13 +255,14 @@
       };
       row.bucket = instanceBucket(row);
       row.issue = instanceIssue(row);
-      row.capabilityMissing = (row.capabilityRequired && !runtimeCapabilityReady(row) && lowerStatus(row.runtime) !== 'active')
+      row.capabilityMissing = !hasActiveInstanceJob(row)
+        && ((row.capabilityRequired && !runtimeCapabilityReady(row) && lowerStatus(row.runtime) !== 'active')
         || (hasRuntimeInstaller(row.service) && isCapabilityMissingText([
         row.latestJobSummary,
         row.healthReason,
         row.driftReason,
         row.issue?.text,
-      ].join(' ')));
+      ].join(' '))));
       return row;
     }
 
@@ -271,6 +276,7 @@
       const health = lowerStatus(row.health);
       const drift = lowerStatus(row.drift);
       const revision = lowerStatus(row.revision);
+      if (hasActiveInstanceJob(row)) return 'pending';
       if (row.capabilityRequired && !runtimeCapabilityReady(row) && runtime !== 'active') return 'problem';
       if (status === 'failed' || runtime === 'failed' || ['failed', 'degraded', 'unhealthy', 'error'].includes(health)) {
         return 'problem';
@@ -289,16 +295,17 @@
       const revision = lowerStatus(row.revision);
       const reasons = [];
       const latestJobStatus = lowerStatus(row.latestJob?.status);
+      const activeJob = hasActiveInstanceJob(row);
       if (row.latestJob && ['failed', 'blocked', 'cancelled'].includes(latestJobStatus)) {
         const summary = row.latestJobSummary ? `: ${row.latestJobSummary}` : '';
         reasons.push(`${row.latestJob.type || 'job'} ${latestJobStatus}${summary}`);
-      } else if (row.latestJob && ['queued', 'running'].includes(latestJobStatus)) {
+      } else if (activeJob) {
         reasons.push(`${row.latestJob.type || 'job'} is ${latestJobStatus}.`);
       }
-      if (row.capabilityRequired && !runtimeCapabilityReady(row) && runtime !== 'active') {
+      if (!activeJob && row.capabilityRequired && !runtimeCapabilityReady(row) && runtime !== 'active') {
         reasons.push(`Runtime capability ${row.service} is ${row.capabilityStatus || 'missing'} on this node.`);
       }
-      if (status === 'failed') {
+      if (!activeJob && status === 'failed') {
         reasons.push('Lifecycle is failed; check the latest apply job result.');
       }
       if (revision && revision !== 'applied' && revision !== 'n/a') {
@@ -306,10 +313,10 @@
       } else if (['pending_apply', 'pending', 'drifted', 'out_of_sync'].includes(drift)) {
         reasons.push(row.driftReason || 'Runtime drift is not in sync with desired state.');
       }
-      if (['failed', 'degraded', 'unhealthy', 'error'].includes(health)) {
+      if (!activeJob && ['failed', 'degraded', 'unhealthy', 'error'].includes(health)) {
         reasons.push(row.healthReason || 'Runtime health status is degraded.');
       }
-      if (status === 'active' && ['stopped', 'inactive'].includes(runtime)) {
+      if (!activeJob && status === 'active' && ['stopped', 'inactive'].includes(runtime)) {
         reasons.push('Unit is not running on the selected node.');
       }
       const bucket = instanceBucket(row);
@@ -752,9 +759,15 @@
         return '<div class="form-result"><span class="tag warn">creating</span></div>';
       }
       if (result.status === 'succeeded') {
+        const installJobs = Array.isArray(result.data?.runtime_install_jobs) ? result.data.runtime_install_jobs : [];
+        const createdInstances = Array.isArray(result.data?.created_instances) ? result.data.created_instances : [];
         return `
           <div class="form-result pack-create-result">
             ${renderActionResponse(result.data, 'Service pack creation')}
+            <div class="pack-create-job-summary">
+              <span class="tag ${installJobs.length ? 'warn' : 'ok'}">${escapeHTML(String(installJobs.length))} runtime install jobs</span>
+              <span class="tag">${escapeHTML(String(createdInstances.length))} instances</span>
+            </div>
             <div class="inline-actions">
               <button class="secondary-btn" id="openInstancesAfterPackCreateBtn" type="button">Open instances</button>
               <button class="secondary-btn" id="createAnotherFromPackBtn" type="button">Create another</button>

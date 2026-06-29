@@ -29,13 +29,15 @@ func (c client) emergencyCleanupNode(ctx context.Context, j job, st agentState) 
 	}
 
 	includeAgent := boolFromAny(j.Payload["include_agent"])
+	cleanupScope := normalizeEmergencyCleanupScope(stringify(j.Payload["cleanup_scope"]), includeAgent)
 	result := map[string]any{
 		"message":       "node emergency cleanup completed",
 		"node_id":       nodeID,
 		"include_agent": includeAgent,
+		"cleanup_scope": cleanupScope,
 	}
 	instanceResults, instanceFailed := emergencyCleanupInstances(ctx, j.Payload["instances"])
-	leftovers := emergencyCleanupManagedLeftovers(ctx)
+	leftovers := emergencyCleanupManagedLeftovers(ctx, cleanupScope)
 	result["instances"] = instanceResults
 	result["leftovers"] = leftovers
 
@@ -97,13 +99,15 @@ func emergencyCleanupInstances(ctx context.Context, raw any) ([]map[string]any, 
 	return results, failed
 }
 
-func emergencyCleanupManagedLeftovers(ctx context.Context) map[string]any {
+func emergencyCleanupManagedLeftovers(ctx context.Context, cleanupScope string) map[string]any {
+	cleanupScope = normalizeEmergencyCleanupScope(cleanupScope, false)
+	fullNode := cleanupScope == "full_node"
 	stoppedUnits := []string{}
 	removedPaths := []string{}
 	skippedItems := []string{}
 	warnings := []string{}
 
-	for _, unit := range emergencyCleanupUnitNames() {
+	for _, unit := range emergencyCleanupUnitNames(cleanupScope) {
 		code, out := runInstallCommand(ctx, "systemctl", "disable", "--now", unit)
 		if code != 0 && !isMissingSystemdUnitOutput(out) {
 			warnings = append(warnings, "systemd disable warning for "+unit+": "+firstLine(out))
@@ -123,25 +127,30 @@ func emergencyCleanupManagedLeftovers(ctx context.Context) map[string]any {
 		}
 	}
 
-	for _, path := range []string{
-		"/etc/megavpn/client-access-routes.json",
-		"/etc/systemd/system/megavpn-route-policy.service",
-	} {
-		removed, err := removeManagedPath(path, false)
-		if err != nil {
-			warnings = append(warnings, path+": "+err.Error())
-		} else if removed {
-			removedPaths = append(removedPaths, path)
-		} else {
-			skippedItems = append(skippedItems, path+": not found - skip")
+	if fullNode {
+		for _, path := range []string{
+			"/etc/megavpn/client-access-routes.json",
+			"/etc/systemd/system/megavpn-route-policy.service",
+		} {
+			removed, err := removeManagedPath(path, false)
+			if err != nil {
+				warnings = append(warnings, path+": "+err.Error())
+			} else if removed {
+				removedPaths = append(removedPaths, path)
+			} else {
+				skippedItems = append(skippedItems, path+": not found - skip")
+			}
 		}
 	}
 
-	for _, path := range []string{
-		"/etc/megavpn/backhaul",
+	managedDirs := []string{
 		"/etc/megavpn/certs",
 		"/var/lib/megavpn/openvpn",
-	} {
+	}
+	if fullNode {
+		managedDirs = append([]string{"/etc/megavpn/backhaul"}, managedDirs...)
+	}
+	for _, path := range managedDirs {
 		removed, err := removeManagedPath(path, true)
 		if err != nil {
 			warnings = append(warnings, path+": "+err.Error())
@@ -162,7 +171,7 @@ func emergencyCleanupManagedLeftovers(ctx context.Context) map[string]any {
 			continue
 		}
 		for _, path := range matches {
-			if !isEmergencyManagedFilePath(path) {
+			if !isEmergencyManagedFilePathForScope(path, cleanupScope) {
 				continue
 			}
 			removed, err := removeManagedPath(path, false)
@@ -176,6 +185,7 @@ func emergencyCleanupManagedLeftovers(ctx context.Context) map[string]any {
 
 	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
 	return map[string]any{
+		"cleanup_scope": cleanupScope,
 		"stopped_units": stoppedUnits,
 		"removed_paths": removedPaths,
 		"skipped_items": skippedItems,
@@ -183,12 +193,13 @@ func emergencyCleanupManagedLeftovers(ctx context.Context) map[string]any {
 	}
 }
 
-func emergencyCleanupUnitNames() []string {
+func emergencyCleanupUnitNames(cleanupScope string) []string {
+	cleanupScope = normalizeEmergencyCleanupScope(cleanupScope, false)
 	seen := map[string]bool{}
 	add := func(unit string) {
 		unit = strings.TrimSpace(unit)
 		unit = strings.TrimSuffix(unit, ".service") + ".service"
-		if isEmergencyManagedUnit(unit) {
+		if isEmergencyManagedUnitForScope(unit, cleanupScope) {
 			seen[unit] = true
 		}
 	}
@@ -216,16 +227,23 @@ func emergencyCleanupUnitNames() []string {
 }
 
 func isEmergencyManagedUnit(unit string) bool {
+	return isEmergencyManagedUnitForScope(unit, "full_node")
+}
+
+func isEmergencyManagedUnitForScope(unit, cleanupScope string) bool {
 	unit = strings.TrimSpace(unit)
 	if unit == "" || !isSafeSystemdUnitToken(unit) {
 		return false
 	}
 	unit = strings.TrimSuffix(unit, ".service")
+	fullNode := normalizeEmergencyCleanupScope(cleanupScope, false) == "full_node"
 	if unit == "megavpn-route-policy" {
-		return true
+		return fullNode
+	}
+	if strings.HasPrefix(unit, "megavpn-backhaul-") {
+		return fullNode
 	}
 	for _, prefix := range []string{
-		"megavpn-backhaul-",
 		"megavpn-netpolicy-",
 		"megavpn-xray-",
 		"megavpn-mtproto-",
@@ -249,6 +267,10 @@ func emergencyManagedUnitFilePath(unit string) string {
 }
 
 func isEmergencyManagedFilePath(path string) bool {
+	return isEmergencyManagedFilePathForScope(path, "full_node")
+}
+
+func isEmergencyManagedFilePathForScope(path, cleanupScope string) bool {
 	path = cleanAbsPath(path)
 	if path == "" || strings.Contains(path, "..") || hasUnsafePathToken(path) {
 		return false
@@ -257,9 +279,23 @@ func isEmergencyManagedFilePath(path string) bool {
 		return true
 	}
 	if strings.HasPrefix(path, "/etc/systemd/system/megavpn-") && strings.HasSuffix(path, ".service") {
-		return true
+		return isEmergencyManagedUnitForScope(filepath.Base(path), cleanupScope)
 	}
 	return false
+}
+
+func normalizeEmergencyCleanupScope(value string, includeAgent bool) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "services_only", "service", "services", "instances", "instance_runtime":
+		return "services_only"
+	case "full_node", "full", "node", "all", "wipe":
+		return "full_node"
+	}
+	if includeAgent {
+		return "full_node"
+	}
+	return "services_only"
 }
 
 func scheduleAgentSelfRemoval(ctx context.Context) (map[string]any, error) {

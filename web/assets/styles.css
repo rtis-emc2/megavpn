@@ -2740,6 +2740,12 @@ tr:hover td { background: #f8fafc; }
   display: grid;
   gap: 12px;
 }
+.pack-create-job-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 @media (max-width: 1180px) {
   .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .split { grid-template-columns: 1fr; }

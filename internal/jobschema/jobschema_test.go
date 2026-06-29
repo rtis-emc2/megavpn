@@ -45,6 +45,26 @@ func TestNormalizeNodeEmergencyCleanupUsesNodeNameConfirmation(t *testing.T) {
 	if got := payload["include_agent"]; got != true {
 		t.Fatalf("include_agent = %v, want true", got)
 	}
+	if got := payload["cleanup_scope"]; got != "full_node" {
+		t.Fatalf("cleanup_scope = %v, want full_node", got)
+	}
+}
+
+func TestNormalizeNodeEmergencyCleanupDefaultsToServicesOnly(t *testing.T) {
+	payload, err := Normalize("node.emergency_cleanup", map[string]any{
+		"node_id":      "node-1",
+		"node_name":    "edge-01",
+		"confirmation": "edge-01",
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := payload["include_agent"]; got != false {
+		t.Fatalf("include_agent = %v, want false", got)
+	}
+	if got := payload["cleanup_scope"]; got != "services_only" {
+		t.Fatalf("cleanup_scope = %v, want services_only", got)
+	}
 }
 
 func TestNormalizeNodeEmergencyCleanupRejectsEmptyConfirmation(t *testing.T) {

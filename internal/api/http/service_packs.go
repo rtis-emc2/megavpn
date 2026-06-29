@@ -11,6 +11,7 @@ import (
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/rbac"
+	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
 type servicePackComponent = domain.ServicePackComponent
@@ -30,11 +31,12 @@ type servicePackCatalogManageStore interface {
 }
 
 type createServicePackRequest struct {
-	NodeID            string `json:"node_id"`
-	BaseName          string `json:"base_name"`
-	EndpointHost      string `json:"endpoint_host"`
-	CertificateID     string `json:"certificate_id"`
-	OpenVPNPKIProfile string `json:"openvpn_pki_profile"`
+	NodeID             string `json:"node_id"`
+	BaseName           string `json:"base_name"`
+	EndpointHost       string `json:"endpoint_host"`
+	CertificateID      string `json:"certificate_id"`
+	OpenVPNPKIProfile  string `json:"openvpn_pki_profile"`
+	AutoInstallRuntime *bool  `json:"auto_install_runtime"`
 }
 
 func servicePackDefinitions() []servicePackDefinition {
@@ -384,6 +386,32 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 		writeErr(w, 400, "invalid service pack payload: endpoint_host is required")
 		return
 	}
+	autoInstallRuntime := true
+	if req.AutoInstallRuntime != nil {
+		autoInstallRuntime = *req.AutoInstallRuntime
+	}
+	runtimeInstallJobs := []domain.Job{}
+	if autoInstallRuntime {
+		capabilities, err := s.store.ListNodeCapabilities(r.Context(), req.NodeID)
+		if err != nil {
+			writeErr(w, 409, "node runtime capability preflight failed: "+err.Error())
+			return
+		}
+		for _, serviceCode := range missingServicePackRuntimeCapabilities(pack.Components, capabilities) {
+			job, err := s.store.CreateNodeCapabilityInstallJob(r.Context(), req.NodeID, serviceCode, "", "")
+			if err != nil {
+				writeJSON(w, 409, response{
+					"status":               "runtime_install_failed",
+					"error":                err.Error(),
+					"service_pack_key":     pack.Key,
+					"runtime_service_code": serviceCode,
+					"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
+				})
+				return
+			}
+			runtimeInstallJobs = append(runtimeInstallJobs, job)
+		}
+	}
 	created := make([]domain.Instance, 0, len(pack.Components))
 	for _, component := range pack.Components {
 		name := req.BaseName
@@ -439,10 +467,57 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "service_pack.create", "service_pack", nil, "service pack created: "+pack.Key)
 	}
 	writeJSON(w, 201, response{
-		"status":            "ok",
-		"service_pack_key":  pack.Key,
-		"created_instances": created,
+		"status":               "ok",
+		"service_pack_key":     pack.Key,
+		"created_instances":    created,
+		"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
 	})
+}
+
+func missingServicePackRuntimeCapabilities(components []domain.ServicePackComponent, capabilities []domain.NodeCapability) []string {
+	ready := map[string]bool{}
+	for _, capability := range capabilities {
+		code := runtimeCapabilityCodeHTTP(capability.CapabilityCode)
+		if code == "" {
+			continue
+		}
+		if isRuntimeCapabilityReadyHTTP(capability.Status) {
+			ready[code] = true
+		}
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, component := range components {
+		code := runtimeCapabilityCodeHTTP(component.ServiceCode)
+		if code == "" || ready[code] || seen[code] || !hasInstallStrategyHTTP(code) {
+			continue
+		}
+		seen[code] = true
+		out = append(out, code)
+	}
+	return out
+}
+
+func runtimeCapabilityCodeHTTP(serviceCode string) string {
+	contract, ok := driver.ContractFor(serviceCode)
+	if ok && strings.TrimSpace(contract.RuntimeCode) != "" {
+		return driver.NormalizeCode(contract.RuntimeCode)
+	}
+	return driver.NormalizeCode(serviceCode)
+}
+
+func isRuntimeCapabilityReadyHTTP(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "available", "installed", "detected":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasInstallStrategyHTTP(serviceCode string) bool {
+	contract, ok := driver.ContractFor(serviceCode)
+	return ok && len(contract.InstallStrategies) > 0
 }
 
 func (s *Server) availableServicePacks(ctx context.Context) ([]domain.ServicePackDefinition, error) {

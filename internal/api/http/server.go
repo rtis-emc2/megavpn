@@ -59,7 +59,7 @@ type Store interface {
 	GetNodeDiagnostics(context.Context, string) (domain.NodeDiagnostics, error)
 	CreateNodeAgentTokenRotateJob(context.Context, string) (domain.Job, error)
 	CreateNodeChannelProbeJob(context.Context, string) (domain.Job, error)
-	CreateNodeEmergencyCleanupJob(context.Context, string, bool, string) (domain.Job, error)
+	CreateNodeEmergencyCleanupJob(context.Context, string, bool, string, string) (domain.Job, error)
 	CreateNodeRoutePolicyApplyJob(context.Context, string) (domain.Job, error)
 	RequeueNodeStuckJob(context.Context, string) (domain.Job, error)
 	ClearNodeStalePendingRotation(context.Context, string) ([]domain.Job, error)
@@ -469,6 +469,7 @@ type nodeBootstrapRequest struct {
 type nodeEmergencyCleanupRequest struct {
 	IncludeAgent bool   `json:"include_agent"`
 	Confirmation string `json:"confirmation"`
+	CleanupScope string `json:"cleanup_scope"`
 }
 
 type secretRefCreateRequest struct {
@@ -783,7 +784,7 @@ func (s *Server) createNodeEmergencyCleanupJob(w nethttp.ResponseWriter, r *neth
 		writeErr(w, 400, "invalid emergency cleanup payload")
 		return
 	}
-	job, err := s.store.CreateNodeEmergencyCleanupJob(r.Context(), idParam(r), req.IncludeAgent, req.Confirmation)
+	job, err := s.store.CreateNodeEmergencyCleanupJob(r.Context(), idParam(r), req.IncludeAgent, req.Confirmation, req.CleanupScope)
 	if err != nil {
 		writeErr(w, 409, err.Error())
 		return

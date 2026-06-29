@@ -586,17 +586,24 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
       openModal(`Emergency cleanup: ${node.name || 'node'}`, 'Destructive node operation', `
         <section class="card">
           <h2>Clean managed runtime from this node</h2>
-          <p>This queues an agent job that removes product-managed instance files, managed systemd units, backhaul state, route policy and runtime certificates from the selected host.</p>
+          <p>This queues an agent job that removes product-managed service instances from the selected host. Backhaul transport and route-policy runtime are preserved unless full node wipe is selected.</p>
           <div class="code-block">node_id = ${escapeHTML(node.id)}
 name = ${escapeHTML(node.name || 'n/a')}
 address = ${escapeHTML(node.address || 'n/a')}
 agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
           <div class="form-grid">
             <label class="choice-card full">
+              <input id="fullNodeCleanupToggle" type="checkbox" />
+              <span>
+                <strong>Full node wipe</strong>
+                <small>Also remove managed backhaul state, route-policy runtime and node-level service material. Use only when taking the node out of service.</small>
+              </span>
+            </label>
+            <label class="choice-card full">
               <input id="includeAgentCleanupToggle" type="checkbox" />
               <span>
                 <strong>Also remove the agent</strong>
-                <small>Schedules a delayed self-removal of the agent binary, unit, env and local state after the job result is submitted.</small>
+                <small>Forces full node wipe, then schedules delayed self-removal of the agent binary, unit, env and local state after the job result is submitted.</small>
               </span>
             </label>
             <div class="field full">
@@ -611,6 +618,17 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
           </div>
           <div id="emergencyCleanupResult" class="form-result"></div>
         </section>`, { wide: true });
+      const includeAgentToggle = document.getElementById('includeAgentCleanupToggle');
+      const fullNodeToggle = document.getElementById('fullNodeCleanupToggle');
+      includeAgentToggle?.addEventListener('change', () => {
+        if (!fullNodeToggle) return;
+        if (includeAgentToggle.checked) {
+          fullNodeToggle.checked = true;
+          fullNodeToggle.disabled = true;
+        } else {
+          fullNodeToggle.disabled = false;
+        }
+      });
       document.getElementById('confirmEmergencyCleanupBtn')?.addEventListener('click', () => queueEmergencyNodeCleanup(node));
       document.getElementById('cancelEmergencyCleanupBtn')?.addEventListener('click', closeModal);
     }
@@ -621,6 +639,7 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
       const confirmation = String(document.getElementById('emergencyCleanupConfirm')?.value || '').trim();
       const expectedConfirmation = String(node.name || node.id || '').trim();
       const includeAgent = Boolean(document.getElementById('includeAgentCleanupToggle')?.checked);
+      const fullNodeCleanup = includeAgent || Boolean(document.getElementById('fullNodeCleanupToggle')?.checked);
       if (!target) return;
       if (confirmation !== expectedConfirmation) {
         target.innerHTML = `<span class="tag danger">type ${escapeHTML(expectedConfirmation)} to confirm</span>`;
@@ -631,6 +650,7 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
       try {
         const job = await sendJSON(`/api/v1/nodes/${node.id}/emergency-cleanup`, 'POST', {
           include_agent: includeAgent,
+          cleanup_scope: fullNodeCleanup ? 'full_node' : 'services_only',
           confirmation,
         });
         target.innerHTML = renderActionResponse(job, 'Emergency cleanup queued');

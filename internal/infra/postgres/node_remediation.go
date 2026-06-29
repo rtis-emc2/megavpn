@@ -41,7 +41,7 @@ func (s *Store) CreateNodeChannelProbeJob(ctx context.Context, nodeID string) (d
 	return job, nil
 }
 
-func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string, includeAgent bool, confirmation string) (domain.Job, error) {
+func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string, includeAgent bool, confirmation, cleanupScope string) (domain.Job, error) {
 	node, err := s.GetNode(ctx, nodeID)
 	if err != nil {
 		return domain.Job{}, err
@@ -53,6 +53,7 @@ func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string
 	if strings.TrimSpace(confirmation) != expectedConfirmation {
 		return domain.Job{}, fmt.Errorf("confirmation must match node name %q", expectedConfirmation)
 	}
+	cleanupScope = normalizeNodeCleanupScope(cleanupScope, includeAgent)
 	instances, err := s.nodeInstanceCleanupPayloads(ctx, nodeID)
 	if err != nil {
 		return domain.Job{}, err
@@ -61,6 +62,7 @@ func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string
 		"node_id":       nodeID,
 		"node_name":     expectedConfirmation,
 		"include_agent": includeAgent,
+		"cleanup_scope": cleanupScope,
 		"confirmation":  strings.TrimSpace(confirmation),
 		"instances":     instances,
 		"requested_at":  time.Now().UTC().Format(time.RFC3339),
@@ -78,6 +80,20 @@ func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string
 	}
 	_, _ = s.CreateAudit(ctx, "system", "node.emergency_cleanup", "node", &nodeID, "node emergency cleanup queued")
 	return job, nil
+}
+
+func normalizeNodeCleanupScope(value string, includeAgent bool) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "services_only", "service", "services", "instances", "instance_runtime":
+		return "services_only"
+	case "full_node", "full", "node", "all", "wipe":
+		return "full_node"
+	}
+	if includeAgent {
+		return "full_node"
+	}
+	return "services_only"
 }
 
 func (s *Store) nodeInstanceCleanupPayloads(ctx context.Context, nodeID string) ([]map[string]any, error) {

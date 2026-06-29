@@ -585,12 +585,8 @@ func (s *Store) CreateNodeCapabilityInstallJob(ctx context.Context, nodeID, serv
 		return domain.Job{}, errors.New("service_code is required")
 	}
 	if strategy == "" {
-		switch serviceCode {
-		case "nginx":
-			strategy = "nginx_org_repo"
-		case "xray-core":
-			strategy = "xtls_install_release"
-		default:
+		strategy = defaultCapabilityInstallStrategy(serviceCode)
+		if strategy == "" {
 			return domain.Job{}, fmt.Errorf("unsupported installable service: %s", serviceCode)
 		}
 	}
@@ -605,13 +601,26 @@ func (s *Store) CreateNodeCapabilityInstallJob(ctx context.Context, nodeID, serv
 		return domain.Job{}, fmt.Errorf("unsupported install strategy %q for %s", strategy, serviceCode)
 	}
 	payload := map[string]any{"node_id": nodeID, "service_code": serviceCode, "strategy": strategy, "channel": channel}
-	j, err := s.CreateJob(ctx, domain.Job{Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Payload: payload})
+	j, err := s.CreateJob(ctx, domain.Job{Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload})
 	if err != nil {
 		return j, err
 	}
 	_, _ = s.db.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,$5,'queued','capability install queued',$6,now())`, id.New(), nodeID, j.ID, serviceCode, strategy, mustJSON(payload))
 	_, _ = s.CreateAudit(ctx, "system", "node.capability.install", "node", &nodeID, "capability install queued: "+serviceCode)
 	return j, nil
+}
+
+func defaultCapabilityInstallStrategy(serviceCode string) string {
+	switch normalizeCapabilityCode(serviceCode) {
+	case driver.Nginx:
+		return "nginx_org_repo"
+	case driver.XrayCore:
+		return "xtls_install_release"
+	case driver.OpenVPN, driver.WireGuard, driver.IPSec, driver.XL2TPD, driver.HTTPProxy, driver.Shadowsocks:
+		return "ubuntu_repo"
+	default:
+		return ""
+	}
 }
 
 func (s *Store) CreateNodeCapabilityVerifyJob(ctx context.Context, nodeID, serviceCode string) (domain.Job, error) {
@@ -884,6 +893,8 @@ func (s *Store) CreateInstance(ctx context.Context, x domain.Instance) (domain.I
 	payload, payloadErr := s.buildInstanceJobPayload(ctx, x, "apply")
 	if payloadErr == nil {
 		if job, err := s.CreateJob(ctx, domain.Job{Type: "instance.apply", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload}); err == nil {
+			_, _ = s.db.Exec(ctx, `update instances set status='provisioning',updated_at=now() where id=$1 and status in ('draft','validated','failed')`, x.ID)
+			x.Status = "provisioning"
 			_ = s.AddJobLog(ctx, job.ID, "info", "initial instance apply queued", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
 			_, _ = s.CreateAudit(ctx, "system", "instance.apply", "instance", &x.ID, "initial instance apply queued")
 		}
@@ -1687,6 +1698,7 @@ func (s *Store) applyNodeEmergencyCleanupResult(ctx context.Context, nodeID stri
 	if v, ok := payload["include_agent"].(bool); ok {
 		includeAgent = v
 	}
+	cleanupScope := normalizeNodeCleanupScope(stringify(payload["cleanup_scope"]), includeAgent)
 	rows, err := s.db.Query(ctx, `select id from instances where node_id=$1 and status <> 'deleted'`, nodeID)
 	if err != nil {
 		return err
@@ -1716,6 +1728,9 @@ func (s *Store) applyNodeEmergencyCleanupResult(ctx context.Context, nodeID stri
 		_, _ = s.db.Exec(ctx, `update nodes set status='draft',agent_status='removed',last_heartbeat_at=null,updated_at=now() where id=$1 and status <> 'retired'`, nodeID)
 	} else {
 		_, _ = s.db.Exec(ctx, `update nodes set updated_at=now() where id=$1 and status <> 'retired'`, nodeID)
+		if cleanupScope == "services_only" {
+			_, _ = s.CreateNodeRoutePolicyApplyJob(ctx, nodeID)
+		}
 	}
 	return nil
 }

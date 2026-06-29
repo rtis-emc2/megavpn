@@ -122,6 +122,13 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else {
 			normalized["include_agent"] = false
 		}
+		cleanupScope, err := optionalString(payload, "cleanup_scope")
+		if err != nil {
+			return nil, err
+		}
+		includeAgent, _ := normalized["include_agent"].(bool)
+		cleanupScope = normalizeNodeCleanupScope(cleanupScope, includeAgent)
+		normalized["cleanup_scope"] = cleanupScope
 	case "node.backhaul.apply":
 		nodeID, err := requireString(payload, "node_id")
 		if err != nil {
@@ -476,6 +483,20 @@ func trimOptionalStrings(dst, src map[string]any, keys ...string) {
 			dst[key] = value
 		}
 	}
+}
+
+func normalizeNodeCleanupScope(value string, includeAgent bool) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "services_only", "service", "services", "instances", "instance_runtime":
+		return "services_only"
+	case "full_node", "full", "node", "all", "wipe":
+		return "full_node"
+	}
+	if includeAgent {
+		return "full_node"
+	}
+	return "services_only"
 }
 
 func requireString(payload map[string]any, key string) (string, error) {
