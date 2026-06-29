@@ -14,7 +14,8 @@ func TestRedactedJobRemovesSensitivePayloadAndResultFields(t *testing.T) {
 			"new_agent_token_hash": "secret-verifier",
 			"new_token_hint":       "abcd...1234",
 			"nested": map[string]any{
-				"password": "secret-password",
+				"password":       "secret-password",
+				"download_token": "secret-download-ticket",
 			},
 		},
 		Result: map[string]any{
@@ -37,8 +38,34 @@ func TestRedactedJobRemovesSensitivePayloadAndResultFields(t *testing.T) {
 	if !ok || nested["password"] != redactedValue {
 		t.Fatalf("nested password was not redacted: %#v", got.Payload["nested"])
 	}
+	if nested["download_token"] != redactedValue {
+		t.Fatalf("nested download token was not redacted: %#v", got.Payload["nested"])
+	}
 	if got.Result["agent_bootstrapenv"] != redactedValue {
 		t.Fatalf("agent_bootstrapenv was not redacted: %#v", got.Result)
+	}
+}
+
+func TestRedactedNodeCapabilityInstallEventsRemoveSensitivePayload(t *testing.T) {
+	events := []domain.NodeCapabilityInstallEvent{{
+		Payload: map[string]any{
+			"binary_repository": map[string]any{
+				"download_token": "secret-ticket",
+				"ticket_hint":    "abcd...wxyz",
+			},
+		},
+	}}
+
+	got := redactedNodeCapabilityInstallEvents(events)
+	repo, ok := got[0].Payload["binary_repository"].(map[string]any)
+	if !ok {
+		t.Fatalf("binary_repository type = %T", got[0].Payload["binary_repository"])
+	}
+	if repo["download_token"] != redactedValue {
+		t.Fatalf("download_token was not redacted: %#v", repo)
+	}
+	if repo["ticket_hint"] != "abcd...wxyz" {
+		t.Fatalf("ticket_hint should remain visible: %#v", repo)
 	}
 }
 

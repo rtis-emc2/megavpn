@@ -2,12 +2,14 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
@@ -39,6 +41,42 @@ func (s *Store) GetBinaryArtifact(ctx context.Context, artifactID string) (domai
 	return scanBinaryArtifact(row)
 }
 
+func (s *Store) FindBinaryRuntimeArtifactForNode(ctx context.Context, nodeID, serviceCode string) (domain.BinaryArtifact, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	serviceCode = driver.NormalizeCode(serviceCode)
+	if nodeID == "" {
+		return domain.BinaryArtifact{}, errors.New("node_id is required")
+	}
+	if serviceCode == "" {
+		return domain.BinaryArtifact{}, errors.New("service_code is required")
+	}
+	var osFamily, osVersion, arch string
+	err := s.db.QueryRow(ctx, `select coalesce(os_family,''),coalesce(os_version,''),coalesce(architecture,'') from nodes where id=$1 and status <> 'retired'`, nodeID).Scan(&osFamily, &osVersion, &arch)
+	if err != nil {
+		return domain.BinaryArtifact{}, err
+	}
+	osFamily = strings.ToLower(strings.TrimSpace(osFamily))
+	if osFamily == "" {
+		osFamily = "linux"
+	}
+	arch = normalizeBinaryArtifactArchitecture(arch)
+	row := s.db.QueryRow(ctx, `
+		select id,name,kind,service_code,version,os_family,os_version,architecture,storage_path,size_bytes,sha256,signature,status,metadata_json,created_at,updated_at
+		from binary_artifacts
+		where status='active'
+		  and service_code=$1
+		  and kind in ('runtime','package','script','bundle')
+		  and os_family=$2
+		  and architecture=$3
+		  and (os_version='' or os_version=$4)
+		order by
+		  case when os_version=$4 and os_version <> '' then 0 else 1 end,
+		  created_at desc,
+		  version desc
+		limit 1`, serviceCode, osFamily, arch, strings.TrimSpace(osVersion))
+	return scanBinaryArtifact(row)
+}
+
 func (s *Store) CreateBinaryArtifact(ctx context.Context, item domain.BinaryArtifact) (domain.BinaryArtifact, error) {
 	if err := normalizeBinaryArtifact(&item); err != nil {
 		return domain.BinaryArtifact{}, err
@@ -61,6 +99,144 @@ func (s *Store) CreateBinaryArtifact(ctx context.Context, item domain.BinaryArti
 	return item, nil
 }
 
+func (s *Store) CreateBinaryDownloadTicket(ctx context.Context, artifactID, nodeID string, jobID *string, ttl time.Duration) (domain.BinaryDownloadTicket, error) {
+	ticket, err := newBinaryDownloadTicket(artifactID, nodeID, jobID, ttl)
+	if err != nil {
+		return domain.BinaryDownloadTicket{}, err
+	}
+	if err := insertBinaryDownloadTicket(ctx, s.db, ticket); err != nil {
+		return domain.BinaryDownloadTicket{}, err
+	}
+	return ticket, nil
+}
+
+func newBinaryDownloadTicket(artifactID, nodeID string, jobID *string, ttl time.Duration) (domain.BinaryDownloadTicket, error) {
+	artifactID = strings.TrimSpace(artifactID)
+	nodeID = strings.TrimSpace(nodeID)
+	if artifactID == "" {
+		return domain.BinaryDownloadTicket{}, errors.New("artifact_id is required")
+	}
+	if nodeID == "" {
+		return domain.BinaryDownloadTicket{}, errors.New("node_id is required")
+	}
+	if ttl <= 0 {
+		ttl = 30 * time.Minute
+	}
+	var normalizedJobID *string
+	if jobID != nil {
+		value := strings.TrimSpace(*jobID)
+		if value == "" {
+			return domain.BinaryDownloadTicket{}, errors.New("job_id cannot be empty")
+		}
+		normalizedJobID = &value
+	}
+	token := randomToken(32)
+	now := time.Now().UTC()
+	ticket := domain.BinaryDownloadTicket{
+		ID:         id.New(),
+		ArtifactID: artifactID,
+		NodeID:     &nodeID,
+		JobID:      normalizedJobID,
+		Token:      token,
+		TokenHint:  tokenHint(token),
+		Status:     "active",
+		ExpiresAt:  now.Add(ttl),
+		CreatedAt:  now,
+	}
+	return ticket, nil
+}
+
+type binaryDownloadTicketInserter interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func insertBinaryDownloadTicket(ctx context.Context, db binaryDownloadTicketInserter, ticket domain.BinaryDownloadTicket) error {
+	if strings.TrimSpace(ticket.Token) == "" {
+		return errors.New("download ticket token is required")
+	}
+	_, err := db.Exec(ctx, `insert into binary_download_tickets(id,artifact_id,node_id,job_id,token_hash,token_hint,status,expires_at,created_at)
+		values($1,$2,$3,$4,$5,$6,$7,$8,$9)`, ticket.ID, ticket.ArtifactID, ticket.NodeID, ticket.JobID, hashToken(ticket.Token), ticket.TokenHint, ticket.Status, ticket.ExpiresAt, ticket.CreatedAt)
+	return err
+}
+
+func (s *Store) ResolveBinaryDownloadTicket(ctx context.Context, token, artifactID, nodeID, jobID string) (domain.BinaryDownloadTicket, domain.BinaryArtifact, error) {
+	token = strings.TrimSpace(token)
+	artifactID = strings.TrimSpace(artifactID)
+	nodeID = strings.TrimSpace(nodeID)
+	jobID = strings.TrimSpace(jobID)
+	if token == "" {
+		return domain.BinaryDownloadTicket{}, domain.BinaryArtifact{}, errors.New("download token is required")
+	}
+	if artifactID == "" || nodeID == "" || jobID == "" {
+		return domain.BinaryDownloadTicket{}, domain.BinaryArtifact{}, errors.New("artifact_id, node_id and job_id are required")
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return domain.BinaryDownloadTicket{}, domain.BinaryArtifact{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var ticket domain.BinaryDownloadTicket
+	var rowJobID sql.NullString
+	err = tx.QueryRow(ctx, `select id,artifact_id,node_id::text,job_id::text,coalesce(token_hint,''),status,expires_at,used_at,created_at
+		from binary_download_tickets
+		where token_hash=$1 and artifact_id=$2 and node_id=$3
+		for update`, hashToken(token), artifactID, nodeID).
+		Scan(&ticket.ID, &ticket.ArtifactID, &ticket.NodeID, &rowJobID, &ticket.TokenHint, &ticket.Status, &ticket.ExpiresAt, &ticket.UsedAt, &ticket.CreatedAt)
+	if err != nil {
+		return domain.BinaryDownloadTicket{}, domain.BinaryArtifact{}, err
+	}
+	if rowJobID.Valid {
+		value := strings.TrimSpace(rowJobID.String)
+		ticket.JobID = &value
+		if value != jobID {
+			return domain.BinaryDownloadTicket{}, domain.BinaryArtifact{}, errors.New("download ticket is not bound to this job")
+		}
+	}
+	now := time.Now().UTC()
+	if ticket.Status != "active" {
+		return domain.BinaryDownloadTicket{}, domain.BinaryArtifact{}, errors.New("download ticket is not active")
+	}
+	if ticket.ExpiresAt.Before(now) {
+		_, _ = tx.Exec(ctx, `update binary_download_tickets set status='expired' where id=$1 and status='active'`, ticket.ID)
+		return domain.BinaryDownloadTicket{}, domain.BinaryArtifact{}, errors.New("download ticket has expired")
+	}
+	artifact, err := scanBinaryArtifact(tx.QueryRow(ctx, `select id,name,kind,service_code,version,os_family,os_version,architecture,storage_path,size_bytes,sha256,signature,status,metadata_json,created_at,updated_at from binary_artifacts where id=$1 and status='active'`, artifactID))
+	if err != nil {
+		return domain.BinaryDownloadTicket{}, domain.BinaryArtifact{}, err
+	}
+	if ticket.JobID == nil {
+		ticket.JobID = &jobID
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.BinaryDownloadTicket{}, domain.BinaryArtifact{}, err
+	}
+	return ticket, artifact, nil
+}
+
+func (s *Store) MarkBinaryDownloadTicketUsed(ctx context.Context, ticketID, jobID string) error {
+	ticketID = strings.TrimSpace(ticketID)
+	jobID = strings.TrimSpace(jobID)
+	if ticketID == "" || jobID == "" {
+		return errors.New("ticket_id and job_id are required")
+	}
+	now := time.Now().UTC()
+	tag, err := s.db.Exec(ctx, `update binary_download_tickets
+		set status='used', used_at=$3, job_id=coalesce(job_id,$2)
+		where id=$1
+		  and status='active'
+		  and expires_at > $3
+		  and (job_id is null or job_id=$2)`,
+		ticketID, jobID, now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("download ticket cannot be marked used")
+	}
+	return nil
+}
+
 func normalizeBinaryArtifact(item *domain.BinaryArtifact) error {
 	if item == nil {
 		return errors.New("binary artifact is required")
@@ -71,7 +247,7 @@ func normalizeBinaryArtifact(item *domain.BinaryArtifact) error {
 	item.Version = strings.TrimSpace(item.Version)
 	item.OSFamily = strings.ToLower(strings.TrimSpace(item.OSFamily))
 	item.OSVersion = strings.TrimSpace(item.OSVersion)
-	item.Architecture = strings.ToLower(strings.TrimSpace(item.Architecture))
+	item.Architecture = normalizeBinaryArtifactArchitecture(item.Architecture)
 	item.StoragePath = strings.TrimSpace(item.StoragePath)
 	item.SHA256 = strings.ToLower(strings.TrimSpace(item.SHA256))
 	item.Signature = strings.TrimSpace(item.Signature)
@@ -113,6 +289,17 @@ func normalizeBinaryArtifact(item *domain.BinaryArtifact) error {
 		return errors.New("size_bytes cannot be negative")
 	}
 	return nil
+}
+
+func normalizeBinaryArtifactArchitecture(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "x86_64":
+		return "amd64"
+	case "aarch64":
+		return "arm64"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
 }
 
 type binaryArtifactScanner interface{ Scan(dest ...any) error }

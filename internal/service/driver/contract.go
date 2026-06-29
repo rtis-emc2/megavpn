@@ -57,7 +57,7 @@ var contracts = map[string]Contract{
 		ProvisioningSupported: true,
 		AccountSupported:      true,
 		Artifacts:             []string{ArtifactVLESSURL},
-		InstallStrategies:     []string{"xtls_install_release", "manual_present"},
+		InstallStrategies:     []string{"binary_repository", "xtls_install_release", "manual_present"},
 	},
 	OpenVPN: {
 		Code:                  OpenVPN,
@@ -143,7 +143,7 @@ var contracts = map[string]Contract{
 		ProvisioningSupported: true,
 		AccountSupported:      true,
 		Artifacts:             []string{ArtifactShadowsocksURL},
-		InstallStrategies:     []string{"ubuntu_repo", "manual_present"},
+		InstallStrategies:     []string{"binary_repository", "ubuntu_repo", "manual_present"},
 	},
 	Nginx: {
 		Code:               Nginx,

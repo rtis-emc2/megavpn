@@ -588,6 +588,23 @@ func (s *Store) CreateNodeCapabilityInstallJobWithDependents(ctx context.Context
 	if serviceCode == "" {
 		return domain.Job{}, errors.New("service_code is required")
 	}
+	var binaryArtifact domain.BinaryArtifact
+	binaryRepositoryAvailable := false
+	if strategy == "" || strategy == "binary_repository" {
+		artifact, err := s.FindBinaryRuntimeArtifactForNode(ctx, nodeID, serviceCode)
+		switch {
+		case err == nil:
+			binaryRepositoryAvailable = true
+			binaryArtifact = artifact
+			if strategy == "" {
+				strategy = "binary_repository"
+			}
+		case strategy == "binary_repository":
+			return domain.Job{}, fmt.Errorf("binary repository artifact is not available for %s on node %s: %w", serviceCode, nodeID, err)
+		case !errors.Is(err, pgx.ErrNoRows):
+			return domain.Job{}, fmt.Errorf("binary repository preflight failed for %s on node %s: %w", serviceCode, nodeID, err)
+		}
+	}
 	if strategy == "" {
 		strategy = defaultCapabilityInstallStrategy(serviceCode)
 		if strategy == "" {
@@ -609,13 +626,75 @@ func (s *Store) CreateNodeCapabilityInstallJobWithDependents(ctx context.Context
 	if len(dependentInstanceIDs) > 0 {
 		payload["dependent_instance_ids"] = dependentInstanceIDs
 	}
+	if strategy == "binary_repository" {
+		if !binaryRepositoryAvailable {
+			return domain.Job{}, fmt.Errorf("binary repository artifact is not available for %s on node %s", serviceCode, nodeID)
+		}
+		jobID := id.New()
+		ticketJobID := jobID
+		ticket, err := newBinaryDownloadTicket(binaryArtifact.ID, nodeID, &ticketJobID, 2*time.Hour)
+		if err != nil {
+			return domain.Job{}, fmt.Errorf("binary repository download ticket create failed: %w", err)
+		}
+		payload["binary_repository"] = binaryRepositoryPayload(binaryArtifact, ticket)
+		return s.createCapabilityInstallJobWithBinaryTicket(ctx, domain.Job{ID: jobID, Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload}, ticket, nodeID, serviceCode, strategy)
+	}
 	j, err := s.CreateJob(ctx, domain.Job{Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload})
 	if err != nil {
 		return j, err
 	}
-	_, _ = s.db.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,$5,'queued','capability install queued',$6,now())`, id.New(), nodeID, j.ID, serviceCode, strategy, mustJSON(payload))
+	_, _ = s.db.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,$5,'queued','capability install queued',$6,now())`, id.New(), nodeID, j.ID, serviceCode, strategy, mustJSON(redactSensitiveMapForStorage(payload)))
 	_, _ = s.CreateAudit(ctx, "system", "node.capability.install", "node", &nodeID, "capability install queued: "+serviceCode)
 	return j, nil
+}
+
+func (s *Store) createCapabilityInstallJobWithBinaryTicket(ctx context.Context, j domain.Job, ticket domain.BinaryDownloadTicket, nodeID, serviceCode, strategy string) (domain.Job, error) {
+	j, payloadJSON, err := normalizeJobForInsert(j)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := insertJobRow(ctx, tx, j, payloadJSON); err != nil {
+		return domain.Job{}, err
+	}
+	if err := insertBinaryDownloadTicket(ctx, tx, ticket); err != nil {
+		return domain.Job{}, err
+	}
+	eventPayload := redactSensitiveMapForStorage(j.Payload)
+	if _, err := tx.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,$5,'queued','capability install queued',$6,now())`, id.New(), nodeID, j.ID, serviceCode, strategy, mustJSON(eventPayload)); err != nil {
+		return domain.Job{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Job{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "job.create", "job", &j.ID, "job queued")
+	_, _ = s.CreateAudit(ctx, "system", "node.capability.install", "node", &nodeID, "capability install queued: "+serviceCode)
+	return j, nil
+}
+
+func binaryRepositoryPayload(artifact domain.BinaryArtifact, ticket domain.BinaryDownloadTicket) map[string]any {
+	return map[string]any{
+		"artifact_id":    artifact.ID,
+		"name":           artifact.Name,
+		"kind":           artifact.Kind,
+		"service_code":   artifact.ServiceCode,
+		"version":        artifact.Version,
+		"os_family":      artifact.OSFamily,
+		"os_version":     artifact.OSVersion,
+		"architecture":   artifact.Architecture,
+		"sha256":         artifact.SHA256,
+		"signature":      artifact.Signature,
+		"metadata":       artifact.Metadata,
+		"download_path":  "/agent/binary-artifacts/" + artifact.ID + "/download",
+		"download_token": ticket.Token,
+		"ticket_id":      ticket.ID,
+		"ticket_hint":    ticket.TokenHint,
+		"expires_at":     ticket.ExpiresAt.Format(time.RFC3339),
+	}
 }
 
 func defaultCapabilityInstallStrategy(serviceCode string) string {
@@ -658,7 +737,7 @@ func (s *Store) CreateNodeCapabilityVerifyJob(ctx context.Context, nodeID, servi
 	if err != nil {
 		return j, err
 	}
-	_, _ = s.db.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,'verify','queued','capability verify queued',$5,now())`, id.New(), nodeID, j.ID, serviceCode, mustJSON(payload))
+	_, _ = s.db.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,'verify','queued','capability verify queued',$5,now())`, id.New(), nodeID, j.ID, serviceCode, mustJSON(redactSensitiveMapForStorage(payload)))
 	_, _ = s.CreateAudit(ctx, "system", "node.capability.verify", "node", &nodeID, "capability verify queued: "+serviceCode)
 	return j, nil
 }
@@ -1313,9 +1392,25 @@ func (s *Store) RevokeShareLink(ctx context.Context, clientID, linkID string) (d
 }
 
 func (s *Store) CreateJob(ctx context.Context, j domain.Job) (domain.Job, error) {
+	j, payloadJSON, err := normalizeJobForInsert(j)
+	if err != nil {
+		return j, err
+	}
+	if err := insertJobRow(ctx, s.db, j, payloadJSON); err != nil {
+		return j, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "job.create", "job", &j.ID, "job queued")
+	return j, nil
+}
+
+type jobInsertExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func normalizeJobForInsert(j domain.Job) (domain.Job, []byte, error) {
 	j.Type = strings.TrimSpace(j.Type)
 	if j.Type == "" {
-		return j, errors.New("job type is required")
+		return j, nil, errors.New("job type is required")
 	}
 	if j.ID == "" {
 		j.ID = id.New()
@@ -1334,21 +1429,22 @@ func (s *Store) CreateJob(ctx context.Context, j domain.Job) (domain.Job, error)
 	}
 	normalizedPayload, err := jobschema.Normalize(j.Type, j.Payload)
 	if err != nil {
-		return j, err
+		return j, nil, err
 	}
 	j.Payload = normalizedPayload
 	if !in(j.Status, "queued", "running", "succeeded", "failed", "cancelled", "retrying") {
-		return j, fmt.Errorf("unsupported job status %q", j.Status)
+		return j, nil, fmt.Errorf("unsupported job status %q", j.Status)
 	}
 	b, _ := json.Marshal(j.Payload)
-	now := time.Now().UTC()
-	j.CreatedAt = now
-	_, err = s.db.Exec(ctx, `insert into jobs(id,type,scope_type,scope_id,node_id,instance_id,status,priority,payload_json,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, j.ID, j.Type, j.ScopeType, j.ScopeID, j.NodeID, j.InstanceID, j.Status, j.Priority, b, now)
-	if err != nil {
-		return j, err
+	if j.CreatedAt.IsZero() {
+		j.CreatedAt = time.Now().UTC()
 	}
-	_, _ = s.CreateAudit(ctx, "system", "job.create", "job", &j.ID, "job queued")
-	return j, nil
+	return j, b, nil
+}
+
+func insertJobRow(ctx context.Context, db jobInsertExecutor, j domain.Job, payloadJSON []byte) error {
+	_, err := db.Exec(ctx, `insert into jobs(id,type,scope_type,scope_id,node_id,instance_id,status,priority,payload_json,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, j.ID, j.Type, j.ScopeType, j.ScopeID, j.NodeID, j.InstanceID, j.Status, j.Priority, payloadJSON, j.CreatedAt)
+	return err
 }
 
 func (s *Store) ListJobs(ctx context.Context, limit int) ([]domain.Job, error) {
@@ -1780,7 +1876,12 @@ func (s *Store) insertCapabilityInstallEvent(ctx context.Context, nodeID, jobID,
 	if summary == "" {
 		summary = "capability job event"
 	}
-	_, err := s.db.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,now())`, id.New(), nodeID, jobID, capCode, strategy, status, summary, payloadJSON)
+	var payload map[string]any
+	_ = json.Unmarshal(payloadJSON, &payload)
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	_, err := s.db.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,now())`, id.New(), nodeID, jobID, capCode, strategy, status, summary, mustJSON(redactSensitiveMapForStorage(payload)))
 	return err
 }
 
@@ -2516,6 +2617,66 @@ func mustJSON(v any) []byte {
 		return []byte(`{}`)
 	}
 	return b
+}
+
+func redactSensitiveMapForStorage(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		if isSensitiveStorageKey(key) {
+			out[key] = "[redacted]"
+			continue
+		}
+		out[key] = redactSensitiveValueForStorage(value)
+	}
+	return out
+}
+
+func redactSensitiveValueForStorage(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return redactSensitiveMapForStorage(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i := range typed {
+			out[i] = redactSensitiveValueForStorage(typed[i])
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func isSensitiveStorageKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	if normalized == "" {
+		return false
+	}
+	if strings.Contains(normalized, "hint") {
+		return false
+	}
+	if strings.HasSuffix(normalized, "secret_ref_id") {
+		return false
+	}
+	switch normalized {
+	case "token", "agent_token", "new_agent_token", "new_agent_token_hash", "enrollment_token",
+		"password", "smtp_password", "private_key", "secret", "psk",
+		"agent_bootstrapenv", "agent_bootstrap_env", "bootstrap_env":
+		return true
+	}
+	if strings.HasSuffix(normalized, "_token") || strings.HasSuffix(normalized, "_token_hash") {
+		return true
+	}
+	if strings.Contains(normalized, "password") || strings.Contains(normalized, "private_key") {
+		return true
+	}
+	if strings.Contains(normalized, "secret") {
+		return true
+	}
+	return false
 }
 
 func normalizeCapabilityCode(code string) string {

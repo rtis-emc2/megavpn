@@ -58,6 +58,18 @@ func (c client) installCapability(ctx context.Context, j job, st agentState) (st
 		if strategy == "" {
 			strategy = "xtls_install_release"
 		}
+		if strategy == "binary_repository" {
+			started := time.Now()
+			res := c.installBinaryRepositoryCapability(ctx, j, serviceCode)
+			inv := collectInventory()
+			_ = c.submitInventory(ctx, st.NodeID, "inventory", inv)
+			res = normalizeInstallResult(res, serviceCode, strategy, started)
+			res["agent_version"] = appVersion
+			if res["ok"] == true {
+				return "succeeded", res
+			}
+			return "failed", res
+		}
 		if strategy == "manual_present" {
 			started := time.Now()
 			res := verifyXrayCore(ctx)
@@ -231,6 +243,18 @@ func (c client) installCapability(ctx context.Context, j job, st agentState) (st
 	case "shadowsocks":
 		if strategy == "" {
 			strategy = "ubuntu_repo"
+		}
+		if strategy == "binary_repository" {
+			started := time.Now()
+			res := c.installBinaryRepositoryCapability(ctx, j, serviceCode)
+			inv := collectInventory()
+			_ = c.submitInventory(ctx, st.NodeID, "inventory", inv)
+			res = normalizeInstallResult(res, serviceCode, strategy, started)
+			res["agent_version"] = appVersion
+			if res["ok"] == true {
+				return "succeeded", res
+			}
+			return "failed", res
 		}
 		if strategy == "manual_present" {
 			started := time.Now()

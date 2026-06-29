@@ -58,6 +58,22 @@ func redactedNodeDiagnostics(diag domain.NodeDiagnostics) domain.NodeDiagnostics
 	return diag
 }
 
+func redactedNodeCapabilityInstallEvent(event domain.NodeCapabilityInstallEvent) domain.NodeCapabilityInstallEvent {
+	event.Payload = redactSensitiveMap(event.Payload)
+	return event
+}
+
+func redactedNodeCapabilityInstallEvents(events []domain.NodeCapabilityInstallEvent) []domain.NodeCapabilityInstallEvent {
+	if events == nil {
+		return nil
+	}
+	out := make([]domain.NodeCapabilityInstallEvent, len(events))
+	for i := range events {
+		out[i] = redactedNodeCapabilityInstallEvent(events[i])
+	}
+	return out
+}
+
 func redactSensitiveMap(src map[string]any) map[string]any {
 	if src == nil {
 		return nil

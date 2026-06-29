@@ -36,6 +36,7 @@
       state.servicePacks = [];
       state.servicePackCatalog = [];
       state.serviceInstallers = [];
+      state.binaryArtifacts = [];
       state.serviceCapabilitiesByNode = {};
       state.serviceInstallEventsByNode = {};
       state.mailSettings = null;
@@ -99,6 +100,7 @@
         ? await fetchJSON('/api/v1/service-packs?include_inactive=1', servicePacks)
         : servicePacks;
       const serviceInstallers = await fetchJSON('/api/v1/services/installers', []);
+      const binaryArtifacts = hasPermission('binary_repository.read') ? await fetchJSON('/api/v1/binary-artifacts', []) : [];
       const platformCertificates = (hasPermission('instance.read') || hasPermission('settings.manage')) ? await fetchJSON('/api/v1/platform/certificates', []) : [];
       const platformPKIRoots = hasPermission('instance.read') ? await fetchJSON('/api/v1/platform/pki-roots', []) : [];
       const controlPlaneTLSSettings = hasPermission('settings.manage') ? await fetchJSON('/api/v1/settings/control-plane-tls', null) : state.controlPlaneTLSSettings;
@@ -120,6 +122,7 @@
         state.servicePacks = activeServicePacksFromCatalog(state.servicePackCatalog);
       }
       state.serviceInstallers = Array.isArray(serviceInstallers) ? serviceInstallers : [];
+      state.binaryArtifacts = Array.isArray(binaryArtifacts) ? binaryArtifacts : [];
       state.serviceCapabilitiesByNode = serviceCapabilitiesByNode && typeof serviceCapabilitiesByNode === 'object' && !Array.isArray(serviceCapabilitiesByNode) ? serviceCapabilitiesByNode : {};
       state.platformCertificates = Array.isArray(platformCertificates) ? platformCertificates : [];
       state.platformPKIRoots = Array.isArray(platformPKIRoots) ? platformPKIRoots : [];

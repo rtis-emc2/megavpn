@@ -38,6 +38,7 @@
       servicePacks: [],
       servicePackCatalog: [],
       serviceInstallers: [],
+      binaryArtifacts: [],
       serviceCapabilitiesByNode: {},
       serviceInstallEventsByNode: {},
       runtimePreflight: null,

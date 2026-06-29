@@ -208,6 +208,75 @@ func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationBinaryRepositoryTicketLifecycle(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-node-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "10.50.0.20",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "x86_64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	artifact, err := store.CreateBinaryArtifact(ctx, domain.BinaryArtifact{
+		Name:         "xray-install-" + suffix,
+		Kind:         "script",
+		ServiceCode:  "xray-core",
+		Version:      "1.2.3",
+		OSFamily:     "linux",
+		Architecture: "amd64",
+		StoragePath:  "runtime/xray-install.sh",
+		SHA256:       strings.Repeat("a", 64),
+		Metadata:     map[string]any{"install_mode": "xray_install_script"},
+	})
+	if err != nil {
+		t.Fatalf("create binary artifact: %v", err)
+	}
+	job, err := store.CreateNodeCapabilityInstallJob(ctx, node.ID, "xray-core", "", "")
+	if err != nil {
+		t.Fatalf("create capability install job: %v", err)
+	}
+	if got := job.Payload["strategy"]; got != "binary_repository" {
+		t.Fatalf("strategy = %v, want binary_repository; payload=%#v", got, job.Payload)
+	}
+	repo, ok := job.Payload["binary_repository"].(map[string]any)
+	if !ok {
+		t.Fatalf("binary_repository payload missing: %#v", job.Payload)
+	}
+	if got := repo["artifact_id"]; got != artifact.ID {
+		t.Fatalf("artifact_id = %v, want %s", got, artifact.ID)
+	}
+	token := stringify(repo["download_token"])
+	if token == "" {
+		t.Fatal("download token must be present for the agent payload")
+	}
+	ticket, resolved, err := store.ResolveBinaryDownloadTicket(ctx, token, artifact.ID, node.ID, job.ID)
+	if err != nil {
+		t.Fatalf("resolve ticket: %v", err)
+	}
+	if resolved.ID != artifact.ID {
+		t.Fatalf("resolved artifact = %s, want %s", resolved.ID, artifact.ID)
+	}
+	if ticket.Status != "active" {
+		t.Fatalf("ticket status = %q, want active before download is marked complete", ticket.Status)
+	}
+	if err := store.MarkBinaryDownloadTicketUsed(ctx, ticket.ID, job.ID); err != nil {
+		t.Fatalf("mark ticket used: %v", err)
+	}
+	if _, _, err := store.ResolveBinaryDownloadTicket(ctx, token, artifact.ID, node.ID, job.ID); err == nil {
+		t.Fatal("download ticket must be single-use")
+	}
+}
+
 func TestPostgresIntegrationRecoverStaleJobLeases(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 

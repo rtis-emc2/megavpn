@@ -43,6 +43,29 @@ func TestNormalizeNodeCapabilityInstallPreservesDependents(t *testing.T) {
 	}
 }
 
+func TestNormalizeNodeCapabilityInstallPreservesBinaryRepositoryPayload(t *testing.T) {
+	payload, err := Normalize("node.capability.install", map[string]any{
+		"node_id":      "node-1",
+		"service_code": "xray-core",
+		"strategy":     "binary_repository",
+		"channel":      "stable",
+		"binary_repository": map[string]any{
+			"artifact_id":    "artifact-1",
+			"download_token": "secret-ticket",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	repo, ok := payload["binary_repository"].(map[string]any)
+	if !ok {
+		t.Fatalf("binary_repository type = %T, want map[string]any", payload["binary_repository"])
+	}
+	if got := repo["download_token"]; got != "secret-ticket" {
+		t.Fatalf("download_token = %v, want preserved token for agent payload", got)
+	}
+}
+
 func TestNormalizeNodeEmergencyCleanupUsesNodeNameConfirmation(t *testing.T) {
 	payload, err := Normalize("node.emergency_cleanup", map[string]any{
 		"node_id":       " node-1 ",

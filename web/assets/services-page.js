@@ -15,6 +15,7 @@
       statusTag,
       escapeHTML,
       formatDate,
+      hasPermission,
     } = ctx;
     if (
       !state ||
@@ -28,7 +29,8 @@
       typeof openUnavailableAction !== 'function' ||
       typeof statusTag !== 'function' ||
       typeof escapeHTML !== 'function' ||
-      typeof formatDate !== 'function'
+      typeof formatDate !== 'function' ||
+      typeof hasPermission !== 'function'
     ) {
       throw new Error('MegaVPNServicesPage requires page dependencies');
     }
@@ -46,6 +48,18 @@
         grouped.get(serviceCode).push(item);
       }
       return Array.from(grouped.entries()).map(([serviceCode, installers]) => ({ serviceCode, installers }));
+    }
+
+    function binaryArtifactsForService(serviceCode) {
+      const code = String(serviceCode || '').trim();
+      return (state.binaryArtifacts || []).filter((artifact) => String(artifact.service_code || '').trim() === code && String(artifact.status || 'active').toLowerCase() === 'active');
+    }
+
+    function binaryArtifactSummary(serviceCode) {
+      const artifacts = binaryArtifactsForService(serviceCode);
+      if (!artifacts.length) return '<span class="tag warn">no artifact</span>';
+      const arches = Array.from(new Set(artifacts.map((artifact) => artifact.architecture || 'arch').filter(Boolean)));
+      return `<span class="tag ok">${escapeHTML(String(artifacts.length))} artifact${artifacts.length === 1 ? '' : 's'}</span><span class="tag">${escapeHTML(arches.join(', '))}</span>`;
     }
 
     function renderServiceRuntimeCard(item, node, capabilities) {
@@ -66,13 +80,14 @@
             ${item.installers.map((installer) => `
               <div class="service-strategy-row">
                 <div>
-                  <div class="inline-actions" style="justify-content:flex-start;gap:10px">
-                    <strong>${escapeHTML(installer.strategy)}</strong>
-                    ${serviceInstallerStateTag(installer, capability)}
-                  </div>
-                  <span>${escapeHTML(installer.description || '')}</span>
+                <div class="inline-actions" style="justify-content:flex-start;gap:10px">
+                  <strong>${escapeHTML(installer.strategy)}</strong>
+                  ${serviceInstallerStateTag(installer, capability)}
+                  ${String(installer.strategy || '') === 'binary_repository' ? binaryArtifactSummary(item.serviceCode) : ''}
                 </div>
-                <div class="inline-actions">
+                <span>${escapeHTML(installer.description || '')}</span>
+              </div>
+              <div class="inline-actions">
                   <button class="secondary-btn service-verify-btn" type="button" data-service-code="${escapeHTML(item.serviceCode)}">Verify</button>
                   <button class="primary-btn service-install-btn" type="button" data-service-code="${escapeHTML(item.serviceCode)}" data-strategy="${escapeHTML(installer.strategy || '')}" data-channel="${escapeHTML(installer.channel || '')}"${node ? '' : ' disabled'}>${escapeHTML(serviceInstallerPrimaryLabel(installer, capability))}</button>
                 </div>
@@ -149,6 +164,22 @@
       return `<table><thead><tr><th>Capability</th><th>Strategy</th><th>Status</th><th>Summary</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
 
+    function renderBinaryArtifactsTable(artifacts) {
+      const rows = artifacts.length
+        ? artifacts.map((entry) => `
+          <tr>
+            <td><strong>${escapeHTML(entry.name || 'artifact')}</strong><div class="mono small">${escapeHTML(entry.id || '')}</div></td>
+            <td>${escapeHTML(entry.service_code || 'n/a')}</td>
+            <td>${escapeHTML(entry.kind || 'n/a')}</td>
+            <td>${escapeHTML(entry.version || 'n/a')}</td>
+            <td>${escapeHTML(entry.os_family || 'linux')} · ${escapeHTML(entry.os_version || 'any')} · ${escapeHTML(entry.architecture || 'arch')}</td>
+            <td><span class="mono small">${escapeHTML(entry.sha256 || '')}</span></td>
+            <td>${statusTag(entry.status || 'unknown')}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="7"><div class="empty">No runtime artifacts registered. Add a pinned artifact before using binary_repository installs.</div></td></tr>';
+      return `<table><thead><tr><th>Artifact</th><th>Service</th><th>Kind</th><th>Version</th><th>Target</th><th>SHA-256</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
     function render() {
       setTitle('Services');
       const node = selectedNode();
@@ -156,6 +187,8 @@
       const capabilities = node ? (state.serviceCapabilitiesByNode[node.id] || []) : [];
       const events = node ? (state.serviceInstallEventsByNode[node.id] || []) : [];
       const definitions = Array.isArray(state.servicesCatalog) ? state.servicesCatalog : [];
+      const binaryArtifacts = Array.isArray(state.binaryArtifacts) ? state.binaryArtifacts : [];
+      const canManageBinaryRepository = hasPermission('binary_repository.manage');
       el('content').innerHTML = `
         <section class="card">
           <div class="inline-actions">
@@ -167,6 +200,19 @@
             </div>
             <button class="secondary-btn" id="refreshServicesBtn" type="button">Refresh service state</button>
           </div>
+        </section>
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Runtime Binary Repository</h2>
+              <p>Runtime installers can use pinned control-plane artifacts instead of external node downloads.</p>
+            </div>
+            <div class="table-tools">
+              <span class="tag">${escapeHTML(String(binaryArtifacts.length))} artifacts</span>
+              ${canManageBinaryRepository ? '<button class="secondary-btn" id="addBinaryArtifactBtn" type="button">Add artifact</button>' : ''}
+            </div>
+          </div>
+          <div class="table-wrap">${renderBinaryArtifactsTable(binaryArtifacts)}</div>
         </section>
         <div class="services-grid">
           ${runtimeServices.map((item) => renderServiceRuntimeCard(item, node, capabilities)).join('')}
@@ -199,6 +245,7 @@
         await loadData();
       });
       document.getElementById('refreshServicesBtn')?.addEventListener('click', loadData);
+      document.getElementById('addBinaryArtifactBtn')?.addEventListener('click', () => openBinaryArtifactModal());
       document.querySelectorAll('.service-install-btn').forEach((button) => {
         button.addEventListener('click', () => runInstaller(button.dataset.serviceCode, button.dataset.strategy, button.dataset.channel));
       });
@@ -215,15 +262,121 @@
         return [node.id, capabilities || []];
       }));
       state.serviceCapabilitiesByNode = Object.fromEntries(pairs);
+      state.binaryArtifacts = hasPermission('binary_repository.read') ? await fetchJSON('/api/v1/binary-artifacts', []) : [];
       if (selectedNodeID) {
         state.serviceInstallEventsByNode[selectedNodeID] = await fetchJSON(`/api/v1/nodes/${selectedNodeID}/capabilities/install-events`, []);
       }
       if (state.page === 'services') render();
     }
 
+    function openBinaryArtifactModal(prefillServiceCode = '') {
+      if (!hasPermission('binary_repository.manage')) {
+        openUnavailableAction('Binary repository', 'Your role can read runtime artifacts but cannot register new artifacts.');
+        return;
+      }
+      openModal('Add runtime artifact', 'Binary repository', `
+        <form id="binaryArtifactForm" class="form-grid">
+          <div class="field">
+            <label>Name</label>
+            <input name="name" placeholder="xray-install-1.8.24" required>
+          </div>
+          <div class="field">
+            <label>Service</label>
+            <select name="service_code">
+              ${['xray-core', 'shadowsocks', 'openvpn', 'wireguard', 'nginx'].map((code) => `<option value="${escapeHTML(code)}"${code === prefillServiceCode ? ' selected' : ''}>${escapeHTML(code)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>Kind</label>
+            <select name="kind">
+              <option value="script">script</option>
+              <option value="package">package</option>
+              <option value="runtime">runtime</option>
+              <option value="bundle">bundle</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Version</label>
+            <input name="version" placeholder="1.0.0" required>
+          </div>
+          <div class="field">
+            <label>OS family</label>
+            <input name="os_family" value="linux" required>
+          </div>
+          <div class="field">
+            <label>OS version</label>
+            <input name="os_version" placeholder="ubuntu-24.04 or empty for any">
+          </div>
+          <div class="field">
+            <label>Architecture</label>
+            <select name="architecture">
+              <option value="amd64">amd64</option>
+              <option value="arm64">arm64</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Install mode</label>
+            <select name="install_mode">
+              <option value="">auto by kind</option>
+              <option value="xray_install_script">xray_install_script</option>
+              <option value="deb_package">deb_package</option>
+            </select>
+          </div>
+          <div class="field full">
+            <label>Storage path</label>
+            <input name="storage_path" placeholder="runtime/xray-install.sh" required>
+            <div class="field-hint">Relative paths are resolved under the control-plane artifact root.</div>
+          </div>
+          <div class="field full">
+            <label>SHA-256</label>
+            <input name="sha256" pattern="[a-fA-F0-9]{64}" placeholder="64 hex characters" required>
+          </div>
+          <div class="modal-actions field full">
+            <button class="secondary-btn" type="button" id="cancelBinaryArtifactBtn">Cancel</button>
+            <button class="primary-btn" type="submit">Register artifact</button>
+          </div>
+        </form>
+        <div id="binaryArtifactResult" class="form-result"></div>`);
+      document.getElementById('cancelBinaryArtifactBtn')?.addEventListener('click', closeModal);
+      document.getElementById('binaryArtifactForm')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const result = document.getElementById('binaryArtifactResult');
+        const data = Object.fromEntries(new FormData(form).entries());
+        const metadata = {};
+        if (String(data.install_mode || '').trim()) metadata.install_mode = String(data.install_mode || '').trim();
+        const payload = {
+          name: String(data.name || '').trim(),
+          service_code: String(data.service_code || '').trim(),
+          kind: String(data.kind || '').trim(),
+          version: String(data.version || '').trim(),
+          os_family: String(data.os_family || 'linux').trim(),
+          os_version: String(data.os_version || '').trim(),
+          architecture: String(data.architecture || '').trim(),
+          storage_path: String(data.storage_path || '').trim(),
+          sha256: String(data.sha256 || '').trim().toLowerCase(),
+          status: 'active',
+          metadata,
+        };
+        result.innerHTML = '<span class="tag warn">registering artifact</span>';
+        try {
+          await sendJSON('/api/v1/binary-artifacts', 'POST', payload);
+          state.binaryArtifacts = await fetchJSON('/api/v1/binary-artifacts', []);
+          result.innerHTML = '<span class="tag ok">artifact registered</span>';
+          render();
+        } catch (err) {
+          result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        }
+      });
+    }
+
     async function runInstaller(serviceCode, strategy, channel) {
       if (!state.servicesNodeID) {
         openUnavailableAction('No target node', 'Select a node before installing a runtime capability.');
+        return;
+      }
+      if (strategy === 'binary_repository' && !binaryArtifactsForService(serviceCode).length) {
+        openBinaryArtifactModal(serviceCode);
         return;
       }
       const node = selectedNode();

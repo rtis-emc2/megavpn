@@ -92,6 +92,8 @@ type Store interface {
 	ListServiceDefinitions(context.Context) ([]domain.ServiceDefinition, error)
 	ListBinaryArtifacts(context.Context, bool) ([]domain.BinaryArtifact, error)
 	CreateBinaryArtifact(context.Context, domain.BinaryArtifact) (domain.BinaryArtifact, error)
+	ResolveBinaryDownloadTicket(context.Context, string, string, string, string) (domain.BinaryDownloadTicket, domain.BinaryArtifact, error)
+	MarkBinaryDownloadTicketUsed(context.Context, string, string) error
 	ListInstances(context.Context) ([]domain.Instance, error)
 	GetInstance(context.Context, string) (domain.Instance, error)
 	GetInstanceWithSpec(context.Context, string) (domain.Instance, error)
@@ -257,6 +259,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /share/{token}", s.withRateLimit("public_share_download", 120, time.Minute, s.publicShareDownload))
 	mux.HandleFunc("GET /assets/{path...}", s.assets)
+	mux.HandleFunc("GET /agent/binary-artifacts/{artifact_id}/download", s.agentBinaryArtifactDownload)
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /api/v1/ready", s.ready)
@@ -675,6 +678,7 @@ func (s *Server) listServiceInstallers(w nethttp.ResponseWriter, r *nethttp.Requ
 		{"service_code": "nginx", "strategy": "nginx_org_repo", "channel": "stable", "description": "Install nginx from the official nginx.org Ubuntu repository; falls back to ubuntu_repo when CPU ISA is incompatible."},
 		{"service_code": "nginx", "strategy": "ubuntu_repo", "channel": "stable", "description": "Install nginx from the Ubuntu repository."},
 		{"service_code": "nginx", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed nginx."},
+		{"service_code": "xray-core", "strategy": "binary_repository", "channel": "stable", "description": "Install Xray-core from a pinned control-plane binary repository artifact."},
 		{"service_code": "xray-core", "strategy": "xtls_install_release", "channel": "latest", "description": "Install Xray-core through the official XTLS/Xray-install release script."},
 		{"service_code": "xray-core", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed xray-core."},
 		{"service_code": "openvpn", "strategy": "ubuntu_repo", "channel": "stable", "description": "Install OpenVPN from the Ubuntu repository and register the capability on the node."},
@@ -687,6 +691,7 @@ func (s *Server) listServiceInstallers(w nethttp.ResponseWriter, r *nethttp.Requ
 		{"service_code": "http_proxy", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed Squid runtime."},
 		{"service_code": "xl2tpd", "strategy": "ubuntu_repo", "channel": "stable", "description": "Install xl2tpd from the Ubuntu repository for L2TP support."},
 		{"service_code": "xl2tpd", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed xl2tpd runtime."},
+		{"service_code": "shadowsocks", "strategy": "binary_repository", "channel": "stable", "description": "Install Shadowsocks from a pinned control-plane binary repository artifact."},
 		{"service_code": "shadowsocks", "strategy": "ubuntu_repo", "channel": "stable", "description": "Install shadowsocks-libev from the Ubuntu repository."},
 		{"service_code": "shadowsocks", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed Shadowsocks runtime."},
 	})
@@ -878,7 +883,7 @@ func (s *Server) nodeCapabilityInstallEvents(w nethttp.ResponseWriter, r *nethtt
 	if x == nil {
 		x = []domain.NodeCapabilityInstallEvent{}
 	}
-	writeJSON(w, 200, x)
+	writeJSON(w, 200, redactedNodeCapabilityInstallEvents(x))
 }
 
 func (s *Server) nodeCapabilitiesDrift(w nethttp.ResponseWriter, r *nethttp.Request) {

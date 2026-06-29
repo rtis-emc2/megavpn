@@ -325,6 +325,7 @@
     statusTag,
     escapeHTML,
     formatDate,
+    hasPermission,
   });
   if (!servicesPage) throw new Error('MegaVPNServicesPage is not loaded');
 
