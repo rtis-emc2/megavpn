@@ -422,6 +422,23 @@ func (s *Store) ListNodeCapabilities(ctx context.Context, nodeID string) ([]doma
 	return out, rows.Err()
 }
 
+func (s *Store) ListAllNodeCapabilities(ctx context.Context) (map[string][]domain.NodeCapability, error) {
+	rows, err := s.db.Query(ctx, `select id,node_id,capability_code,coalesce(version,''),status,source,detected_at from node_capabilities order by node_id,capability_code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]domain.NodeCapability{}
+	for rows.Next() {
+		var c domain.NodeCapability
+		if err := rows.Scan(&c.ID, &c.NodeID, &c.CapabilityCode, &c.Version, &c.Status, &c.Source, &c.DetectedAt); err != nil {
+			return nil, err
+		}
+		out[c.NodeID] = append(out[c.NodeID], c)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) SubmitNodeInventory(ctx context.Context, nodeID string, payload map[string]any) (domain.NodeInventorySnapshot, []domain.NodeCapability, error) {
 	if nodeID == "" {
 		return domain.NodeInventorySnapshot{}, nil, errors.New("node_id is required")

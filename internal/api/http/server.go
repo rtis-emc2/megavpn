@@ -70,6 +70,7 @@ type Store interface {
 	CreateNodeBootstrapJob(context.Context, string, string, map[string]any) (domain.Job, domain.NodeBootstrapRun, error)
 	ListNodeBootstrapRuns(context.Context, string, int) ([]domain.NodeBootstrapRun, error)
 	LatestNodeInventory(context.Context, string) (domain.NodeInventorySnapshot, error)
+	ListAllNodeCapabilities(context.Context) (map[string][]domain.NodeCapability, error)
 	ListNodeCapabilities(context.Context, string) ([]domain.NodeCapability, error)
 	ListNodeCapabilityInstallEvents(context.Context, string, int) ([]domain.NodeCapabilityInstallEvent, error)
 	CreateNodeCapabilityInstallJob(context.Context, string, string, string, string) (domain.Job, error)
@@ -327,6 +328,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/nodes/{id}/agent-identity/revoke", "node.bootstrap", s.revokeNodeAgentIdentity)
 	protected("POST /api/v1/nodes/{id}/emergency-cleanup", "node.bootstrap", s.createNodeEmergencyCleanupJob)
 	protected("GET /api/v1/nodes/{id}/inventory", "node.read", s.getNodeInventory)
+	protected("GET /api/v1/nodes/capabilities", "node.read", s.listAllNodeCapabilities)
 	protected("GET /api/v1/nodes/{id}/capabilities", "node.read", s.getNodeCapabilities)
 	protected("POST /api/v1/nodes/{id}/capabilities/install", "node.write", s.installNodeCapability)
 	protected("POST /api/v1/nodes/{id}/capabilities/verify", "node.write", s.verifyNodeCapability)
@@ -819,6 +821,18 @@ func (s *Server) getNodeCapabilities(w nethttp.ResponseWriter, r *nethttp.Reques
 	}
 	if x == nil {
 		x = []domain.NodeCapability{}
+	}
+	writeJSON(w, 200, x)
+}
+
+func (s *Server) listAllNodeCapabilities(w nethttp.ResponseWriter, r *nethttp.Request) {
+	x, err := s.store.ListAllNodeCapabilities(r.Context())
+	if err != nil {
+		writeErr(w, 500, "list node capabilities failed")
+		return
+	}
+	if x == nil {
+		x = map[string][]domain.NodeCapability{}
 	}
 	writeJSON(w, 200, x)
 }

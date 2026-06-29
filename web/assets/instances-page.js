@@ -186,6 +186,31 @@
       return (state.serviceInstallers || []).some((installer) => normalizeInstanceServiceCode(installer.service_code) === normalized);
     }
 
+    function nodeCapability(nodeID, serviceCode) {
+      const normalized = normalizeInstanceServiceCode(serviceCode);
+      return (state.serviceCapabilitiesByNode?.[nodeID] || [])
+        .find((item) => normalizeInstanceServiceCode(item.capability_code) === normalized) || null;
+    }
+
+    function runtimeCapabilityState(nodeID, serviceCode) {
+      const required = hasRuntimeInstaller(serviceCode);
+      if (!required) {
+        return { required: false, status: 'not_required', version: '', source: '' };
+      }
+      const capability = nodeCapability(nodeID, serviceCode);
+      return {
+        required: true,
+        status: String(capability?.status || 'missing').trim().toLowerCase() || 'missing',
+        version: capability?.version || '',
+        source: capability?.source || '',
+      };
+    }
+
+    function runtimeCapabilityReady(row) {
+      if (!row.capabilityRequired) return true;
+      return ['available', 'installed', 'detected'].includes(String(row.capabilityStatus || '').toLowerCase());
+    }
+
     function isCapabilityMissingText(value) {
       return /capability missing|binary is not installed|not installed or not executable|runtime capability is not available/i.test(String(value || ''));
     }
@@ -194,6 +219,8 @@
       const node = nodeByID(instance.node_id);
       const runtime = runtimeStateFor(instance.id);
       const latestJob = latestInstanceJob(instance.id);
+      const service = instance.service_code || 'unknown';
+      const capability = runtimeCapabilityState(instance.node_id, service);
       const healthReason = primaryReason(runtime?.health_reasons, 'Waiting for runtime health report.');
       const driftReason = primaryReason(runtime?.drift_reasons, 'Waiting for runtime drift report.');
       const latestJobSummary = jobResultSummary(latestJob);
@@ -205,8 +232,8 @@
         nodeRole: node?.role || '',
         nodeStatus: node?.status || '',
         nodeAddress: node?.address || '',
-        service: instance.service_code || 'unknown',
-        serviceLabel: serviceLabel(instance.service_code || 'unknown'),
+        service,
+        serviceLabel: serviceLabel(service),
         endpoint: instanceEndpoint(instance),
         revision: revisionState(instance),
         status: instance.status || 'draft',
@@ -217,15 +244,20 @@
         driftReason,
         latestJob,
         latestJobSummary,
+        capabilityRequired: capability.required,
+        capabilityStatus: capability.status,
+        capabilityVersion: capability.version,
+        capabilitySource: capability.source,
       };
       row.bucket = instanceBucket(row);
       row.issue = instanceIssue(row);
-      row.capabilityMissing = hasRuntimeInstaller(row.service) && isCapabilityMissingText([
+      row.capabilityMissing = (row.capabilityRequired && !runtimeCapabilityReady(row) && lowerStatus(row.runtime) !== 'active')
+        || (hasRuntimeInstaller(row.service) && isCapabilityMissingText([
         row.latestJobSummary,
         row.healthReason,
         row.driftReason,
         row.issue?.text,
-      ].join(' '));
+      ].join(' ')));
       return row;
     }
 
@@ -239,6 +271,7 @@
       const health = lowerStatus(row.health);
       const drift = lowerStatus(row.drift);
       const revision = lowerStatus(row.revision);
+      if (row.capabilityRequired && !runtimeCapabilityReady(row) && runtime !== 'active') return 'problem';
       if (status === 'failed' || runtime === 'failed' || ['failed', 'degraded', 'unhealthy', 'error'].includes(health)) {
         return 'problem';
       }
@@ -261,6 +294,9 @@
         reasons.push(`${row.latestJob.type || 'job'} ${latestJobStatus}${summary}`);
       } else if (row.latestJob && ['queued', 'running'].includes(latestJobStatus)) {
         reasons.push(`${row.latestJob.type || 'job'} is ${latestJobStatus}.`);
+      }
+      if (row.capabilityRequired && !runtimeCapabilityReady(row) && runtime !== 'active') {
+        reasons.push(`Runtime capability ${row.service} is ${row.capabilityStatus || 'missing'} on this node.`);
       }
       if (status === 'failed') {
         reasons.push('Lifecycle is failed; check the latest apply job result.');

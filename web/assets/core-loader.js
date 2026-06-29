@@ -94,6 +94,7 @@
       const backhaulDrivers = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul/drivers', []) : [];
       const servicesCatalog = await fetchJSON('/api/v1/services', []);
       const servicePacks = await fetchJSON('/api/v1/service-packs', []);
+      const serviceCapabilitiesByNode = hasPermission('node.read') ? await fetchJSON('/api/v1/nodes/capabilities', {}) : {};
       const servicePackCatalog = hasPermission('settings.manage')
         ? await fetchJSON('/api/v1/service-packs?include_inactive=1', servicePacks)
         : servicePacks;
@@ -119,6 +120,7 @@
         state.servicePacks = activeServicePacksFromCatalog(state.servicePackCatalog);
       }
       state.serviceInstallers = Array.isArray(serviceInstallers) ? serviceInstallers : [];
+      state.serviceCapabilitiesByNode = serviceCapabilitiesByNode && typeof serviceCapabilitiesByNode === 'object' && !Array.isArray(serviceCapabilitiesByNode) ? serviceCapabilitiesByNode : {};
       state.platformCertificates = Array.isArray(platformCertificates) ? platformCertificates : [];
       state.platformPKIRoots = Array.isArray(platformPKIRoots) ? platformPKIRoots : [];
       state.controlPlaneTLSSettings = controlPlaneTLSSettings || null;
