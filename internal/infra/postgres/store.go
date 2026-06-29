@@ -1377,7 +1377,7 @@ func (s *Store) CancelJob(ctx context.Context, jobID string) (domain.Job, error)
 }
 
 func (s *Store) ClaimJob(ctx context.Context, workerID string) (domain.Job, bool, error) {
-	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.delete')`, nil)
+	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.delete')`, nil)
 }
 
 func (s *Store) RecoverStaleJobLeases(ctx context.Context) (int, error) {
@@ -1553,6 +1553,17 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 					_, _ = s.db.Exec(ctx, `update nodes set agent_status='online',updated_at=now() where id=$1`, *scopeID)
 				}
 			}
+		case "node.emergency_cleanup":
+			nodeID := ""
+			if scopeID != nil {
+				nodeID = *scopeID
+			}
+			if nodeID == "" {
+				nodeID = strings.TrimSpace(stringify(payload["node_id"]))
+			}
+			if nodeID != "" {
+				_ = s.applyNodeEmergencyCleanupResult(ctx, nodeID, payload)
+			}
 		case "instance.apply":
 			if instanceID != nil {
 				_, _ = s.db.Exec(ctx, `update instance_revisions
@@ -1654,6 +1665,44 @@ func shouldHandoffNodeBootstrapToAgent(payload, result map[string]any) bool {
 	return bootstrapMode == "ssh_bootstrap"
 }
 
+func (s *Store) applyNodeEmergencyCleanupResult(ctx context.Context, nodeID string, payload map[string]any) error {
+	includeAgent := false
+	if v, ok := payload["include_agent"].(bool); ok {
+		includeAgent = v
+	}
+	rows, err := s.db.Query(ctx, `select id from instances where node_id=$1 and status <> 'deleted'`, nodeID)
+	if err != nil {
+		return err
+	}
+	instanceIDs := []string{}
+	for rows.Next() {
+		var instanceID string
+		if err := rows.Scan(&instanceID); err != nil {
+			rows.Close()
+			return err
+		}
+		instanceIDs = append(instanceIDs, instanceID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, instanceID := range instanceIDs {
+		_, _ = s.db.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, instanceID)
+		_, _ = s.db.Exec(ctx, `update client_access_routes set status='deleted',updated_at=now() where instance_id=$1 and status in ('pending','active','disabled')`, instanceID)
+		_, _ = s.db.Exec(ctx, `update service_accesses set status='failed',updated_at=now() where instance_id=$1 and status in ('pending','active','disabled')`, instanceID)
+		s.releaseInstanceAddressPoolAllocations(ctx, instanceID)
+	}
+	if includeAgent {
+		_, _ = s.db.Exec(ctx, `update node_agents set status='revoked',revoked_at=now() where node_id=$1`, nodeID)
+		_, _ = s.db.Exec(ctx, `update nodes set status='draft',agent_status='removed',last_heartbeat_at=null,updated_at=now() where id=$1 and status <> 'retired'`, nodeID)
+	} else {
+		_, _ = s.db.Exec(ctx, `update nodes set updated_at=now() where id=$1 and status <> 'retired'`, nodeID)
+	}
+	return nil
+}
+
 func (s *Store) insertCapabilityInstallEvent(ctx context.Context, nodeID, jobID, capCode, strategy, status, summary string, payloadJSON []byte) error {
 	if capCode == "" {
 		capCode = "unknown"
@@ -1699,7 +1748,7 @@ func (s *Store) AgentNextJob(ctx context.Context, nodeRef string) (domain.Job, b
 	if err := s.db.QueryRow(ctx, `select id from nodes where (id::text=$1 or name=$1) and status <> 'retired'`, nodeRef).Scan(&nodeID); err != nil {
 		return domain.Job{}, false, err
 	}
-	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.delete')`
+	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.delete')`
 	job, ok, err := s.claimJob(ctx, "agent:"+nodeID, where, []any{nodeID})
 	if err != nil || !ok {
 		return job, ok, err
@@ -2073,7 +2122,7 @@ func jobLockTarget(j domain.Job) (resourceType string, resourceID string, lockKi
 
 func jobLeaseDurationForType(jobType string) time.Duration {
 	switch jobType {
-	case "node.capability.install", "node.backhaul.apply", "instance.apply", "instance.delete":
+	case "node.capability.install", "node.emergency_cleanup", "node.backhaul.apply", "instance.apply", "instance.delete":
 		return longNodeJobLeaseDuration
 	default:
 		return jobLeaseDuration

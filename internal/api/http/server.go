@@ -59,6 +59,7 @@ type Store interface {
 	GetNodeDiagnostics(context.Context, string) (domain.NodeDiagnostics, error)
 	CreateNodeAgentTokenRotateJob(context.Context, string) (domain.Job, error)
 	CreateNodeChannelProbeJob(context.Context, string) (domain.Job, error)
+	CreateNodeEmergencyCleanupJob(context.Context, string, bool, string) (domain.Job, error)
 	CreateNodeRoutePolicyApplyJob(context.Context, string) (domain.Job, error)
 	RequeueNodeStuckJob(context.Context, string) (domain.Job, error)
 	ClearNodeStalePendingRotation(context.Context, string) ([]domain.Job, error)
@@ -87,6 +88,8 @@ type Store interface {
 	RetireNode(context.Context, string) (domain.Node, error)
 	SetNodeMaintenance(context.Context, string, bool) (domain.Node, error)
 	ListServiceDefinitions(context.Context) ([]domain.ServiceDefinition, error)
+	ListBinaryArtifacts(context.Context, bool) ([]domain.BinaryArtifact, error)
+	CreateBinaryArtifact(context.Context, domain.BinaryArtifact) (domain.BinaryArtifact, error)
 	ListInstances(context.Context) ([]domain.Instance, error)
 	GetInstance(context.Context, string) (domain.Instance, error)
 	GetInstanceWithSpec(context.Context, string) (domain.Instance, error)
@@ -299,6 +302,8 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/service-packs/{key}/enable", "settings.manage", s.setServicePackStatus("active"))
 	protected("POST /api/v1/service-packs/{key}/disable", "settings.manage", s.setServicePackStatus("disabled"))
 	protected("DELETE /api/v1/service-packs/{key}", "settings.manage", s.setServicePackStatus("deleted"))
+	protected("GET /api/v1/binary-artifacts", "binary_repository.read", s.listBinaryArtifacts)
+	protected("POST /api/v1/binary-artifacts", "binary_repository.manage", s.createBinaryArtifact)
 	protected("GET /api/v1/nodes", "node.read", s.listNodes)
 	protected("POST /api/v1/nodes", "node.write", s.createNode)
 	protected("GET /api/v1/nodes/{id}", "node.read", s.getNode)
@@ -320,6 +325,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/nodes/{id}/agent-token/rotate", "node.bootstrap", s.rotateNodeAgentToken)
 	protected("POST /api/v1/nodes/{id}/enrollment-token/rotate", "node.bootstrap", s.rotateNodeEnrollmentToken)
 	protected("POST /api/v1/nodes/{id}/agent-identity/revoke", "node.bootstrap", s.revokeNodeAgentIdentity)
+	protected("POST /api/v1/nodes/{id}/emergency-cleanup", "node.bootstrap", s.createNodeEmergencyCleanupJob)
 	protected("GET /api/v1/nodes/{id}/inventory", "node.read", s.getNodeInventory)
 	protected("GET /api/v1/nodes/{id}/capabilities", "node.read", s.getNodeCapabilities)
 	protected("POST /api/v1/nodes/{id}/capabilities/install", "node.write", s.installNodeCapability)
@@ -456,6 +462,11 @@ type nodeBootstrapRequest struct {
 	BootstrapMode  string `json:"bootstrap_mode"`
 	ReinstallAgent bool   `json:"reinstall_agent"`
 	ForceReenroll  bool   `json:"force_reenroll"`
+}
+
+type nodeEmergencyCleanupRequest struct {
+	IncludeAgent bool   `json:"include_agent"`
+	Confirmation string `json:"confirmation"`
 }
 
 type secretRefCreateRequest struct {
@@ -676,6 +687,33 @@ func (s *Server) listServiceInstallers(w nethttp.ResponseWriter, r *nethttp.Requ
 	})
 }
 
+func (s *Server) listBinaryArtifacts(w nethttp.ResponseWriter, r *nethttp.Request) {
+	includeInactive := r.URL.Query().Get("include_inactive") == "1"
+	items, err := s.store.ListBinaryArtifacts(r.Context(), includeInactive)
+	if err != nil {
+		writeErr(w, 500, "list binary artifacts failed")
+		return
+	}
+	if items == nil {
+		items = []domain.BinaryArtifact{}
+	}
+	writeJSON(w, 200, items)
+}
+
+func (s *Server) createBinaryArtifact(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req domain.BinaryArtifact
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid binary artifact payload")
+		return
+	}
+	item, err := s.store.CreateBinaryArtifact(r.Context(), req)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 201, item)
+}
+
 func (s *Server) listNodes(w nethttp.ResponseWriter, r *nethttp.Request) {
 	x, err := s.store.ListNodes(r.Context())
 	if err != nil {
@@ -735,6 +773,20 @@ func (s *Server) createNodeBootstrapJob(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 	writeJSON(w, 202, response{"job": redactedJob(job), "bootstrap_run": redactedBootstrapRun(run)})
+}
+
+func (s *Server) createNodeEmergencyCleanupJob(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req nodeEmergencyCleanupRequest
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid emergency cleanup payload")
+		return
+	}
+	job, err := s.store.CreateNodeEmergencyCleanupJob(r.Context(), idParam(r), req.IncludeAgent, req.Confirmation)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 202, redactedJob(job))
 }
 
 func (s *Server) listNodeBootstrapRuns(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -1731,6 +1783,7 @@ func jobTypeMustUseTypedEndpoint(jobType string) bool {
 	case "platform.control_plane_tls.apply",
 		"node.bootstrap",
 		"node.agent.rotate_token",
+		"node.emergency_cleanup",
 		"node.backhaul.apply",
 		"node.backhaul.probe",
 		"node.backhaul.cleanup",
@@ -1754,7 +1807,7 @@ func requiredPermissionForJobType(jobType string) string {
 	switch strings.TrimSpace(jobType) {
 	case "platform.control_plane_tls.apply":
 		return "settings.manage"
-	case "node.bootstrap", "node.agent.rotate_token":
+	case "node.bootstrap", "node.agent.rotate_token", "node.emergency_cleanup":
 		return "node.bootstrap"
 	case "node.capability.install", "node.capability.verify", "node.inventory", "node.inventory.sync", "node.services.discover", "node.channel.probe", "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup", "node.route_policy.apply":
 		return "node.write"

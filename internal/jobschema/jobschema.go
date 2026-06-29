@@ -99,6 +99,27 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 			return nil, err
 		}
 		normalized["node_id"] = nodeID
+	case "node.emergency_cleanup":
+		nodeID, err := requireString(payload, "node_id")
+		if err != nil {
+			return nil, err
+		}
+		confirmation, err := requireString(payload, "confirmation")
+		if err != nil {
+			return nil, err
+		}
+		if confirmation != "ERASE_NODE_MANAGED_STATE" {
+			return nil, validationf("payload.confirmation must be ERASE_NODE_MANAGED_STATE")
+		}
+		normalized["node_id"] = nodeID
+		normalized["confirmation"] = confirmation
+		if v, ok, err := optionalBool(payload, "include_agent"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["include_agent"] = v
+		} else {
+			normalized["include_agent"] = false
+		}
 	case "node.backhaul.apply":
 		nodeID, err := requireString(payload, "node_id")
 		if err != nil {

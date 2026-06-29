@@ -495,6 +495,74 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
       }
     }
 
+    function openEmergencyNodeCleanupModal(node) {
+      if (!node?.id) return;
+      openModal(`Emergency cleanup: ${node.name || 'node'}`, 'Destructive node operation', `
+        <section class="card">
+          <h2>Clean managed runtime from this node</h2>
+          <p>This queues an agent job that removes product-managed instance files, managed systemd units, backhaul state, route policy and runtime certificates from the selected host.</p>
+          <div class="code-block">node_id = ${escapeHTML(node.id)}
+name = ${escapeHTML(node.name || 'n/a')}
+address = ${escapeHTML(node.address || 'n/a')}
+agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
+          <div class="form-grid">
+            <label class="choice-card full">
+              <input id="includeAgentCleanupToggle" type="checkbox" />
+              <span>
+                <strong>Also remove the agent</strong>
+                <small>Schedules a delayed self-removal of the agent binary, unit, env and local state after the job result is submitted.</small>
+              </span>
+            </label>
+            <div class="field full">
+              <label>Type ERASE_NODE_MANAGED_STATE to confirm</label>
+              <input id="emergencyCleanupConfirm" autocomplete="off" spellcheck="false" />
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button class="danger-btn" id="confirmEmergencyCleanupBtn" type="button">Queue emergency cleanup</button>
+            <button class="secondary-btn" id="cancelEmergencyCleanupBtn" type="button">Cancel</button>
+          </div>
+          <div id="emergencyCleanupResult" class="form-result"></div>
+        </section>`, { wide: true });
+      document.getElementById('confirmEmergencyCleanupBtn')?.addEventListener('click', () => queueEmergencyNodeCleanup(node));
+      document.getElementById('cancelEmergencyCleanupBtn')?.addEventListener('click', closeModal);
+    }
+
+    async function queueEmergencyNodeCleanup(node) {
+      const target = document.getElementById('emergencyCleanupResult');
+      const button = document.getElementById('confirmEmergencyCleanupBtn');
+      const confirmation = String(document.getElementById('emergencyCleanupConfirm')?.value || '').trim();
+      const includeAgent = Boolean(document.getElementById('includeAgentCleanupToggle')?.checked);
+      if (!target) return;
+      if (confirmation !== 'ERASE_NODE_MANAGED_STATE') {
+        target.innerHTML = '<span class="tag danger">confirmation phrase is required</span>';
+        return;
+      }
+      target.innerHTML = '<span class="tag warn">queueing cleanup</span>';
+      if (button) button.disabled = true;
+      try {
+        const job = await sendJSON(`/api/v1/nodes/${node.id}/emergency-cleanup`, 'POST', {
+          include_agent: includeAgent,
+          confirmation,
+        });
+        target.innerHTML = renderActionResponse(job, 'Emergency cleanup queued');
+        if (job?.id) {
+          await watchJob(job.id, target, 'node emergency cleanup');
+        }
+        await refresh();
+        if (includeAgent) {
+          closeModal();
+          state.nodeManageData = null;
+          setPage('nodes');
+          return;
+        }
+        await reloadNodeControlModal(node.id, 'Emergency cleanup completed. Runtime state was refreshed.');
+      } catch (err) {
+        target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        if (button) button.disabled = false;
+      }
+    }
+
     function openNodeControlModal(nodeID) {
       closeModal();
       state.nodeManageID = nodeID;
@@ -721,6 +789,7 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
                       <button class="operator-action" id="openNodeTerminalBtn" type="button"><strong>SSH terminal</strong><span>${escapeHTML(terminalEndpointLabel(terminalMethod))}</span></button>
                       <button class="operator-action" id="refreshNodeRuntimeBtn" type="button"><strong>Refresh diagnostics</strong><span>Reload current runtime state.</span></button>
                       <button class="operator-action" id="nodeMaintenanceToggleBtn" type="button"><strong>${node.status === 'maintenance' ? 'Disable maintenance' : 'Enable maintenance'}</strong><span>Control scheduling state for this node.</span></button>
+                      <button class="operator-action danger-action" id="emergencyNodeCleanupBtn" type="button"><strong>Emergency cleanup</strong><span>Remove managed services and optionally remove the agent.</span></button>
                       <button class="operator-action danger-action" id="deleteNodeFromManageBtn" type="button"><strong>Delete node</strong><span>Retire node after instances are moved or removed.</span></button>
                     </div>
                     <div id="nodeRuntimeActionResult" class="form-result"></div>
@@ -928,6 +997,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       document.getElementById('refreshNodeRuntimeBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Node runtime state refreshed.'));
       document.getElementById('refreshNodeBootstrapBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Bootstrap state refreshed.'));
       document.getElementById('editNodeFromManageBtn').addEventListener('click', () => openEditNodeModal(node.id));
+      document.getElementById('emergencyNodeCleanupBtn').addEventListener('click', () => openEmergencyNodeCleanupModal(node));
       document.getElementById('deleteNodeFromManageBtn').addEventListener('click', () => openDeleteNodeModal(node.id, node.name));
       document.getElementById('openNodeTerminalBtn')?.addEventListener('click', () => switchNodeConsoleTab('terminal'));
       document.getElementById('openTerminalBootstrapBtn')?.addEventListener('click', () => switchNodeConsoleTab('bootstrap'));

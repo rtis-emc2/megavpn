@@ -399,6 +399,47 @@ type Artifact struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
+type BinaryArtifact struct {
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Kind         string         `json:"kind"`
+	ServiceCode  string         `json:"service_code"`
+	Version      string         `json:"version"`
+	OSFamily     string         `json:"os_family"`
+	OSVersion    string         `json:"os_version"`
+	Architecture string         `json:"architecture"`
+	StoragePath  string         `json:"storage_path"`
+	SizeBytes    int64          `json:"size_bytes"`
+	SHA256       string         `json:"sha256"`
+	Signature    string         `json:"signature,omitempty"`
+	Status       string         `json:"status"`
+	Metadata     map[string]any `json:"metadata"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+}
+
+type BinaryManifest struct {
+	ID         string         `json:"id"`
+	ArtifactID string         `json:"artifact_id"`
+	Channel    string         `json:"channel"`
+	Manifest   map[string]any `json:"manifest"`
+	Status     string         `json:"status"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+type BinaryDownloadTicket struct {
+	ID         string     `json:"id"`
+	ArtifactID string     `json:"artifact_id"`
+	NodeID     *string    `json:"node_id,omitempty"`
+	JobID      *string    `json:"job_id,omitempty"`
+	Token      string     `json:"token,omitempty"`
+	TokenHint  string     `json:"token_hint"`
+	Status     string     `json:"status"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	UsedAt     *time.Time `json:"used_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
 type ShareLink struct {
 	ID              string    `json:"id"`
 	ClientAccountID string    `json:"client_account_id"`

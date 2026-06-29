@@ -41,6 +41,80 @@ func (s *Store) CreateNodeChannelProbeJob(ctx context.Context, nodeID string) (d
 	return job, nil
 }
 
+func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string, includeAgent bool, confirmation string) (domain.Job, error) {
+	if _, err := s.GetNode(ctx, nodeID); err != nil {
+		return domain.Job{}, err
+	}
+	instances, err := s.nodeInstanceCleanupPayloads(ctx, nodeID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	payload := map[string]any{
+		"node_id":       nodeID,
+		"include_agent": includeAgent,
+		"confirmation":  strings.TrimSpace(confirmation),
+		"instances":     instances,
+		"requested_at":  time.Now().UTC().Format(time.RFC3339),
+	}
+	job, err := s.CreateJob(ctx, domain.Job{
+		Type:      "node.emergency_cleanup",
+		ScopeType: "node",
+		ScopeID:   &nodeID,
+		NodeID:    &nodeID,
+		Priority:  1,
+		Payload:   payload,
+	})
+	if err != nil {
+		return job, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "node.emergency_cleanup", "node", &nodeID, "node emergency cleanup queued")
+	return job, nil
+}
+
+func (s *Store) nodeInstanceCleanupPayloads(ctx context.Context, nodeID string) ([]map[string]any, error) {
+	rows, err := s.db.Query(ctx, `select id from instances where node_id=$1 and status <> 'deleted' order by created_at asc`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	instanceIDs := []string{}
+	for rows.Next() {
+		var instanceID string
+		if err := rows.Scan(&instanceID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		instanceIDs = append(instanceIDs, instanceID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	out := []map[string]any{}
+	for _, instanceID := range instanceIDs {
+		instance, err := s.GetInstance(ctx, instanceID)
+		if err != nil {
+			return nil, err
+		}
+		payload, err := s.buildInstanceDeleteJobPayload(ctx, instance)
+		if err != nil {
+			payload = map[string]any{
+				"instance_id":  instance.ID,
+				"action":       "delete",
+				"service_code": instance.ServiceCode,
+				"name":         instance.Name,
+				"slug":         instance.Slug,
+				"systemd_unit": instance.SystemdUnit,
+				"enabled":      false,
+				"spec":         map[string]any{"render_error": err.Error()},
+			}
+		}
+		out = append(out, payload)
+	}
+	return out, nil
+}
+
 func (s *Store) RequeueNodeStuckJob(ctx context.Context, nodeID string) (domain.Job, error) {
 	if _, err := s.GetNode(ctx, nodeID); err != nil {
 		return domain.Job{}, err

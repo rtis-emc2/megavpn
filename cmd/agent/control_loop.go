@@ -150,6 +150,8 @@ func (c *client) execute(ctx context.Context, j job, st *agentState) (string, ma
 		return c.verifyCapability(ctx, j, *st)
 	case "node.agent.rotate_token":
 		return c.rotateAgentToken(ctx, j, st)
+	case "node.emergency_cleanup":
+		return c.emergencyCleanupNode(ctx, j, *st)
 	case "node.backhaul.apply":
 		return c.applyBackhaul(ctx, j, *st)
 	case "node.backhaul.probe":
