@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
 func TestDefaultServicePacksAreCreateReady(t *testing.T) {
@@ -85,6 +86,28 @@ func TestDefaultAccessSuiteHasExpectedComponentsWithoutInlineSecrets(t *testing.
 			if _, exists := component.Spec[secretKey]; exists {
 				t.Fatalf("component %d must not include inline secret key %q", idx, secretKey)
 			}
+		}
+	}
+}
+
+func TestMissingServicePackRuntimeCapabilitiesDeduplicatesRuntime(t *testing.T) {
+	components := []domain.ServicePackComponent{
+		{ServiceCode: "xray-core"},
+		{ServiceCode: "xray-core"},
+		{ServiceCode: "openvpn"},
+		{ServiceCode: "wireguard"},
+	}
+	capabilities := []domain.NodeCapability{
+		{CapabilityCode: "openvpn", Status: "available"},
+	}
+	got := missingServicePackRuntimeCapabilities(components, capabilities)
+	want := []string{"xray-core", "wireguard"}
+	if len(got) != len(want) {
+		t.Fatalf("missing runtime count = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for idx := range want {
+		if got[idx] != want[idx] {
+			t.Fatalf("missing runtime %d = %q, want %q; all=%#v", idx, got[idx], want[idx], got)
 		}
 	}
 }

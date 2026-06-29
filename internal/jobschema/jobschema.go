@@ -82,6 +82,11 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		normalized["service_code"] = strings.ToLower(serviceCode)
 		normalized["strategy"] = strategy
 		normalized["channel"] = channel
+		if ids, ok, err := optionalStringSlice(payload, "dependent_instance_ids"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["dependent_instance_ids"] = ids
+		}
 	case "node.capability.verify":
 		nodeID, err := requireString(payload, "node_id")
 		if err != nil {

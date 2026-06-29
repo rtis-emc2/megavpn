@@ -575,6 +575,10 @@ func (s *Store) CreateNodeServiceDiscoveryJob(ctx context.Context, nodeID string
 }
 
 func (s *Store) CreateNodeCapabilityInstallJob(ctx context.Context, nodeID, serviceCode, strategy, channel string) (domain.Job, error) {
+	return s.CreateNodeCapabilityInstallJobWithDependents(ctx, nodeID, serviceCode, strategy, channel, nil)
+}
+
+func (s *Store) CreateNodeCapabilityInstallJobWithDependents(ctx context.Context, nodeID, serviceCode, strategy, channel string, dependentInstanceIDs []string) (domain.Job, error) {
 	serviceCode = normalizeCapabilityCode(serviceCode)
 	strategy = strings.TrimSpace(strategy)
 	channel = strings.TrimSpace(channel)
@@ -601,6 +605,10 @@ func (s *Store) CreateNodeCapabilityInstallJob(ctx context.Context, nodeID, serv
 		return domain.Job{}, fmt.Errorf("unsupported install strategy %q for %s", strategy, serviceCode)
 	}
 	payload := map[string]any{"node_id": nodeID, "service_code": serviceCode, "strategy": strategy, "channel": channel}
+	dependentInstanceIDs = normalizedStringSet(dependentInstanceIDs)
+	if len(dependentInstanceIDs) > 0 {
+		payload["dependent_instance_ids"] = dependentInstanceIDs
+	}
 	j, err := s.CreateJob(ctx, domain.Job{Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload})
 	if err != nil {
 		return j, err
@@ -621,6 +629,20 @@ func defaultCapabilityInstallStrategy(serviceCode string) string {
 	default:
 		return ""
 	}
+}
+
+func normalizedStringSet(values []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func (s *Store) CreateNodeCapabilityVerifyJob(ctx context.Context, nodeID, serviceCode string) (domain.Job, error) {
@@ -846,6 +868,14 @@ func (s *Store) FindNodeInstanceByService(ctx context.Context, nodeID, serviceCo
 }
 
 func (s *Store) CreateInstance(ctx context.Context, x domain.Instance) (domain.Instance, error) {
+	return s.createInstance(ctx, x, true)
+}
+
+func (s *Store) CreateInstanceDraft(ctx context.Context, x domain.Instance) (domain.Instance, error) {
+	return s.createInstance(ctx, x, false)
+}
+
+func (s *Store) createInstance(ctx context.Context, x domain.Instance, queueInitialApply bool) (domain.Instance, error) {
 	if x.ID == "" {
 		x.ID = id.New()
 	}
@@ -890,13 +920,15 @@ func (s *Store) CreateInstance(ctx context.Context, x domain.Instance) (domain.I
 		_, _ = s.db.Exec(ctx, `delete from instances where id=$1`, x.ID)
 		return x, err
 	}
-	payload, payloadErr := s.buildInstanceJobPayload(ctx, x, "apply")
-	if payloadErr == nil {
-		if job, err := s.CreateJob(ctx, domain.Job{Type: "instance.apply", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload}); err == nil {
-			_, _ = s.db.Exec(ctx, `update instances set status='provisioning',updated_at=now() where id=$1 and status in ('draft','validated','failed')`, x.ID)
-			x.Status = "provisioning"
-			_ = s.AddJobLog(ctx, job.ID, "info", "initial instance apply queued", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
-			_, _ = s.CreateAudit(ctx, "system", "instance.apply", "instance", &x.ID, "initial instance apply queued")
+	if queueInitialApply {
+		payload, payloadErr := s.buildInstanceJobPayload(ctx, x, "apply")
+		if payloadErr == nil {
+			if job, err := s.CreateJob(ctx, domain.Job{Type: "instance.apply", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload}); err == nil {
+				_, _ = s.db.Exec(ctx, `update instances set status='provisioning',updated_at=now() where id=$1 and status in ('draft','validated','failed')`, x.ID)
+				x.Status = "provisioning"
+				_ = s.AddJobLog(ctx, job.ID, "info", "initial instance apply queued", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
+				_, _ = s.CreateAudit(ctx, "system", "instance.apply", "instance", &x.ID, "initial instance apply queued")
+			}
 		}
 	}
 	_, _ = s.CreateAudit(ctx, "system", "instance.create", "instance", &x.ID, "instance created")
@@ -1543,6 +1575,9 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 			if err := s.upsertNodeCapability(ctx, *scopeID, capCode, version, capStatus, "installer"); err != nil {
 				return err
 			}
+			if status == "succeeded" {
+				s.queueApplyJobsForCapabilityDependents(ctx, idv, *scopeID, capCode, payload)
+			}
 		}
 	}
 
@@ -1761,6 +1796,50 @@ func (s *Store) upsertNodeCapability(ctx context.Context, nodeID, capCode, versi
 	}
 	_, err := s.db.Exec(ctx, `insert into node_capabilities(id,node_id,capability_code,version,status,detected_at,source) values($1,$2,$3,$4,$5,now(),$6) on conflict(node_id, capability_code) do update set version=excluded.version,status=excluded.status,detected_at=excluded.detected_at,source=excluded.source`, id.New(), nodeID, capCode, version, status, source)
 	return err
+}
+
+func (s *Store) queueApplyJobsForCapabilityDependents(ctx context.Context, parentJobID, nodeID, capCode string, payload map[string]any) {
+	capCode = runtimeCapabilityCodeForService(capCode)
+	if nodeID == "" || capCode == "" {
+		return
+	}
+	for _, instanceID := range stringSetFromAny(payload["dependent_instance_ids"]) {
+		instance, err := s.GetInstance(ctx, instanceID)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(instance.NodeID) != nodeID {
+			continue
+		}
+		if runtimeCapabilityCodeForService(instance.ServiceCode) != capCode {
+			continue
+		}
+		job, err := s.UpdateInstanceStatus(ctx, instance.ID, driver.OperationApply)
+		if err != nil {
+			if parentJobID != "" {
+				_ = s.AddJobLog(ctx, parentJobID, "warn", "dependent instance apply was not queued", map[string]any{"instance_id": instance.ID, "error": err.Error()})
+			}
+			continue
+		}
+		_ = s.AddJobLog(ctx, job.ID, "info", "instance apply queued after runtime install", map[string]any{"instance_id": instance.ID, "runtime_service_code": capCode})
+	}
+}
+
+func stringSetFromAny(value any) []string {
+	switch items := value.(type) {
+	case []string:
+		return normalizedStringSet(items)
+	case []any:
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			if text := strings.TrimSpace(stringify(item)); text != "" {
+				out = append(out, text)
+			}
+		}
+		return normalizedStringSet(out)
+	default:
+		return nil
+	}
 }
 
 func (s *Store) AddJobLog(ctx context.Context, jobID, level, msg string, payload map[string]any) error {
@@ -2441,6 +2520,14 @@ func mustJSON(v any) []byte {
 
 func normalizeCapabilityCode(code string) string {
 	return driver.NormalizeCode(code)
+}
+
+func runtimeCapabilityCodeForService(serviceCode string) string {
+	contract, ok := driver.ContractFor(serviceCode)
+	if ok && strings.TrimSpace(contract.RuntimeCode) != "" {
+		return driver.NormalizeCode(contract.RuntimeCode)
+	}
+	return driver.NormalizeCode(serviceCode)
 }
 
 func validInstallStrategy(serviceCode, strategy string) bool {

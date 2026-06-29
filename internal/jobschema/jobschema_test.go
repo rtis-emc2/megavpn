@@ -23,6 +23,26 @@ func TestNormalizeNodeBootstrap(t *testing.T) {
 	}
 }
 
+func TestNormalizeNodeCapabilityInstallPreservesDependents(t *testing.T) {
+	payload, err := Normalize("node.capability.install", map[string]any{
+		"node_id":                " node-1 ",
+		"service_code":           " xray-core ",
+		"strategy":               " xtls_install_release ",
+		"channel":                " latest ",
+		"dependent_instance_ids": []any{" inst-1 ", "inst-2"},
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	got, ok := payload["dependent_instance_ids"].([]string)
+	if !ok {
+		t.Fatalf("dependent_instance_ids type = %T, want []string", payload["dependent_instance_ids"])
+	}
+	if len(got) != 2 || got[0] != "inst-1" || got[1] != "inst-2" {
+		t.Fatalf("dependent_instance_ids = %#v", got)
+	}
+}
+
 func TestNormalizeNodeEmergencyCleanupUsesNodeNameConfirmation(t *testing.T) {
 	payload, err := Normalize("node.emergency_cleanup", map[string]any{
 		"node_id":       " node-1 ",

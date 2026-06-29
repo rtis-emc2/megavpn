@@ -159,10 +159,20 @@
       const id = String(instanceID || '').trim();
       if (!id) return null;
       return (state.jobs || [])
-        .filter((job) => String(job.instance_id || '').trim() === id
-          || String(job.scope_id || '').trim() === id
-          || String(job.payload?.instance_id || '').trim() === id)
+        .filter((job) => jobTargetsInstance(job, id))
         .sort((left, right) => String(right.created_at || '').localeCompare(String(left.created_at || '')))[0] || null;
+    }
+
+    function jobTargetsInstance(job, instanceID) {
+      const id = String(instanceID || '').trim();
+      if (!id || !job) return false;
+      if (String(job.instance_id || '').trim() === id
+          || String(job.scope_id || '').trim() === id
+          || String(job.payload?.instance_id || '').trim() === id) {
+        return true;
+      }
+      const dependentIDs = Array.isArray(job.payload?.dependent_instance_ids) ? job.payload.dependent_instance_ids : [];
+      return dependentIDs.some((item) => String(item || '').trim() === id);
     }
 
     function jobResultSummary(job) {
@@ -213,6 +223,13 @@
 
     function hasActiveInstanceJob(row) {
       return ['queued', 'running', 'retrying'].includes(lowerStatus(row?.latestJob?.status));
+    }
+
+    function activeInstanceLifecycle(row) {
+      const jobType = String(row?.latestJob?.type || '').trim();
+      if (jobType === 'node.capability.install') return 'installing runtime';
+      if (jobType.startsWith('instance.')) return 'provisioning';
+      return 'pending';
     }
 
     function isCapabilityMissingText(value) {
@@ -452,6 +469,17 @@
     }
 
     function renderInstanceStateCluster(row) {
+      if (hasActiveInstanceJob(row)) {
+        const jobStatus = lowerStatus(row.latestJob?.status) || 'queued';
+        const jobType = String(row.latestJob?.type || 'job').replace(/^node\.capability\.install$/, 'runtime install');
+        return `
+        <div class="instance-state-cluster">
+          ${statusTag(activeInstanceLifecycle(row))}
+          ${statusTag(jobStatus)}
+          <span class="tag warn">${escapeHTML(jobType)}</span>
+          <span class="tag">${escapeHTML(row.revision === 'applied' ? 'rev applied' : `rev ${row.revision}`)}</span>
+        </div>`;
+      }
       return `
         <div class="instance-state-cluster">
           ${statusTag(row.status)}
@@ -510,14 +538,16 @@
     }
 
     function actionButtons(row) {
+      const busy = hasActiveInstanceJob(row);
+      const busyAttr = busy ? ' disabled title="Current instance job is still queued or running"' : '';
       return `
         <div class="instance-actions">
           <button class="secondary-btn instance-manage-btn" type="button" data-instance-id="${escapeHTML(row.id)}">Manage</button>
           ${row.capabilityMissing ? `<button class="secondary-btn instance-runtime-install-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-issue="${escapeHTML(row.issue?.text || row.latestJobSummary || '')}">Install runtime</button>` : ''}
-          <button class="primary-btn instance-action-btn" type="button" data-action="apply" data-instance-id="${escapeHTML(row.id)}">Apply</button>
-          <button class="secondary-btn instance-action-btn" type="button" data-action="restart" data-instance-id="${escapeHTML(row.id)}">Restart</button>
-          <button class="secondary-btn instance-action-btn" type="button" data-action="start" data-instance-id="${escapeHTML(row.id)}">Start</button>
-          <button class="secondary-btn instance-action-btn" type="button" data-action="stop" data-instance-id="${escapeHTML(row.id)}">Stop</button>
+          <button class="primary-btn instance-action-btn" type="button" data-action="apply" data-instance-id="${escapeHTML(row.id)}"${busyAttr}>Apply</button>
+          <button class="secondary-btn instance-action-btn" type="button" data-action="restart" data-instance-id="${escapeHTML(row.id)}"${busyAttr}>Restart</button>
+          <button class="secondary-btn instance-action-btn" type="button" data-action="start" data-instance-id="${escapeHTML(row.id)}"${busyAttr}>Start</button>
+          <button class="secondary-btn instance-action-btn" type="button" data-action="stop" data-instance-id="${escapeHTML(row.id)}"${busyAttr}>Stop</button>
           <button class="danger-btn instance-delete-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-instance-name="${escapeHTML(row.name || 'instance')}">Delete</button>
         </div>`;
     }
@@ -760,12 +790,14 @@
       }
       if (result.status === 'succeeded') {
         const installJobs = Array.isArray(result.data?.runtime_install_jobs) ? result.data.runtime_install_jobs : [];
+        const applyJobs = Array.isArray(result.data?.apply_jobs) ? result.data.apply_jobs : [];
         const createdInstances = Array.isArray(result.data?.created_instances) ? result.data.created_instances : [];
         return `
           <div class="form-result pack-create-result">
             ${renderActionResponse(result.data, 'Service pack creation')}
             <div class="pack-create-job-summary">
               <span class="tag ${installJobs.length ? 'warn' : 'ok'}">${escapeHTML(String(installJobs.length))} runtime install jobs</span>
+              <span class="tag ${applyJobs.length ? 'warn' : 'ok'}">${escapeHTML(String(applyJobs.length))} apply jobs</span>
               <span class="tag">${escapeHTML(String(createdInstances.length))} instances</span>
             </div>
             <div class="inline-actions">

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -390,7 +391,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 	if req.AutoInstallRuntime != nil {
 		autoInstallRuntime = *req.AutoInstallRuntime
 	}
-	runtimeInstallJobs := []domain.Job{}
+	missingRuntimes := map[string]bool{}
 	if autoInstallRuntime {
 		capabilities, err := s.store.ListNodeCapabilities(r.Context(), req.NodeID)
 		if err != nil {
@@ -398,21 +399,12 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			return
 		}
 		for _, serviceCode := range missingServicePackRuntimeCapabilities(pack.Components, capabilities) {
-			job, err := s.store.CreateNodeCapabilityInstallJob(r.Context(), req.NodeID, serviceCode, "", "")
-			if err != nil {
-				writeJSON(w, 409, response{
-					"status":               "runtime_install_failed",
-					"error":                err.Error(),
-					"service_pack_key":     pack.Key,
-					"runtime_service_code": serviceCode,
-					"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
-				})
-				return
-			}
-			runtimeInstallJobs = append(runtimeInstallJobs, job)
+			missingRuntimes[serviceCode] = true
 		}
 	}
 	created := make([]domain.Instance, 0, len(pack.Components))
+	applyNowInstanceIDs := []string{}
+	dependentInstanceIDsByRuntime := map[string][]string{}
 	for _, component := range pack.Components {
 		name := req.BaseName
 		if suffix := strings.TrimSpace(component.NameSuffix); suffix != "" {
@@ -450,7 +442,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			EndpointPort: component.EndpointPort,
 			Spec:         spec,
 		}
-		createdInstance, err := s.store.CreateInstance(r.Context(), instance)
+		createdInstance, err := s.store.CreateInstanceDraft(r.Context(), instance)
 		if err != nil {
 			writeJSON(w, 409, response{
 				"status":            "partial_failure",
@@ -461,6 +453,50 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			return
 		}
 		created = append(created, createdInstance)
+		runtimeCode := runtimeCapabilityCodeHTTP(component.ServiceCode)
+		if autoInstallRuntime && missingRuntimes[runtimeCode] {
+			dependentInstanceIDsByRuntime[runtimeCode] = append(dependentInstanceIDsByRuntime[runtimeCode], createdInstance.ID)
+		} else {
+			applyNowInstanceIDs = append(applyNowInstanceIDs, createdInstance.ID)
+		}
+	}
+	runtimeInstallJobs := []domain.Job{}
+	runtimeCodes := make([]string, 0, len(dependentInstanceIDsByRuntime))
+	for runtimeCode := range dependentInstanceIDsByRuntime {
+		runtimeCodes = append(runtimeCodes, runtimeCode)
+	}
+	sort.Strings(runtimeCodes)
+	for _, runtimeCode := range runtimeCodes {
+		dependentIDs := dependentInstanceIDsByRuntime[runtimeCode]
+		job, err := s.store.CreateNodeCapabilityInstallJobWithDependents(r.Context(), req.NodeID, runtimeCode, "", "", dependentIDs)
+		if err != nil {
+			writeJSON(w, 409, response{
+				"status":               "runtime_install_failed",
+				"error":                err.Error(),
+				"service_pack_key":     pack.Key,
+				"runtime_service_code": runtimeCode,
+				"created_instances":    created,
+				"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
+			})
+			return
+		}
+		runtimeInstallJobs = append(runtimeInstallJobs, job)
+	}
+	applyJobs := []domain.Job{}
+	for _, instanceID := range applyNowInstanceIDs {
+		job, err := s.store.UpdateInstanceStatus(r.Context(), instanceID, driver.OperationApply)
+		if err != nil {
+			writeJSON(w, 409, response{
+				"status":               "apply_queue_failed",
+				"error":                err.Error(),
+				"service_pack_key":     pack.Key,
+				"created_instances":    created,
+				"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
+				"apply_jobs":           redactedJobs(applyJobs),
+			})
+			return
+		}
+		applyJobs = append(applyJobs, job)
 	}
 	authCtx, ok := authFromRequest(r)
 	if ok {
@@ -471,6 +507,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 		"service_pack_key":     pack.Key,
 		"created_instances":    created,
 		"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
+		"apply_jobs":           redactedJobs(applyJobs),
 	})
 }
 
@@ -489,7 +526,7 @@ func missingServicePackRuntimeCapabilities(components []domain.ServicePackCompon
 	out := []string{}
 	for _, component := range components {
 		code := runtimeCapabilityCodeHTTP(component.ServiceCode)
-		if code == "" || ready[code] || seen[code] || !hasInstallStrategyHTTP(code) {
+		if code == "" || ready[code] || seen[code] || !hasAutomaticInstallStrategyHTTP(code) {
 			continue
 		}
 		seen[code] = true
@@ -515,9 +552,13 @@ func isRuntimeCapabilityReadyHTTP(status string) bool {
 	}
 }
 
-func hasInstallStrategyHTTP(serviceCode string) bool {
-	contract, ok := driver.ContractFor(serviceCode)
-	return ok && len(contract.InstallStrategies) > 0
+func hasAutomaticInstallStrategyHTTP(serviceCode string) bool {
+	switch driver.NormalizeCode(serviceCode) {
+	case driver.Nginx, driver.XrayCore, driver.OpenVPN, driver.WireGuard, driver.IPSec, driver.XL2TPD, driver.HTTPProxy, driver.Shadowsocks:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) availableServicePacks(ctx context.Context) ([]domain.ServicePackDefinition, error) {
