@@ -47,6 +47,7 @@
     }
 
     const { certificateOptions, nodeOptions, servicePKIProfileOptions } = domainUI;
+    const INSTANCE_PAGE_SIZE = 100;
 
     function instanceEndpoint(instance) {
       const host = String(instance?.endpoint_host || '').trim();
@@ -130,27 +131,47 @@
       return `${text.slice(0, 117)}...`;
     }
 
-    function nameCell(row) {
-      return `
-        <strong>${escapeHTML(row.name)}</strong>
-        <div class="metric-caption">desired: ${escapeHTML(row.status)} · revision: ${escapeHTML(row.revision)}</div>`;
+    function firstText(...values) {
+      return values.map((value) => String(value || '').trim()).find(Boolean) || '';
     }
 
-    function stateCell(value, reason) {
-      const text = compactReason(reason || 'No runtime details yet.');
-      return `
-        <div>${statusTag(value || 'unknown')}</div>
-        <div class="metric-caption" title="${escapeHTML(reason || '')}">${escapeHTML(text)}</div>`;
+    function latestInstanceJob(instanceID) {
+      const id = String(instanceID || '').trim();
+      if (!id) return null;
+      return (state.jobs || [])
+        .filter((job) => String(job.instance_id || '').trim() === id
+          || String(job.scope_id || '').trim() === id
+          || String(job.payload?.instance_id || '').trim() === id)
+        .sort((left, right) => String(right.created_at || '').localeCompare(String(left.created_at || '')))[0] || null;
+    }
+
+    function jobResultSummary(job) {
+      const result = job?.result || {};
+      const health = result.health || {};
+      return firstText(
+        result.health_reason,
+        result.health_route_warning,
+        health.reason,
+        health.route_warning,
+        result.health_error,
+        health.error,
+        result.error,
+        result.message,
+        result.active_state,
+      );
     }
 
     function toInstanceRow(instance) {
-      const node = state.nodes.find((item) => item.id === instance.node_id);
+      const node = (state.nodes || []).find((item) => item.id === instance.node_id);
       const runtime = runtimeStateFor(instance.id);
-      return {
+      const latestJob = latestInstanceJob(instance.id);
+      const row = {
         id: instance.id,
         name: instance.name,
         node: node?.name || instance.node_id || 'n/a',
+        nodeAddress: node?.public_address || node?.private_address || '',
         service: instance.service_code || 'unknown',
+        serviceLabel: serviceLabel(instance.service_code || 'unknown'),
         endpoint: instanceEndpoint(instance),
         revision: revisionState(instance),
         status: instance.status || 'draft',
@@ -159,7 +180,208 @@
         drift: runtime?.drift_status || 'unknown',
         healthReason: primaryReason(runtime?.health_reasons, 'Waiting for runtime health report.'),
         driftReason: primaryReason(runtime?.drift_reasons, 'Waiting for runtime drift report.'),
+        latestJob,
+        latestJobSummary: jobResultSummary(latestJob),
       };
+      row.bucket = instanceBucket(row);
+      row.issue = instanceIssue(row);
+      return row;
+    }
+
+    function lowerStatus(value) {
+      return String(value || '').trim().toLowerCase();
+    }
+
+    function instanceBucket(row) {
+      const status = lowerStatus(row.status);
+      const runtime = lowerStatus(row.runtime);
+      const health = lowerStatus(row.health);
+      const drift = lowerStatus(row.drift);
+      const revision = lowerStatus(row.revision);
+      if (status === 'failed' || runtime === 'failed' || ['failed', 'degraded', 'unhealthy', 'error'].includes(health)) {
+        return 'problem';
+      }
+      if (revision && revision !== 'applied' && revision !== 'n/a') return 'pending';
+      if (['pending_apply', 'pending', 'drifted', 'out_of_sync'].includes(drift)) return 'pending';
+      if (status === 'active' && runtime === 'active' && health === 'healthy' && drift === 'in_sync') return 'healthy';
+      return 'unknown';
+    }
+
+    function instanceIssue(row) {
+      const status = lowerStatus(row.status);
+      const runtime = lowerStatus(row.runtime);
+      const health = lowerStatus(row.health);
+      const drift = lowerStatus(row.drift);
+      const revision = lowerStatus(row.revision);
+      const reasons = [];
+      const latestJobStatus = lowerStatus(row.latestJob?.status);
+      if (row.latestJob && ['failed', 'blocked', 'cancelled'].includes(latestJobStatus)) {
+        const summary = row.latestJobSummary ? `: ${row.latestJobSummary}` : '';
+        reasons.push(`${row.latestJob.type || 'job'} ${latestJobStatus}${summary}`);
+      } else if (row.latestJob && ['queued', 'running'].includes(latestJobStatus)) {
+        reasons.push(`${row.latestJob.type || 'job'} is ${latestJobStatus}.`);
+      }
+      if (status === 'failed') {
+        reasons.push('Lifecycle is failed; check the latest apply job result.');
+      }
+      if (revision && revision !== 'applied' && revision !== 'n/a') {
+        reasons.push(row.driftReason || 'Current desired revision has not been applied to the node yet.');
+      } else if (['pending_apply', 'pending', 'drifted', 'out_of_sync'].includes(drift)) {
+        reasons.push(row.driftReason || 'Runtime drift is not in sync with desired state.');
+      }
+      if (['failed', 'degraded', 'unhealthy', 'error'].includes(health)) {
+        reasons.push(row.healthReason || 'Runtime health status is degraded.');
+      }
+      if (status === 'active' && ['stopped', 'inactive'].includes(runtime)) {
+        reasons.push('Unit is not running on the selected node.');
+      }
+      const bucket = instanceBucket(row);
+      if (!reasons.length && bucket === 'healthy') {
+        return { status: 'ok', text: 'No active issue.' };
+      }
+      if (!reasons.length) {
+        return { status: 'unknown', text: 'Waiting for agent runtime report.' };
+      }
+      return {
+        status: bucket === 'problem' ? 'failed' : bucket,
+        text: compactReason(reasons.filter(Boolean).slice(0, 3).join(' · ')),
+      };
+    }
+
+    function ensureInstanceListFilters() {
+      if (!state.instanceListFilters || typeof state.instanceListFilters !== 'object') {
+        state.instanceListFilters = { search: '', status: 'all', service: 'all', node: 'all' };
+      }
+      if (!state.instanceListFilters.search) state.instanceListFilters.search = '';
+      if (!state.instanceListFilters.status) state.instanceListFilters.status = 'all';
+      if (!state.instanceListFilters.service) state.instanceListFilters.service = 'all';
+      if (!state.instanceListFilters.node) state.instanceListFilters.node = 'all';
+      return state.instanceListFilters;
+    }
+
+    function instanceFilterOptions(rows, key, labelFn = (value) => value) {
+      const values = Array.from(new Set(rows.map((row) => String(row[key] || '').trim()).filter(Boolean)))
+        .sort((left, right) => left.localeCompare(right, 'en'));
+      return values.map((value) => ({ value, label: labelFn(value) }));
+    }
+
+    function renderInstanceFilterOptions(options, selected) {
+      return options.map((option) => `
+        <option value="${escapeHTML(option.value)}"${option.value === selected ? ' selected' : ''}>${escapeHTML(option.label)}</option>`).join('');
+    }
+
+    function filterInstanceRows(rows, filters) {
+      const query = String(filters.search || '').trim().toLowerCase();
+      return rows.filter((row) => {
+        if (filters.status !== 'all' && row.bucket !== filters.status) return false;
+        if (filters.service !== 'all' && row.service !== filters.service) return false;
+        if (filters.node !== 'all' && row.node !== filters.node) return false;
+        if (!query) return true;
+        const haystack = [
+          row.name,
+          row.id,
+          row.service,
+          row.serviceLabel,
+          row.node,
+          row.nodeAddress,
+          row.endpoint,
+          row.status,
+          row.runtime,
+          row.health,
+          row.drift,
+          row.issue?.text,
+        ].join(' ').toLowerCase();
+        return haystack.includes(query);
+      });
+    }
+
+    function renderInstanceListToolbar(rows, filteredRows) {
+      const filters = ensureInstanceListFilters();
+      const serviceOptions = instanceFilterOptions(rows, 'service', serviceLabel);
+      const nodeOptionsList = instanceFilterOptions(rows, 'node');
+      return `
+        <div class="instance-list-toolbar">
+          <div class="field compact">
+            <label>Search</label>
+            <input id="instanceSearchInput" value="${escapeHTML(filters.search)}" placeholder="name, node, endpoint, issue">
+          </div>
+          <div class="field compact">
+            <label>Status</label>
+            <select id="instanceStatusFilter">
+              <option value="all"${filters.status === 'all' ? ' selected' : ''}>All statuses</option>
+              <option value="problem"${filters.status === 'problem' ? ' selected' : ''}>Problems</option>
+              <option value="pending"${filters.status === 'pending' ? ' selected' : ''}>Pending apply</option>
+              <option value="healthy"${filters.status === 'healthy' ? ' selected' : ''}>Healthy</option>
+              <option value="unknown"${filters.status === 'unknown' ? ' selected' : ''}>Unknown</option>
+            </select>
+          </div>
+          <div class="field compact">
+            <label>Service</label>
+            <select id="instanceServiceFilter">
+              <option value="all"${filters.service === 'all' ? ' selected' : ''}>All services</option>
+              ${renderInstanceFilterOptions(serviceOptions, filters.service)}
+            </select>
+          </div>
+          <div class="field compact">
+            <label>Node</label>
+            <select id="instanceNodeFilter">
+              <option value="all"${filters.node === 'all' ? ' selected' : ''}>All nodes</option>
+              ${renderInstanceFilterOptions(nodeOptionsList, filters.node)}
+            </select>
+          </div>
+          <div class="instance-list-toolbar-actions">
+            <button class="secondary-btn" id="applyInstanceFiltersBtn" type="button">Apply filters</button>
+            <button class="secondary-btn" id="resetInstanceFiltersBtn" type="button">Reset</button>
+            <span class="tag">${escapeHTML(String(filteredRows.length))} shown</span>
+          </div>
+        </div>`;
+    }
+
+    function renderInstanceIssue(row) {
+      const tagClass = row.issue.status === 'ok'
+        ? 'ok'
+        : row.issue.status === 'failed' || row.issue.status === 'problem'
+          ? 'danger'
+          : row.issue.status === 'pending'
+            ? 'warn'
+            : 'stub';
+      return `
+        <div class="instance-issue-cell">
+          <span class="tag ${tagClass}">${escapeHTML(row.issue.status || 'unknown')}</span>
+          <span title="${escapeHTML(row.issue.text || '')}">${escapeHTML(row.issue.text || 'Waiting for runtime report.')}</span>
+        </div>`;
+    }
+
+    function renderInstanceStateCluster(row) {
+      return `
+        <div class="instance-state-cluster">
+          ${statusTag(row.status)}
+          ${statusTag(row.runtime)}
+          ${statusTag(row.health)}
+          <span class="tag">${escapeHTML(row.revision === 'applied' ? 'rev applied' : `rev ${row.revision}`)}</span>
+        </div>`;
+    }
+
+    function renderInstanceTableRow(row) {
+      return `
+        <tr>
+          <td>
+            <strong class="mono-clip" title="${escapeHTML(row.name || '')}">${escapeHTML(row.name || 'instance')}</strong>
+            <span class="metric-caption mono-clip" title="${escapeHTML(row.id || '')}">${escapeHTML(row.id || 'n/a')}</span>
+          </td>
+          <td>
+            <strong>${escapeHTML(row.serviceLabel)}</strong>
+            <span class="metric-caption mono-clip">${escapeHTML(row.service)}</span>
+          </td>
+          <td>
+            <strong class="mono-clip" title="${escapeHTML(row.node)}">${escapeHTML(row.node)}</strong>
+            ${row.nodeAddress ? `<span class="metric-caption mono-clip" title="${escapeHTML(row.nodeAddress)}">${escapeHTML(row.nodeAddress)}</span>` : ''}
+          </td>
+          <td><code class="mono-clip" title="${escapeHTML(row.endpoint)}">${escapeHTML(row.endpoint)}</code></td>
+          <td>${renderInstanceStateCluster(row)}</td>
+          <td>${renderInstanceIssue(row)}</td>
+          <td>${actionButtons(row)}</td>
+        </tr>`;
     }
 
     function renderInstanceFact(label, value, className = '') {
@@ -167,18 +389,6 @@
         <div class="instance-fact ${className}">
           <span>${escapeHTML(label)}</span>
           <strong>${escapeHTML(String(value ?? '').trim() || 'n/a')}</strong>
-        </div>`;
-    }
-
-    function renderInstanceStateLine(label, status, reason) {
-      const text = compactReason(reason || 'No runtime details yet.');
-      return `
-        <div class="instance-state-line">
-          <div class="instance-state-head">
-            <span>${escapeHTML(label)}</span>
-            ${statusTag(status || 'unknown')}
-          </div>
-          <small title="${escapeHTML(reason || '')}">${escapeHTML(text)}</small>
         </div>`;
     }
 
@@ -194,57 +404,38 @@
         </div>`;
     }
 
-    function renderInstanceCard(instance) {
-      const row = toInstanceRow(instance);
-      return `
-        <article class="instance-row-card" data-instance-id="${escapeHTML(row.id)}">
-          <div class="instance-row-head">
-            <div class="instance-title-block">
-              <h3>${escapeHTML(row.name || 'instance')}</h3>
-              <div class="instance-subtitle">${escapeHTML(row.node)} -> ${escapeHTML(row.endpoint)}</div>
-            </div>
-            <div class="instance-row-tags">
-              ${statusTag(row.status)}
-              <span class="tag">${escapeHTML(serviceLabel(row.service))}</span>
-              <span class="tag">${escapeHTML(row.revision === 'applied' ? 'revision applied' : `revision ${row.revision}`)}</span>
-            </div>
-          </div>
-          <div class="instance-row-grid">
-            <section class="instance-panel">
-              <div class="instance-panel-label">Service</div>
-              <div class="instance-facts">
-                ${renderInstanceFact('Code', row.service)}
-                ${renderInstanceFact('Node', row.node)}
-                ${renderInstanceFact('Endpoint', row.endpoint, 'wide')}
-              </div>
-            </section>
-            <section class="instance-panel">
-              <div class="instance-panel-label">Desired state</div>
-              <div class="instance-facts">
-                ${renderInstanceFact('Lifecycle', row.status)}
-                ${renderInstanceFact('Revision', row.revision)}
-                ${renderInstanceFact('Instance ID', row.id, 'wide')}
-              </div>
-            </section>
-            <section class="instance-panel">
-              <div class="instance-panel-label">Runtime</div>
-              <div class="instance-state-stack">
-                ${renderInstanceStateLine('runtime', row.runtime, 'Agent runtime observation for this unit.')}
-                ${renderInstanceStateLine('health', row.health, row.healthReason)}
-                ${renderInstanceStateLine('drift', row.drift, row.driftReason)}
-              </div>
-            </section>
-            <section class="instance-panel">
-              <div class="instance-panel-label">Actions</div>
-              ${actionButtons(row)}
-            </section>
-          </div>
-        </article>`;
-    }
-
     function renderInstancesList(instances) {
       if (!instances.length) return renderEmptyInstancesState();
-      return instances.map(renderInstanceCard).join('');
+      const rows = instances.map(toInstanceRow);
+      const filters = ensureInstanceListFilters();
+      const filteredRows = filterInstanceRows(rows, filters);
+      const limit = Number(state.instancesVisibleLimit || INSTANCE_PAGE_SIZE);
+      const visibleRows = filteredRows.slice(0, limit);
+      const hiddenCount = Math.max(0, filteredRows.length - visibleRows.length);
+      return `
+        ${renderInstanceListToolbar(rows, filteredRows)}
+        <div class="table-wrap instances-table-wrap">
+          <table class="instances-table">
+            <thead>
+              <tr>
+                <th>Instance</th>
+                <th>Service</th>
+                <th>Node</th>
+                <th>Endpoint</th>
+                <th>State</th>
+                <th>Issue</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${visibleRows.length ? visibleRows.map(renderInstanceTableRow).join('') : '<tr><td colspan="7"><div class="empty">No instances match the selected filters.</div></td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        ${hiddenCount ? `
+          <div class="instance-load-more">
+            <button class="secondary-btn" id="showMoreInstancesBtn" type="button">Show next ${escapeHTML(String(Math.min(INSTANCE_PAGE_SIZE, hiddenCount)))} of ${escapeHTML(String(hiddenCount))}</button>
+          </div>` : ''}`;
     }
 
     function renderEmptyInstancesState() {
@@ -433,7 +624,7 @@
               ${renderPackDetails(selectedPack)}
               <form id="createServicePackPageForm" class="pack-create-form">
                 <input type="hidden" name="service_pack_key" value="${escapeHTML(selectedPack?.key || '')}">
-                <div class="pack-create-form-grid">
+                <div class="pack-create-form-grid stable">
                   <div class="field">
                     <label>Node</label>
                     <select name="node_id" required${nodeSelect ? '' : ' disabled'}>
@@ -441,24 +632,24 @@
                     </select>
                   </div>
                   <div class="field">
-                    <label>TLS edge certificate</label>
-                    <select name="certificate_id">${certificateSelect}</select>
-                    <div class="field-hint">Used only by Nginx or Xray TLS components. OpenVPN uses the Service CA profile below.</div>
-                  </div>
-                  ${usesOpenVPN ? `
-                    <div class="field">
-                      <label>OpenVPN CA profile</label>
-                      <select name="openvpn_pki_profile">${servicePKIProfileOptions('openvpn', 'default')}</select>
-                      <div class="field-hint">All OpenVPN instances created with this profile will trust the same service CA root.</div>
-                    </div>` : ''}
-                  <div class="field">
                     <label>Base name</label>
                     <input name="base_name" value="${escapeHTML(baseName)}" placeholder="${escapeHTML(baseName)}">
                   </div>
-                  <div class="field">
+                  <div class="field full">
                     <label>Endpoint host</label>
                     <input name="endpoint_host" placeholder="${escapeHTML(endpointHint)}"${endpointRequired ? ' required' : ''}>
                   </div>
+                  <div class="field full">
+                    <label>TLS edge certificate</label>
+                    <select name="certificate_id">${certificateSelect}</select>
+                    <div class="field-hint">Used by TLS-facing Nginx or Xray components only. OpenVPN uses the Service CA profile below.</div>
+                  </div>
+                  ${usesOpenVPN ? `
+                    <div class="field full">
+                      <label>OpenVPN CA profile</label>
+                      <select name="openvpn_pki_profile">${servicePKIProfileOptions('openvpn', 'default')}</select>
+                      <div class="field-hint">OpenVPN instances created with this profile trust the same service CA root, which is required for a shared endpoint fleet.</div>
+                    </div>` : ''}
                 </div>
                 <div class="pack-create-actions">
                   <button class="primary-btn" type="submit"${selectedPack && nodeSelect ? '' : ' disabled'}>Create instances</button>
@@ -533,6 +724,7 @@
     function bindActions() {
       document.getElementById('createInstanceBtn')?.addEventListener('click', openCreateInstanceModal);
       document.getElementById('createServicePackBtn')?.addEventListener('click', openCreateFromPackPage);
+      bindInstanceListControls();
       document.getElementById('addServicePackTemplateBtn')?.addEventListener('click', () => openServicePackEditor(''));
       document.querySelectorAll('.service-pack-edit-btn').forEach((button) => {
         button.addEventListener('click', () => openServicePackEditor(button.dataset.packKey));
@@ -548,6 +740,41 @@
       });
       document.querySelectorAll('.instance-delete-btn').forEach((button) => {
         button.addEventListener('click', () => openDeleteInstanceModal(button.dataset.instanceId, button.dataset.instanceName));
+      });
+    }
+
+    function bindInstanceListControls() {
+      const filters = ensureInstanceListFilters();
+      const searchInput = document.getElementById('instanceSearchInput');
+      const statusFilter = document.getElementById('instanceStatusFilter');
+      const serviceFilter = document.getElementById('instanceServiceFilter');
+      const nodeFilter = document.getElementById('instanceNodeFilter');
+      const apply = () => {
+        filters.search = String(searchInput?.value || '').trim();
+        filters.status = String(statusFilter?.value || 'all');
+        filters.service = String(serviceFilter?.value || 'all');
+        filters.node = String(nodeFilter?.value || 'all');
+        state.instancesVisibleLimit = INSTANCE_PAGE_SIZE;
+        render();
+      };
+      searchInput?.addEventListener('input', () => {
+        filters.search = String(searchInput.value || '');
+      });
+      searchInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') apply();
+      });
+      statusFilter?.addEventListener('change', apply);
+      serviceFilter?.addEventListener('change', apply);
+      nodeFilter?.addEventListener('change', apply);
+      document.getElementById('applyInstanceFiltersBtn')?.addEventListener('click', apply);
+      document.getElementById('resetInstanceFiltersBtn')?.addEventListener('click', () => {
+        state.instanceListFilters = { search: '', status: 'all', service: 'all', node: 'all' };
+        state.instancesVisibleLimit = INSTANCE_PAGE_SIZE;
+        render();
+      });
+      document.getElementById('showMoreInstancesBtn')?.addEventListener('click', () => {
+        state.instancesVisibleLimit = Number(state.instancesVisibleLimit || INSTANCE_PAGE_SIZE) + INSTANCE_PAGE_SIZE;
+        render();
       });
     }
 

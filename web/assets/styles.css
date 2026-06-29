@@ -2072,8 +2072,7 @@ tr:hover td { background: #f8fafc; }
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
-.instance-empty-panel,
-.instance-row-card {
+.instance-empty-panel {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -2093,55 +2092,6 @@ tr:hover td { background: #f8fafc; }
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
-}
-.instance-row-card {
-  display: grid;
-  gap: 14px;
-  padding: 18px;
-  border-width: 0 0 1px;
-  border-radius: 0;
-  background: #ffffff;
-}
-.instance-row-card:last-child {
-  border-bottom: 0;
-}
-.instance-row-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  min-width: 0;
-}
-.instance-title-block {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-.instance-title-block h3 {
-  font-size: 17px;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-.instance-subtitle {
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-.instance-row-tags {
-  display: flex;
-  justify-content: flex-end;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
-.instance-row-grid {
-  display: grid;
-  grid-template-columns: minmax(220px, 1.05fr) minmax(240px, 1.05fr) minmax(320px, 1.55fr) minmax(130px, 0.48fr);
-  gap: 12px;
-  align-items: stretch;
 }
 .instance-panel {
   display: grid;
@@ -2186,39 +2136,6 @@ tr:hover td { background: #f8fafc; }
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-.instance-state-stack {
-  display: grid;
-  gap: 8px;
-}
-.instance-state-line {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 9px;
-  background: #ffffff;
-}
-.instance-state-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.instance-state-head span {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.instance-state-line small {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
 .instance-actions {
   display: grid;
   grid-template-columns: 1fr;
@@ -2231,6 +2148,112 @@ tr:hover td { background: #f8fafc; }
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.2;
+}
+.instance-list-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.35fr) minmax(150px, 0.75fr) minmax(170px, 0.9fr) minmax(170px, 0.9fr) minmax(260px, auto);
+  gap: 10px;
+  align-items: end;
+  min-width: 0;
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+  background: #f8fafc;
+}
+.field.compact {
+  gap: 5px;
+}
+.field.compact label {
+  font-size: 11px;
+}
+.field.compact input,
+.field.compact select {
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+.instance-list-toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.instance-list-toolbar-actions button {
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+.instances-table-wrap table.instances-table {
+  min-width: 1280px;
+  table-layout: fixed;
+}
+.instances-table th,
+.instances-table td {
+  padding: 11px 12px;
+}
+.instances-table td {
+  height: 64px;
+}
+.instances-table th:nth-child(1) { width: 230px; }
+.instances-table th:nth-child(2) { width: 155px; }
+.instances-table th:nth-child(3) { width: 190px; }
+.instances-table th:nth-child(4) { width: 190px; }
+.instances-table th:nth-child(5) { width: 210px; }
+.instances-table th:nth-child(6) { width: auto; }
+.instances-table th:nth-child(7) { width: 190px; }
+.instance-state-cluster {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.instance-state-cluster .tag {
+  max-width: 96px;
+  min-height: 24px;
+  padding: 3px 7px;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instance-issue-cell {
+  display: grid;
+  grid-template-columns: minmax(74px, max-content) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+}
+.instance-issue-cell .tag {
+  min-height: 24px;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+.instance-issue-cell span:last-child {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.instances-table .instance-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  min-width: 0;
+}
+.instances-table .instance-actions button {
+  min-height: 28px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+.instance-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+  background: #ffffff;
 }
 .address-pools-page {
   overflow: hidden;
@@ -2591,6 +2614,15 @@ tr:hover td { background: #f8fafc; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
+.pack-create-form-grid.stable {
+  align-items: start;
+}
+.pack-create-form-grid.stable .field {
+  align-content: start;
+}
+.pack-create-form-grid.stable .field-hint {
+  min-height: 36px;
+}
 .pack-create-actions {
   display: flex;
   justify-content: flex-start;
@@ -2636,7 +2668,7 @@ tr:hover td { background: #f8fafc; }
   .backhaul-row-grid, .backhaul-row-grid.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .instance-row-grid,
+  .instance-list-toolbar,
   .instances-empty-grid,
   .pool-summary-grid,
   .pool-space-grid,
@@ -2725,7 +2757,7 @@ tr:hover td { background: #f8fafc; }
   .backhaul-row-grid.compact,
   .backhaul-facts,
   .backhaul-actions,
-  .instance-row-grid,
+  .instance-list-toolbar,
   .instances-empty-grid,
   .instance-facts,
   .instance-actions,
@@ -2739,14 +2771,9 @@ tr:hover td { background: #f8fafc; }
   .pack-component-grid {
     grid-template-columns: 1fr;
   }
-  .instance-row-head {
-    flex-direction: column;
-  }
-  .instance-row-tags {
-    justify-content: flex-start;
-  }
   .table-head,
   .table-tools,
+  .instance-list-toolbar-actions,
   .table-tools .inline-actions {
     justify-content: flex-start;
   }
