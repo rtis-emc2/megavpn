@@ -294,6 +294,7 @@
     openCreateInstanceModal: instanceWorkflows.openCreateInstanceModal,
     openCreateInstanceChoiceModal: instanceWorkflows.openCreateInstanceChoiceModal,
     openInstanceManageModal: instanceWorkflows.openInstanceManageModal,
+    openInstanceRuntimeInstallModal: instanceWorkflows.openInstanceRuntimeInstallModal,
     queueInstanceAction: instanceWorkflows.queueInstanceAction,
   });
   if (!instancesPage) throw new Error('MegaVPNInstancesPage is not loaded');

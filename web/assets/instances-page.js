@@ -20,6 +20,7 @@
       openActionOutcomeModal,
       openCreateInstanceModal,
       openInstanceManageModal,
+      openInstanceRuntimeInstallModal,
       queueInstanceAction,
     } = ctx;
     if (
@@ -31,6 +32,7 @@
       typeof escapeHTML !== 'function' ||
       !domainUI ||
       typeof domainUI.nodeOptions !== 'function' ||
+      typeof domainUI.normalizeInstanceServiceCode !== 'function' ||
       typeof domainUI.certificateOptions !== 'function' ||
       typeof domainUI.servicePKIProfileOptions !== 'function' ||
       typeof renderActionResponse !== 'function' ||
@@ -43,12 +45,13 @@
       typeof openActionOutcomeModal !== 'function' ||
       typeof openCreateInstanceModal !== 'function' ||
       typeof openInstanceManageModal !== 'function' ||
+      typeof openInstanceRuntimeInstallModal !== 'function' ||
       typeof queueInstanceAction !== 'function'
     ) {
       throw new Error('MegaVPNInstancesPage requires page dependencies');
     }
 
-    const { certificateOptions, nodeOptions, servicePKIProfileOptions } = domainUI;
+    const { certificateOptions, nodeOptions, normalizeInstanceServiceCode, servicePKIProfileOptions } = domainUI;
     const INSTANCE_PAGE_SIZE = 100;
 
     function instanceEndpoint(instance) {
@@ -178,10 +181,22 @@
       );
     }
 
+    function hasRuntimeInstaller(serviceCode) {
+      const normalized = normalizeInstanceServiceCode(serviceCode);
+      return (state.serviceInstallers || []).some((installer) => normalizeInstanceServiceCode(installer.service_code) === normalized);
+    }
+
+    function isCapabilityMissingText(value) {
+      return /capability missing|binary is not installed|not installed or not executable|runtime capability is not available/i.test(String(value || ''));
+    }
+
     function toInstanceRow(instance) {
       const node = nodeByID(instance.node_id);
       const runtime = runtimeStateFor(instance.id);
       const latestJob = latestInstanceJob(instance.id);
+      const healthReason = primaryReason(runtime?.health_reasons, 'Waiting for runtime health report.');
+      const driftReason = primaryReason(runtime?.drift_reasons, 'Waiting for runtime drift report.');
+      const latestJobSummary = jobResultSummary(latestJob);
       const row = {
         id: instance.id,
         name: instance.name,
@@ -198,13 +213,19 @@
         runtime: runtime?.runtime_status || 'unknown',
         health: runtime?.health_status || 'unknown',
         drift: runtime?.drift_status || 'unknown',
-        healthReason: primaryReason(runtime?.health_reasons, 'Waiting for runtime health report.'),
-        driftReason: primaryReason(runtime?.drift_reasons, 'Waiting for runtime drift report.'),
+        healthReason,
+        driftReason,
         latestJob,
-        latestJobSummary: jobResultSummary(latestJob),
+        latestJobSummary,
       };
       row.bucket = instanceBucket(row);
       row.issue = instanceIssue(row);
+      row.capabilityMissing = hasRuntimeInstaller(row.service) && isCapabilityMissingText([
+        row.latestJobSummary,
+        row.healthReason,
+        row.driftReason,
+        row.issue?.text,
+      ].join(' '));
       return row;
     }
 
@@ -449,6 +470,7 @@
       return `
         <div class="instance-actions">
           <button class="secondary-btn instance-manage-btn" type="button" data-instance-id="${escapeHTML(row.id)}">Manage</button>
+          ${row.capabilityMissing ? `<button class="secondary-btn instance-runtime-install-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-issue="${escapeHTML(row.issue?.text || row.latestJobSummary || '')}">Install runtime</button>` : ''}
           <button class="primary-btn instance-action-btn" type="button" data-action="apply" data-instance-id="${escapeHTML(row.id)}">Apply</button>
           <button class="secondary-btn instance-action-btn" type="button" data-action="restart" data-instance-id="${escapeHTML(row.id)}">Restart</button>
           <button class="secondary-btn instance-action-btn" type="button" data-action="start" data-instance-id="${escapeHTML(row.id)}">Start</button>
@@ -865,6 +887,9 @@
       });
       document.querySelectorAll('.instance-action-btn').forEach((button) => {
         button.addEventListener('click', () => queueInstanceAction(button.dataset.instanceId, button.dataset.action));
+      });
+      document.querySelectorAll('.instance-runtime-install-btn').forEach((button) => {
+        button.addEventListener('click', () => openInstanceRuntimeInstallModal(button.dataset.instanceId, button.dataset.issue || ''));
       });
       document.querySelectorAll('.instance-delete-btn').forEach((button) => {
         button.addEventListener('click', () => openDeleteInstanceModal(button.dataset.instanceId, button.dataset.instanceName));

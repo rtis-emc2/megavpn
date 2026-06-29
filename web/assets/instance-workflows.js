@@ -52,6 +52,55 @@
       syncCreateServicePackDefaults,
     } = domainUI;
 
+    function instanceEndpoint(instance) {
+      const host = String(instance?.endpoint_host || '').trim();
+      const port = Number(instance?.endpoint_port || 0);
+      if (!host && !port) return 'n/a';
+      if (!host) return String(port);
+      if (!port) return host;
+      return `${host}:${port}`;
+    }
+
+    function nodeForInstance(instance) {
+      return (state.nodes || []).find((node) => node.id === instance?.node_id) || null;
+    }
+
+    function serviceDefinition(serviceCode) {
+      const code = normalizeInstanceServiceCode(serviceCode);
+      return (state.servicesCatalog || []).find((item) => item.code === code || (code === 'xray-core' && item.code === 'xray')) || null;
+    }
+
+    function serviceDisplayName(serviceCode) {
+      const definition = serviceDefinition(serviceCode);
+      return definition?.label || definition?.display_name || definition?.name || normalizeInstanceServiceCode(serviceCode) || 'runtime';
+    }
+
+    function installersForService(serviceCode) {
+      const code = normalizeInstanceServiceCode(serviceCode);
+      return (state.serviceInstallers || [])
+        .filter((installer) => normalizeInstanceServiceCode(installer.service_code) === code)
+        .sort((left, right) => {
+          const leftManual = String(left.strategy || '') === 'manual_present' ? 1 : 0;
+          const rightManual = String(right.strategy || '') === 'manual_present' ? 1 : 0;
+          return leftManual - rightManual || String(left.strategy || '').localeCompare(String(right.strategy || ''), 'en');
+        });
+    }
+
+    function installerValue(installer) {
+      return `${String(installer?.strategy || '').trim()}|${String(installer?.channel || '').trim()}`;
+    }
+
+    function parseInstallerValue(value) {
+      const [strategy, channel] = String(value || '').split('|');
+      return { strategy: String(strategy || '').trim(), channel: String(channel || '').trim() };
+    }
+
+    function installerOptions(serviceCode) {
+      const installers = installersForService(serviceCode);
+      return installers.map((installer, index) => `
+        <option value="${escapeHTML(installerValue(installer))}"${index === 0 ? ' selected' : ''}>${escapeHTML(installer.strategy || 'default')} · ${escapeHTML(installer.channel || 'default')}</option>`).join('');
+    }
+
     function openCreateServicePackModal() {
       const initialPack = defaultServicePack();
       const hasPack = Boolean(initialPack);
@@ -208,6 +257,98 @@
       }
     }
 
+    function openInstanceRuntimeInstallModal(instanceID, issueText = '') {
+      const instance = (state.instances || []).find((item) => item.id === instanceID);
+      if (!instance) {
+        openActionOutcomeModal('Instance remediation', 'Instance not found', 'failed', 'Refresh the page and try again.', []);
+        return;
+      }
+      const node = nodeForInstance(instance);
+      const serviceCode = normalizeInstanceServiceCode(instance.service_code);
+      const installers = installersForService(serviceCode);
+      if (!node?.id) {
+        openActionOutcomeModal('Instance remediation', 'Node not found', 'failed', 'This instance is not attached to a loaded active node.', [
+          { label: 'Instance', value: instance.name || instance.id },
+          { label: 'Node ID', value: instance.node_id || 'n/a' },
+        ]);
+        return;
+      }
+      if (!installers.length) {
+        openActionOutcomeModal('Instance remediation', 'No installer registered', 'failed', 'The service catalog does not expose a runtime installer for this service.', [
+          { label: 'Instance', value: instance.name || instance.id },
+          { label: 'Service', value: serviceCode },
+        ]);
+        return;
+      }
+      openModal(`Install runtime: ${serviceDisplayName(serviceCode)}`, 'Instance remediation', `
+        <section class="card">
+          <div class="mini-label">Target</div>
+          <div class="timeline">
+            <div class="timeline-item"><strong>Instance</strong><div class="timeline-meta">${escapeHTML(instance.name || instance.id)}</div></div>
+            <div class="timeline-item"><strong>Node</strong><div class="timeline-meta">${escapeHTML(node.name || node.id)}${node.address ? ` · ${escapeHTML(node.address)}` : ''}</div></div>
+            <div class="timeline-item"><strong>Endpoint</strong><div class="timeline-meta">${escapeHTML(instanceEndpoint(instance))}</div></div>
+            <div class="timeline-item"><strong>Issue</strong><div class="timeline-meta">${escapeHTML(issueText || 'Runtime capability appears to be missing on the node.')}</div></div>
+          </div>
+        </section>
+        <form id="instanceRuntimeInstallForm" class="form-grid">
+          <div class="field full">
+            <label>Install strategy</label>
+            <select name="installer" required>${installerOptions(serviceCode)}</select>
+            <div class="field-hint">The job runs on the selected node through the agent capability installer.</div>
+          </div>
+          <label class="choice-card full">
+            <input name="apply_after_install" type="checkbox" checked />
+            <span>
+              <strong>Apply instance after successful install</strong>
+              <small>Queue a new instance.apply only when the runtime install job succeeds.</small>
+            </span>
+          </label>
+          <div class="field full inline-actions">
+            <button class="secondary-btn" id="cancelInstanceRuntimeInstallBtn" type="button">Cancel</button>
+            <button class="primary-btn" type="submit">Install runtime</button>
+          </div>
+        </form>
+        <div id="instanceRuntimeInstallResult" class="form-result"></div>`, { wide: true });
+      document.getElementById('cancelInstanceRuntimeInstallBtn')?.addEventListener('click', closeModal);
+      document.getElementById('instanceRuntimeInstallForm')?.addEventListener('submit', (event) => runInstanceRuntimeInstall(event, instance, node, serviceCode));
+    }
+
+    async function runInstanceRuntimeInstall(event, instance, node, serviceCode) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const target = document.getElementById('instanceRuntimeInstallResult');
+      const selected = parseInstallerValue(new FormData(form).get('installer'));
+      const applyAfterInstall = Boolean(form.querySelector('input[name="apply_after_install"]')?.checked);
+      setSubmitBusy(form, true, 'Installing...');
+      if (target) target.innerHTML = '<span class="tag warn">queueing runtime install</span>';
+      try {
+        const installJob = await sendJSON(`/api/v1/nodes/${encodeURIComponent(node.id)}/capabilities/install`, 'POST', {
+          service_code: serviceCode,
+          strategy: selected.strategy,
+          channel: selected.channel,
+        });
+        const finalInstallJob = await watchJob(installJob.id, target, 'Runtime install', {
+          attempts: 80,
+          intervalMs: 1500,
+          context: {
+            node: node.name || node.id,
+            service: serviceCode,
+            strategy: selected.strategy || 'default',
+            channel: selected.channel || 'default',
+          },
+        });
+        await refresh();
+        if (applyAfterInstall && finalInstallJob && String(finalInstallJob.status || '').toLowerCase() === 'succeeded') {
+          if (target) target.innerHTML += '<div class="form-result"><span class="tag warn">runtime installed; queueing instance apply</span></div>';
+          await runInstanceAction(instance.id, 'apply', target);
+        }
+      } catch (err) {
+        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      } finally {
+        setSubmitBusy(form, false);
+      }
+    }
+
     async function openInstanceManageModal(instanceID) {
       openModal('Instance manage', 'Loading current desired state', '<div class="empty">Loading instance spec...</div>');
       try {
@@ -315,6 +456,7 @@
       openCreateInstanceChoiceModal,
       openCreateServicePackModal,
       openInstanceManageModal,
+      openInstanceRuntimeInstallModal,
       queueInstanceAction,
       runInstanceAction,
     };
