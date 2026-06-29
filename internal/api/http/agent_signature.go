@@ -167,3 +167,19 @@ func writeSignedAgentNoContent(w nethttp.ResponseWriter, r *nethttp.Request, tok
 	w.Header().Set(agentauth.HeaderSignature, signature)
 	w.WriteHeader(nethttp.StatusNoContent)
 }
+
+func setSignedAgentResponseHeaders(w nethttp.ResponseWriter, r *nethttp.Request, token, bodyHash string) bool {
+	token = strings.TrimSpace(token)
+	bodyHash = strings.ToLower(strings.TrimSpace(bodyHash))
+	if token == "" || bodyHash == "" {
+		return false
+	}
+	timestamp := strconv.FormatInt(time.Now().UTC().Unix(), 10)
+	nonce := agentauth.NewNonce()
+	signature := agentauth.SignBodyHash(token, "RESPONSE", r.URL.RequestURI(), timestamp, nonce, bodyHash)
+	w.Header().Set(agentauth.HeaderTimestamp, timestamp)
+	w.Header().Set(agentauth.HeaderNonce, nonce)
+	w.Header().Set(agentauth.HeaderBodyHash, bodyHash)
+	w.Header().Set(agentauth.HeaderSignature, signature)
+	return true
+}

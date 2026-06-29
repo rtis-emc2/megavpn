@@ -34,6 +34,45 @@ func TestVerifyRejectsTamperedBody(t *testing.T) {
 	}
 }
 
+func TestSignVerifyBodyHashRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	bodyHash := BodyHash([]byte("runtime artifact"))
+	timestamp := strconv.FormatInt(time.Now().UTC().Unix(), 10)
+	nonce := NewNonce()
+	signature := SignBodyHash("agent-token", "RESPONSE", "/agent/binary-artifacts/artifact-1/download?node_id=node-1&job_id=job-1", timestamp, nonce, bodyHash)
+
+	err := VerifyBodyHash(
+		"agent-token",
+		"RESPONSE",
+		"/agent/binary-artifacts/artifact-1/download?node_id=node-1&job_id=job-1",
+		timestamp,
+		nonce,
+		bodyHash,
+		signature,
+		bodyHash,
+		time.Now().UTC(),
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("VerifyBodyHash signed response error = %v, want nil", err)
+	}
+}
+
+func TestVerifyBodyHashRejectsMismatchedActualHash(t *testing.T) {
+	t.Parallel()
+
+	bodyHash := BodyHash([]byte("runtime artifact"))
+	timestamp := strconv.FormatInt(time.Now().UTC().Unix(), 10)
+	nonce := NewNonce()
+	signature := SignBodyHash("agent-token", "RESPONSE", "/agent/binary-artifacts/artifact-1/download", timestamp, nonce, bodyHash)
+
+	err := VerifyBodyHash("agent-token", "RESPONSE", "/agent/binary-artifacts/artifact-1/download", timestamp, nonce, bodyHash, signature, BodyHash([]byte("tampered")), time.Now().UTC(), time.Minute)
+	if !errors.Is(err, ErrInvalidBodyHash) {
+		t.Fatalf("VerifyBodyHash mismatched body hash error = %v, want ErrInvalidBodyHash", err)
+	}
+}
+
 func TestVerifyRejectsExpiredTimestamp(t *testing.T) {
 	t.Parallel()
 

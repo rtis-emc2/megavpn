@@ -54,12 +54,21 @@ func CanonicalString(method, requestURI, timestamp, nonce, bodyHash string) stri
 
 func Sign(token, method, requestURI, timestamp, nonce string, body []byte) (string, string) {
 	bodyHash := BodyHash(body)
+	signature := SignBodyHash(token, method, requestURI, timestamp, nonce, bodyHash)
+	return signature, bodyHash
+}
+
+func SignBodyHash(token, method, requestURI, timestamp, nonce, bodyHash string) string {
 	mac := hmac.New(sha256.New, []byte(token))
 	_, _ = mac.Write([]byte(CanonicalString(method, requestURI, timestamp, nonce, bodyHash)))
-	return signaturePrefix + hex.EncodeToString(mac.Sum(nil)), bodyHash
+	return signaturePrefix + hex.EncodeToString(mac.Sum(nil))
 }
 
 func Verify(token, method, requestURI, timestamp, nonce, bodyHash, signature string, body []byte, now time.Time, window time.Duration) error {
+	return VerifyBodyHash(token, method, requestURI, timestamp, nonce, bodyHash, signature, BodyHash(body), now, window)
+}
+
+func VerifyBodyHash(token, method, requestURI, timestamp, nonce, bodyHash, signature, actualBodyHash string, now time.Time, window time.Duration) error {
 	if strings.TrimSpace(signature) == "" || strings.TrimSpace(timestamp) == "" || strings.TrimSpace(nonce) == "" || strings.TrimSpace(bodyHash) == "" {
 		return ErrUnsigned
 	}
@@ -83,11 +92,10 @@ func Verify(token, method, requestURI, timestamp, nonce, bodyHash, signature str
 	if issuedAt.Before(now.Add(-window)) || issuedAt.After(now.Add(window)) {
 		return ErrTimestampOutdated
 	}
-	actualBodyHash := BodyHash(body)
 	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(bodyHash)), []byte(actualBodyHash)) != 1 {
 		return ErrInvalidBodyHash
 	}
-	wantSignature, _ := Sign(token, method, requestURI, timestamp, nonce, body)
+	wantSignature := SignBodyHash(token, method, requestURI, timestamp, nonce, bodyHash)
 	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(signature)), []byte(wantSignature)) != 1 {
 		return ErrInvalidSignature
 	}

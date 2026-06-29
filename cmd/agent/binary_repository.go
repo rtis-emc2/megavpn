@@ -12,6 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/rtis-emc2/megavpn/internal/agentauth"
 )
 
 const binaryDownloadTicketHeader = "X-MegaVPN-Binary-Ticket"
@@ -120,7 +123,13 @@ func (c client) downloadBinaryRepositoryArtifact(ctx context.Context, j job, rep
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		b, readErr := c.readSignedResponseBody(req, resp, true)
+		if readErr != nil {
+			return downloadedBinaryArtifact{}, readErr
+		}
+		if int64(len(b)) > 4096 {
+			b = b[:4096]
+		}
 		return downloadedBinaryArtifact{}, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(b))
 	}
 	dir, err := os.MkdirTemp("", "megavpn-runtime-*")
@@ -144,6 +153,10 @@ func (c client) downloadBinaryRepositoryArtifact(ctx context.Context, j job, rep
 		return downloadedBinaryArtifact{}, closeErr
 	}
 	gotSHA := hex.EncodeToString(hash.Sum(nil))
+	if err := c.verifyBinaryRepositoryDownloadSignature(req, resp, gotSHA); err != nil {
+		os.RemoveAll(dir)
+		return downloadedBinaryArtifact{}, err
+	}
 	if gotSHA != expectedSHA {
 		os.RemoveAll(dir)
 		return downloadedBinaryArtifact{}, fmt.Errorf("sha256 mismatch: got %s", gotSHA)
@@ -156,6 +169,38 @@ func (c client) downloadBinaryRepositoryArtifact(ctx context.Context, j job, rep
 		Kind:    stringify(repo["kind"]),
 		Mode:    binaryInstallMode(repo),
 	}, nil
+}
+
+func (c client) verifyBinaryRepositoryDownloadSignature(req *http.Request, resp *http.Response, bodyHash string) error {
+	if !responseHasAgentSignature(resp) {
+		return errors.New("unsigned binary repository response rejected")
+	}
+	if strings.TrimSpace(c.token) == "" {
+		return errors.New("signed binary repository response received without local agent token")
+	}
+	err := agentauth.VerifyBodyHash(
+		c.token,
+		"RESPONSE",
+		req.URL.RequestURI(),
+		resp.Header.Get(agentauth.HeaderTimestamp),
+		resp.Header.Get(agentauth.HeaderNonce),
+		resp.Header.Get(agentauth.HeaderBodyHash),
+		resp.Header.Get(agentauth.HeaderSignature),
+		bodyHash,
+		time.Now().UTC(),
+		5*time.Minute,
+	)
+	if err != nil {
+		return fmt.Errorf("binary repository response signature verification failed: %w", err)
+	}
+	if c.responseReplay == nil {
+		c.responseReplay = newResponseReplayCache(5 * time.Minute)
+	}
+	replayKey := req.URL.RequestURI() + ":" + strings.TrimSpace(resp.Header.Get(agentauth.HeaderNonce))
+	if !c.responseReplay.accept(replayKey, time.Now().UTC()) {
+		return errors.New("binary repository response signature replay rejected")
+	}
+	return nil
 }
 
 func binaryInstallMode(repo map[string]any) string {

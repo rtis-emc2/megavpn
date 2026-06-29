@@ -47,6 +47,7 @@ func (s *Server) agentBinaryArtifactDownload(w http.ResponseWriter, r *http.Requ
 	nodeID := strings.TrimSpace(r.URL.Query().Get("node_id"))
 	jobID := strings.TrimSpace(r.URL.Query().Get("job_id"))
 	token := strings.TrimSpace(r.Header.Get(binaryDownloadTicketHeader))
+	agentToken := bearerToken(r)
 	if artifactID == "" || nodeID == "" || jobID == "" || token == "" {
 		writeErr(w, 400, "artifact_id, node_id, job_id and download ticket are required")
 		return
@@ -58,19 +59,19 @@ func (s *Server) agentBinaryArtifactDownload(w http.ResponseWriter, r *http.Requ
 	}
 	ticket, artifact, err := s.store.ResolveBinaryDownloadTicket(r.Context(), token, artifactID, nodeID, jobID)
 	if err != nil {
-		writeErr(w, 403, err.Error())
+		writeSignedAgentJSON(w, r, agentToken, 403, response{"error": err.Error()})
 		return
 	}
 	if _, _, _, err := s.resolveBinaryArtifactFile(artifact); err != nil {
-		writeErr(w, artifactHTTPStatus(err), err.Error())
+		writeSignedAgentJSON(w, r, agentToken, artifactHTTPStatus(err), response{"error": err.Error()})
 		return
 	}
 	if err := s.store.MarkBinaryDownloadTicketUsed(r.Context(), ticket.ID, jobID); err != nil {
-		writeErr(w, 403, err.Error())
+		writeSignedAgentJSON(w, r, agentToken, 403, response{"error": err.Error()})
 		return
 	}
-	if err := s.serveBinaryArtifactDownload(w, r, artifact); err != nil {
-		writeErr(w, artifactHTTPStatus(err), err.Error())
+	if err := s.serveBinaryArtifactDownload(w, r, artifact, agentToken); err != nil {
+		writeSignedAgentJSON(w, r, agentToken, artifactHTTPStatus(err), response{"error": err.Error()})
 	}
 }
 
@@ -135,10 +136,14 @@ func (s *Server) serveArtifactDownload(w http.ResponseWriter, r *http.Request, a
 	return nil
 }
 
-func (s *Server) serveBinaryArtifactDownload(w http.ResponseWriter, r *http.Request, artifact domain.BinaryArtifact) error {
+func (s *Server) serveBinaryArtifactDownload(w http.ResponseWriter, r *http.Request, artifact domain.BinaryArtifact, agentToken string) error {
 	path, filename, _, err := s.resolveBinaryArtifactFile(artifact)
 	if err != nil {
 		return err
+	}
+	bodyHash := strings.ToLower(strings.TrimSpace(artifact.SHA256))
+	if bodyHash == "" {
+		return fmt.Errorf("binary artifact sha256 is empty")
 	}
 	contentType := mime.TypeByExtension(filepath.Ext(filename))
 	if contentType != "" {
@@ -147,7 +152,8 @@ func (s *Server) serveBinaryArtifactDownload(w http.ResponseWriter, r *http.Requ
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
-	w.Header().Set("X-MegaVPN-Binary-SHA256", strings.TrimSpace(artifact.SHA256))
+	w.Header().Set("X-MegaVPN-Binary-SHA256", bodyHash)
+	setSignedAgentResponseHeaders(w, r, agentToken, bodyHash)
 	http.ServeFile(w, r, path)
 	return nil
 }

@@ -78,3 +78,31 @@ func TestWriteSignedAgentNoContent(t *testing.T) {
 		t.Fatalf("signed no-content verification error = %v, want nil", err)
 	}
 }
+
+func TestSetSignedAgentResponseHeadersUsesProvidedBodyHash(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(nethttp.MethodGet, "/agent/binary-artifacts/artifact-1/download?node_id=node-1&job_id=job-1", nil)
+	rr := httptest.NewRecorder()
+	bodyHash := agentauth.BodyHash([]byte("runtime artifact"))
+
+	if ok := setSignedAgentResponseHeaders(rr, req, "agent-token", bodyHash); !ok {
+		t.Fatal("setSignedAgentResponseHeaders returned false")
+	}
+
+	err := agentauth.VerifyBodyHash(
+		"agent-token",
+		"RESPONSE",
+		req.URL.RequestURI(),
+		rr.Header().Get(agentauth.HeaderTimestamp),
+		rr.Header().Get(agentauth.HeaderNonce),
+		rr.Header().Get(agentauth.HeaderBodyHash),
+		rr.Header().Get(agentauth.HeaderSignature),
+		bodyHash,
+		time.Now().UTC(),
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("signed binary response header verification error = %v, want nil", err)
+	}
+}
