@@ -1074,7 +1074,7 @@ func runtimeStatusFromJob(jobType, jobStatus, activeState string) string {
 		return "unknown"
 	}
 	switch jobType {
-	case "instance.stop", "instance.disable":
+	case "instance.stop", "instance.disable", "instance.delete":
 		return "stopped"
 	case "instance.start", "instance.enable", "instance.restart", "instance.apply":
 		if activeState != "" {
@@ -1096,7 +1096,7 @@ func healthStatusFromRuntime(jobType, jobStatus, activeState string) string {
 	if jobStatus == "cancelled" {
 		return "unknown"
 	}
-	if jobType == "instance.stop" || jobType == "instance.disable" {
+	if jobType == "instance.stop" || jobType == "instance.disable" || jobType == "instance.delete" {
 		return "stopped"
 	}
 	switch strings.ToLower(strings.TrimSpace(activeState)) {

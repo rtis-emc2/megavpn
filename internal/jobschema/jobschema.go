@@ -334,7 +334,7 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else if hint != "" {
 			normalized["new_token_hint"] = hint
 		}
-	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable":
+	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable", "instance.delete":
 		instanceID, err := requireString(payload, "instance_id")
 		if err != nil {
 			return nil, err
@@ -366,7 +366,7 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		if stringifyAny(normalized["service_code"]) == "" && stringifyAny(normalized["runtime_service_code"]) == "" && strings.TrimSpace(stringifyAny(payload["systemd_unit"])) == "" {
 			return nil, validationf("payload.service_code, payload.runtime_service_code or payload.systemd_unit is required")
 		}
-		if action == "apply" {
+		if action == "apply" || action == "delete" {
 			spec, err := requireMap(payload, "spec")
 			if err != nil {
 				return nil, err

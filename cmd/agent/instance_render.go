@@ -216,6 +216,29 @@ func validateManagedFilePolicy(payload instanceJobPayload, file managedFileSpec)
 	return nil
 }
 
+func validateManagedDeletePathPolicy(payload instanceJobPayload, rawPath string) error {
+	path := cleanAbsPath(rawPath)
+	if path == "" {
+		return fmt.Errorf("managed file path must be absolute")
+	}
+	if hasUnsafePathToken(path) {
+		return fmt.Errorf("managed file path contains unsafe characters: %s", rawPath)
+	}
+	if !isAllowedInstanceManagedPath(payload, path) {
+		return fmt.Errorf("managed file path is outside allowed roots for %s: %s", payload.ServiceCode, path)
+	}
+	if strings.HasPrefix(path, "/etc/systemd/system/") {
+		unit := strings.TrimSuffix(strings.TrimPrefix(path, "/etc/systemd/system/"), ".service")
+		if !isAllowedInstanceUnit(payload, unit) {
+			return fmt.Errorf("managed systemd unit is not allowed for %s: %s", payload.ServiceCode, unit)
+		}
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("managed file path must not be a symlink: %s", path)
+	}
+	return nil
+}
+
 func isAllowedManagedServiceFile(payload instanceJobPayload, content string) bool {
 	if strings.Contains(content, "/bin/sh") || strings.Contains(content, " -c ") {
 		return false

@@ -1742,7 +1742,8 @@ func jobTypeMustUseTypedEndpoint(jobType string) bool {
 		"instance.start",
 		"instance.stop",
 		"instance.enable",
-		"instance.disable":
+		"instance.disable",
+		"instance.delete":
 		return true
 	default:
 		return false
@@ -1757,7 +1758,7 @@ func requiredPermissionForJobType(jobType string) string {
 		return "node.bootstrap"
 	case "node.capability.install", "node.capability.verify", "node.inventory", "node.inventory.sync", "node.services.discover", "node.channel.probe", "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup", "node.route_policy.apply":
 		return "node.write"
-	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable":
+	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable", "instance.delete":
 		return "instance.apply"
 	case "client.provision", "client.revoke":
 		return "client.provision"

@@ -951,9 +951,9 @@
       const instance = (state.instances || []).find((item) => item.id === instanceID);
       openModal(`Delete instance: ${instanceName || 'instance'}`, 'Instance lifecycle', `
         <div class="card">
-          <div class="mini-label">Soft delete</div>
+          <div class="mini-label">Managed cleanup</div>
           <h3>${escapeHTML(instance?.name || instanceName || instanceID)}</h3>
-          <p>This marks the instance as deleted and hides it from operational lists. The backend blocks deletion while active service accesses still reference this instance.</p>
+          <p>This queues an agent cleanup job on the selected node. The agent stops the managed unit, removes managed files and then the control plane hides the instance after cleanup succeeds. Deletion is blocked while active service accesses still reference this instance.</p>
           <div class="response-grid">
             <div class="response-fact"><span>Service</span><strong>${escapeHTML(instance?.service_code || 'unknown')}</strong></div>
             <div class="response-fact"><span>Node</span><strong>${escapeHTML(instance?.node_id || 'n/a')}</strong></div>
@@ -963,7 +963,7 @@
         </div>
         <div class="inline-actions" style="margin-top:14px">
           <button class="secondary-btn" id="cancelDeleteInstanceBtn" type="button">Cancel</button>
-          <button class="danger-btn" id="confirmDeleteInstanceBtn" type="button">Delete instance</button>
+          <button class="danger-btn" id="confirmDeleteInstanceBtn" type="button">Queue cleanup</button>
         </div>`, { wide: true });
       document.getElementById('cancelDeleteInstanceBtn')?.addEventListener('click', closeModal);
       document.getElementById('confirmDeleteInstanceBtn')?.addEventListener('click', (event) => submitDeleteInstance(instanceID, instanceName, event.currentTarget));
@@ -979,13 +979,13 @@
         closeModal();
         await refresh();
         openActionOutcomeModal(
-          `Instance deleted: ${instanceName || deleted?.name || instanceID}`,
+          `Instance cleanup queued: ${instanceName || deleted?.name || instanceID}`,
           'Instance lifecycle',
           'succeeded',
-          'Instance was soft-deleted and removed from the active operational list.',
+          'Cleanup job was queued for the node. The instance remains visible as deleting until the agent confirms cleanup.',
           [
             { label: 'Instance', value: deleted?.name || instanceName || instanceID },
-            { label: 'Status', value: deleted?.status || 'deleted' },
+            { label: 'Status', value: deleted?.status || 'deleting' },
           ],
         );
       } catch (err) {
@@ -1002,7 +1002,7 @@
       } finally {
         if (button) {
           button.disabled = false;
-          button.textContent = 'Delete instance';
+          button.textContent = 'Queue cleanup';
         }
       }
     }

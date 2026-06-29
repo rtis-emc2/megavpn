@@ -158,7 +158,7 @@ func (c *client) execute(ctx context.Context, j job, st *agentState) (string, ma
 		return c.cleanupBackhaul(ctx, j, *st)
 	case "node.route_policy.apply":
 		return c.applyRoutePolicy(ctx, j, *st)
-	case "instance.restart", "instance.apply", "instance.start", "instance.stop", "instance.enable", "instance.disable":
+	case "instance.restart", "instance.apply", "instance.start", "instance.stop", "instance.enable", "instance.disable", "instance.delete":
 		return c.handleInstanceJob(ctx, j)
 	default:
 		return "failed", map[string]any{"error": "job type is not whitelisted for agent"}

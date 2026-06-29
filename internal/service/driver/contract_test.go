@@ -108,6 +108,13 @@ func TestOperationFromJobType(t *testing.T) {
 	if op != OperationDisable {
 		t.Fatalf("operation = %q, want %q", op, OperationDisable)
 	}
+	op, ok = OperationFromJobType("instance.delete")
+	if !ok {
+		t.Fatal("instance.delete should map to an operation")
+	}
+	if op != OperationDelete {
+		t.Fatalf("operation = %q, want %q", op, OperationDelete)
+	}
 	if IsInstanceOperationJobType("node.bootstrap") {
 		t.Fatal("node.bootstrap must not be an instance operation job type")
 	}

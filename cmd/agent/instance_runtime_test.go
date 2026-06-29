@@ -71,6 +71,41 @@ func TestInstanceUnitPolicyAllowsDriverDefaultOnly(t *testing.T) {
 	}
 }
 
+func TestInstanceOwnedRuntimeUnitPolicy(t *testing.T) {
+	t.Parallel()
+
+	owned := []instanceJobPayload{
+		{ServiceCode: driver.WireGuard, Slug: "corp", SystemdUnit: "wg-quick@corp"},
+		{ServiceCode: driver.OpenVPN, Slug: "corp", SystemdUnit: "openvpn-server@corp"},
+		{ServiceCode: driver.XrayCore, Slug: "edge", SystemdUnit: "megavpn-xray-edge"},
+		{ServiceCode: driver.Shadowsocks, Slug: "edge", SystemdUnit: "megavpn-shadowsocks-edge"},
+	}
+	for _, payload := range owned {
+		payload := payload
+		t.Run(payload.ServiceCode, func(t *testing.T) {
+			t.Parallel()
+			if !isInstanceOwnedRuntimeUnit(payload, payload.SystemdUnit) {
+				t.Fatalf("expected %s unit %s to be instance-owned", payload.ServiceCode, payload.SystemdUnit)
+			}
+		})
+	}
+
+	shared := []instanceJobPayload{
+		{ServiceCode: driver.Nginx, Slug: "edge", SystemdUnit: "nginx"},
+		{ServiceCode: driver.IPSec, Slug: "edge", SystemdUnit: "strongswan-starter"},
+		{ServiceCode: driver.XL2TPD, Slug: "edge", SystemdUnit: "xl2tpd"},
+	}
+	for _, payload := range shared {
+		payload := payload
+		t.Run(payload.ServiceCode, func(t *testing.T) {
+			t.Parallel()
+			if isInstanceOwnedRuntimeUnit(payload, payload.SystemdUnit) {
+				t.Fatalf("expected %s unit %s to be treated as shared", payload.ServiceCode, payload.SystemdUnit)
+			}
+		})
+	}
+}
+
 func TestManagedFilePolicyRejectsArbitraryServiceUnit(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +123,18 @@ func TestManagedFilePolicyRejectsArbitraryContentForDefaultServiceUnit(t *testin
 	file := managedFileSpec{Path: "/etc/systemd/system/megavpn-xray-edge.service", Content: "[Service]\nExecStart=/bin/sh -c 'id'\n", Mode: "0644"}
 	if err := validateManagedFilePolicy(payload, file); err == nil {
 		t.Fatal("expected arbitrary service unit content to be rejected")
+	}
+}
+
+func TestManagedDeletePathPolicyAllowsMalformedGeneratedUnitPath(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{ServiceCode: driver.XrayCore, Slug: "edge", SystemdUnit: "megavpn-xray-edge"}
+	if err := validateManagedDeletePathPolicy(payload, "/etc/systemd/system/megavpn-xray-edge.service"); err != nil {
+		t.Fatalf("expected delete path policy to allow cleanup of generated unit path: %v", err)
+	}
+	if err := validateManagedDeletePathPolicy(payload, "/etc/systemd/system/evil.service"); err == nil {
+		t.Fatal("expected arbitrary service unit path to remain rejected for delete")
 	}
 }
 

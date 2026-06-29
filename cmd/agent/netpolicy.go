@@ -69,6 +69,161 @@ func applyNetworkPolicy(ctx context.Context, payload instanceJobPayload) (map[st
 	return result, nil
 }
 
+func cleanupNetworkPolicy(ctx context.Context, payload instanceJobPayload) map[string]any {
+	slug := slugifyLocal(first(payload.Slug, payload.InstanceID, payload.Name, "instance"))
+	scriptPath := filepath.Join("/usr/local/lib/megavpn/netpolicy", slug+".sh")
+	unitName := "megavpn-netpolicy-" + slug + ".service"
+	unitPath := filepath.Join("/etc/systemd/system", unitName)
+	result := map[string]any{
+		"unit":        unitName,
+		"unit_path":   unitPath,
+		"script_path": scriptPath,
+	}
+	if !isSafeNetworkPolicyManagedPath(scriptPath) || !isSafeNetworkPolicyManagedPath(unitPath) || !isSafeNetworkPolicyUnit(unitName) {
+		result["error"] = "network policy managed path is not allowed"
+		return result
+	}
+	removedPaths := []string{}
+	skippedItems := []string{}
+	warnings := []string{}
+
+	if code, out := runInstallCommand(ctx, "systemctl", "disable", "--now", unitName); code != 0 {
+		if isMissingSystemdUnitOutput(out) || networkPolicyUnitNotFound(unitName) {
+			skippedItems = append(skippedItems, unitName+": unit not found - skip")
+		} else {
+			warnings = append(warnings, "systemd disable warning for "+unitName+": "+firstLine(out))
+		}
+		result["systemd_disable_output"] = truncate(out, 2000)
+	} else {
+		result["systemd_disable_output"] = "disabled"
+	}
+
+	if firewallRules, err := parseFirewallRules(payload.Spec["firewall_rules"]); err != nil {
+		warnings = append(warnings, "firewall cleanup skipped: "+err.Error())
+	} else {
+		removedRules := 0
+		for _, rule := range firewallRules {
+			comment := firewallRuleComment(payload, rule)
+			count, warning := deleteNFTRulesByComment(ctx, rule.Direction, comment)
+			removedRules += count
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
+		}
+		result["removed_firewall_rules"] = removedRules
+	}
+	if routes, err := parseRoutes(payload.Spec["routes"]); err != nil {
+		warnings = append(warnings, "route cleanup skipped: "+err.Error())
+	} else {
+		removedRoutes := 0
+		for _, route := range routes {
+			code, out := runInstallCommand(ctx, "ip", ipRouteDeleteArgs(route)...)
+			if code == 0 {
+				removedRoutes++
+				continue
+			}
+			if out = strings.ToLower(out); strings.Contains(out, "no such process") || strings.Contains(out, "not found") {
+				continue
+			}
+			warnings = append(warnings, "route cleanup warning for "+route.Destination+": "+firstLine(out))
+		}
+		result["removed_routes"] = removedRoutes
+	}
+
+	for _, path := range []string{unitPath, scriptPath} {
+		removed, err := removeManagedPath(path, false)
+		if err != nil {
+			warnings = append(warnings, path+": "+err.Error())
+			continue
+		}
+		if removed {
+			removedPaths = append(removedPaths, path)
+		} else {
+			skippedItems = append(skippedItems, path+": not found - skip")
+		}
+	}
+	result["removed_paths"] = removedPaths
+	result["skipped_items"] = skippedItems
+	result["warnings"] = warnings
+	if len(warnings) > 0 {
+		result["error"] = strings.Join(warnings, " · ")
+	}
+	return result
+}
+
+func deleteNFTRulesByComment(ctx context.Context, chain, comment string) (int, string) {
+	if strings.TrimSpace(comment) == "" {
+		return 0, ""
+	}
+	code, out := runInstallCommand(ctx, "nft", "-a", "list", "chain", "inet", "megavpn", chain)
+	if code != 0 {
+		text := strings.ToLower(out)
+		if strings.Contains(text, "no such file") || strings.Contains(text, "does not exist") || strings.Contains(text, "not found") {
+			return 0, ""
+		}
+		return 0, "nft list warning for " + chain + ": " + firstLine(out)
+	}
+	removed := 0
+	for _, handle := range nftHandlesForComment(out, comment) {
+		code, deleteOut := runInstallCommand(ctx, "nft", "delete", "rule", "inet", "megavpn", chain, "handle", handle)
+		if code != 0 {
+			return removed, "nft delete warning for " + chain + " handle " + handle + ": " + firstLine(deleteOut)
+		}
+		removed++
+	}
+	return removed, ""
+}
+
+func nftHandlesForComment(output, comment string) []string {
+	handles := []string{}
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, comment) {
+			continue
+		}
+		idx := strings.LastIndex(line, " handle ")
+		if idx < 0 {
+			continue
+		}
+		fields := strings.Fields(line[idx+len(" handle "):])
+		if len(fields) == 0 {
+			continue
+		}
+		if _, err := strconv.Atoi(fields[0]); err == nil {
+			handles = append(handles, fields[0])
+		}
+	}
+	return handles
+}
+
+func ipRouteDeleteArgs(route routeSpec) []string {
+	parts := []string{"route", "delete", route.Destination}
+	if route.Via != "" {
+		parts = append(parts, "via", route.Via)
+	}
+	if route.Dev != "" {
+		parts = append(parts, "dev", route.Dev)
+	}
+	if route.Source != "" {
+		parts = append(parts, "src", route.Source)
+	}
+	if route.Metric > 0 {
+		parts = append(parts, "metric", strconv.Itoa(route.Metric))
+	}
+	if route.Table != "" {
+		parts = append(parts, "table", route.Table)
+	}
+	return parts
+}
+
+func networkPolicyUnitNotFound(unit string) bool {
+	unit = strings.TrimSpace(unit)
+	if !isSafeNetworkPolicyUnit(unit) {
+		return false
+	}
+	state := strings.ToLower(strings.TrimSpace(runOutput("systemctl", "show", unit, "-p", "LoadState", "--value")))
+	return state == "" || state == "not-found"
+}
+
 func renderNetworkPolicyUnit(unitName, scriptPath string, payload instanceJobPayload) string {
 	return strings.Join([]string{
 		"[Unit]",

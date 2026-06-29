@@ -11,6 +11,7 @@ const (
 	OperationStop     = "stop"
 	OperationEnable   = "enable"
 	OperationDisable  = "disable"
+	OperationDelete   = "delete"
 )
 
 type OperationSpec struct {
@@ -131,6 +132,24 @@ var baseOperations = []OperationSpec{
 		SetsEnabled:           true,
 		QueuedEnabled:         false,
 	},
+	{
+		Code:                  OperationDelete,
+		JobType:               "instance.delete",
+		DisplayName:           "Delete managed runtime",
+		Category:              "lifecycle",
+		ExecutionTarget:       "agent",
+		RequiresSpec:          true,
+		RequiresRenderedFiles: true,
+		RequiresSystemdUnit:   true,
+		MutatesConfig:         true,
+		MutatesRuntime:        true,
+		ConvergesDesiredState: true,
+		Destructive:           true,
+		AgentExecutable:       true,
+		QueuedStatus:          "deleting",
+		SetsEnabled:           true,
+		QueuedEnabled:         false,
+	},
 }
 
 func NormalizeOperation(value string) string {
@@ -142,7 +161,7 @@ func NormalizeOperation(value string) string {
 		return OperationStart
 	case "down":
 		return OperationStop
-	case "apply", "restart", "start", "stop", "enable", "disable", "render", "validate":
+	case "apply", "restart", "start", "stop", "enable", "disable", "delete", "render", "validate":
 		return value
 	default:
 		return value

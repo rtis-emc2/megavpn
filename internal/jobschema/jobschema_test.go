@@ -48,6 +48,40 @@ func TestNormalizeInstanceApplyRequiresSpec(t *testing.T) {
 	}
 }
 
+func TestNormalizeInstanceDeleteRequiresSpec(t *testing.T) {
+	_, err := Normalize("instance.delete", map[string]any{
+		"instance_id":  "instance-1",
+		"service_code": "wireguard",
+		"systemd_unit": "wg-quick@corp",
+	})
+	if err == nil {
+		t.Fatal("expected validation error for missing spec")
+	}
+	if !IsValidationError(err) {
+		t.Fatalf("expected validation error, got %T", err)
+	}
+}
+
+func TestNormalizeInstanceDeleteInfersAction(t *testing.T) {
+	payload, err := Normalize("instance.delete", map[string]any{
+		"instance_id":  "instance-1",
+		"service_code": "wireguard",
+		"systemd_unit": "wg-quick@corp",
+		"spec": map[string]any{
+			"files": []any{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := payload["action"]; got != "delete" {
+		t.Fatalf("action = %v, want delete", got)
+	}
+	if got := payload["service_code"]; got != "wireguard" {
+		t.Fatalf("service_code = %v, want wireguard", got)
+	}
+}
+
 func TestNormalizeInstanceRestartInfersAction(t *testing.T) {
 	payload, err := Normalize("instance.restart", map[string]any{
 		"instance_id":  "instance-1",

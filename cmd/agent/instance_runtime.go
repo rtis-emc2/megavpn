@@ -20,6 +20,8 @@ func (e instanceRuntimeExecutor) Execute(ctx context.Context, payload instanceJo
 		return e.Apply(ctx, payload)
 	case driver.OperationRestart, driver.OperationStart, driver.OperationStop, driver.OperationEnable, driver.OperationDisable:
 		return e.Systemd(ctx, payload, op.Code)
+	case driver.OperationDelete:
+		return e.Delete(ctx, payload)
 	default:
 		return "failed", map[string]any{"error": "unsupported instance operation", "action": payload.Action}
 	}
@@ -132,6 +134,144 @@ func (e instanceRuntimeExecutor) Systemd(ctx context.Context, payload instanceJo
 	}
 	result["message"] = "systemd action applied"
 	return "succeeded", result
+}
+
+func (e instanceRuntimeExecutor) Delete(ctx context.Context, payload instanceJobPayload) (string, map[string]any) {
+	started := time.Now()
+	result := map[string]any{
+		"instance_id":  payload.InstanceID,
+		"service_code": payload.ServiceCode,
+		"systemd_unit": payload.SystemdUnit,
+		"action":       driver.OperationDelete,
+	}
+	removedPaths := []string{}
+	skippedItems := []string{}
+	warnings := []string{}
+	stoppedUnits := []string{}
+
+	unit := strings.TrimSpace(payload.SystemdUnit)
+	if unit != "" {
+		if !isAllowedInstanceUnit(payload, unit) {
+			result["error"] = "systemd_unit is not allowed for instance delete"
+			result["duration_ms"] = time.Since(started).Milliseconds()
+			return "failed", result
+		}
+		if isInstanceOwnedRuntimeUnit(payload, unit) {
+			code, out := runInstallCommand(ctx, "systemctl", "disable", "--now", unit)
+			result["systemd_disable_output"] = truncate(out, 2000)
+			if code != 0 {
+				if isMissingSystemdUnitOutput(out) || instanceUnitNotFound(payload, unit) {
+					skippedItems = append(skippedItems, unit+": unit not found - skip")
+				} else {
+					result["error"] = "systemd disable failed"
+					result["active_state"] = currentUnitState(unit)
+					result["duration_ms"] = time.Since(started).Milliseconds()
+					return "failed", result
+				}
+			} else {
+				stoppedUnits = append(stoppedUnits, unit)
+			}
+		} else {
+			skippedItems = append(skippedItems, unit+": shared runtime unit not stopped")
+		}
+	}
+
+	files, err := materializeInstanceSpec(payload)
+	if err != nil {
+		result["error"] = err.Error()
+		result["duration_ms"] = time.Since(started).Milliseconds()
+		return "failed", result
+	}
+	seen := map[string]bool{}
+	for _, file := range files {
+		if err := validateManagedDeletePathPolicy(payload, file.Path); err != nil {
+			result["error"] = err.Error()
+			result["path"] = file.Path
+			result["duration_ms"] = time.Since(started).Milliseconds()
+			return "failed", result
+		}
+		path := cleanAbsPath(file.Path)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		removed, err := removeManagedPath(path, false)
+		if err != nil {
+			result["error"] = err.Error()
+			result["path"] = path
+			result["duration_ms"] = time.Since(started).Milliseconds()
+			return "failed", result
+		}
+		if removed {
+			removedPaths = append(removedPaths, path)
+		} else {
+			skippedItems = append(skippedItems, path+": not found - skip")
+		}
+	}
+	if unitFile := managedInstanceUnitFilePath(payload); unitFile != "" && !seen[unitFile] {
+		removed, err := removeManagedPath(unitFile, false)
+		if err != nil {
+			result["error"] = err.Error()
+			result["path"] = unitFile
+			result["duration_ms"] = time.Since(started).Milliseconds()
+			return "failed", result
+		}
+		if removed {
+			removedPaths = append(removedPaths, unitFile)
+		} else {
+			skippedItems = append(skippedItems, unitFile+": not found - skip")
+		}
+	}
+
+	networkPolicy := cleanupNetworkPolicy(ctx, payload)
+	if errText := stringify(networkPolicy["error"]); errText != "" {
+		warnings = append(warnings, "network policy cleanup warning: "+errText)
+	}
+	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+
+	result["message"] = "instance runtime cleanup completed"
+	result["removed_paths"] = removedPaths
+	result["skipped_items"] = skippedItems
+	result["stopped_units"] = stoppedUnits
+	result["warnings"] = warnings
+	result["network_policy"] = networkPolicy
+	result["active_state"] = currentUnitState(unit)
+	result["duration_ms"] = time.Since(started).Milliseconds()
+	return "succeeded", result
+}
+
+func managedInstanceUnitFilePath(payload instanceJobPayload) string {
+	unit := strings.TrimSpace(payload.SystemdUnit)
+	if unit == "" || !isAllowedInstanceUnit(payload, unit) {
+		return ""
+	}
+	switch driver.NormalizeCode(payload.ServiceCode) {
+	case driver.XrayCore, driver.MTProto, driver.HTTPProxy, driver.Shadowsocks:
+		return "/etc/systemd/system/" + strings.TrimSuffix(unit, ".service") + ".service"
+	default:
+		return ""
+	}
+}
+
+func isInstanceOwnedRuntimeUnit(payload instanceJobPayload, unit string) bool {
+	if !isAllowedInstanceUnit(payload, unit) {
+		return false
+	}
+	switch driver.NormalizeCode(payload.ServiceCode) {
+	case driver.XrayCore, driver.MTProto, driver.HTTPProxy, driver.Shadowsocks, driver.OpenVPN, driver.WireGuard:
+		return true
+	default:
+		return false
+	}
+}
+
+func instanceUnitNotFound(payload instanceJobPayload, unit string) bool {
+	unit = strings.TrimSpace(unit)
+	if !isAllowedInstanceUnit(payload, unit) {
+		return false
+	}
+	state := strings.ToLower(strings.TrimSpace(runOutput("systemctl", "show", unit, "-p", "LoadState", "--value")))
+	return state == "" || state == "not-found"
 }
 
 func systemdArgsForOperation(operation, unit string) ([]string, error) {
