@@ -3,6 +3,8 @@ package http
 import (
 	"net/http"
 	"time"
+
+	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
 type platformServicePKIRootResponse struct {
@@ -26,18 +28,22 @@ func (s *Server) listPlatformServicePKIRoots(w http.ResponseWriter, r *http.Requ
 	}
 	resp := make([]platformServicePKIRootResponse, 0, len(roots))
 	for _, root := range roots {
-		resp = append(resp, platformServicePKIRootResponse{
-			ID:                root.ID,
-			ServiceCode:       root.ServiceCode,
-			PKIProfile:        root.PKIProfile,
-			Status:            root.Status,
-			CACertSecretRefID: root.CACertSecretRefID,
-			CommonName:        root.CommonName,
-			NotBefore:         root.NotBefore,
-			NotAfter:          root.NotAfter,
-			CreatedAt:         root.CreatedAt,
-			RotatedAt:         root.RotatedAt,
-		})
+		resp = append(resp, platformServicePKIRootToResponse(root))
 	}
 	writeJSON(w, 200, resp)
+}
+
+func platformServicePKIRootToResponse(root domain.PlatformServicePKIRoot) platformServicePKIRootResponse {
+	return platformServicePKIRootResponse{
+		ID:                root.ID,
+		ServiceCode:       root.ServiceCode,
+		PKIProfile:        root.PKIProfile,
+		Status:            root.Status,
+		CACertSecretRefID: root.CACertSecretRefID,
+		CommonName:        root.CommonName,
+		NotBefore:         root.NotBefore,
+		NotAfter:          root.NotAfter,
+		CreatedAt:         root.CreatedAt,
+		RotatedAt:         root.RotatedAt,
+	}
 }

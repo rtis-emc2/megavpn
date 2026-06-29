@@ -30,10 +30,11 @@ type servicePackCatalogManageStore interface {
 }
 
 type createServicePackRequest struct {
-	NodeID        string `json:"node_id"`
-	BaseName      string `json:"base_name"`
-	EndpointHost  string `json:"endpoint_host"`
-	CertificateID string `json:"certificate_id"`
+	NodeID            string `json:"node_id"`
+	BaseName          string `json:"base_name"`
+	EndpointHost      string `json:"endpoint_host"`
+	CertificateID     string `json:"certificate_id"`
+	OpenVPNPKIProfile string `json:"openvpn_pki_profile"`
 }
 
 func servicePackDefinitions() []servicePackDefinition {
@@ -48,6 +49,7 @@ func servicePackDefinitions() []servicePackDefinition {
 			PlatformNotes: []string{
 				"Template не хранит runtime secrets: Reality keys, WireGuard private key и Shadowsocks password генерируются при создании revision/apply и сохраняются как secret refs.",
 				"Компоненты используют разные listen ports, чтобы pack можно было создать на одной ноде и одном endpoint host.",
+				"OpenVPN components используют выбранный Service PKI profile; один profile можно использовать на нескольких нодах для общего trust-root.",
 			},
 			Recommendations: []string{
 				"Перед production rollout проверь DNS, firewall/NAT и conflict-free ports на выбранной ноде.",
@@ -143,7 +145,7 @@ func servicePackDefinitions() []servicePackDefinition {
 			EndpointHint:         "ovpn.example.com",
 			RequiresEndpointHost: true,
 			PlatformNotes: []string{
-				"Control plane автоматически использует platform CA root для OpenVPN, если pki_scope=platform.",
+				"OpenVPN использует Service PKI root по выбранному pki_profile; default profile создается автоматически при apply, если root еще не создан.",
 			},
 			Recommendations: []string{
 				"Рекомендуемый baseline, если нужен более совместимый TCP transport.",
@@ -160,7 +162,7 @@ func servicePackDefinitions() []servicePackDefinition {
 			EndpointHint:         "ovpn.example.com",
 			RequiresEndpointHost: true,
 			PlatformNotes: []string{
-				"Control plane автоматически использует platform CA root для OpenVPN, если pki_scope=platform.",
+				"OpenVPN использует Service PKI root по выбранному pki_profile; default profile создается автоматически при apply, если root еще не создан.",
 			},
 			Recommendations: []string{
 				"Подходит там, где throughput важнее camouflage и firewall-path стабильнее.",
@@ -374,6 +376,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 	req.BaseName = strings.TrimSpace(req.BaseName)
 	req.EndpointHost = strings.TrimSpace(req.EndpointHost)
 	req.CertificateID = strings.TrimSpace(req.CertificateID)
+	req.OpenVPNPKIProfile = strings.TrimSpace(req.OpenVPNPKIProfile)
 	if req.BaseName == "" {
 		req.BaseName = pack.BaseNameTemplate
 	}
@@ -405,6 +408,10 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 					spec["certificate_id"] = req.CertificateID
 				}
 			}
+		}
+		if component.ServiceCode == "openvpn" && req.OpenVPNPKIProfile != "" {
+			spec["pki_scope"] = "platform"
+			spec["pki_profile"] = req.OpenVPNPKIProfile
 		}
 		instance := domain.Instance{
 			NodeID:       req.NodeID,

@@ -31,6 +31,7 @@
       !domainUI ||
       typeof domainUI.nodeOptions !== 'function' ||
       typeof domainUI.certificateOptions !== 'function' ||
+      typeof domainUI.servicePKIProfileOptions !== 'function' ||
       typeof renderActionResponse !== 'function' ||
       typeof sendJSON !== 'function' ||
       typeof refresh !== 'function' ||
@@ -45,7 +46,7 @@
       throw new Error('MegaVPNInstancesPage requires page dependencies');
     }
 
-    const { certificateOptions, nodeOptions } = domainUI;
+    const { certificateOptions, nodeOptions, servicePKIProfileOptions } = domainUI;
 
     function instanceEndpoint(instance) {
       const host = String(instance?.endpoint_host || '').trim();
@@ -288,6 +289,11 @@
       return Array.isArray(pack?.components) ? pack.components : [];
     }
 
+    function packUsesService(pack, serviceCode) {
+      const expected = String(serviceCode || '').trim().toLowerCase();
+      return servicePackComponents(pack).some((component) => String(component?.service_code || '').trim().toLowerCase() === expected);
+    }
+
     function endpointRequirementLabel(pack) {
       if (!pack) return 'n/a';
       return pack.requires_endpoint_host ? 'required' : 'optional';
@@ -400,6 +406,7 @@
       const selectedPack = ensureCreatePackSelection(packs);
       const nodeSelect = nodeOptions();
       const certificateSelect = certificateOptions('', true);
+      const usesOpenVPN = packUsesService(selectedPack, 'openvpn');
       const baseName = selectedPack?.base_name_template || 'edge-service-pack';
       const endpointHint = selectedPack?.endpoint_hint || 'edge.example.com';
       const endpointRequired = Boolean(selectedPack?.requires_endpoint_host);
@@ -434,9 +441,16 @@
                     </select>
                   </div>
                   <div class="field">
-                    <label>Managed certificate</label>
+                    <label>TLS edge certificate</label>
                     <select name="certificate_id">${certificateSelect}</select>
+                    <div class="field-hint">Used only by Nginx or Xray TLS components. OpenVPN uses the Service CA profile below.</div>
                   </div>
+                  ${usesOpenVPN ? `
+                    <div class="field">
+                      <label>OpenVPN CA profile</label>
+                      <select name="openvpn_pki_profile">${servicePKIProfileOptions('openvpn', 'default')}</select>
+                      <div class="field-hint">All OpenVPN instances created with this profile will trust the same service CA root.</div>
+                    </div>` : ''}
                   <div class="field">
                     <label>Base name</label>
                     <input name="base_name" value="${escapeHTML(baseName)}" placeholder="${escapeHTML(baseName)}">
@@ -491,6 +505,7 @@
         base_name: String(data.get('base_name') || '').trim(),
         endpoint_host: String(data.get('endpoint_host') || '').trim(),
         certificate_id: String(data.get('certificate_id') || '').trim(),
+        openvpn_pki_profile: String(data.get('openvpn_pki_profile') || '').trim(),
       };
       if (!packKey) {
         state.instancesCreateResult = { status: 'failed', message: 'service pack is required' };

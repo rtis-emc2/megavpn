@@ -160,19 +160,23 @@
     function openActionOutcomeModal(title, eyebrow, status, message, details = []) {
       const items = Array.isArray(details) ? details.filter((item) => item && item.label) : [];
       openModal(title, eyebrow, `
-        <div class="form-grid">
-          <div class="field full">
-            <div class="code-block">
-              <div style="margin-bottom:8px">${statusTag(status)}</div>
-              <div><strong>${escapeHTML(message || 'Operation finished')}</strong></div>
+        <div class="action-outcome">
+          <div class="action-outcome-head">
+            ${statusTag(status)}
+            <div>
+              <h3>${escapeHTML(message || 'Operation finished')}</h3>
+              <p>${escapeHTML(eyebrow || title || 'Operation result')}</p>
             </div>
           </div>
-          ${items.map((item) => `
-            <div class="field">
-              <label>${escapeHTML(item.label)}</label>
-              <div class="code-block">${escapeHTML(String(item.value ?? 'n/a'))}</div>
-            </div>`).join('')}
-          <div class="field full inline-actions"><button class="primary-btn" id="actionOutcomeCloseBtn" type="button">Close</button></div>
+          ${items.length ? `
+            <div class="response-grid action-outcome-grid">
+              ${items.map((item) => `
+                <div class="response-fact">
+                  <span>${escapeHTML(item.label)}</span>
+                  <strong>${escapeHTML(String(item.value ?? 'n/a'))}</strong>
+                </div>`).join('')}
+            </div>` : ''}
+          <div class="modal-actions"><button class="primary-btn" id="actionOutcomeCloseBtn" type="button">Close</button></div>
         </div>`, { wide: true });
       const btn = document.getElementById('actionOutcomeCloseBtn');
       if (btn) btn.addEventListener('click', closeModal);

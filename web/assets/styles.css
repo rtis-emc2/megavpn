@@ -1714,6 +1714,71 @@ tr:hover td { background: #f8fafc; }
   user-select: none;
 }
 .response-raw .code-block { margin-top: 10px; }
+.action-outcome {
+  display: grid;
+  gap: 16px;
+}
+.action-outcome-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.action-outcome-head .tag {
+  flex: 0 0 auto;
+}
+.action-outcome-head h3 {
+  margin: 0 0 5px;
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.35;
+}
+.action-outcome-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.action-outcome-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.certificate-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.certificate-overview-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.04);
+}
+.certificate-overview-card span {
+  color: var(--muted-2);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.certificate-overview-card strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 22px;
+  line-height: 1.1;
+}
+.certificate-overview-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
 .certificate-manager-card .inline-actions { justify-content: flex-start; }
 .certificate-manager-card td:first-child { min-width: 260px; }
 .certificate-summary-grid { align-items: stretch; }
@@ -2564,6 +2629,7 @@ tr:hover td { background: #f8fafc; }
   .node-console-nav { position: static; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .auth-gate .login-shell { grid-template-columns: 1fr; }
   .auth-gate .login-hero, .auth-gate .auth-card { min-height: auto; }
+  .certificate-overview-grid,
   .certificate-choice-grid, .certificate-manage-layout, .certificate-preview-grid, .choice-list { grid-template-columns: 1fr; }
   .revision-instance-strip { grid-template-columns: 1fr; }
   .revision-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2638,7 +2704,9 @@ tr:hover td { background: #f8fafc; }
   .auth-gate .login-hero, .auth-gate .auth-card { padding: 26px; }
   .auth-gate .login-hero h2 { font-size: 34px; max-width: none; }
   .response-head { flex-direction: column; }
-  .response-grid { grid-template-columns: 1fr; }
+  .response-grid,
+  .action-outcome-grid,
+  .certificate-overview-grid { grid-template-columns: 1fr; }
   .certificate-wizard-head { flex-direction: column; }
   .revision-page-head { flex-direction: column; }
   .revision-page-head .table-tools, .revision-page-head select { width: 100%; max-width: none; }

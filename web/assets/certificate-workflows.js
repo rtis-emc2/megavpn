@@ -122,7 +122,7 @@
           <details class="details-block certificate-advanced-actions">
             <summary>CA operations</summary>
             <div class="certificate-action-row">
-              <button class="secondary-btn" type="button" data-certificate-action="managed_ca">Create managed CA</button>
+              <button class="secondary-btn" type="button" data-certificate-action="managed_ca">Create TLS CA</button>
               <button class="secondary-btn" type="button" data-certificate-action="service_ca_root">Create service CA root</button>
               <button class="secondary-btn" type="button" data-certificate-action="letsencrypt">Let's Encrypt status</button>
             </div>
@@ -192,13 +192,14 @@
           document.getElementById('selfSignedCertificateForm').addEventListener('submit', createSelfSignedCertificateSubmit);
           return;
         case 'managed_ca':
-          openModal('Create managed CA', 'Certificates / Managed CA', `
+          openModal('Create TLS CA', 'Certificates / TLS authority', `
             <form id="managedCAForm" class="form-grid">
-              <div class="field"><label>Name</label><input name="name" required placeholder="RTIS Internal Edge CA" /></div>
-              <div class="field"><label>Description</label><input name="description" placeholder="Managed internal CA for edge certificates" /></div>
-              <div class="field"><label>Common Name</label><input name="common_name" required placeholder="RTIS Internal Edge CA" /></div>
+              <div class="field"><label>Name</label><input name="name" required placeholder="Internal Edge TLS CA" /></div>
+              <div class="field"><label>Description</label><input name="description" placeholder="Managed internal CA for edge TLS certificates" /></div>
+              <div class="field"><label>Common Name</label><input name="common_name" required placeholder="Internal Edge TLS CA" /></div>
               <div class="field"><label>Valid days</label><input name="valid_days" type="number" min="1" max="10950" value="3650" /></div>
-              <div class="field full inline-actions"><button class="primary-btn" type="submit">Create managed CA</button></div>
+              <div class="field full"><div class="field-hint">This CA issues TLS leaf certificates. It is not used as the OpenVPN service CA root.</div></div>
+              <div class="field full inline-actions"><button class="primary-btn" type="submit">Create TLS CA</button></div>
             </form>
             <div id="certificateActionResult" class="form-result"></div>`, { wide: true });
           document.getElementById('managedCAForm').addEventListener('submit', createManagedCASubmit);
@@ -219,12 +220,13 @@
           document.getElementById('issueFromCAForm').addEventListener('submit', issueCertificateFromCASubmit);
           return;
         case 'service_ca_root':
-          openModal('Create service CA root', 'Certificates / Service CA', `
+          openModal('Create service CA root', 'Certificates / Service PKI', `
             <form id="serviceCARootForm" class="form-grid">
               <div class="field"><label>Service code</label><input name="service_code" value="openvpn" required placeholder="openvpn" /></div>
               <div class="field"><label>PKI profile</label><input name="pki_profile" value="default" placeholder="default" /></div>
-              <div class="field"><label>Common Name</label><input name="common_name" required placeholder="RTIS OpenVPN Platform CA" /></div>
+              <div class="field"><label>Common Name</label><input name="common_name" required placeholder="OpenVPN Platform CA" /></div>
               <div class="field"><label>Valid days</label><input name="valid_days" type="number" min="1" max="10950" value="3650" /></div>
+              <div class="field full"><div class="field-hint">OpenVPN instances with the same PKI profile will issue server/client certificates from this root.</div></div>
               <div class="field full inline-actions"><button class="primary-btn" type="submit">Create service CA root</button></div>
             </form>
             <div id="certificateActionResult" class="form-result"></div>`, { wide: true });
@@ -290,8 +292,8 @@
           <section class="card">
             <div class="mini-label">Operational model</div>
             <p>${isLeaf
-              ? 'Leaf certificates can be assigned to edge TLS services and Xray/Nginx instances. Revoke only when no production binding depends on it.'
-              : 'Managed CA can issue internal leaf certificates. Delete CA is cascade and marks its issued children as deleted.'}</p>
+              ? 'Leaf TLS certificates can be assigned to edge TLS services and Xray/Nginx instances. Revoke only when no production binding depends on it.'
+              : 'TLS CA can issue internal leaf TLS certificates. OpenVPN uses Service PKI roots instead. Delete CA is cascade and marks its issued children as deleted.'}</p>
             <div class="code-block">certificate_id = ${escapeHTML(item.id)}
 cert_secret_ref = ${escapeHTML(item.cert_secret_ref_id || 'n/a')}
 key_secret_ref = ${escapeHTML(item.key_secret_ref_id || 'n/a')}</div>
@@ -603,21 +605,21 @@ key_secret_ref = ${escapeHTML(item.key_secret_ref_id || 'n/a')}</div>
         };
         const data = await sendJSON('/api/v1/platform/certificates/authorities', 'POST', payload);
         await finishCertificateAction(formEl, data, {
-          title: 'Managed CA created',
+          title: 'TLS CA created',
           eyebrow: 'Certificates / Success',
-          message: (item) => `Managed certificate authority ${item.name || item.common_name || item.id} was created successfully.`,
+          message: (item) => `TLS certificate authority ${item.name || item.common_name || item.id} was created successfully.`,
           details: (item) => [
             { label: 'Name', value: item.name || item.common_name || item.id },
             { label: 'Common Name', value: item.common_name || 'n/a' },
-            { label: 'Kind', value: item.kind || 'ca' },
             { label: 'Valid until', value: certificateExpiryCaption(item) },
+            { label: 'Use for', value: 'issuing TLS leaf certificates' },
           ],
         });
       } catch (err) {
         failCertificateAction(formEl, err, {
-          title: 'Managed CA creation failed',
+          title: 'TLS CA creation failed',
           eyebrow: 'Certificates / Error',
-          errorDetails: () => [{ label: 'Action', value: 'Create managed CA' }],
+          errorDetails: () => [{ label: 'Action', value: 'Create TLS CA' }],
         });
       }
     }
@@ -674,12 +676,13 @@ key_secret_ref = ${escapeHTML(item.key_secret_ref_id || 'n/a')}</div>
         await finishCertificateAction(formEl, data, {
           title: 'Service CA root created',
           eyebrow: 'Certificates / Success',
-          message: (item) => `Service CA root for ${item.service_code || 'service'} / ${item.pki_profile || 'default'} was created successfully.`,
+          message: (item) => `Service CA root for ${item.service_code || 'service'} profile ${item.pki_profile || 'default'} was created successfully.`,
           details: (item) => [
             { label: 'Service', value: item.service_code || 'n/a' },
             { label: 'Profile', value: item.pki_profile || 'default' },
             { label: 'Common Name', value: item.common_name || 'n/a' },
             { label: 'Valid until', value: certificateExpiryCaption(item) },
+            { label: 'Use for', value: 'service server/client certificates' },
           ],
         });
       } catch (err) {

@@ -42,6 +42,7 @@
       defaultServicePack,
       servicePackOptions,
       certificateOptions,
+      servicePKIProfileOptions,
       nodeOptions,
       normalizeInstanceServiceCode,
       stringValue,
@@ -54,13 +55,16 @@
     function openCreateServicePackModal() {
       const initialPack = defaultServicePack();
       const hasPack = Boolean(initialPack);
+      const usesOpenVPN = Array.isArray(initialPack?.components)
+        && initialPack.components.some((component) => String(component?.service_code || '').trim().toLowerCase() === 'openvpn');
       openModal('Create instance from pack', 'POST /api/v1/service-packs/{key}/instances', `
         <form id="createServicePackForm" class="form-grid">
           <div class="field"><label>Node</label><select name="node_id" required>${nodeOptions()}</select></div>
           <div class="field"><label>Service pack</label><select name="service_pack_key" required${hasPack ? '' : ' disabled'}>${servicePackOptions(initialPack?.key || '')}</select></div>
           <div class="field"><label>Base name</label><input name="base_name" required placeholder="${escapeHTML(initialPack?.base_name_template || 'edge-service-pack')}" /></div>
           <div class="field"><label>Endpoint host</label><input name="endpoint_host" placeholder="${escapeHTML(initialPack?.endpoint_hint || 'edge.example.com')}" /></div>
-          <div class="field"><label>Managed certificate</label><select name="certificate_id">${certificateOptions('', true)}</select></div>
+          <div class="field"><label>TLS edge certificate</label><select name="certificate_id">${certificateOptions('', true)}</select><div class="field-hint">Used only by Nginx or Xray TLS components.</div></div>
+          ${usesOpenVPN ? `<div class="field"><label>OpenVPN CA profile</label><select name="openvpn_pki_profile">${servicePKIProfileOptions('openvpn', 'default')}</select><div class="field-hint">OpenVPN server/client certificates are issued from this service CA profile.</div></div>` : ''}
           <div id="servicePackFields" class="form-grid full"></div>
           <div class="field full inline-actions"><button class="primary-btn" type="submit"${hasPack ? '' : ' disabled title="No active service pack is available"'}>Create from pack</button></div>
         </form>
@@ -113,6 +117,7 @@
           base_name: String(form.get('base_name') || '').trim(),
           endpoint_host: String(form.get('endpoint_host') || '').trim(),
           certificate_id: String(form.get('certificate_id') || '').trim(),
+          openvpn_pki_profile: String(form.get('openvpn_pki_profile') || '').trim(),
         };
         const data = await sendJSON(`/api/v1/service-packs/${encodeURIComponent(packKey)}/instances`, 'POST', payload);
         target.innerHTML = renderActionResponse(data, 'Service pack creation');

@@ -76,6 +76,7 @@ values($1,$2,$3,$4,$5,$6,$7,$8)`,
 		root.ID, root.ServiceCode, root.PKIProfile, root.Status, root.CACertSecretRefID, root.CAKeySecretRefID, root.CommonName, root.CreatedAt); err != nil {
 		return domain.PlatformServicePKIRoot{}, err
 	}
+	s.populatePlatformServicePKIRootDates(ctx, &root)
 	_, _ = s.CreateAudit(ctx, "system", "platform_service_pki_root.create", "platform_service_pki_root", &root.ID, "platform service pki root created")
 	return root, nil
 }

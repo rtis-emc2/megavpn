@@ -118,6 +118,44 @@
         .join('');
     }
 
+    function activeServicePKIRoots(serviceCode = '') {
+      const expectedService = normalizeInstanceServiceCode(serviceCode);
+      return (state.platformPKIRoots || [])
+        .filter((root) => String(root.status || 'active').toLowerCase() === 'active')
+        .filter((root) => !expectedService || normalizeInstanceServiceCode(root.service_code) === expectedService)
+        .sort((left, right) => String(left.service_code || '').localeCompare(String(right.service_code || ''), 'en')
+          || String(left.pki_profile || 'default').localeCompare(String(right.pki_profile || 'default'), 'en'));
+    }
+
+    function servicePKIProfileOptions(serviceCode = 'openvpn', selectedProfile = 'default') {
+      const selected = String(selectedProfile || 'default').trim() || 'default';
+      const roots = activeServicePKIRoots(serviceCode);
+      const profiles = new Map();
+      for (const root of roots) {
+        const profile = String(root.pki_profile || 'default').trim() || 'default';
+        if (!profiles.has(profile)) profiles.set(profile, root);
+      }
+      if (!profiles.has('default')) {
+        profiles.set('default', {
+          pki_profile: 'default',
+          common_name: 'default profile, auto-created on first apply',
+          service_code: serviceCode || 'openvpn',
+        });
+      }
+      if (selected && !profiles.has(selected)) {
+        profiles.set(selected, {
+          pki_profile: selected,
+          common_name: 'custom profile, create the matching service CA root before rollout',
+          service_code: serviceCode || 'openvpn',
+        });
+      }
+      return Array.from(profiles.entries()).map(([profile, root]) => {
+        const expires = root.not_after ? ` · ${certificateExpiryCaption(root)}` : '';
+        const label = `${profile} · ${root.common_name || 'service CA root'}${expires}`;
+        return `<option value="${escapeHTML(profile)}"${profile === selected ? ' selected' : ''}>${escapeHTML(label)}</option>`;
+      }).join('');
+    }
+
     function nodeOptions() {
       return (state.nodes || [])
         .map((node) => {
@@ -547,7 +585,11 @@
             <div class="field"><label>Cipher</label><input name="ovpn_cipher" value="${escapeHTML(draft.ovpn_cipher || '')}" placeholder="AES-256-GCM" /></div>
             <div class="field"><label>Auth</label><input name="ovpn_auth" value="${escapeHTML(draft.ovpn_auth || '')}" placeholder="SHA256" /></div>
             <div class="field"><label>Runtime dir</label><input name="ovpn_runtime_dir" value="${escapeHTML(draft.ovpn_runtime_dir || '')}" placeholder="/etc/openvpn/server/megavpn-edge" /></div>
-            <div class="field"><label>PKI profile</label><input name="ovpn_pki_profile" value="${escapeHTML(draft.ovpn_pki_profile || 'default')}" placeholder="default" /></div>
+            <div class="field">
+              <label>Service CA profile</label>
+              <select name="ovpn_pki_profile">${servicePKIProfileOptions('openvpn', draft.ovpn_pki_profile || 'default')}</select>
+              <div class="field-hint">OpenVPN server/client certificates are issued from this platform PKI profile.</div>
+            </div>
             <div class="field"><label>Client proxy mode</label><select name="ovpn_client_proxy_mode">
               <option value="direct"${!draft.ovpn_client_proxy_mode || draft.ovpn_client_proxy_mode === 'direct' || draft.ovpn_client_proxy_mode === 'none' ? ' selected' : ''}>direct</option>
               <option value="socks5"${draft.ovpn_client_proxy_mode === 'socks5' || draft.ovpn_client_proxy_mode === 'socks' ? ' selected' : ''}>socks5</option>
@@ -1028,6 +1070,7 @@
       servicePackOptions,
       activeLeafCertificates,
       activeManagedAuthorities,
+      activeServicePKIRoots,
       certificateIsExpired,
       certificateDisplayStatus,
       certificateExpiryCaption,
@@ -1035,6 +1078,7 @@
       certificateUsageCaption,
       certificateOptions,
       authorityCertificateOptions,
+      servicePKIProfileOptions,
       nodeOptions,
       normalizeInstanceServiceCode,
       cloneJSON,

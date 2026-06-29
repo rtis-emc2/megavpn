@@ -192,7 +192,7 @@ func (s *Server) createManagedPlatformServicePKIRoot(w http.ResponseWriter, r *h
 		writeErr(w, classifyCertificateErrStatus(err), err.Error())
 		return
 	}
-	writeJSON(w, 201, root)
+	writeJSON(w, 201, platformServicePKIRootToResponse(root))
 }
 
 func (s *Server) setDefaultPlatformCertificate(w http.ResponseWriter, r *http.Request) {
