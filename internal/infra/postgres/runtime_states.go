@@ -472,6 +472,9 @@ func evaluateEndpointListeningCheck(input runtimeProjectionInput, check domain.R
 
 func healthReasonsForRuntimeProjection(input runtimeProjectionInput, checks []domain.RuntimeCheck) []string {
 	reasons := make([]string, 0, 4)
+	if instanceRuntimeJobInProgress(input.LastJobStatus) && strings.TrimSpace(input.LastJobType) != "" {
+		reasons = append(reasons, input.LastJobType+" is "+strings.ToLower(strings.TrimSpace(input.LastJobStatus))+"; waiting for agent convergence.")
+	}
 	if errText := strings.TrimSpace(input.ErrorText); errText != "" {
 		reasons = append(reasons, "Runtime error: "+truncateRuntimeReason(errText))
 	}
@@ -502,6 +505,9 @@ func driftReasonsForRuntimeProjection(input runtimeProjectionInput) []string {
 	case "in_sync":
 		return []string{"Applied revision and observed runtime state are in sync."}
 	case "pending_apply":
+		if instanceRuntimeJobInProgress(input.LastJobStatus) && strings.TrimSpace(input.LastJobType) != "" {
+			return []string{input.LastJobType + " is " + strings.ToLower(strings.TrimSpace(input.LastJobStatus)) + "; desired state is waiting for agent convergence."}
+		}
 		return []string{"Current desired revision has not been applied to the node yet."}
 	case "drifted":
 		reasons := make([]string, 0, 3)
@@ -684,6 +690,106 @@ func (s *Store) upsertInstanceRuntimeStateForJob(ctx context.Context, instanceID
 		ListeningPorts:     []map[string]any{},
 		Result:             result,
 		ErrorText:          errorText,
+		ObservedAt:         now,
+		ReceivedAt:         now,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) upsertInstanceRuntimeStateForQueuedJob(ctx context.Context, instanceID string, job domain.Job) error {
+	instance, err := s.GetInstance(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	jobStatus := strings.TrimSpace(job.Status)
+	if jobStatus == "" {
+		jobStatus = "queued"
+	}
+	result := map[string]any{
+		"message":    strings.TrimSpace(job.Type) + " queued",
+		"queued":     true,
+		"job_status": jobStatus,
+	}
+	runtimeStatus := runtimeStatusFromJob(job.Type, jobStatus, "")
+	healthStatus := healthStatusFromRuntime(job.Type, jobStatus, "")
+	driftStatus := driftStatusForInstance(instance, job.Type, jobStatus)
+	resultRaw := mustJSON(result)
+	now := time.Now().UTC()
+	stateID := id.New()
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `insert into instance_runtime_states(
+			id,instance_id,node_id,service_code,systemd_unit,desired_status,runtime_status,health_status,drift_status,active_state,
+			enabled_state,config_hash,last_job_id,last_job_type,last_job_status,applied_revision_id,observed_revision_id,endpoint_host,endpoint_port,listening_ports_json,result_json,error_text,agent_reported_at,checked_at,updated_at
+		) values($1,$2,$3,$4,$5,$6,$7,$8,$9,'','','',$10,$11,$12,$13,null,$14,nullif($15,0),'[]'::jsonb,$16,'',null,$17,$17)
+		on conflict(instance_id) do update set
+			node_id=excluded.node_id,
+			service_code=excluded.service_code,
+			systemd_unit=excluded.systemd_unit,
+			desired_status=excluded.desired_status,
+			runtime_status=excluded.runtime_status,
+			health_status=excluded.health_status,
+			drift_status=excluded.drift_status,
+			last_job_id=excluded.last_job_id,
+			last_job_type=excluded.last_job_type,
+			last_job_status=excluded.last_job_status,
+			applied_revision_id=excluded.applied_revision_id,
+			endpoint_host=excluded.endpoint_host,
+			endpoint_port=excluded.endpoint_port,
+			result_json=excluded.result_json,
+			error_text='',
+			checked_at=excluded.checked_at,
+			updated_at=excluded.updated_at`,
+		stateID,
+		instance.ID,
+		nullableString(instance.NodeID),
+		instance.ServiceCode,
+		instance.SystemdUnit,
+		instance.Status,
+		runtimeStatus,
+		healthStatus,
+		driftStatus,
+		nullableString(job.ID),
+		job.Type,
+		jobStatus,
+		instance.LastAppliedRevisionID,
+		instance.EndpointHost,
+		instance.EndpointPort,
+		resultRaw,
+		now,
+	)
+	if err != nil {
+		return err
+	}
+	if err := insertInstanceRuntimeObservation(ctx, tx, domain.InstanceRuntimeObservation{
+		ID:                 id.New(),
+		InstanceID:         instance.ID,
+		NodeID:             nullableString(instance.NodeID),
+		Source:             "job",
+		ServiceCode:        instance.ServiceCode,
+		SystemdUnit:        instance.SystemdUnit,
+		DesiredStatus:      instance.Status,
+		RuntimeStatus:      runtimeStatus,
+		HealthStatus:       healthStatus,
+		DriftStatus:        driftStatus,
+		ActiveState:        "",
+		EnabledState:       "",
+		ConfigHash:         "",
+		LastJobID:          nullableString(job.ID),
+		LastJobType:        job.Type,
+		LastJobStatus:      jobStatus,
+		AppliedRevisionID:  instance.LastAppliedRevisionID,
+		ObservedRevisionID: nil,
+		EndpointHost:       instance.EndpointHost,
+		EndpointPort:       instance.EndpointPort,
+		ListeningPorts:     []map[string]any{},
+		Result:             result,
+		ErrorText:          "",
 		ObservedAt:         now,
 		ReceivedAt:         now,
 	}); err != nil {
@@ -1067,6 +1173,9 @@ func intFromAny(value any) int64 {
 }
 
 func runtimeStatusFromJob(jobType, jobStatus, activeState string) string {
+	if instanceRuntimeJobInProgress(jobStatus) {
+		return "provisioning"
+	}
 	if jobStatus == "failed" {
 		return "failed"
 	}
@@ -1090,6 +1199,9 @@ func runtimeStatusFromJob(jobType, jobStatus, activeState string) string {
 }
 
 func healthStatusFromRuntime(jobType, jobStatus, activeState string) string {
+	if instanceRuntimeJobInProgress(jobStatus) {
+		return "provisioning"
+	}
 	if jobStatus == "failed" {
 		return "unhealthy"
 	}
@@ -1112,6 +1224,9 @@ func healthStatusFromRuntime(jobType, jobStatus, activeState string) string {
 }
 
 func driftStatusForInstance(instance domain.Instance, jobType, jobStatus string) string {
+	if instanceRuntimeJobInProgress(jobStatus) {
+		return "pending_apply"
+	}
 	if jobStatus != "succeeded" {
 		return "unknown"
 	}
@@ -1125,6 +1240,15 @@ func driftStatusForInstance(instance domain.Instance, jobType, jobStatus string)
 		return "pending_apply"
 	}
 	return "unknown"
+}
+
+func instanceRuntimeJobInProgress(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "queued", "running", "retrying":
+		return true
+	default:
+		return false
+	}
 }
 
 func nullableString(value string) *string {

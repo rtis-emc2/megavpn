@@ -1005,6 +1005,7 @@ func (s *Store) createInstance(ctx context.Context, x domain.Instance, queueInit
 			if job, err := s.CreateJob(ctx, domain.Job{Type: "instance.apply", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload}); err == nil {
 				_, _ = s.db.Exec(ctx, `update instances set status='provisioning',updated_at=now() where id=$1 and status in ('draft','validated','failed')`, x.ID)
 				x.Status = "provisioning"
+				_ = s.upsertInstanceRuntimeStateForQueuedJob(ctx, x.ID, job)
 				_ = s.AddJobLog(ctx, job.ID, "info", "initial instance apply queued", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
 				_, _ = s.CreateAudit(ctx, "system", "instance.apply", "instance", &x.ID, "initial instance apply queued")
 			}
@@ -1057,6 +1058,9 @@ func (s *Store) UpdateInstanceStatus(ctx context.Context, instanceID, action str
 		return domain.Job{}, err
 	}
 	j, err := s.CreateJob(ctx, domain.Job{Type: jobType, ScopeType: "instance", ScopeID: &instanceID, NodeID: &x.NodeID, InstanceID: &instanceID, Payload: payload})
+	if err == nil {
+		_ = s.upsertInstanceRuntimeStateForQueuedJob(ctx, instanceID, j)
+	}
 	_, _ = s.CreateAudit(ctx, "system", jobType, "instance", &instanceID, "instance action queued")
 	return j, err
 }
@@ -1089,6 +1093,7 @@ func (s *Store) DeleteInstance(ctx context.Context, instanceID string) (domain.I
 		_, _ = s.db.Exec(ctx, `update instances set status=$2,enabled=$3,updated_at=now() where id=$1`, instanceID, x.Status, x.Enabled)
 		return domain.Instance{}, err
 	}
+	_ = s.upsertInstanceRuntimeStateForQueuedJob(ctx, instanceID, job)
 	_ = s.AddJobLog(ctx, job.ID, "info", "instance cleanup queued", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
 	_, _ = s.CreateAudit(ctx, "system", "instance.delete", "instance", &instanceID, "instance cleanup queued")
 	return s.GetInstance(ctx, instanceID)

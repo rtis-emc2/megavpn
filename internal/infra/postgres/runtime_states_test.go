@@ -39,6 +39,43 @@ func TestRuntimeStateDerivationForFailure(t *testing.T) {
 	}
 }
 
+func TestRuntimeStateDerivationForQueuedApply(t *testing.T) {
+	t.Parallel()
+
+	instance := domain.Instance{CurrentRevisionID: stringPtr("rev-2"), LastAppliedRevisionID: stringPtr("rev-1")}
+	if got := runtimeStatusFromJob("instance.apply", "queued", ""); got != "provisioning" {
+		t.Fatalf("runtime status = %q", got)
+	}
+	if got := healthStatusFromRuntime("instance.apply", "queued", ""); got != "provisioning" {
+		t.Fatalf("health status = %q", got)
+	}
+	if got := driftStatusForInstance(instance, "instance.apply", "queued"); got != "pending_apply" {
+		t.Fatalf("drift status = %q", got)
+	}
+}
+
+func TestRuntimeProjectionExplainsQueuedJob(t *testing.T) {
+	t.Parallel()
+
+	_, healthReasons, driftReasons := buildRuntimeProjection(runtimeProjectionInput{
+		ServiceCode:    driver.WireGuard,
+		DesiredStatus:  "provisioning",
+		RuntimeStatus:  "provisioning",
+		HealthStatus:   "provisioning",
+		DriftStatus:    "pending_apply",
+		LastJobType:    "instance.apply",
+		LastJobStatus:  "queued",
+		EndpointPort:   51820,
+		ListeningPorts: []map[string]any{},
+	})
+	if len(healthReasons) == 0 || healthReasons[0] != "instance.apply is queued; waiting for agent convergence." {
+		t.Fatalf("health reasons = %#v", healthReasons)
+	}
+	if len(driftReasons) != 1 || driftReasons[0] != "instance.apply is queued; desired state is waiting for agent convergence." {
+		t.Fatalf("drift reasons = %#v", driftReasons)
+	}
+}
+
 func TestRuntimeStateDerivationForStoppedInstance(t *testing.T) {
 	t.Parallel()
 
