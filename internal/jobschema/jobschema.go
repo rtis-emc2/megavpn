@@ -108,11 +108,13 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if confirmation != "ERASE_NODE_MANAGED_STATE" {
-			return nil, validationf("payload.confirmation must be ERASE_NODE_MANAGED_STATE")
-		}
 		normalized["node_id"] = nodeID
 		normalized["confirmation"] = confirmation
+		if nodeName, err := optionalString(payload, "node_name"); err != nil {
+			return nil, err
+		} else if nodeName != "" {
+			normalized["node_name"] = nodeName
+		}
 		if v, ok, err := optionalBool(payload, "include_agent"); err != nil {
 			return nil, err
 		} else if ok {

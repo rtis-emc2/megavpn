@@ -582,6 +582,7 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
 
     function openEmergencyNodeCleanupModal(node) {
       if (!node?.id) return;
+      const confirmationName = String(node.name || node.id || '').trim();
       openModal(`Emergency cleanup: ${node.name || 'node'}`, 'Destructive node operation', `
         <section class="card">
           <h2>Clean managed runtime from this node</h2>
@@ -599,8 +600,9 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
               </span>
             </label>
             <div class="field full">
-              <label>Type ERASE_NODE_MANAGED_STATE to confirm</label>
-              <input id="emergencyCleanupConfirm" autocomplete="off" spellcheck="false" />
+              <label>Type node name to confirm</label>
+              <input id="emergencyCleanupConfirm" autocomplete="off" spellcheck="false" placeholder="${escapeHTML(confirmationName)}" />
+              <div class="field-hint">Required value: <code>${escapeHTML(confirmationName)}</code></div>
             </div>
           </div>
           <div class="modal-actions">
@@ -617,10 +619,11 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
       const target = document.getElementById('emergencyCleanupResult');
       const button = document.getElementById('confirmEmergencyCleanupBtn');
       const confirmation = String(document.getElementById('emergencyCleanupConfirm')?.value || '').trim();
+      const expectedConfirmation = String(node.name || node.id || '').trim();
       const includeAgent = Boolean(document.getElementById('includeAgentCleanupToggle')?.checked);
       if (!target) return;
-      if (confirmation !== 'ERASE_NODE_MANAGED_STATE') {
-        target.innerHTML = '<span class="tag danger">confirmation phrase is required</span>';
+      if (confirmation !== expectedConfirmation) {
+        target.innerHTML = `<span class="tag danger">type ${escapeHTML(expectedConfirmation)} to confirm</span>`;
         return;
       }
       target.innerHTML = '<span class="tag warn">queueing cleanup</span>';

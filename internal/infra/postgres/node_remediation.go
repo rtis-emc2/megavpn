@@ -42,8 +42,16 @@ func (s *Store) CreateNodeChannelProbeJob(ctx context.Context, nodeID string) (d
 }
 
 func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string, includeAgent bool, confirmation string) (domain.Job, error) {
-	if _, err := s.GetNode(ctx, nodeID); err != nil {
+	node, err := s.GetNode(ctx, nodeID)
+	if err != nil {
 		return domain.Job{}, err
+	}
+	expectedConfirmation := strings.TrimSpace(node.Name)
+	if expectedConfirmation == "" {
+		expectedConfirmation = strings.TrimSpace(nodeID)
+	}
+	if strings.TrimSpace(confirmation) != expectedConfirmation {
+		return domain.Job{}, fmt.Errorf("confirmation must match node name %q", expectedConfirmation)
 	}
 	instances, err := s.nodeInstanceCleanupPayloads(ctx, nodeID)
 	if err != nil {
@@ -51,6 +59,7 @@ func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string
 	}
 	payload := map[string]any{
 		"node_id":       nodeID,
+		"node_name":     expectedConfirmation,
 		"include_agent": includeAgent,
 		"confirmation":  strings.TrimSpace(confirmation),
 		"instances":     instances,

@@ -20,8 +20,12 @@ func (c client) emergencyCleanupNode(ctx context.Context, j job, st agentState) 
 	if st.NodeID != "" && nodeID != "" && nodeID != st.NodeID {
 		return "failed", map[string]any{"error": "cleanup node_id does not match enrolled agent", "payload_node_id": nodeID, "agent_node_id": st.NodeID}
 	}
-	if stringify(j.Payload["confirmation"]) != "ERASE_NODE_MANAGED_STATE" {
-		return "failed", map[string]any{"error": "cleanup confirmation is missing or invalid"}
+	expectedConfirmation := stringify(j.Payload["node_name"])
+	if expectedConfirmation == "" {
+		expectedConfirmation = st.NodeName
+	}
+	if expectedConfirmation == "" || stringify(j.Payload["confirmation"]) != expectedConfirmation {
+		return "failed", map[string]any{"error": "cleanup confirmation is missing or invalid", "expected_node_name": expectedConfirmation}
 	}
 
 	includeAgent := boolFromAny(j.Payload["include_agent"])
