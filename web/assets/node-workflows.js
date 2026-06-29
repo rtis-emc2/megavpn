@@ -94,7 +94,92 @@
       return Array.isArray(value) ? value : [];
     }
 
-    const nodeManageTabIDs = new Set(['overview', 'bootstrap', 'terminal', 'agent', 'inventory', 'services']);
+    const nodeManageTabIDs = new Set(['overview', 'instances', 'bootstrap', 'terminal', 'agent', 'inventory', 'services']);
+
+    function managedInstancesForNode(nodeID) {
+      const id = String(nodeID || '').trim();
+      return arrayOrEmpty(state.instances)
+        .filter((item) => String(item.node_id || '').trim() === id)
+        .filter((item) => String(item.status || '').toLowerCase() !== 'deleted');
+    }
+
+    function runtimeStateForInstance(instanceID) {
+      const id = String(instanceID || '').trim();
+      return arrayOrEmpty(state.instanceRuntimeStates).find((item) => String(item.instance_id || '').trim() === id) || null;
+    }
+
+    function serviceLabel(serviceCode) {
+      const code = String(serviceCode || '').trim();
+      const service = arrayOrEmpty(state.servicesCatalog).find((item) => String(item.code || '').trim() === code);
+      return service?.label || service?.display_name || service?.name || code || 'unknown';
+    }
+
+    function instanceEndpoint(instance) {
+      const host = String(instance?.endpoint_host || '').trim();
+      const port = Number(instance?.endpoint_port || 0);
+      if (!host && !port) return 'n/a';
+      if (!host) return String(port);
+      if (!port) return host;
+      return `${host}:${port}`;
+    }
+
+    function openInstancesForNode(node) {
+      if (!node?.id) return;
+      if (state.nodeTerminalActive) disconnectNodeTerminal();
+      state.instancesView = 'list';
+      state.instancesListView = 'node';
+      state.instancesVisibleLimit = 100;
+      state.instanceListFilters = {
+        search: '',
+        status: 'all',
+        service: 'all',
+        node: node.id,
+      };
+      setPage('instances');
+    }
+
+    function renderManagedNodeInstanceRows(instances) {
+      if (!instances.length) {
+        return '<tr><td colspan="6"><div class="empty">No managed instances are assigned to this node.</div></td></tr>';
+      }
+      return instances.map((instance) => {
+        const runtime = runtimeStateForInstance(instance.id);
+        const revision = instance.current_revision_id && instance.last_applied_revision_id && instance.current_revision_id === instance.last_applied_revision_id
+          ? 'applied'
+          : instance.current_revision_id
+            ? 'pending'
+            : 'n/a';
+        const healthReason = Array.isArray(runtime?.health_reasons)
+          ? runtime.health_reasons.map((item) => String(item || '').trim()).find(Boolean)
+          : '';
+        return `
+          <tr>
+            <td>
+              <strong class="mono-clip" title="${escapeHTML(instance.name || '')}">${escapeHTML(instance.name || 'instance')}</strong>
+              <span class="metric-caption mono-clip" title="${escapeHTML(instance.id || '')}">${escapeHTML(instance.id || 'n/a')}</span>
+            </td>
+            <td>
+              <strong>${escapeHTML(serviceLabel(instance.service_code))}</strong>
+              <span class="metric-caption mono-clip">${escapeHTML(instance.service_code || 'unknown')}</span>
+            </td>
+            <td><code class="mono-clip" title="${escapeHTML(instanceEndpoint(instance))}">${escapeHTML(instanceEndpoint(instance))}</code></td>
+            <td>
+              <div class="instance-state-cluster">
+                ${statusTag(instance.status || 'draft')}
+                <span class="tag">${escapeHTML(revision === 'applied' ? 'rev applied' : `rev ${revision}`)}</span>
+              </div>
+            </td>
+            <td>
+              <div class="instance-state-cluster">
+                ${statusTag(runtime?.runtime_status || 'unknown')}
+                ${statusTag(runtime?.health_status || 'unknown')}
+                ${statusTag(runtime?.drift_status || 'unknown')}
+              </div>
+            </td>
+            <td><span class="metric-caption" title="${escapeHTML(healthReason || '')}">${escapeHTML(healthReason || 'No recent runtime issue.')}</span></td>
+          </tr>`;
+      }).join('');
+    }
 
     function persistNodeManageTabs() {
       try {
@@ -724,6 +809,8 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
       const communicationState = diag?.communication_state || 'unknown';
       const accessStatus = terminalMethod ? 'configured' : 'missing';
       const publicURL = platformPublicBaseURL() || 'not configured';
+      const managedInstances = managedInstancesForNode(node.id);
+      const managedInstanceRows = renderManagedNodeInstanceRows(managedInstances);
       const agentNextStepPanel = String(diag?.communication_state || '') === 'awaiting_enrollment'
         ? `<div class="fact-card emphasis-card node-next-step">
             <div class="mini-label">Next step</div>
@@ -745,12 +832,14 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
           <div class="fact-card"><div class="mini-label">Agent</div><div class="metric-caption strong">${statusTag(diagnosticsAgentState(diag))}</div><div class="metric-caption">${escapeHTML(communicationState)}</div></div>
           <div class="fact-card"><div class="mini-label">Heartbeat</div><div class="metric-caption strong">${escapeHTML(heartbeatStatus)}</div><div class="metric-caption">${escapeHTML(heartbeatDrift == null ? formatRelativeDate(node.last_heartbeat_at) : formatDurationSeconds(heartbeatDrift))}</div></div>
           <div class="fact-card"><div class="mini-label">Bootstrap</div><div class="metric-caption strong">${statusTag(diag?.last_bootstrap?.status || 'not started')}</div><div class="metric-caption">SSH access ${escapeHTML(accessStatus)}</div></div>
+          <div class="fact-card"><div class="mini-label">Instances</div><div class="metric-caption strong">${escapeHTML(String(managedInstances.length))}</div><div class="metric-caption">managed workloads</div></div>
           <div class="fact-card"><div class="mini-label">Inventory</div><div class="metric-caption strong">${escapeHTML(formatRelativeDate(inventoryCollectedAt))}</div><div class="metric-caption">${escapeHTML(inventoryLabel(inventoryPayload, 'os.pretty_name', `${node.os_family || 'linux'} ${node.os_version || ''}`))}</div></div>
         </div>
         ${flash ? `<div class="notice subtle-notice">${escapeHTML(flash)}</div>` : ''}
         <div class="node-console-layout">
           <nav class="node-console-nav" aria-label="Node management sections">
             ${nodeConsoleTabButton('overview', 'Overview', 'profile and actions', activeTab)}
+            ${nodeConsoleTabButton('instances', 'Instances', 'managed workloads', activeTab)}
             ${nodeConsoleTabButton('bootstrap', 'Bootstrap', 'SSH, tokens, jobs', activeTab)}
             ${nodeConsoleTabButton('terminal', 'Terminal', 'browser SSH', activeTab)}
             ${nodeConsoleTabButton('agent', 'Agent channel', 'health and trust', activeTab)}
@@ -786,6 +875,7 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
                   <div class="section-body">
                     <div class="operator-action-grid">
                       <button class="operator-action" id="editNodeFromManageBtn" type="button"><strong>Edit profile</strong><span>Name, role, address, setup method.</span></button>
+                      <button class="operator-action" id="openNodeInstancesBtn" type="button"><strong>Managed instances</strong><span>${escapeHTML(String(managedInstances.length))} workload(s) assigned to this node.</span></button>
                       <button class="operator-action" id="openNodeTerminalBtn" type="button"><strong>SSH terminal</strong><span>${escapeHTML(terminalEndpointLabel(terminalMethod))}</span></button>
                       <button class="operator-action" id="refreshNodeRuntimeBtn" type="button"><strong>Refresh diagnostics</strong><span>Reload current runtime state.</span></button>
                       <button class="operator-action" id="nodeMaintenanceToggleBtn" type="button"><strong>${node.status === 'maintenance' ? 'Disable maintenance' : 'Enable maintenance'}</strong><span>Control scheduling state for this node.</span></button>
@@ -796,6 +886,35 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
                   </div>
                 </section>
               </div>
+            </section>
+            <section class="node-tab-panel${activeTab === 'instances' ? ' is-active' : ''}" data-node-panel="instances">
+              <section class="table-card compact-card">
+                <div class="table-head">
+                  <div>
+                    <h2>Managed Instances</h2>
+                    <div class="metric-caption">Desired-state services assigned to this node.</div>
+                  </div>
+                  <div class="table-tools">
+                    <span class="tag">${escapeHTML(String(managedInstances.length))} workloads</span>
+                    <button class="secondary-btn" id="openInstancesFilteredBtn" type="button">Open in Instances</button>
+                  </div>
+                </div>
+                <div class="table-wrap node-managed-instances-wrap">
+                  <table class="node-managed-instances-table">
+                    <thead>
+                      <tr>
+                        <th>Instance</th>
+                        <th>Service</th>
+                        <th>Endpoint</th>
+                        <th>Desired</th>
+                        <th>Runtime</th>
+                        <th>Latest issue</th>
+                      </tr>
+                    </thead>
+                    <tbody>${managedInstanceRows}</tbody>
+                  </table>
+                </div>
+              </section>
             </section>
             <section class="node-tab-panel${activeTab === 'terminal' ? ' is-active' : ''}" data-node-panel="terminal">
               <div class="node-panel-head">
@@ -997,6 +1116,8 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       document.getElementById('refreshNodeRuntimeBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Node runtime state refreshed.'));
       document.getElementById('refreshNodeBootstrapBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Bootstrap state refreshed.'));
       document.getElementById('editNodeFromManageBtn').addEventListener('click', () => openEditNodeModal(node.id));
+      document.getElementById('openNodeInstancesBtn')?.addEventListener('click', () => switchNodeConsoleTab('instances'));
+      document.getElementById('openInstancesFilteredBtn')?.addEventListener('click', () => openInstancesForNode(node));
       document.getElementById('emergencyNodeCleanupBtn').addEventListener('click', () => openEmergencyNodeCleanupModal(node));
       document.getElementById('deleteNodeFromManageBtn').addEventListener('click', () => openDeleteNodeModal(node.id, node.name));
       document.getElementById('openNodeTerminalBtn')?.addEventListener('click', () => switchNodeConsoleTab('terminal'));

@@ -13,6 +13,7 @@
       renderActionResponse,
       sendJSON,
       refresh,
+      setPage,
       hasPermission,
       openModal,
       closeModal,
@@ -35,6 +36,7 @@
       typeof renderActionResponse !== 'function' ||
       typeof sendJSON !== 'function' ||
       typeof refresh !== 'function' ||
+      typeof setPage !== 'function' ||
       typeof hasPermission !== 'function' ||
       typeof openModal !== 'function' ||
       typeof closeModal !== 'function' ||
@@ -72,6 +74,21 @@
 
     function activeNodes() {
       return (state.nodes || []).filter((node) => node.status !== 'retired');
+    }
+
+    function nodeByID(nodeID) {
+      const id = String(nodeID || '').trim();
+      return (state.nodes || []).find((item) => String(item.id || '').trim() === id) || null;
+    }
+
+    function nodeOptionLabel(row) {
+      const role = String(row.nodeRole || '').trim();
+      const address = String(row.nodeAddress || '').trim();
+      return [row.node || row.nodeID || 'node', role, address].filter(Boolean).join(' · ');
+    }
+
+    function instanceListViewMode() {
+      return String(state.instancesListView || 'node') === 'table' ? 'table' : 'node';
     }
 
     function instanceCapableServices() {
@@ -162,14 +179,17 @@
     }
 
     function toInstanceRow(instance) {
-      const node = (state.nodes || []).find((item) => item.id === instance.node_id);
+      const node = nodeByID(instance.node_id);
       const runtime = runtimeStateFor(instance.id);
       const latestJob = latestInstanceJob(instance.id);
       const row = {
         id: instance.id,
         name: instance.name,
+        nodeID: instance.node_id || '',
         node: node?.name || instance.node_id || 'n/a',
-        nodeAddress: node?.public_address || node?.private_address || '',
+        nodeRole: node?.role || '',
+        nodeStatus: node?.status || '',
+        nodeAddress: node?.address || '',
         service: instance.service_code || 'unknown',
         serviceLabel: serviceLabel(instance.service_code || 'unknown'),
         endpoint: instanceEndpoint(instance),
@@ -265,6 +285,16 @@
       return values.map((value) => ({ value, label: labelFn(value) }));
     }
 
+    function instanceNodeFilterOptions(rows) {
+      const byNode = new Map();
+      for (const row of rows) {
+        const value = String(row.nodeID || row.node || '').trim();
+        if (!value || byNode.has(value)) continue;
+        byNode.set(value, { value, label: nodeOptionLabel(row) });
+      }
+      return Array.from(byNode.values()).sort((left, right) => left.label.localeCompare(right.label, 'en'));
+    }
+
     function renderInstanceFilterOptions(options, selected) {
       return options.map((option) => `
         <option value="${escapeHTML(option.value)}"${option.value === selected ? ' selected' : ''}>${escapeHTML(option.label)}</option>`).join('');
@@ -275,7 +305,7 @@
       return rows.filter((row) => {
         if (filters.status !== 'all' && row.bucket !== filters.status) return false;
         if (filters.service !== 'all' && row.service !== filters.service) return false;
-        if (filters.node !== 'all' && row.node !== filters.node) return false;
+        if (filters.node !== 'all' && row.nodeID !== filters.node && row.node !== filters.node) return false;
         if (!query) return true;
         const haystack = [
           row.name,
@@ -298,7 +328,8 @@
     function renderInstanceListToolbar(rows, filteredRows) {
       const filters = ensureInstanceListFilters();
       const serviceOptions = instanceFilterOptions(rows, 'service', serviceLabel);
-      const nodeOptionsList = instanceFilterOptions(rows, 'node');
+      const nodeOptionsList = instanceNodeFilterOptions(rows);
+      const viewMode = instanceListViewMode();
       return `
         <div class="instance-list-toolbar">
           <div class="field compact">
@@ -330,6 +361,10 @@
             </select>
           </div>
           <div class="instance-list-toolbar-actions">
+            <div class="instance-view-switch" role="group" aria-label="Instance list view">
+              <button class="${viewMode === 'node' ? 'is-active' : ''}" id="instancesByNodeViewBtn" type="button">By node</button>
+              <button class="${viewMode === 'table' ? 'is-active' : ''}" id="instancesTableViewBtn" type="button">Table</button>
+            </div>
             <button class="secondary-btn" id="applyInstanceFiltersBtn" type="button">Apply filters</button>
             <button class="secondary-btn" id="resetInstanceFiltersBtn" type="button">Reset</button>
             <span class="tag">${escapeHTML(String(filteredRows.length))} shown</span>
@@ -384,6 +419,24 @@
         </tr>`;
     }
 
+    function renderNodeInstanceTableRow(row) {
+      return `
+        <tr>
+          <td>
+            <strong class="mono-clip" title="${escapeHTML(row.name || '')}">${escapeHTML(row.name || 'instance')}</strong>
+            <span class="metric-caption mono-clip" title="${escapeHTML(row.id || '')}">${escapeHTML(row.id || 'n/a')}</span>
+          </td>
+          <td>
+            <strong>${escapeHTML(row.serviceLabel)}</strong>
+            <span class="metric-caption mono-clip">${escapeHTML(row.service)}</span>
+          </td>
+          <td><code class="mono-clip" title="${escapeHTML(row.endpoint)}">${escapeHTML(row.endpoint)}</code></td>
+          <td>${renderInstanceStateCluster(row)}</td>
+          <td>${renderInstanceIssue(row)}</td>
+          <td>${actionButtons(row)}</td>
+        </tr>`;
+    }
+
     function renderInstanceFact(label, value, className = '') {
       return `
         <div class="instance-fact ${className}">
@@ -404,16 +457,78 @@
         </div>`;
     }
 
-    function renderInstancesList(instances) {
-      if (!instances.length) return renderEmptyInstancesState();
-      const rows = instances.map(toInstanceRow);
-      const filters = ensureInstanceListFilters();
-      const filteredRows = filterInstanceRows(rows, filters);
-      const limit = Number(state.instancesVisibleLimit || INSTANCE_PAGE_SIZE);
-      const visibleRows = filteredRows.slice(0, limit);
-      const hiddenCount = Math.max(0, filteredRows.length - visibleRows.length);
+    function groupRowsByNode(rows) {
+      const groups = new Map();
+      for (const row of rows) {
+        const key = String(row.nodeID || row.node || 'unknown').trim() || 'unknown';
+        if (!groups.has(key)) {
+          groups.set(key, {
+            key,
+            nodeID: row.nodeID || '',
+            node: row.node || 'n/a',
+            role: row.nodeRole || '',
+            status: row.nodeStatus || '',
+            address: row.nodeAddress || '',
+            rows: [],
+          });
+        }
+        groups.get(key).rows.push(row);
+      }
+      return Array.from(groups.values()).sort((left, right) => left.node.localeCompare(right.node, 'en'));
+    }
+
+    function groupBucketCount(group, bucket) {
+      return group.rows.filter((row) => row.bucket === bucket).length;
+    }
+
+    function renderNodeInstanceGroup(group) {
+      const problem = groupBucketCount(group, 'problem');
+      const pending = groupBucketCount(group, 'pending');
+      const healthy = groupBucketCount(group, 'healthy');
+      const unknown = group.rows.length - problem - pending - healthy;
       return `
-        ${renderInstanceListToolbar(rows, filteredRows)}
+        <section class="node-instance-group">
+          <div class="node-instance-group-head">
+            <div class="node-instance-title">
+              <div class="instance-panel-label">Node workload</div>
+              <h3>${escapeHTML(group.node || 'node')}</h3>
+              <p>${escapeHTML([group.role, group.address].filter(Boolean).join(' · ') || 'node metadata unavailable')}</p>
+            </div>
+            <div class="node-instance-summary">
+              ${group.status ? statusTag(group.status) : ''}
+              <span class="tag">${escapeHTML(String(group.rows.length))} instances</span>
+              ${problem ? `<span class="tag danger">${escapeHTML(String(problem))} problem</span>` : ''}
+              ${pending ? `<span class="tag warn">${escapeHTML(String(pending))} pending</span>` : ''}
+              ${healthy ? `<span class="tag ok">${escapeHTML(String(healthy))} healthy</span>` : ''}
+              ${unknown ? `<span class="tag">${escapeHTML(String(unknown))} unknown</span>` : ''}
+              ${group.nodeID ? `<button class="secondary-btn node-instance-open-btn" type="button" data-node-id="${escapeHTML(group.nodeID)}">Open node</button>` : ''}
+            </div>
+          </div>
+          <div class="table-wrap node-instance-table-wrap">
+            <table class="instances-table node-instance-table">
+              <thead>
+                <tr>
+                  <th>Instance</th>
+                  <th>Service</th>
+                  <th>Endpoint</th>
+                  <th>State</th>
+                  <th>Issue</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>${group.rows.map(renderNodeInstanceTableRow).join('')}</tbody>
+            </table>
+          </div>
+        </section>`;
+    }
+
+    function renderInstancesByNode(rows) {
+      if (!rows.length) return '<div class="empty instance-filter-empty">No instances match the selected filters.</div>';
+      return `<div class="node-instance-groups">${groupRowsByNode(rows).map(renderNodeInstanceGroup).join('')}</div>`;
+    }
+
+    function renderInstancesTable(rows) {
+      return `
         <div class="table-wrap instances-table-wrap">
           <table class="instances-table">
             <thead>
@@ -428,10 +543,23 @@
               </tr>
             </thead>
             <tbody>
-              ${visibleRows.length ? visibleRows.map(renderInstanceTableRow).join('') : '<tr><td colspan="7"><div class="empty">No instances match the selected filters.</div></td></tr>'}
+              ${rows.length ? rows.map(renderInstanceTableRow).join('') : '<tr><td colspan="7"><div class="empty">No instances match the selected filters.</div></td></tr>'}
             </tbody>
           </table>
-        </div>
+        </div>`;
+    }
+
+    function renderInstancesList(instances) {
+      if (!instances.length) return renderEmptyInstancesState();
+      const rows = instances.map(toInstanceRow);
+      const filters = ensureInstanceListFilters();
+      const filteredRows = filterInstanceRows(rows, filters);
+      const limit = Number(state.instancesVisibleLimit || INSTANCE_PAGE_SIZE);
+      const visibleRows = filteredRows.slice(0, limit);
+      const hiddenCount = Math.max(0, filteredRows.length - visibleRows.length);
+      return `
+        ${renderInstanceListToolbar(rows, filteredRows)}
+        ${instanceListViewMode() === 'node' ? renderInstancesByNode(visibleRows) : renderInstancesTable(visibleRows)}
         ${hiddenCount ? `
           <div class="instance-load-more">
             <button class="secondary-btn" id="showMoreInstancesBtn" type="button">Show next ${escapeHTML(String(Math.min(INSTANCE_PAGE_SIZE, hiddenCount)))} of ${escapeHTML(String(hiddenCount))}</button>
@@ -741,6 +869,20 @@
       document.querySelectorAll('.instance-delete-btn').forEach((button) => {
         button.addEventListener('click', () => openDeleteInstanceModal(button.dataset.instanceId, button.dataset.instanceName));
       });
+      document.querySelectorAll('.node-instance-open-btn').forEach((button) => {
+        button.addEventListener('click', () => openNodeFromInstanceList(button.dataset.nodeId));
+      });
+    }
+
+    function openNodeFromInstanceList(nodeID) {
+      if (!nodeID) return;
+      if (!state.nodeManageActiveTabs || typeof state.nodeManageActiveTabs !== 'object') {
+        state.nodeManageActiveTabs = {};
+      }
+      state.nodeManageActiveTabs[nodeID] = 'instances';
+      state.nodeManageID = nodeID;
+      state.nodeManageData = null;
+      setPage('nodeManage');
     }
 
     function bindInstanceListControls() {
@@ -769,6 +911,16 @@
       document.getElementById('applyInstanceFiltersBtn')?.addEventListener('click', apply);
       document.getElementById('resetInstanceFiltersBtn')?.addEventListener('click', () => {
         state.instanceListFilters = { search: '', status: 'all', service: 'all', node: 'all' };
+        state.instancesVisibleLimit = INSTANCE_PAGE_SIZE;
+        render();
+      });
+      document.getElementById('instancesByNodeViewBtn')?.addEventListener('click', () => {
+        state.instancesListView = 'node';
+        state.instancesVisibleLimit = INSTANCE_PAGE_SIZE;
+        render();
+      });
+      document.getElementById('instancesTableViewBtn')?.addEventListener('click', () => {
+        state.instancesListView = 'table';
         state.instancesVisibleLimit = INSTANCE_PAGE_SIZE;
         render();
       });

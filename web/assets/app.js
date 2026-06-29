@@ -286,6 +286,7 @@
     requestJSON,
     sendJSON,
     refresh,
+    setPage,
     hasPermission,
     openModal,
     closeModal,
