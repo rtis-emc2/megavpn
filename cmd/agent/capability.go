@@ -605,6 +605,35 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 				steps = append(steps, step)
 				return true
 			}
+			if aptFailureLooksSandboxSetuid(out) {
+				step["apt_sandbox_fallback"] = "retrying with APT::Sandbox::User=root"
+				steps = append(steps, step)
+				if fallbackName, fallbackArgs, ok := aptSandboxRootFallbackCommand(name, args...); ok {
+					fallbackCommand := append([]string{fallbackName}, fallbackArgs...)
+					fallbackCode, fallbackOut := runInstallCommand(ctx, fallbackName, fallbackArgs...)
+					fallbackStep := map[string]any{
+						"command":            fallbackCommand,
+						"exit_code":          fallbackCode,
+						"output":             truncate(fallbackOut, 4000),
+						"attempt":            attempt,
+						"apt_sandbox_user":   "root",
+						"apt_sandbox_reason": "apt could not switch to the _apt sandbox user inside the agent service sandbox",
+					}
+					steps = append(steps, fallbackStep)
+					if fallbackCode == 0 {
+						return true
+					}
+					if !shouldRetryAptInstallCommand(fallbackName, fallbackArgs, fallbackCode, fallbackOut) || attempt == maxAttempts {
+						return false
+					}
+					delay := aptInstallRetryDelay(attempt)
+					fallbackStep["retry_after_seconds"] = int(delay.Seconds())
+					if err := sleepContext(ctx, delay); err != nil {
+						return false
+					}
+					continue
+				}
+			}
 			if !shouldRetryAptInstallCommand(name, args, code, out) || attempt == maxAttempts {
 				steps = append(steps, step)
 				return false
@@ -895,6 +924,62 @@ func aptFailureSuggestsRepair(output string) bool {
 		"sub-process /usr/bin/dpkg returned an error code",
 	} {
 		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func aptFailureLooksSandboxSetuid(output string) bool {
+	lower := strings.ToLower(output)
+	return (strings.Contains(lower, "seteuid") || strings.Contains(lower, "setresuid") || strings.Contains(lower, "failed to set new user ids")) &&
+		(strings.Contains(lower, "operation not permitted") || strings.Contains(lower, "_apt") || strings.Contains(lower, "method http has died"))
+}
+
+func aptSandboxRootFallbackCommand(name string, args ...string) (string, []string, bool) {
+	if aptInstallCommandVerb(name, args...) == "" {
+		return "", nil, false
+	}
+	if aptCommandHasSandboxUserRoot(name, args...) {
+		return "", nil, false
+	}
+	if name == "apt-get" {
+		next := make([]string, 0, len(args)+2)
+		next = append(next, "-o", "APT::Sandbox::User=root")
+		next = append(next, args...)
+		return name, next, true
+	}
+	if name == "env" {
+		next := make([]string, 0, len(args)+2)
+		for idx, arg := range args {
+			next = append(next, arg)
+			if arg == "apt-get" {
+				next = append(next, "-o", "APT::Sandbox::User=root")
+				next = append(next, args[idx+1:]...)
+				return name, next, true
+			}
+		}
+	}
+	return "", nil, false
+}
+
+func aptCommandHasSandboxUserRoot(name string, args ...string) bool {
+	if name == "apt-get" {
+		return stringSliceContains(args, "APT::Sandbox::User=root")
+	}
+	if name == "env" {
+		for idx, arg := range args {
+			if arg == "apt-get" {
+				return stringSliceContains(args[idx+1:], "APT::Sandbox::User=root")
+			}
+		}
+	}
+	return false
+}
+
+func stringSliceContains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
 			return true
 		}
 	}

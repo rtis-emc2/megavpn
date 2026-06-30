@@ -134,6 +134,29 @@ func TestAptFailureSuggestsRepair(t *testing.T) {
 	}
 }
 
+func TestAptSandboxSetuidFallbackCommand(t *testing.T) {
+	t.Parallel()
+
+	output := "E: seteuid 42 failed - seteuid (1: Operation not permitted)\nE: Method gave invalid 400 URI Failure message: Failed to set new user ids - setresuid (1: Operation not permitted)"
+	if !aptFailureLooksSandboxSetuid(output) {
+		t.Fatal("expected apt sandbox setuid failure to be detected")
+	}
+	name, args, ok := aptSandboxRootFallbackCommand("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "install", "-y", "shadowsocks-libev")
+	if !ok {
+		t.Fatal("expected apt sandbox fallback command")
+	}
+	if name != "env" {
+		t.Fatalf("fallback name = %q, want env", name)
+	}
+	got := strings.Join(args, " ")
+	if !strings.Contains(got, "apt-get -o APT::Sandbox::User=root -o Dpkg::Lock::Timeout=120 install -y shadowsocks-libev") {
+		t.Fatalf("fallback args = %q", got)
+	}
+	if aptFailureLooksSandboxSetuid("Temporary failure resolving archive.ubuntu.com") {
+		t.Fatal("network failure must not trigger apt sandbox fallback")
+	}
+}
+
 func TestAptPolicyHasCandidate(t *testing.T) {
 	t.Parallel()
 
