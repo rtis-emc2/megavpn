@@ -89,3 +89,25 @@ func TestAptInstallCommandRetryClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestAptPolicyHasCandidate(t *testing.T) {
+	t.Parallel()
+
+	if !aptPolicyHasCandidate("Installed: (none)\nCandidate: 3.3.5-1\nVersion table:\n") {
+		t.Fatal("expected package candidate to be detected")
+	}
+	if aptPolicyHasCandidate("Installed: (none)\nCandidate: (none)\nVersion table:\n") {
+		t.Fatal("expected missing package candidate to be rejected")
+	}
+}
+
+func TestShadowsocksUbuntuRuntimeInstallDoesNotEnablePackageUnit(t *testing.T) {
+	t.Parallel()
+
+	if got := ubuntuPackageEnableUnits("shadowsocks", "shadowsocks-libev"); len(got) != 0 {
+		t.Fatalf("shadowsocks runtime install enable units = %#v, want none", got)
+	}
+	if got := ubuntuPackageEnableUnits("openvpn", "openvpn"); len(got) != 1 || got[0] != "openvpn" {
+		t.Fatalf("openvpn runtime install enable units = %#v, want [openvpn]", got)
+	}
+}

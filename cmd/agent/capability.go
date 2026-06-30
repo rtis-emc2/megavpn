@@ -272,7 +272,7 @@ func (c client) installCapability(ctx context.Context, j job, st agentState) (st
 			return "failed", normalizeInstallResult(map[string]any{"ok": false, "message": "unsupported shadowsocks install strategy", "strategy": strategy}, serviceCode, strategy, time.Now())
 		}
 		started := time.Now()
-		res := installUbuntuPackageCapability(ctx, "shadowsocks", "shadowsocks-libev", "shadowsocks-libev", []string{"shadowsocks-libev"})
+		res := installUbuntuPackageCapability(ctx, "shadowsocks", "shadowsocks-libev", "shadowsocks-libev", ubuntuPackageEnableUnits("shadowsocks"))
 		inv := collectInventory()
 		_ = c.submitInventory(ctx, st.NodeID, "inventory", inv)
 		res = normalizeInstallResult(res, serviceCode, strategy, started)
@@ -581,7 +581,13 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 		return map[string]any{"ok": false, "message": capabilityCode + " install requires root", "steps": steps}
 	}
 	if !run("apt-get", "-o", "Acquire::Retries=3", "-o", "Dpkg::Lock::Timeout=120", "update") {
-		return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "apt update failed"), "steps": steps, "package": packageName}
+		if !aptPackageCandidateAvailable(ctx, packageName, &steps) {
+			return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "apt update failed"), "steps": steps, "package": packageName}
+		}
+		steps = append(steps, map[string]any{
+			"command": []string{"apt-cache", "policy", packageName},
+			"note":    "apt update failed, but local package metadata has an install candidate; continuing with package install",
+		})
 	}
 	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "install", "-y", packageName) {
 		return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "package install failed"), "steps": steps, "package": packageName}
@@ -609,6 +615,27 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 	verify["steps"] = steps
 	verify["package"] = packageName
 	return verify
+}
+
+func ubuntuPackageEnableUnits(capabilityCode string, units ...string) []string {
+	switch normalizeCapabilityCode(capabilityCode) {
+	case driver.Shadowsocks:
+		return nil
+	default:
+		return append([]string(nil), units...)
+	}
+}
+
+func aptPackageCandidateAvailable(ctx context.Context, packageName string, steps *[]map[string]any) bool {
+	packageName = strings.TrimSpace(packageName)
+	if packageName == "" {
+		return false
+	}
+	code, out := runInstallCommand(ctx, "apt-cache", "policy", packageName)
+	if steps != nil {
+		*steps = append(*steps, map[string]any{"command": []string{"apt-cache", "policy", packageName}, "exit_code": code, "output": truncate(out, 4000)})
+	}
+	return code == 0 && aptPolicyHasCandidate(out)
 }
 
 func aptInstallCommandAttempts(name string, args ...string) int {
