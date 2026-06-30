@@ -1282,6 +1282,22 @@ func (s *Store) UpdateInstanceStatus(ctx context.Context, instanceID, action str
 		if !in(strings.TrimSpace(currentRevisionStatus), "validated", "applied") {
 			return domain.Job{}, fmt.Errorf("current revision is not apply-ready; status=%s", strings.TrimSpace(currentRevisionStatus))
 		}
+		installNeeded, err := s.runtimeCapabilityInstallNeeded(ctx, x)
+		if err != nil {
+			return domain.Job{}, err
+		}
+		if installNeeded {
+			job, err := s.CreateNodeCapabilityInstallJobWithDependents(ctx, x.NodeID, x.ServiceCode, "", "", []string{x.ID})
+			if err != nil {
+				return domain.Job{}, err
+			}
+			if _, err := s.db.Exec(ctx, `update instances set status=$2,enabled=$3,updated_at=now() where id=$1`, instanceID, status, enabled); err != nil {
+				return domain.Job{}, err
+			}
+			_ = s.AddJobLog(ctx, job.ID, "info", "runtime install queued before instance apply", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
+			_, _ = s.CreateAudit(ctx, "system", "node.capability.install", "instance", &instanceID, "runtime install queued before instance apply")
+			return job, nil
+		}
 	}
 	payload, payloadErr := s.buildInstanceJobPayload(ctx, x, action)
 	if payloadErr != nil {
@@ -1300,6 +1316,27 @@ func (s *Store) UpdateInstanceStatus(ctx context.Context, instanceID, action str
 	}
 	_, _ = s.CreateAudit(ctx, "system", jobType, "instance", &instanceID, "instance action queued")
 	return j, err
+}
+
+func (s *Store) runtimeCapabilityInstallNeeded(ctx context.Context, instance domain.Instance) (bool, error) {
+	capCode := runtimeCapabilityCodeForService(instance.ServiceCode)
+	if capCode == "" || defaultCapabilityInstallStrategy(capCode) == "" {
+		return false, nil
+	}
+	var status string
+	err := s.db.QueryRow(ctx, `select coalesce(status,'') from node_capabilities where node_id=$1 and capability_code=$2`, instance.NodeID, capCode).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "available", "installed", "detected":
+		return false, nil
+	default:
+		return true, nil
+	}
 }
 
 func (s *Store) DeleteInstance(ctx context.Context, instanceID string) (domain.Instance, error) {

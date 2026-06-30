@@ -270,6 +270,7 @@
         runtime: runtime?.runtime_status || 'unknown',
         health: runtime?.health_status || 'unknown',
         drift: runtime?.drift_status || 'unknown',
+        activeState: runtime?.active_state || 'unknown',
         healthReason,
         driftReason,
         latestJob,
@@ -303,6 +304,11 @@
       const drift = lowerStatus(row.drift);
       const revision = lowerStatus(row.revision);
       if (hasActiveInstanceJob(row)) return 'pending';
+      if (['provisioning', 'transitioning', 'activating', 'deactivating', 'reloading'].includes(runtime)
+          || ['provisioning', 'transitioning'].includes(health)
+          || ['activating', 'deactivating', 'reloading'].includes(lowerStatus(row.activeState))) {
+        return 'pending';
+      }
       if (row.capabilityRequired && !runtimeCapabilityReady(row) && runtime !== 'active') return 'problem';
       if (status === 'failed' || runtime === 'failed' || ['failed', 'degraded', 'unhealthy', 'error'].includes(health)) {
         return 'problem';
@@ -549,13 +555,15 @@
     function actionButtons(row) {
       const busy = hasActiveInstanceJob(row);
       const busyAttr = busy ? ' disabled title="Current instance job is still queued or running"' : '';
+      const runtimeBlocked = row.capabilityMissing;
+      const runtimeBlockedAttr = runtimeBlocked ? ' disabled title="Install the runtime capability before applying or controlling this instance"' : '';
       return `
         <div class="instance-actions">
           <button class="secondary-btn instance-manage-btn" type="button" data-instance-id="${escapeHTML(row.id)}">Manage</button>
-          ${row.capabilityMissing ? `<button class="secondary-btn instance-runtime-install-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-issue="${escapeHTML(row.issue?.text || row.latestJobSummary || '')}">Install runtime</button>` : ''}
-          <button class="primary-btn instance-action-btn" type="button" data-action="apply" data-instance-id="${escapeHTML(row.id)}"${busyAttr}>Apply</button>
-          <button class="secondary-btn instance-action-btn" type="button" data-action="restart" data-instance-id="${escapeHTML(row.id)}"${busyAttr}>Restart</button>
-          <button class="secondary-btn instance-action-btn" type="button" data-action="start" data-instance-id="${escapeHTML(row.id)}"${busyAttr}>Start</button>
+          ${row.capabilityMissing ? `<button class="primary-btn instance-runtime-install-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-issue="${escapeHTML(row.issue?.text || row.latestJobSummary || '')}">Install runtime</button>` : ''}
+          <button class="${row.capabilityMissing ? 'secondary-btn' : 'primary-btn'} instance-action-btn" type="button" data-action="apply" data-instance-id="${escapeHTML(row.id)}"${busyAttr || runtimeBlockedAttr}>Apply</button>
+          <button class="secondary-btn instance-action-btn" type="button" data-action="restart" data-instance-id="${escapeHTML(row.id)}"${busyAttr || runtimeBlockedAttr}>Restart</button>
+          <button class="secondary-btn instance-action-btn" type="button" data-action="start" data-instance-id="${escapeHTML(row.id)}"${busyAttr || runtimeBlockedAttr}>Start</button>
           <button class="secondary-btn instance-action-btn" type="button" data-action="stop" data-instance-id="${escapeHTML(row.id)}"${busyAttr}>Stop</button>
           <button class="danger-btn instance-delete-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-instance-name="${escapeHTML(row.name || 'instance')}">Delete</button>
         </div>`;

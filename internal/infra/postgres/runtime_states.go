@@ -508,6 +508,9 @@ func driftReasonsForRuntimeProjection(input runtimeProjectionInput) []string {
 		if instanceRuntimeJobInProgress(input.LastJobStatus) && strings.TrimSpace(input.LastJobType) != "" {
 			return []string{input.LastJobType + " is " + strings.ToLower(strings.TrimSpace(input.LastJobStatus)) + "; desired state is waiting for agent convergence."}
 		}
+		if runtimeProjectionTransitioningState(input.ActiveState) {
+			return []string{"Systemd unit is transitioning; waiting for runtime convergence."}
+		}
 		return []string{"Current desired revision has not been applied to the node yet."}
 	case "drifted":
 		reasons := make([]string, 0, 3)
@@ -519,7 +522,9 @@ func driftReasonsForRuntimeProjection(input runtimeProjectionInput) []string {
 		}
 		if !runtimeProjectionDesiredStopped(input) {
 			activeState := normalizeRuntimeObservationState(input.ActiveState)
-			if activeState != "active" && activeState != "unknown" {
+			if runtimeProjectionTransitioningState(activeState) {
+				reasons = append(reasons, "Systemd unit is transitioning; waiting for runtime convergence.")
+			} else if activeState != "active" && activeState != "unknown" {
 				reasons = append(reasons, "Instance is desired running but systemd unit is "+activeState+".")
 			}
 		}
@@ -531,6 +536,15 @@ func driftReasonsForRuntimeProjection(input runtimeProjectionInput) []string {
 		return []string{"Runtime drift has not been observed yet."}
 	default:
 		return []string{"Runtime drift status is " + input.DriftStatus + "."}
+	}
+}
+
+func runtimeProjectionTransitioningState(value string) bool {
+	switch normalizeRuntimeObservationState(value) {
+	case "activating", "deactivating", "reloading":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1096,6 +1110,9 @@ func healthStatusFromAgentReport(instance domain.Instance, report domain.AgentIn
 	if activeState == "failed" {
 		return "unhealthy"
 	}
+	if runtimeProjectionTransitioningState(activeState) {
+		return "provisioning"
+	}
 	checks := evaluateDriverHealthChecks(runtimeProjectionInput{
 		ServiceCode:    firstString(report.ServiceCode, instance.ServiceCode),
 		DesiredStatus:  instance.Status,
@@ -1152,6 +1169,9 @@ func driftStatusFromAgentReport(instance domain.Instance, report domain.AgentIns
 	}
 	if desiredInstanceStopped(instance) && activeState == "active" {
 		return "drifted"
+	}
+	if !desiredInstanceStopped(instance) && runtimeProjectionTransitioningState(activeState) {
+		return "pending_apply"
 	}
 	if !desiredInstanceStopped(instance) && activeState != "active" {
 		return "drifted"

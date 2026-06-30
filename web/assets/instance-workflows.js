@@ -98,10 +98,32 @@
       return { strategy: String(strategy || '').trim(), channel: String(channel || '').trim() };
     }
 
-    function installerOptions(serviceCode) {
+    function preferredInstallerValue(serviceCode, node, installers) {
+      const code = normalizeInstanceServiceCode(serviceCode);
+      const artifacts = binaryRepositoryArtifactsForNode(code, node);
+      const preferredByService = {
+        nginx: 'nginx_org_repo',
+        'xray-core': artifacts.length ? 'binary_repository' : 'xtls_install_release',
+        openvpn: 'ubuntu_repo',
+        wireguard: 'ubuntu_repo',
+        ipsec: 'ubuntu_repo',
+        http_proxy: 'ubuntu_repo',
+        xl2tpd: 'ubuntu_repo',
+        shadowsocks: artifacts.length ? 'binary_repository' : 'ubuntu_repo',
+      };
+      const preferred = preferredByService[code] || '';
+      const matched = (installers || []).find((installer) => String(installer.strategy || '') === preferred);
+      if (matched) return installerValue(matched);
+      const nonManual = (installers || []).find((installer) => String(installer.strategy || '') !== 'manual_present' && String(installer.strategy || '') !== 'binary_repository');
+      if (nonManual) return installerValue(nonManual);
+      return installerValue((installers || [])[0]);
+    }
+
+    function installerOptions(serviceCode, node = null) {
       const installers = installersForService(serviceCode);
+      const preferred = preferredInstallerValue(serviceCode, node, installers);
       return installers.map((installer, index) => `
-        <option value="${escapeHTML(installerValue(installer))}"${index === 0 ? ' selected' : ''}>${escapeHTML(installer.strategy || 'default')} · ${escapeHTML(installer.channel || 'default')}</option>`).join('');
+        <option value="${escapeHTML(installerValue(installer))}"${installerValue(installer) === preferred || (!preferred && index === 0) ? ' selected' : ''}>${escapeHTML(installer.strategy || 'default')} · ${escapeHTML(installer.channel || 'default')}</option>`).join('');
     }
 
     function normalizeRuntimeArchitecture(value) {
@@ -355,7 +377,7 @@
         <form id="instanceRuntimeInstallForm" class="form-grid">
           <div class="field full">
             <label>Install strategy</label>
-            <select name="installer" required>${installerOptions(serviceCode)}</select>
+            <select name="installer" required>${installerOptions(serviceCode, node)}</select>
             <div class="field-hint">The job runs on the selected node through the agent capability installer.</div>
             ${runtimeInstallCatalogHint(serviceCode, node, installers)}
           </div>

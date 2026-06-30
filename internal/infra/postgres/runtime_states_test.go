@@ -162,6 +162,34 @@ func TestAgentRuntimeReportDerivationPendingApply(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeReportDerivationTransitioning(t *testing.T) {
+	t.Parallel()
+
+	instance := domain.Instance{
+		ServiceCode:           driver.OpenVPN,
+		Status:                "active",
+		Enabled:               true,
+		EndpointPort:          1194,
+		CurrentRevisionID:     stringPtr("rev-1"),
+		LastAppliedRevisionID: stringPtr("rev-1"),
+	}
+	report := domain.AgentInstanceRuntimeReport{
+		ServiceCode:        driver.OpenVPN,
+		ConfigHash:         "sha256:test",
+		ActiveState:        "activating",
+		ObservedRevisionID: stringPtr("rev-1"),
+	}
+	if got := runtimeStatusFromAgentReport(instance, report); got != "transitioning" {
+		t.Fatalf("runtime status = %q", got)
+	}
+	if got := healthStatusFromAgentReport(instance, report); got != "provisioning" {
+		t.Fatalf("health status = %q", got)
+	}
+	if got := driftStatusFromAgentReport(instance, report); got != "pending_apply" {
+		t.Fatalf("drift status = %q", got)
+	}
+}
+
 func TestRuntimeProjectionBuildsDriverHealthChecks(t *testing.T) {
 	t.Parallel()
 
