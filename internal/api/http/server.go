@@ -313,6 +313,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("GET /api/v1/binary-artifacts", "binary_repository.read", s.listBinaryArtifacts)
 	protected("POST /api/v1/binary-artifacts", "binary_repository.manage", s.createBinaryArtifact)
 	protected("POST /api/v1/binary-artifacts/import", "binary_repository.manage", s.importBinaryArtifact)
+	protected("POST /api/v1/binary-artifacts/import-url", "binary_repository.manage", s.importBinaryArtifactFromURL)
 	protected("GET /api/v1/nodes", "node.read", s.listNodes)
 	protected("POST /api/v1/nodes", "node.write", s.createNode)
 	protected("GET /api/v1/nodes/{id}", "node.read", s.getNode)

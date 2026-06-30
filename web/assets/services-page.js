@@ -299,10 +299,22 @@
       }
       openModal('Add runtime artifact', 'Binary repository', `
         <form id="binaryArtifactForm" class="form-grid">
-          <div class="field full">
+          <div class="field">
+            <label>Source</label>
+            <select name="source_mode" id="binaryArtifactSourceMode">
+              <option value="upload">Upload from browser</option>
+              <option value="url">Fetch from HTTPS URL</option>
+            </select>
+          </div>
+          <div class="field full" id="binaryArtifactFileField">
             <label>Artifact file</label>
             <input name="file" type="file" required>
             <div class="field-hint">The control plane stores the file under the configured artifact root and calculates SHA-256 before registration.</div>
+          </div>
+          <div class="field full" id="binaryArtifactURLField" hidden>
+            <label>Source URL</label>
+            <input name="source_url" type="url" placeholder="https://downloads.example.com/runtime/xray">
+            <div class="field-hint">The control plane downloads this URL directly. HTTPS and expected SHA-256 are required; private/loopback targets are rejected.</div>
           </div>
           <div class="field">
             <label>Name</label>
@@ -373,17 +385,26 @@
         </form>
         <div id="binaryArtifactResult" class="form-result"></div>`);
       document.getElementById('cancelBinaryArtifactBtn')?.addEventListener('click', closeModal);
+      document.getElementById('binaryArtifactSourceMode')?.addEventListener('change', updateBinaryArtifactSourceMode);
+      updateBinaryArtifactSourceMode();
       document.getElementById('binaryArtifactForm')?.addEventListener('submit', async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
         const result = document.getElementById('binaryArtifactResult');
         const data = new FormData(form);
-        result.innerHTML = '<span class="tag warn">uploading artifact</span>';
+        const sourceMode = String(data.get('source_mode') || 'upload');
+        result.innerHTML = sourceMode === 'url'
+          ? '<span class="tag warn">fetching artifact</span>'
+          : '<span class="tag warn">uploading artifact</span>';
         try {
-          await requestJSON('/api/v1/binary-artifacts/import', {
-            method: 'POST',
-            body: data,
-          });
+          if (sourceMode === 'url') {
+            await sendJSON('/api/v1/binary-artifacts/import-url', 'POST', binaryArtifactURLPayload(data));
+          } else {
+            await requestJSON('/api/v1/binary-artifacts/import', {
+              method: 'POST',
+              body: data,
+            });
+          }
           state.binaryArtifacts = await fetchJSON('/api/v1/binary-artifacts', []);
           result.innerHTML = '<span class="tag ok">artifact uploaded</span>';
           render();
@@ -391,6 +412,38 @@
           result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
         }
       });
+    }
+
+    function updateBinaryArtifactSourceMode() {
+      const sourceMode = String(document.getElementById('binaryArtifactSourceMode')?.value || 'upload');
+      const fileField = document.getElementById('binaryArtifactFileField');
+      const urlField = document.getElementById('binaryArtifactURLField');
+      const fileInput = document.querySelector('#binaryArtifactFileField input[name="file"]');
+      const urlInput = document.querySelector('#binaryArtifactURLField input[name="source_url"]');
+      const expectedSHAInput = document.querySelector('#binaryArtifactForm input[name="expected_sha256"]');
+      if (fileField) fileField.hidden = sourceMode !== 'upload';
+      if (urlField) urlField.hidden = sourceMode !== 'url';
+      if (fileInput) fileInput.required = sourceMode === 'upload';
+      if (urlInput) urlInput.required = sourceMode === 'url';
+      if (expectedSHAInput) expectedSHAInput.required = sourceMode === 'url';
+    }
+
+    function binaryArtifactURLPayload(data) {
+      return {
+        source_url: String(data.get('source_url') || '').trim(),
+        name: String(data.get('name') || '').trim(),
+        service_code: String(data.get('service_code') || '').trim(),
+        kind: String(data.get('kind') || '').trim(),
+        version: String(data.get('version') || '').trim(),
+        os_family: String(data.get('os_family') || 'linux').trim(),
+        os_version: String(data.get('os_version') || '').trim(),
+        architecture: String(data.get('architecture') || '').trim(),
+        install_mode: String(data.get('install_mode') || '').trim(),
+        install_path: String(data.get('install_path') || '').trim(),
+        storage_path: String(data.get('storage_path') || '').trim(),
+        expected_sha256: String(data.get('expected_sha256') || '').trim().toLowerCase(),
+        replace_file: false,
+      };
     }
 
     async function runInstaller(serviceCode, strategy, channel) {

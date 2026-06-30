@@ -322,7 +322,7 @@ Generated client artifacts are stored under `MEGAVPN_ARTIFACT_ROOT`, defaulting 
 export MEGAVPN_ARTIFACT_ROOT=/var/lib/megavpn/artifacts
 ```
 
-Runtime binaries that are not installed from the operating system package repository can be pinned in the same artifact root through Services -> Runtime Binary Repository or through the offline admin CLI. The API upload path stores the file under `MEGAVPN_ARTIFACT_ROOT`, calculates SHA-256, records the metadata in PostgreSQL and later issues a short-lived node/job-bound download ticket for the agent. Updated agents reject unsigned downloads, verify the response signature and verify the artifact SHA-256 before installation.
+Runtime binaries that are not installed from the operating system package repository can be pinned in the same artifact root through Services -> Runtime Binary Repository or through the offline admin CLI. The UI supports browser upload and control-plane HTTPS URL import. The API stores the file under `MEGAVPN_ARTIFACT_ROOT`, calculates SHA-256, records the metadata in PostgreSQL and later issues a short-lived node/job-bound download ticket for the agent. URL imports require an expected SHA-256 pin and reject private, loopback and link-local targets to avoid server-side request forgery. Updated agents reject unsigned downloads, verify the response signature and verify the artifact SHA-256 before installation.
 
 ```bash
 sudo -E /opt/megavpn/bin/megavpn-admin import-binary-artifact \
