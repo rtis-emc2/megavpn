@@ -176,6 +176,7 @@
     state,
     domainUI,
     requestJSON,
+    fetchJSON,
     sendJSON,
     refresh,
     openModal,
@@ -186,6 +187,7 @@
     watchJob: jobWorkflows.watchJob,
     statusTag,
     escapeHTML,
+    formatDate,
     renderActionResponse,
   });
   if (!instanceWorkflows) throw new Error('MegaVPNInstanceWorkflows is not loaded');

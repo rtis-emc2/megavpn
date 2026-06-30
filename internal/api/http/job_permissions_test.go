@@ -7,6 +7,7 @@ func TestRequiredPermissionForPrivilegedJobTypes(t *testing.T) {
 
 	cases := map[string]string{
 		"instance.apply":                   "instance.apply",
+		"instance.diagnose":                "instance.read",
 		"instance.delete":                  "instance.apply",
 		"node.backhaul.apply":              "node.write",
 		"node.route_policy.apply":          "node.write",
@@ -28,7 +29,7 @@ func TestRequiredPermissionForPrivilegedJobTypes(t *testing.T) {
 func TestPrivilegedJobTypesMustUseTypedEndpoint(t *testing.T) {
 	t.Parallel()
 
-	for _, jobType := range []string{"instance.apply", "instance.delete", "node.backhaul.apply", "node.route_policy.apply", "node.capability.install", "node.emergency_cleanup"} {
+	for _, jobType := range []string{"instance.apply", "instance.diagnose", "instance.delete", "node.backhaul.apply", "node.route_policy.apply", "node.capability.install", "node.emergency_cleanup"} {
 		jobType := jobType
 		t.Run(jobType, func(t *testing.T) {
 			t.Parallel()

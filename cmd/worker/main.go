@@ -98,7 +98,7 @@ func runOnce(ctx context.Context, log interface {
 	case "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup":
 		status = "failed"
 		result["error"] = job.Type + " must be handled by an agent"
-	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable", "instance.delete":
+	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable", "instance.diagnose", "instance.delete":
 		status = "failed"
 		result["error"] = job.Type + " must be handled by an agent"
 	default:

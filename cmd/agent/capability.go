@@ -642,7 +642,17 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 	}
 	defer cleanupServiceAutostart()
 	if !run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "UCF_FORCE_CONFFOLD=1", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "install", "-y", packageName) {
-		return aptInstallFailureResult(capabilityCode, packageName, "package install failed", steps)
+		detail := lastFailedInstallCommand(steps)
+		if aptFailureSuggestsRepair(detail.output) {
+			steps = append(steps, map[string]any{"stage": "apt_repair", "reason": detail.outputLine})
+			_ = run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "dpkg", "--configure", "-a")
+			_ = run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-f", "install", "-y")
+			if !run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "UCF_FORCE_CONFFOLD=1", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "install", "-y", packageName) {
+				return aptInstallFailureResult(capabilityCode, packageName, "package install failed after apt repair", steps)
+			}
+		} else {
+			return aptInstallFailureResult(capabilityCode, packageName, "package install failed", steps)
+		}
 	}
 	for _, unit := range enableUnits {
 		_ = run("systemctl", "enable", "--now", unit)
@@ -869,6 +879,26 @@ func aptInstallRetryDelay(attempt int) time.Duration {
 	default:
 		return 30 * time.Second
 	}
+}
+
+func aptFailureSuggestsRepair(output string) bool {
+	lower := strings.ToLower(output)
+	for _, marker := range []string{
+		"dpkg was interrupted",
+		"dpkg --configure -a",
+		"apt --fix-broken install",
+		"apt-get -f install",
+		"fix-broken install",
+		"dependency problems prevent configuration",
+		"dependencies - leaving unconfigured",
+		"post-installation script subprocess returned error",
+		"sub-process /usr/bin/dpkg returned an error code",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func aptInstallFailureMessage(capabilityCode, packageName, reason string) string {

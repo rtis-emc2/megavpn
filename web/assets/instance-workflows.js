@@ -6,6 +6,7 @@
       state,
       domainUI,
       requestJSON,
+      fetchJSON,
       sendJSON,
       refresh,
       openModal,
@@ -16,12 +17,14 @@
       watchJob,
       statusTag,
       escapeHTML,
+      formatDate,
       renderActionResponse,
     } = ctx;
     if (
       !state ||
       !domainUI ||
       typeof requestJSON !== 'function' ||
+      typeof fetchJSON !== 'function' ||
       typeof sendJSON !== 'function' ||
       typeof refresh !== 'function' ||
       typeof openModal !== 'function' ||
@@ -32,6 +35,7 @@
       typeof watchJob !== 'function' ||
       typeof statusTag !== 'function' ||
       typeof escapeHTML !== 'function' ||
+      typeof formatDate !== 'function' ||
       typeof renderActionResponse !== 'function'
     ) {
       throw new Error('MegaVPNInstanceWorkflows requires workflow dependencies');
@@ -76,6 +80,131 @@
     function serviceDisplayName(serviceCode) {
       const definition = serviceDefinition(serviceCode);
       return definition?.label || definition?.display_name || definition?.name || normalizeInstanceServiceCode(serviceCode) || 'runtime';
+    }
+
+    function shortID(value, left = 8, right = 6) {
+      const text = String(value || '').trim();
+      if (!text) return 'n/a';
+      if (text.length <= left + right + 1) return text;
+      return `${text.slice(0, left)}…${text.slice(-right)}`;
+    }
+
+    function firstDiagnosticText(...values) {
+      for (const value of values) {
+        if (Array.isArray(value)) {
+          const joined = value.map((item) => String(item || '').trim()).filter(Boolean).join(' · ');
+          if (joined) return joined;
+          continue;
+        }
+        const text = String(value ?? '').trim();
+        if (text) return text;
+      }
+      return '';
+    }
+
+    function diagnosticResult(runtimeState, observations, latestJob) {
+      const latestObservation = Array.isArray(observations) && observations.length ? observations[0] : null;
+      return latestJob?.result || latestObservation?.result || runtimeState?.result || {};
+    }
+
+    function renderOutputBlock(title, value) {
+      const text = String(value || '').trim();
+      if (!text) return '';
+      return `
+        <details class="response-raw" open>
+          <summary>${escapeHTML(title)}</summary>
+          <div class="code-block">${escapeHTML(text)}</div>
+        </details>`;
+    }
+
+    function renderInstanceEvidence(runtimeState, observations, latestJob, latestJobLogs) {
+      const rows = [];
+      if (runtimeState) {
+        rows.push([
+          'Runtime state',
+          firstDiagnosticText(
+            runtimeState.runtime_status,
+            runtimeState.active_state,
+            runtimeState.health_status,
+            runtimeState.drift_status
+          ),
+          firstDiagnosticText(runtimeState.error_text, runtimeState.health_reasons, runtimeState.drift_reasons),
+          runtimeState.updated_at || runtimeState.checked_at,
+        ]);
+      }
+      (Array.isArray(observations) ? observations : []).slice(0, 5).forEach((item) => {
+        rows.push([
+          item.source || 'runtime observation',
+          firstDiagnosticText(item.runtime_status, item.active_state, item.health_status, item.drift_status),
+          firstDiagnosticText(item.error_text, item.health_reasons, item.drift_reasons, item.result?.message, item.result?.error),
+          item.observed_at || item.received_at,
+        ]);
+      });
+      const result = diagnosticResult(runtimeState, observations, latestJob);
+      const failedCommand = firstDiagnosticText(result.last_failed_command);
+      const failedExitCode = firstDiagnosticText(result.last_failed_exit_code);
+      const failedOutput = firstDiagnosticText(result.last_failed_output, result.output, result.systemctl_status_output, result.journal_tail);
+      const jobID = runtimeState?.last_job_id || (Array.isArray(observations) && observations[0]?.last_job_id) || latestJob?.id || '';
+      const logRows = Array.isArray(latestJobLogs) ? latestJobLogs : [];
+      return `
+        <section class="card instance-diagnostics">
+          <div class="table-head compact-head">
+            <div>
+              <h3>Operational diagnostics</h3>
+              <p>Последнее состояние control plane, agent job и node-side evidence по этому instance.</p>
+            </div>
+            <div class="inline-actions">
+              ${jobID ? `<span class="tag">job ${escapeHTML(shortID(jobID))}</span>` : '<span class="tag stub">no job</span>'}
+              ${latestJob?.status ? statusTag(latestJob.status) : ''}
+              <button class="secondary-btn small-action" type="button" id="collectInstanceDiagnosticsBtn">Collect node diagnostics</button>
+            </div>
+          </div>
+          <div class="grid cols-2">
+            <div class="response-fact">
+              <span>Last job</span>
+              <strong>${escapeHTML(firstDiagnosticText(latestJob?.type, runtimeState?.last_job_type, 'n/a'))}</strong>
+            </div>
+            <div class="response-fact">
+              <span>Last job status</span>
+              <strong>${escapeHTML(firstDiagnosticText(latestJob?.status, runtimeState?.last_job_status, 'n/a'))}</strong>
+            </div>
+            <div class="response-fact">
+              <span>Failed command</span>
+              <strong>${escapeHTML(failedCommand || 'n/a')}</strong>
+            </div>
+            <div class="response-fact">
+              <span>Exit code</span>
+              <strong>${escapeHTML(failedExitCode || 'n/a')}</strong>
+            </div>
+          </div>
+          ${renderOutputBlock('Last failed output / service output', failedOutput)}
+          <div class="table-head compact-head" style="margin-top:14px">
+            <h3>Runtime timeline</h3>
+            <span class="tag">${escapeHTML(String(rows.length))} records</span>
+          </div>
+          ${rows.length ? `
+            <div class="timeline">
+              ${rows.map(([source, stateText, reason, observedAt]) => `
+                <div class="timeline-item">
+                  <strong>${escapeHTML(source)} · ${escapeHTML(stateText || 'unknown')}</strong>
+                  <div class="timeline-meta">${escapeHTML(formatDate(observedAt))}</div>
+                  ${reason ? `<div class="metric-caption">${escapeHTML(reason)}</div>` : ''}
+                </div>`).join('')}
+            </div>` : '<div class="empty compact-empty">No runtime observations have been recorded yet.</div>'}
+          <div class="table-head compact-head" style="margin-top:14px">
+            <h3>Job logs</h3>
+            <span class="tag">${escapeHTML(String(logRows.length))} entries</span>
+          </div>
+          ${logRows.length ? `
+            <div class="timeline">
+              ${logRows.slice(0, 20).map((entry) => `
+                <div class="timeline-item">
+                  <strong>${escapeHTML(formatDate(entry.created_at))} · ${escapeHTML(String(entry.level || 'info').toUpperCase())}</strong>
+                  <div class="timeline-meta">${escapeHTML(entry.message || '')}</div>
+                  ${entry.payload && Object.keys(entry.payload || {}).length ? renderActionResponse(entry.payload, 'Log payload') : ''}
+                </div>`).join('')}
+            </div>` : '<div class="empty compact-empty">No job log entries are available for the latest job.</div>'}
+        </section>`;
     }
 
     function runtimeInstallSubmitLabel(serviceCode) {
@@ -455,7 +584,16 @@
     async function openInstanceManageModal(instanceID) {
       openModal('Instance manage', 'Loading current desired state', '<div class="empty">Loading instance spec...</div>');
       try {
-        const instance = await requestJSON(`/api/v1/instances/${instanceID}`);
+        const [instance, runtimeState, observations] = await Promise.all([
+          requestJSON(`/api/v1/instances/${instanceID}`),
+          fetchJSON(`/api/v1/instances/${instanceID}/runtime-state`, null),
+          fetchJSON(`/api/v1/instances/${instanceID}/runtime-observations?limit=8`, []),
+        ]);
+        const latestJobID = runtimeState?.last_job_id || (Array.isArray(observations) && observations[0]?.last_job_id) || '';
+        const [latestJob, latestJobLogs] = latestJobID ? await Promise.all([
+          fetchJSON(`/api/v1/jobs/${encodeURIComponent(latestJobID)}`, null),
+          fetchJSON(`/api/v1/jobs/${encodeURIComponent(latestJobID)}/logs?limit=30`, []),
+        ]) : [null, []];
         const draft = buildInstanceSpecDraft(instance.service_code, instance);
         openModal(`Manage instance: ${instance.name}`, 'Desired state, revisions and apply feedback', `
           <div class="grid cols-2">
@@ -472,6 +610,9 @@
               <div class="mini-label">Current state</div>
               <div class="inline-actions">
                 ${statusTag(instance.status || 'unknown')}
+                ${runtimeState?.runtime_status ? statusTag(runtimeState.runtime_status) : ''}
+                ${runtimeState?.health_status ? statusTag(runtimeState.health_status) : ''}
+                ${runtimeState?.drift_status ? statusTag(runtimeState.drift_status) : ''}
                 <span class="tag">${escapeHTML(instance.slug || 'no-slug')}</span>
                 ${instance.current_revision_id ? `<span class="tag">rev ${escapeHTML(instance.current_revision_id.slice(0, 8))}</span>` : ''}
                 ${instance.last_applied_revision_id ? `<span class="tag ok">applied ${escapeHTML(instance.last_applied_revision_id.slice(0, 8))}</span>` : ''}
@@ -479,6 +620,7 @@
               <p>Сохранение ниже создает новую revision. Apply остается отдельным действием и будет показан с live job feedback и logs.</p>
             </div>
           </div>
+          ${renderInstanceEvidence(runtimeState, observations, latestJob, latestJobLogs)}
           <form id="editInstanceForm" class="form-grid">
             <input type="hidden" name="slug" value="${escapeHTML(instance.slug || '')}" />
             <div class="field"><label>Endpoint port</label><input name="endpoint_port" type="number" min="0" max="65535" value="${escapeHTML(draft.endpoint_port || instance.endpoint_port || 0)}" /></div>
@@ -496,6 +638,25 @@
         const form = document.getElementById('editInstanceForm');
         form.addEventListener('submit', (event) => saveManagedInstanceSpec(event, instance, false));
         document.getElementById('saveApplyInstanceBtn').addEventListener('click', (event) => saveManagedInstanceSpec(event, instance, true));
+        document.getElementById('collectInstanceDiagnosticsBtn')?.addEventListener('click', async () => {
+          const jobTarget = document.getElementById('instanceManageJobResult');
+          if (jobTarget) jobTarget.innerHTML = '<span class="tag warn">queueing diagnostics</span>';
+          try {
+            const job = await sendJSON(`/api/v1/instances/${instance.id}/diagnose`, 'POST', {});
+            await watchJob(job.id, jobTarget, 'Instance diagnostics', {
+              attempts: 30,
+              intervalMs: 1500,
+              context: {
+                node: nodeForInstance(instance)?.name || instance.node_id,
+                service: instance.service_code,
+                strategy: 'read-only',
+                channel: 'node-side evidence',
+              },
+            });
+          } catch (err) {
+            if (jobTarget) jobTarget.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+          }
+        });
         document.getElementById('restartInstanceBtn').addEventListener('click', async () => {
           const jobTarget = document.getElementById('instanceManageJobResult');
           try {

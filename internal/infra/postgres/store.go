@@ -1330,6 +1330,46 @@ func (s *Store) UpdateInstanceStatus(ctx context.Context, instanceID, action str
 	return j, err
 }
 
+func (s *Store) CreateInstanceDiagnosticsJob(ctx context.Context, instanceID string) (domain.Job, error) {
+	x, err := s.GetInstance(ctx, instanceID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	payload, payloadErr := s.buildInstanceDeleteJobPayload(ctx, x)
+	if payloadErr != nil {
+		payload = map[string]any{
+			"instance_id":          x.ID,
+			"action":               "diagnose",
+			"service_code":         x.ServiceCode,
+			"runtime_service_code": normalizeInstanceRuntimeCode(x.ServiceCode),
+			"name":                 x.Name,
+			"slug":                 x.Slug,
+			"systemd_unit":         x.SystemdUnit,
+			"endpoint_host":        x.EndpointHost,
+			"endpoint_port":        x.EndpointPort,
+			"enabled":              x.Enabled,
+			"spec":                 map[string]any{"render_error": payloadErr.Error()},
+		}
+	}
+	payload["action"] = "diagnose"
+	payload["diagnostics"] = true
+	j, err := s.CreateJob(ctx, domain.Job{
+		Type:       "instance.diagnose",
+		ScopeType:  "instance",
+		ScopeID:    &instanceID,
+		NodeID:     &x.NodeID,
+		InstanceID: &instanceID,
+		Priority:   40,
+		Payload:    payload,
+	})
+	if err != nil {
+		return j, err
+	}
+	_ = s.AddJobLog(ctx, j.ID, "info", "instance diagnostics queued", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
+	_, _ = s.CreateAudit(ctx, "system", "instance.diagnose", "instance", &instanceID, "instance diagnostics queued")
+	return j, nil
+}
+
 func (s *Store) runtimeCapabilityInstallNeeded(ctx context.Context, instance domain.Instance) (bool, error) {
 	capCode := runtimeCapabilityCodeForService(instance.ServiceCode)
 	if capCode == "" || defaultCapabilityInstallStrategy(capCode) == "" {
@@ -1824,7 +1864,7 @@ func (s *Store) CancelJob(ctx context.Context, jobID string) (domain.Job, error)
 }
 
 func (s *Store) ClaimJob(ctx context.Context, workerID string) (domain.Job, bool, error) {
-	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.delete')`, nil)
+	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`, nil)
 }
 
 func (s *Store) RecoverStaleJobLeases(ctx context.Context) (int, error) {
@@ -1977,7 +2017,7 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 		}
 	}
 
-	if strings.HasPrefix(jobType, "instance.") && instanceID != nil {
+	if strings.HasPrefix(jobType, "instance.") && jobType != "instance.diagnose" && instanceID != nil {
 		return s.applyInstanceJobCompletionSideEffects(ctx, *instanceID, idv, jobType, status, result)
 	}
 
@@ -2352,7 +2392,7 @@ func (s *Store) AgentNextJob(ctx context.Context, nodeRef string) (domain.Job, b
 	if err := s.db.QueryRow(ctx, `select id from nodes where (id::text=$1 or name=$1) and status <> 'retired'`, nodeRef).Scan(&nodeID); err != nil {
 		return domain.Job{}, false, err
 	}
-	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.delete')`
+	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`
 	job, ok, err := s.claimJob(ctx, "agent:"+nodeID, where, []any{nodeID})
 	if err != nil || !ok {
 		return job, ok, err

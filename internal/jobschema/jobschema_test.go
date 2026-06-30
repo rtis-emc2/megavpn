@@ -199,6 +199,23 @@ func TestNormalizeInstanceRestartInfersAction(t *testing.T) {
 	}
 }
 
+func TestNormalizeInstanceDiagnoseDoesNotRequireSpec(t *testing.T) {
+	payload, err := Normalize("instance.diagnose", map[string]any{
+		"instance_id":  "instance-1",
+		"service_code": "shadowsocks-libev",
+		"systemd_unit": "megavpn-shadowsocks-edge",
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := payload["action"]; got != "diagnose" {
+		t.Fatalf("action = %v, want diagnose", got)
+	}
+	if got := payload["service_code"]; got != "shadowsocks" {
+		t.Fatalf("service_code = %v, want shadowsocks", got)
+	}
+}
+
 func TestNormalizeInstanceOperationRejectsUnsupportedDriver(t *testing.T) {
 	_, err := Normalize("instance.restart", map[string]any{
 		"instance_id":  "instance-1",

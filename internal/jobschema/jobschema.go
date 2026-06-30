@@ -419,6 +419,42 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else if ok {
 			normalized["enabled"] = v
 		}
+	case "instance.diagnose":
+		instanceID, err := requireString(payload, "instance_id")
+		if err != nil {
+			return nil, err
+		}
+		normalized["instance_id"] = instanceID
+		normalized["action"] = "diagnose"
+		if serviceCode, err := optionalString(payload, "service_code"); err != nil {
+			return nil, err
+		} else if serviceCode != "" {
+			normalized["service_code"] = driver.NormalizeCode(serviceCode)
+		}
+		if runtimeCode, err := optionalString(payload, "runtime_service_code"); err != nil {
+			return nil, err
+		} else if runtimeCode != "" {
+			normalized["runtime_service_code"] = driver.NormalizeCode(runtimeCode)
+		}
+		if stringifyAny(normalized["service_code"]) == "" && stringifyAny(normalized["runtime_service_code"]) == "" && strings.TrimSpace(stringifyAny(payload["systemd_unit"])) == "" {
+			return nil, validationf("payload.service_code, payload.runtime_service_code or payload.systemd_unit is required")
+		}
+		if spec, err := optionalMap(payload, "spec"); err != nil {
+			return nil, err
+		} else if spec != nil {
+			normalized["spec"] = spec
+		}
+		trimOptionalStrings(normalized, payload, "name", "slug", "systemd_unit", "endpoint_host")
+		if v, ok, err := optionalInt(payload, "endpoint_port"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["endpoint_port"] = v
+		}
+		if v, ok, err := optionalBool(payload, "enabled"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["enabled"] = v
+		}
 	case "client.provision":
 		clientID, err := requireString(payload, "client_id")
 		if err != nil {

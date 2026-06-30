@@ -521,6 +521,9 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 .profile-mode-tags { margin-top: 8px; }
 .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:16px; }
 .form-result, .auth-message { margin-top: 14px; }
+.small-action { padding: 9px 12px; min-height: 36px; font-size: 13px; }
+.instance-diagnostics { margin-top: 16px; }
+.instance-diagnostics .code-block { max-height: 360px; }
 .subtle-notice { margin-top: 14px; margin-bottom: 0; }
 .settings-layout { display: grid; grid-template-columns: 1.1fr 1fr; gap: 16px; }
 .panel-banner {

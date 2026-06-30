@@ -120,6 +120,20 @@ func TestAptInstallCommandRetryClassification(t *testing.T) {
 	}
 }
 
+func TestAptFailureSuggestsRepair(t *testing.T) {
+	t.Parallel()
+
+	if !aptFailureSuggestsRepair("E: dpkg was interrupted, you must manually run 'sudo dpkg --configure -a' to correct the problem.") {
+		t.Fatal("expected interrupted dpkg output to request repair")
+	}
+	if !aptFailureSuggestsRepair("dpkg: error processing package shadowsocks-libev (--configure): installed shadowsocks-libev package post-installation script subprocess returned error exit status 1") {
+		t.Fatal("expected package post-install failure to request repair")
+	}
+	if aptFailureSuggestsRepair("Temporary failure resolving archive.ubuntu.com") {
+		t.Fatal("network resolution failure must not request dpkg repair")
+	}
+}
+
 func TestAptPolicyHasCandidate(t *testing.T) {
 	t.Parallel()
 

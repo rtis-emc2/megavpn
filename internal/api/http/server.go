@@ -115,6 +115,7 @@ type Store interface {
 	DiscardInstanceDraft(context.Context, string) error
 	ReplaceInstanceSpec(context.Context, string, string, map[string]any) (domain.InstanceRevision, error)
 	RollbackInstanceRevision(context.Context, string, string, string) (domain.InstanceRevision, error)
+	CreateInstanceDiagnosticsJob(context.Context, string) (domain.Job, error)
 	UpdateInstanceStatus(context.Context, string, string) (domain.Job, error)
 	DeleteInstance(context.Context, string) (domain.Instance, error)
 	ListClients(context.Context) ([]domain.Client, error)
@@ -379,6 +380,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/instances/{id}/stop", "instance.apply", s.instanceAction("stop"))
 	protected("POST /api/v1/instances/{id}/enable", "instance.apply", s.instanceAction("enable"))
 	protected("POST /api/v1/instances/{id}/disable", "instance.apply", s.instanceAction("disable"))
+	protected("POST /api/v1/instances/{id}/diagnose", "instance.read", s.diagnoseInstance)
 	protected("GET /api/v1/clients", "client.read", s.listClients)
 	protected("POST /api/v1/clients", "client.write", s.createClient)
 	protected("GET /api/v1/clients/{id}", "client.read", s.getClient)
@@ -1253,6 +1255,14 @@ func (s *Server) deleteInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	writeJSON(w, 200, x)
 }
+func (s *Server) diagnoseInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
+	j, err := s.store.CreateInstanceDiagnosticsJob(r.Context(), idParam(r))
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 202, redactedJob(j))
+}
 func (s *Server) instanceAction(action string) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		j, err := s.store.UpdateInstanceStatus(r.Context(), idParam(r), action)
@@ -1817,6 +1827,7 @@ func jobTypeMustUseTypedEndpoint(jobType string) bool {
 		"instance.stop",
 		"instance.enable",
 		"instance.disable",
+		"instance.diagnose",
 		"instance.delete":
 		return true
 	default:
@@ -1834,6 +1845,8 @@ func requiredPermissionForJobType(jobType string) string {
 		return "node.write"
 	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable", "instance.delete":
 		return "instance.apply"
+	case "instance.diagnose":
+		return "instance.read"
 	case "client.provision", "client.revoke":
 		return "client.provision"
 	case "artifact.build":

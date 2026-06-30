@@ -379,6 +379,7 @@ func isAgentHandledJobType(jobType string) bool {
 		"instance.stop",
 		"instance.enable",
 		"instance.disable",
+		"instance.diagnose",
 		"instance.delete":
 		return true
 	default:
