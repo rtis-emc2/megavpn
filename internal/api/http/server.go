@@ -542,6 +542,7 @@ func decodeJSONBody(r *nethttp.Request, v any, optional bool) bool {
 func idParam(r *nethttp.Request) string { return strings.TrimSpace(r.PathValue("id")) }
 
 func (s *Server) index(w nethttp.ResponseWriter, r *nethttp.Request) {
+	setWebAssetNoStore(w)
 	if s.serveFileIfExists(w, r, "index.html", "text/html; charset=utf-8") {
 		return
 	}
@@ -555,10 +556,17 @@ func (s *Server) assets(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.NotFound(w, r)
 		return
 	}
+	setWebAssetNoStore(w)
 	if s.serveFileIfExists(w, r, filepath.Join("assets", assetPath), "") {
 		return
 	}
 	nethttp.NotFound(w, r)
+}
+
+func setWebAssetNoStore(w nethttp.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 }
 
 func (s *Server) serveFileIfExists(w nethttp.ResponseWriter, r *nethttp.Request, relPath, contentType string) bool {
