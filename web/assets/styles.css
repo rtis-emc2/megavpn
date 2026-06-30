@@ -1465,6 +1465,193 @@ tr:hover td { background: #f8fafc; }
   font-size: 12px;
   line-height: 1.2;
 }
+.clients-workspace {
+  display: grid;
+  gap: 16px;
+}
+.client-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.client-summary-card,
+.client-access-overview > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+.client-summary-card span,
+.client-access-overview span {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.client-summary-card strong,
+.client-access-overview strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  line-height: 1.15;
+}
+.client-summary-card strong {
+  font-size: 24px;
+}
+.client-access-overview strong {
+  font-size: 18px;
+}
+.client-summary-card small,
+.client-access-overview small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.table-subtitle {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.clients-table {
+  min-width: 1180px;
+  table-layout: fixed;
+}
+.clients-table td {
+  vertical-align: top;
+  white-space: normal;
+}
+.clients-col-client { width: 18%; }
+.clients-col-contact { width: 18%; }
+.clients-col-provisioning { width: 20%; }
+.clients-col-delivery { width: 20%; }
+.clients-col-state { width: 12%; }
+.clients-col-actions { width: 12%; }
+.client-primary {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.client-status-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.client-action-grid {
+  grid-template-columns: repeat(2, minmax(82px, 1fr));
+  min-width: 176px;
+}
+.client-provision-form {
+  display: grid;
+  gap: 14px;
+}
+.client-workflow-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.client-workflow-strip div {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.client-workflow-strip span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+}
+.client-workflow-strip strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.client-workflow-strip small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.client-provision-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.client-provision-choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.client-provision-choice:hover,
+.client-provision-choice:has(input:checked) {
+  border-color: rgba(185, 28, 28, 0.34);
+  background: #fff7f7;
+  box-shadow: inset 0 0 0 1px rgba(185, 28, 28, 0.08);
+}
+.client-provision-choice input {
+  margin-top: 4px;
+}
+.client-provision-choice strong,
+.client-provision-choice small,
+.client-provision-choice em {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.client-provision-choice strong {
+  color: var(--text);
+  font-size: 14px;
+}
+.client-provision-choice small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.client-provision-choice em {
+  margin-top: 5px;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-style: normal;
+}
+.client-choice-tags {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.client-access-overview {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.compact-empty {
+  padding: 14px;
+}
 .service-pack-table {
   min-width: 980px;
   table-layout: fixed;
@@ -2862,6 +3049,9 @@ tr:hover td { background: #f8fafc; }
   .instance-list-toolbar,
   .instances-empty-grid,
   .node-instance-group-head,
+  .client-summary-grid,
+  .client-workflow-strip,
+  .client-access-overview,
   .pool-summary-grid,
   .pool-space-grid,
   .pack-create-summary,
@@ -2959,6 +3149,10 @@ tr:hover td { background: #f8fafc; }
   .pool-range-line,
   .pool-facts,
   .pool-actions,
+  .client-summary-grid,
+  .client-workflow-strip,
+  .client-provision-choice-grid,
+  .client-access-overview,
   .pack-create-form-grid,
   .pack-create-summary,
   .pack-component-grid {

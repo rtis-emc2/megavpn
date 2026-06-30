@@ -1426,7 +1426,61 @@ func (s *Store) DeleteInstance(ctx context.Context, instanceID string) (domain.I
 }
 
 func (s *Store) ListClients(ctx context.Context) ([]domain.Client, error) {
-	rows, err := s.db.Query(ctx, `select id,username,coalesce(display_name,''),coalesce(email,''),status,coalesce(notes,''),expires_at,created_at,updated_at from client_accounts where status <> 'deleted' order by created_at desc`)
+	rows, err := s.db.Query(ctx, `select
+		ca.id,
+		ca.username,
+		coalesce(ca.display_name,''),
+		coalesce(ca.email,''),
+		ca.status,
+		coalesce(ca.notes,''),
+		ca.expires_at,
+		ca.created_at,
+		ca.updated_at,
+		coalesce(sa.total_count,0),
+		coalesce(sa.active_count,0),
+		coalesce(sa.pending_count,0),
+		coalesce(car.total_count,0),
+		coalesce(car.active_count,0),
+		coalesce(ar.total_count,0),
+		coalesce(ar.ready_count,0),
+		ar.last_created_at,
+		coalesce(sl.total_count,0),
+		coalesce(sl.active_count,0),
+		sl.next_expires_at
+	from client_accounts ca
+	left join lateral (
+		select
+			count(*) as total_count,
+			count(*) filter (where status='active') as active_count,
+			count(*) filter (where status='pending') as pending_count
+		from service_accesses
+		where client_account_id=ca.id and status <> 'revoked'
+	) sa on true
+	left join lateral (
+		select
+			count(*) as total_count,
+			count(*) filter (where status='active') as active_count
+		from client_access_routes
+		where client_account_id=ca.id and status <> 'revoked'
+	) car on true
+	left join lateral (
+		select
+			count(*) as total_count,
+			count(*) filter (where status='ready') as ready_count,
+			max(created_at) as last_created_at
+		from artifacts
+		where client_account_id=ca.id
+	) ar on true
+	left join lateral (
+		select
+			count(*) as total_count,
+			count(*) filter (where status='active' and expires_at > now()) as active_count,
+			min(expires_at) filter (where status='active' and expires_at > now()) as next_expires_at
+		from share_links
+		where client_account_id=ca.id and status <> 'revoked'
+	) sl on true
+	where ca.status <> 'deleted'
+	order by ca.created_at desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -1434,9 +1488,45 @@ func (s *Store) ListClients(ctx context.Context) ([]domain.Client, error) {
 	var out []domain.Client
 	for rows.Next() {
 		var c domain.Client
-		if err := rows.Scan(&c.ID, &c.Username, &c.DisplayName, &c.Email, &c.Status, &c.Notes, &c.ExpiresAt, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var summary domain.ClientSummary
+		var serviceAccessCount, activeServiceAccessCount, pendingServiceAccessCount int64
+		var routeCount, activeRouteCount int64
+		var artifactCount, readyArtifactCount int64
+		var shareLinkCount, activeShareLinkCount int64
+		if err := rows.Scan(
+			&c.ID,
+			&c.Username,
+			&c.DisplayName,
+			&c.Email,
+			&c.Status,
+			&c.Notes,
+			&c.ExpiresAt,
+			&c.CreatedAt,
+			&c.UpdatedAt,
+			&serviceAccessCount,
+			&activeServiceAccessCount,
+			&pendingServiceAccessCount,
+			&routeCount,
+			&activeRouteCount,
+			&artifactCount,
+			&readyArtifactCount,
+			&summary.LastArtifactAt,
+			&shareLinkCount,
+			&activeShareLinkCount,
+			&summary.NextShareLinkExpiresAt,
+		); err != nil {
 			return nil, err
 		}
+		summary.ServiceAccessCount = int(serviceAccessCount)
+		summary.ActiveServiceAccessCount = int(activeServiceAccessCount)
+		summary.PendingServiceAccessCount = int(pendingServiceAccessCount)
+		summary.RouteCount = int(routeCount)
+		summary.ActiveRouteCount = int(activeRouteCount)
+		summary.ArtifactCount = int(artifactCount)
+		summary.ReadyArtifactCount = int(readyArtifactCount)
+		summary.ShareLinkCount = int(shareLinkCount)
+		summary.ActiveShareLinkCount = int(activeShareLinkCount)
+		c.Summary = &summary
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -1541,6 +1631,15 @@ func (s *Store) ensureClientProvisioningAccesses(ctx context.Context, clientID s
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
+	} else {
+		normalized, err := s.validateClientProvisioningInstanceIDs(ctx, instanceIDs)
+		if err != nil {
+			return nil, err
+		}
+		instanceIDs = normalized
+	}
+	if len(instanceIDs) == 0 {
+		return nil, fmt.Errorf("at least one provisionable service instance is required")
 	}
 	for _, iid := range instanceIDs {
 		var accessID string
@@ -1558,6 +1657,45 @@ func (s *Store) ensureClientProvisioningAccesses(ctx context.Context, clientID s
 		}
 	}
 	return instanceIDs, nil
+}
+
+func (s *Store) validateClientProvisioningInstanceIDs(ctx context.Context, instanceIDs []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(instanceIDs))
+	out := make([]string, 0, len(instanceIDs))
+	for _, raw := range instanceIDs {
+		instanceID := strings.TrimSpace(raw)
+		if instanceID == "" {
+			continue
+		}
+		if _, ok := seen[instanceID]; ok {
+			continue
+		}
+		seen[instanceID] = struct{}{}
+
+		var enabled, supportsAccounts bool
+		var status, serviceCode string
+		err := s.db.QueryRow(ctx, `select i.enabled,i.status,sd.code,sd.supports_accounts
+			from instances i
+			join service_definitions sd on sd.id=i.service_definition_id
+			where i.id=$1`, instanceID).Scan(&enabled, &status, &serviceCode, &supportsAccounts)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("service instance %s not found", instanceID)
+			}
+			return nil, err
+		}
+		if !enabled || strings.TrimSpace(status) == "deleted" {
+			return nil, fmt.Errorf("service instance %s is not available for client provisioning", instanceID)
+		}
+		if !supportsAccounts {
+			return nil, fmt.Errorf("service %s does not support client provisioning", strings.TrimSpace(serviceCode))
+		}
+		out = append(out, instanceID)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("at least one service instance is required")
+	}
+	return out, nil
 }
 
 func (s *Store) RevokeClient(ctx context.Context, clientID string) (domain.Job, error) {

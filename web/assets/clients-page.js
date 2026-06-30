@@ -96,6 +96,74 @@
       }
     }
 
+    function shareLinkIsUsable(link) {
+      const status = String(link?.status || '').toLowerCase();
+      if (status !== 'active') return false;
+      if (!link?.expires_at) return true;
+      const expiresAt = Date.parse(link.expires_at);
+      return Number.isNaN(expiresAt) || expiresAt > Date.now();
+    }
+
+    function shareLinkDisplayStatus(link) {
+      const status = String(link?.status || 'unknown').toLowerCase();
+      if (status === 'active' && !shareLinkIsUsable(link)) return 'expired';
+      return status;
+    }
+
+    function clientSummary(client) {
+      const summary = client?.summary && typeof client.summary === 'object' ? client.summary : {};
+      const clientID = client?.id || '';
+      const artifacts = (state.artifacts || []).filter((artifact) => artifact.client_account_id === clientID);
+      const shareLinks = (state.shareLinks || []).filter((link) => link.client_account_id === clientID);
+      const readyArtifacts = artifacts.filter((artifact) => String(artifact.status || '').toLowerCase() === 'ready');
+      const activeLinks = shareLinks.filter(shareLinkIsUsable);
+      return {
+        serviceAccessCount: Number(summary.service_access_count || 0),
+        activeServiceAccessCount: Number(summary.active_service_access_count || 0),
+        pendingServiceAccessCount: Number(summary.pending_service_access_count || 0),
+        routeCount: Number(summary.route_count || 0),
+        activeRouteCount: Number(summary.active_route_count || 0),
+        artifactCount: Number(summary.artifact_count ?? artifacts.length),
+        readyArtifactCount: Number(summary.ready_artifact_count ?? readyArtifacts.length),
+        shareLinkCount: Number(summary.share_link_count ?? shareLinks.length),
+        activeShareLinkCount: Number(summary.active_share_link_count ?? activeLinks.length),
+        lastArtifactAt: summary.last_artifact_at || artifacts[0]?.created_at || '',
+        nextShareLinkExpiresAt: summary.next_share_link_expires_at || activeLinks[0]?.expires_at || '',
+      };
+    }
+
+    function clientLifecycleStatus(client) {
+      const status = String(client.status || 'unknown').toLowerCase();
+      if (status === 'active' && client.expires_at && Date.parse(client.expires_at) < Date.now()) return 'expired';
+      return status;
+    }
+
+    function clientDisplayName(client) {
+      return client.display_name || client.username || client.id;
+    }
+
+    function compactServiceLabel(value) {
+      const normalized = String(value || '').trim();
+      switch (normalized) {
+        case 'xray-core':
+          return 'Xray';
+        case 'http_proxy':
+          return 'HTTP proxy';
+        case 'wireguard':
+          return 'WireGuard';
+        case 'openvpn':
+          return 'OpenVPN';
+        case 'shadowsocks':
+          return 'Shadowsocks';
+        case 'mtproto':
+          return 'MTProto';
+        case 'ipsec':
+          return 'IPsec';
+        default:
+          return normalized || 'service';
+      }
+    }
+
     function artifactDownloadURL(clientID, artifactID) {
       const path = `/api/v1/clients/${encodeURIComponent(clientID)}/artifacts/${encodeURIComponent(artifactID)}/download`;
       try {
@@ -131,9 +199,10 @@
 
     function renderActionButtons(client) {
       return `
-        <div class="inline-actions compact-actions">
+        <div class="table-actions client-action-grid">
+          <button class="secondary-btn client-accesses-btn" type="button" data-client-id="${escapeHTML(client.id)}">Manage</button>
           <button class="secondary-btn client-provision-btn" type="button" data-client-id="${escapeHTML(client.id)}">Provision</button>
-          <button class="secondary-btn client-accesses-btn" type="button" data-client-id="${escapeHTML(client.id)}">Access</button>
+          <button class="secondary-btn client-build-btn" type="button" data-client-id="${escapeHTML(client.id)}">Build</button>
           <button class="secondary-btn client-email-btn" type="button" data-client-id="${escapeHTML(client.id)}">Email</button>
         </div>`;
     }
@@ -146,6 +215,9 @@
       document.querySelectorAll('.client-accesses-btn').forEach((button) => {
         button.addEventListener('click', () => openClientAccessesModal(button.dataset.clientId));
       });
+      document.querySelectorAll('.client-build-btn').forEach((button) => {
+        button.addEventListener('click', () => openBuildClientArtifactsForClient(button.dataset.clientId));
+      });
       document.querySelectorAll('.client-email-btn').forEach((button) => {
         button.addEventListener('click', () => openClientEmailModal(button.dataset.clientId));
       });
@@ -154,16 +226,97 @@
     function render() {
       setTitle('Clients');
       const rows = state.clients || [];
+      const activeClients = rows.filter((client) => clientLifecycleStatus(client) === 'active').length;
+      const accessTotal = rows.reduce((sum, client) => sum + clientSummary(client).serviceAccessCount, 0);
+      const readyArtifacts = rows.reduce((sum, client) => sum + clientSummary(client).readyArtifactCount, 0);
+      const activeLinks = rows.reduce((sum, client) => sum + clientSummary(client).activeShareLinkCount, 0);
       el('content').innerHTML = `
-        ${tableCard('Client Accounts', rows, [
-          { title: 'Username', key: 'username' },
-          { title: 'Display', key: 'display_name', render: (row) => escapeHTML(row.display_name || 'n/a') },
-          { title: 'Email', key: 'email', render: (row) => escapeHTML(row.email || 'n/a') },
-          { title: 'Expires', key: 'expires_at', render: (row) => formatDate(row.expires_at) },
-          { title: 'Status', key: 'status', render: (row) => statusTag(row.status) },
-          { title: 'Actions', key: 'id', render: renderActionButtons },
-        ], '<button class="secondary-btn" type="button" id="clientCreateBtn">Create client</button>')}`;
+        <section class="clients-workspace">
+          <div class="client-summary-grid">
+            <div class="client-summary-card">
+              <span>Clients</span>
+              <strong>${escapeHTML(String(rows.length))}</strong>
+              <small>${escapeHTML(String(activeClients))} active</small>
+            </div>
+            <div class="client-summary-card">
+              <span>Service access</span>
+              <strong>${escapeHTML(String(accessTotal))}</strong>
+              <small>bound instances</small>
+            </div>
+            <div class="client-summary-card">
+              <span>Configs</span>
+              <strong>${escapeHTML(String(readyArtifacts))}</strong>
+              <small>ready artifacts</small>
+            </div>
+            <div class="client-summary-card">
+              <span>Delivery</span>
+              <strong>${escapeHTML(String(activeLinks))}</strong>
+              <small>active share links</small>
+            </div>
+          </div>
+          <section class="table-card clients-table-card">
+            <div class="table-head">
+              <div>
+                <h2>Client provisioning</h2>
+                <p class="table-subtitle">Bind service access, generate client configs and deliver artifacts from one workflow.</p>
+              </div>
+              <div class="table-tools">
+                <span class="tag">${escapeHTML(String(rows.length))} loaded</span>
+                <button class="secondary-btn" type="button" id="clientCreateBtn">Create client</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="clients-table">
+                <thead>
+                  <tr>
+                    <th class="clients-col-client">Client</th>
+                    <th class="clients-col-contact">Contact</th>
+                    <th class="clients-col-provisioning">Provisioning</th>
+                    <th class="clients-col-delivery">Delivery</th>
+                    <th class="clients-col-state">State</th>
+                    <th class="clients-col-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>${renderClientRows(rows)}</tbody>
+              </table>
+            </div>
+          </section>
+        </section>`;
       bindListActions();
+    }
+
+    function renderClientRows(rows) {
+      return rows.map((client) => {
+        const summary = clientSummary(client);
+        const lifecycle = clientLifecycleStatus(client);
+        return `
+          <tr>
+            <td>
+              <strong class="client-primary">${escapeHTML(client.username || client.id)}</strong>
+              <div class="timeline-meta">${escapeHTML(client.display_name || client.id)}</div>
+            </td>
+            <td>
+              <div>${escapeHTML(client.email || 'no email')}</div>
+              <div class="timeline-meta">expires ${escapeHTML(formatDate(client.expires_at))}</div>
+            </td>
+            <td>
+              <div class="client-status-cluster">
+                <span class="tag">${escapeHTML(String(summary.serviceAccessCount))} access</span>
+                <span class="tag ${summary.pendingServiceAccessCount > 0 ? 'warn' : 'stub'}">${escapeHTML(String(summary.pendingServiceAccessCount))} pending</span>
+                <span class="tag">${escapeHTML(String(summary.routeCount))} routes</span>
+              </div>
+            </td>
+            <td>
+              <div class="client-status-cluster">
+                <span class="tag ${summary.readyArtifactCount > 0 ? 'ok' : 'stub'}">${escapeHTML(String(summary.readyArtifactCount))} configs</span>
+                <span class="tag ${summary.activeShareLinkCount > 0 ? 'ok' : 'stub'}">${escapeHTML(String(summary.activeShareLinkCount))} links</span>
+              </div>
+              <div class="timeline-meta">last build ${escapeHTML(formatDate(summary.lastArtifactAt))}</div>
+            </td>
+            <td>${statusTag(lifecycle)}<div class="timeline-meta">updated ${escapeHTML(formatDate(client.updated_at))}</div></td>
+            <td>${renderActionButtons(client)}</td>
+          </tr>`;
+      }).join('') || '<tr><td colspan="6"><div class="empty">No client accounts yet. Create a client, bind service access and build configs.</div></td></tr>';
     }
 
     function openCreateClientModal() {
@@ -240,14 +393,49 @@
     function queueClientProvision(clientID) {
       const client = findClient(clientID);
       if (!client) return;
-      openModal(`Provision client: ${client.username}`, 'Bind selected service instances and queue provisioning', `
-        <form id="clientProvisionForm" class="form-grid">
-          <div class="field full"><label>Service instances</label><select name="instance_ids" id="clientProvisionInstances" multiple size="9" required>${serviceInstanceOptions(provisionableClientInstances(), [])}</select></div>
-          <div class="field full inline-actions"><button class="primary-btn" type="submit">Queue provisioning</button><button class="secondary-btn" id="cancelProvisionBtn" type="button">Cancel</button></div>
+      const instances = provisionableClientInstances();
+      openModal(`Provision client: ${client.username}`, 'Create service access and queue config generation', `
+        <form id="clientProvisionForm" class="client-provision-form">
+          <div class="client-workflow-strip">
+            <div><span>1</span><strong>Access</strong><small>Bind the client to selected instances.</small></div>
+            <div><span>2</span><strong>Secrets</strong><small>Driver state generates certificates, keys or passwords.</small></div>
+            <div><span>3</span><strong>Apply</strong><small>Changed instances are queued for agent apply.</small></div>
+            <div><span>4</span><strong>Configs</strong><small>Client artifacts are stored for preview/download.</small></div>
+          </div>
+          <div class="field full">
+            <label>Service instances</label>
+            <div class="client-provision-choice-grid" id="clientProvisionInstances">${renderProvisionInstanceChoices(instances)}</div>
+          </div>
+          <div class="field full inline-actions">
+            <button class="primary-btn" type="submit"${instances.length ? '' : ' disabled'}>Queue provisioning</button>
+            <button class="secondary-btn" id="cancelProvisionBtn" type="button">Cancel</button>
+          </div>
         </form>
         <div id="clientProvisionResult" class="form-result"></div>`);
       document.getElementById('cancelProvisionBtn')?.addEventListener('click', closeModal);
       document.getElementById('clientProvisionForm')?.addEventListener('submit', (event) => submitClientProvision(event, clientID));
+    }
+
+    function renderProvisionInstanceChoices(instances = []) {
+      if (!instances.length) {
+        return '<div class="empty compact-empty">No provisionable service instances. Create and apply a service instance first.</div>';
+      }
+      return instances.map((instance) => {
+        const node = findNode(instance.node_id);
+        const runtime = (state.instanceRuntimeStates || []).find((item) => item.instance_id === instance.id);
+        const runtimeStatus = runtime?.runtime_status || instance.status || 'unknown';
+        const healthStatus = runtime?.health_status || 'unknown';
+        return `
+          <label class="client-provision-choice">
+            <input type="checkbox" name="instance_ids" value="${escapeHTML(instance.id)}" />
+            <span>
+              <strong>${escapeHTML(instance.name || instance.slug || instance.id)}</strong>
+              <small>${escapeHTML(compactServiceLabel(instance.service_code))} · ${escapeHTML(node?.name || instance.node_id || 'node')} · ${escapeHTML(node?.role || 'role n/a')}</small>
+              <em>${escapeHTML(endpointLabel(instance))}</em>
+            </span>
+            <span class="client-choice-tags">${statusTag(runtimeStatus)}${statusTag(healthStatus)}</span>
+          </label>`;
+      }).join('');
     }
 
     async function submitClientProvision(event, clientID) {
@@ -257,12 +445,16 @@
       const instanceIDs = Array.from(event.currentTarget.querySelector('#clientProvisionInstances')?.selectedOptions || [])
         .map((option) => option.value)
         .filter(Boolean);
-      if (instanceIDs.length === 0) {
+      const checkboxIDs = Array.from(event.currentTarget.querySelectorAll('input[name="instance_ids"]:checked') || [])
+        .map((input) => input.value)
+        .filter(Boolean);
+      const selectedIDs = checkboxIDs.length ? checkboxIDs : instanceIDs;
+      if (selectedIDs.length === 0) {
         if (target) target.innerHTML = '<span class="tag danger">Select at least one service instance</span>';
         return;
       }
       try {
-        const data = await sendJSON(`/api/v1/clients/${clientID}/provision`, 'POST', { instance_ids: instanceIDs });
+        const data = await sendJSON(`/api/v1/clients/${clientID}/provision`, 'POST', { instance_ids: selectedIDs });
         if (target) target.innerHTML = renderActionResponse(data, 'Client provision');
         await refresh();
       } catch (err) {
@@ -372,25 +564,83 @@
       }).join('') || '<tr><td colspan="6"><div class="empty">No generated configs yet. Build client configs after service access is created.</div></td></tr>';
     }
 
+    function renderClientShareLinkRows(shareLinkList, artifactList, clientID) {
+      const artifactByID = new Map((artifactList || []).map((artifact) => [artifact.id, artifact]));
+      return (shareLinkList || []).map((link) => {
+        const artifact = artifactByID.get(link.target_id || '');
+        return `
+          <tr>
+            <td><span class="tag">${escapeHTML(link.token_hint || 'hidden')}</span></td>
+            <td>${escapeHTML(artifact ? artifactTypeLabel(artifact.artifact_type) : link.target_id || 'artifact')}</td>
+            <td>${statusTag(shareLinkDisplayStatus(link))}</td>
+            <td>${escapeHTML(formatDate(link.expires_at))}</td>
+            <td>${escapeHTML(String(link.download_count || 0))}</td>
+            <td>
+              <div class="inline-actions compact-actions">
+                <button class="danger-btn client-share-revoke-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-link-id="${escapeHTML(link.id)}">Revoke</button>
+              </div>
+            </td>
+          </tr>`;
+      }).join('') || '<tr><td colspan="6"><div class="empty">No delivery links yet. Publish a link after a config artifact is ready.</div></td></tr>';
+    }
+
+    function renderClientAccessOverview(client, accessList, routeList, artifactList, shareLinkList) {
+      const activeAccesses = accessList.filter((item) => String(item.status || '').toLowerCase() === 'active').length;
+      const pendingAccesses = accessList.filter((item) => String(item.status || '').toLowerCase() === 'pending').length;
+      const readyArtifacts = artifactList.filter((item) => String(item.status || '').toLowerCase() === 'ready').length;
+      const activeLinks = shareLinkList.filter(shareLinkIsUsable).length;
+      return `
+        <div class="client-access-overview">
+          <div>
+            <span>Client</span>
+            <strong>${escapeHTML(clientDisplayName(client))}</strong>
+            <small>${escapeHTML(client.email || 'no email')}</small>
+          </div>
+          <div>
+            <span>Access</span>
+            <strong>${escapeHTML(String(accessList.length))}</strong>
+            <small>${escapeHTML(String(activeAccesses))} active · ${escapeHTML(String(pendingAccesses))} pending</small>
+          </div>
+          <div>
+            <span>Routes</span>
+            <strong>${escapeHTML(String(routeList.length))}</strong>
+            <small>policy rows</small>
+          </div>
+          <div>
+            <span>Configs</span>
+            <strong>${escapeHTML(String(readyArtifacts))}</strong>
+            <small>${escapeHTML(String(artifactList.length))} total artifacts</small>
+          </div>
+          <div>
+            <span>Delivery</span>
+            <strong>${escapeHTML(String(activeLinks))}</strong>
+            <small>active links</small>
+          </div>
+        </div>`;
+    }
+
     async function openClientAccessesModal(clientID) {
       const client = findClient(clientID);
       if (!client) return;
       openModal(`Client access: ${client.username}`, 'Provisioned service bindings and route policy', '<div class="empty">Loading service accesses...</div>', { wide: true });
       try {
-        const [accesses, routes, artifacts] = await Promise.all([
+        const [accesses, routes, artifacts, shareLinks] = await Promise.all([
           requestJSON(`/api/v1/clients/${clientID}/accesses`),
           requestJSON(`/api/v1/clients/${clientID}/routes`),
           requestJSON(`/api/v1/clients/${clientID}/artifacts`),
+          requestJSON(`/api/v1/clients/${clientID}/share-links`),
         ]);
         const accessList = Array.isArray(accesses) ? accesses : [];
         const routeList = Array.isArray(routes) ? routes : [];
         const artifactList = Array.isArray(artifacts) ? artifacts : [];
+        const shareLinkList = Array.isArray(shareLinks) ? shareLinks : [];
         const accessOptions = accessList.map((access) => {
           const instance = findInstance(access.instance_id);
           return `<option value="${escapeHTML(access.id)}">${escapeHTML(instance?.name || access.instance_id)} - ${escapeHTML(access.status || 'unknown')}</option>`;
         }).join('');
         el('modalBody').innerHTML = `
           <div id="clientAccessRotateResult" class="form-result"></div>
+          ${renderClientAccessOverview(client, accessList, routeList, artifactList, shareLinkList)}
           <section class="table-card compact-card">
             <div class="table-head"><h2>Service Accesses</h2><span class="tag">${escapeHTML(String(accessList.length))}</span></div>
             <div class="table-wrap">
@@ -421,6 +671,8 @@
               <div class="table-tools">
                 <span class="tag">${escapeHTML(String(artifactList.length))} files</span>
                 <button class="secondary-btn" id="clientArtifactBuildBtn" type="button">Build configs</button>
+                <button class="secondary-btn" id="clientSharePublishBtn" type="button">Publish link</button>
+                <button class="secondary-btn" id="clientManageEmailBtn" type="button">Email</button>
               </div>
             </div>
             <div class="table-wrap">
@@ -429,14 +681,28 @@
                 <tbody>${renderClientArtifactRows(artifactList, accessList, clientID)}</tbody>
               </table>
             </div>
+          </section>
+          <section class="table-card compact-card" style="margin-top:16px">
+            <div class="table-head">
+              <h2>Delivery Links</h2>
+              <div class="table-tools">
+                <span class="tag">${escapeHTML(String(shareLinkList.length))} links</span>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Token</th><th>Artifact</th><th>Status</th><th>Expires</th><th>Downloads</th><th>Actions</th></tr></thead>
+                <tbody>${renderClientShareLinkRows(shareLinkList, artifactList, clientID)}</tbody>
+              </table>
+            </div>
           </section>`;
-        bindAccessModalActions(clientID, accessOptions, accessList);
+        bindAccessModalActions(clientID, accessOptions, accessList, artifactList);
       } catch (err) {
         el('modalBody').innerHTML = `<div class="empty">Failed to load service accesses: ${escapeHTML(err.message)}</div>`;
       }
     }
 
-    function bindAccessModalActions(clientID, accessOptions, accessList = []) {
+    function bindAccessModalActions(clientID, accessOptions, accessList = [], artifactList = []) {
       document.querySelectorAll('.rotate-access-btn').forEach((button) => {
         button.addEventListener('click', () => rotateClientAccess(button.dataset.clientId, button.dataset.accessId, button.dataset.driver));
       });
@@ -445,6 +711,11 @@
         button.addEventListener('click', () => revokeClientAccessRoute(button.dataset.clientId, button.dataset.routeId));
       });
       document.getElementById('clientArtifactBuildBtn')?.addEventListener('click', () => openBuildClientArtifactsModal(clientID, accessList));
+      document.getElementById('clientSharePublishBtn')?.addEventListener('click', () => openPublishShareLinkModal(clientID, artifactList));
+      document.getElementById('clientManageEmailBtn')?.addEventListener('click', () => openClientEmailModal(clientID));
+      document.querySelectorAll('.client-share-revoke-btn').forEach((button) => {
+        button.addEventListener('click', () => revokeClientShareLink(button.dataset.clientId, button.dataset.linkId));
+      });
       document.querySelectorAll('.client-artifact-preview-btn').forEach((button) => {
         button.addEventListener('click', () => previewClientArtifact(button.dataset.clientId, button.dataset.artifactId));
       });
@@ -481,6 +752,18 @@
       document.getElementById('clientArtifactBuildForm')?.addEventListener('submit', (event) => submitClientArtifactBuild(event, clientID));
     }
 
+    async function openBuildClientArtifactsForClient(clientID) {
+      const client = findClient(clientID);
+      if (!client) return;
+      openModal(`Build configs: ${client.username}`, 'Loading provisioned service access', '<div class="empty">Loading service accesses...</div>', { wide: true });
+      try {
+        const accesses = await requestJSON(`/api/v1/clients/${clientID}/accesses`);
+        openBuildClientArtifactsModal(clientID, Array.isArray(accesses) ? accesses : []);
+      } catch (err) {
+        el('modalBody').innerHTML = `<div class="empty">Failed to load service accesses: ${escapeHTML(err.message)}</div>`;
+      }
+    }
+
     async function submitClientArtifactBuild(event, clientID) {
       event.preventDefault();
       const target = document.getElementById('clientArtifactBuildResult');
@@ -501,6 +784,57 @@
         });
         if (target) target.innerHTML = renderActionResponse(data, 'Client config build');
         await refresh();
+      } catch (err) {
+        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    function openPublishShareLinkModal(clientID, artifactList = []) {
+      const client = findClient(clientID);
+      if (!client) return;
+      const readyArtifacts = (artifactList || []).filter((artifact) => String(artifact.status || '').toLowerCase() === 'ready');
+      const options = readyArtifacts.map((artifact) => {
+        const label = `${artifactTypeLabel(artifact.artifact_type)} · ${artifact.size_bytes || 0} B · ${formatDate(artifact.created_at)}`;
+        return `<option value="${escapeHTML(artifact.id)}">${escapeHTML(label)}</option>`;
+      }).join('');
+      openModal(`Publish delivery link: ${client.username}`, 'Create a temporary download link for one ready artifact', `
+        <form id="clientShareLinkForm" class="form-grid">
+          <div class="field full"><label>Ready artifact</label><select name="target_id" required>${options || '<option value="" disabled>No ready artifacts</option>'}</select></div>
+          <div class="field"><label>TTL hours</label><input name="ttl_hours" type="number" min="1" max="720" value="72" /></div>
+          <div class="field full inline-actions">
+            <button class="primary-btn" type="submit"${readyArtifacts.length ? '' : ' disabled'}>Publish link</button>
+            <button class="secondary-btn" id="cancelShareLinkBtn" type="button">Cancel</button>
+          </div>
+        </form>
+        <div id="clientShareLinkResult" class="form-result"></div>`);
+      document.getElementById('cancelShareLinkBtn')?.addEventListener('click', () => openClientAccessesModal(clientID));
+      document.getElementById('clientShareLinkForm')?.addEventListener('submit', (event) => submitClientShareLink(event, clientID));
+    }
+
+    async function submitClientShareLink(event, clientID) {
+      event.preventDefault();
+      const target = document.getElementById('clientShareLinkResult');
+      if (target) target.innerHTML = '<span class="tag warn">publishing link</span>';
+      try {
+        const form = new FormData(event.currentTarget);
+        await sendJSON(`/api/v1/clients/${clientID}/share-links`, 'POST', {
+          target_id: String(form.get('target_id') || '').trim(),
+          ttl_hours: Number(form.get('ttl_hours') || 72),
+        });
+        await refresh();
+        await openClientAccessesModal(clientID);
+      } catch (err) {
+        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function revokeClientShareLink(clientID, linkID) {
+      const target = document.getElementById('clientAccessRotateResult');
+      if (target) target.innerHTML = '<span class="tag warn">revoking link</span>';
+      try {
+        await requestJSON(`/api/v1/clients/${clientID}/share-links/${linkID}/revoke`, { method: 'POST' });
+        await refresh();
+        await openClientAccessesModal(clientID);
       } catch (err) {
         if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
       }

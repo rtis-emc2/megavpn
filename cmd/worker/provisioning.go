@@ -630,6 +630,10 @@ func buildShadowsocksArtifacts(record domain.ProvisioningAccess) ([]generatedArt
 
 	method := firstNonEmpty(stringify(meta["method"]), stringify(spec["method"]), "chacha20-ietf-poly1305")
 	password := firstNonEmpty(stringify(meta["password"]), stringify(meta["shadowsocks_password"]), stringify(spec["password"]), stringify(spec["server_password"]))
+	account := shadowsocksManagedAccountForAccess(spec["managed_accounts"], record.Access.ID)
+	if password == "" {
+		password = firstNonEmpty(stringify(account["password"]), stringify(account["shadowsocks_password"]))
+	}
 	if password == "" {
 		return nil, fmt.Errorf("shadowsocks password is required")
 	}
@@ -637,7 +641,7 @@ func buildShadowsocksArtifacts(record domain.ProvisioningAccess) ([]generatedArt
 	if host == "" {
 		return nil, fmt.Errorf("shadowsocks server host is required")
 	}
-	port := firstInt(meta["server_port"], meta["port"], spec["server_port"], record.Instance.EndpointPort)
+	port := firstInt(meta["server_port"], meta["port"], account["server_port"], account["port"], spec["server_port"], record.Instance.EndpointPort)
 	if port <= 0 {
 		return nil, fmt.Errorf("shadowsocks server port is required")
 	}
@@ -655,6 +659,32 @@ func buildShadowsocksArtifacts(record domain.ProvisioningAccess) ([]generatedArt
 		Filename:        filename,
 		Content:         []byte(ssURL + "\n"),
 	}}, nil
+}
+
+func shadowsocksManagedAccountForAccess(raw any, accessID string) map[string]any {
+	accessID = strings.TrimSpace(accessID)
+	if accessID == "" {
+		return nil
+	}
+	switch accounts := raw.(type) {
+	case []any:
+		for _, item := range accounts {
+			account, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if strings.TrimSpace(stringify(account["service_access_id"])) == accessID {
+				return account
+			}
+		}
+	case []map[string]any:
+		for _, account := range accounts {
+			if strings.TrimSpace(stringify(account["service_access_id"])) == accessID {
+				return account
+			}
+		}
+	}
+	return nil
 }
 
 func buildHTTPProxyArtifacts(record domain.ProvisioningAccess) ([]generatedArtifactFile, error) {

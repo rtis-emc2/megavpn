@@ -304,15 +304,30 @@ type AgentInstanceRuntimeReport struct {
 }
 
 type Client struct {
-	ID          string     `json:"id"`
-	Username    string     `json:"username"`
-	DisplayName string     `json:"display_name"`
-	Email       string     `json:"email"`
-	Status      string     `json:"status"`
-	Notes       string     `json:"notes"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID          string         `json:"id"`
+	Username    string         `json:"username"`
+	DisplayName string         `json:"display_name"`
+	Email       string         `json:"email"`
+	Status      string         `json:"status"`
+	Notes       string         `json:"notes"`
+	ExpiresAt   *time.Time     `json:"expires_at"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	Summary     *ClientSummary `json:"summary,omitempty"`
+}
+
+type ClientSummary struct {
+	ServiceAccessCount        int        `json:"service_access_count"`
+	ActiveServiceAccessCount  int        `json:"active_service_access_count"`
+	PendingServiceAccessCount int        `json:"pending_service_access_count"`
+	RouteCount                int        `json:"route_count"`
+	ActiveRouteCount          int        `json:"active_route_count"`
+	ArtifactCount             int        `json:"artifact_count"`
+	ReadyArtifactCount        int        `json:"ready_artifact_count"`
+	ShareLinkCount            int        `json:"share_link_count"`
+	ActiveShareLinkCount      int        `json:"active_share_link_count"`
+	LastArtifactAt            *time.Time `json:"last_artifact_at,omitempty"`
+	NextShareLinkExpiresAt    *time.Time `json:"next_share_link_expires_at,omitempty"`
 }
 
 type ServiceAccess struct {

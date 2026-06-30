@@ -46,6 +46,7 @@
       'nodeManage',
       'instances',
       'addressPools',
+      'clients',
       'jobs',
       'backhaul',
       'services',
