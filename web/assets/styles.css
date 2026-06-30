@@ -396,6 +396,37 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 }
 .artifact-workflow strong { display: block; margin-bottom: 4px; color: var(--text); }
 .artifact-workflow span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.artifact-success-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(52,211,153,0.28);
+  border-radius: 16px;
+  padding: 14px;
+  background: rgba(52,211,153,0.08);
+}
+.artifact-success-head { justify-content: space-between; }
+.artifact-success-panel > strong { font-size: 17px; color: var(--text); }
+.artifact-success-panel p { margin: 0; color: var(--muted); line-height: 1.45; }
+.artifact-success-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.artifact-success-grid div {
+  border: 1px solid rgba(52,211,153,0.18);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(7,16,24,0.20);
+  min-width: 0;
+}
+.artifact-success-grid div.full { grid-column: 1 / -1; }
+.artifact-success-grid span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted-2);
+  font-size: 11px;
+}
+.artifact-success-grid strong { overflow-wrap: anywhere; }
 .service-node-target-card {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) auto;

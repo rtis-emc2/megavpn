@@ -563,27 +563,77 @@
         event.preventDefault();
         const form = event.currentTarget;
         const result = document.getElementById('binaryArtifactResult');
+        const submitButton = form.querySelector('button[type="submit"]');
+        const cancelButton = document.getElementById('cancelBinaryArtifactBtn');
+        if (form.dataset.submitting === '1' || form.dataset.completed === '1') {
+          return;
+        }
         const data = new FormData(form);
         const sourceMode = String(data.get('source_mode') || 'upload');
+        const idleLabel = sourceMode === 'url' ? 'Fetch artifact' : 'Upload artifact';
+        form.dataset.submitting = '1';
+        if (submitButton) {
+          submitButton.disabled = true;
+          submitButton.textContent = sourceMode === 'url' ? 'Fetching artifact' : 'Uploading artifact';
+        }
         result.innerHTML = sourceMode === 'url'
           ? '<span class="tag warn">fetching artifact</span>'
           : '<span class="tag warn">uploading artifact</span>';
         try {
+          let artifact;
           if (sourceMode === 'url') {
-            await sendJSON('/api/v1/binary-artifacts/import-url', 'POST', binaryArtifactURLPayload(data));
+            artifact = await sendJSON('/api/v1/binary-artifacts/import-url', 'POST', binaryArtifactURLPayload(data));
           } else {
-            await requestJSON('/api/v1/binary-artifacts/import', {
+            artifact = await requestJSON('/api/v1/binary-artifacts/import', {
               method: 'POST',
               body: data,
             });
           }
           state.binaryArtifacts = await fetchJSON('/api/v1/binary-artifacts', []);
-          result.innerHTML = '<span class="tag ok">artifact uploaded</span>';
+          form.dataset.completed = '1';
+          setBinaryArtifactFormCompleted(form);
+          if (cancelButton) cancelButton.textContent = 'Close';
+          result.innerHTML = renderBinaryArtifactImportSuccess(artifact, sourceMode);
           render();
         } catch (err) {
           result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        } finally {
+          delete form.dataset.submitting;
+          if (form.dataset.completed !== '1' && submitButton) {
+            submitButton.disabled = false;
+            submitButton.textContent = idleLabel;
+          }
         }
       });
+    }
+
+    function setBinaryArtifactFormCompleted(form) {
+      form.querySelectorAll('input, select, button').forEach((control) => {
+        if (control.id === 'cancelBinaryArtifactBtn') return;
+        control.disabled = true;
+      });
+    }
+
+    function renderBinaryArtifactImportSuccess(artifact, sourceMode) {
+      const name = artifact?.name || 'runtime artifact';
+      const version = artifact?.version || 'n/a';
+      const serviceCode = artifact?.service_code || 'n/a';
+      const sha = artifact?.sha256 || '';
+      const mode = sourceMode === 'url' ? 'Fetched and registered' : 'Uploaded and registered';
+      return `
+        <div class="artifact-success-panel">
+          <div class="inline-actions artifact-success-head">
+            <span class="tag ok">registered</span>
+            <span class="tag">${escapeHTML(mode)}</span>
+          </div>
+          <strong>${escapeHTML(name)}</strong>
+          <p>The artifact is now in the global runtime repository. This dialog is locked to prevent duplicate imports.</p>
+          <div class="artifact-success-grid">
+            <div><span>Service</span><strong>${escapeHTML(serviceCode)}</strong></div>
+            <div><span>Version</span><strong>${escapeHTML(version)}</strong></div>
+            <div class="full"><span>SHA-256</span><strong class="mono">${escapeHTML(sha || 'calculated and stored')}</strong></div>
+          </div>
+        </div>`;
     }
 
     function updateBinaryArtifactSourceMode() {
