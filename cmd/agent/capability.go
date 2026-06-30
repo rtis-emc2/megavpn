@@ -629,6 +629,8 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 			"command": []string{"apt-cache", "policy", packageName},
 			"note":    "apt update failed, but local package metadata has an install candidate; continuing with package install",
 		})
+	} else if !aptPackageCandidateAvailable(ctx, packageName, &steps) {
+		_ = tryPrepareUbuntuUniverseRepository(ctx, packageName, &steps)
 	}
 	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "install", "-y", packageName) {
 		return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "package install failed"), "steps": steps, "package": packageName}
@@ -677,6 +679,81 @@ func aptPackageCandidateAvailable(ctx context.Context, packageName string, steps
 		*steps = append(*steps, map[string]any{"command": []string{"apt-cache", "policy", packageName}, "exit_code": code, "output": truncate(out, 4000)})
 	}
 	return code == 0 && aptPolicyHasCandidate(out)
+}
+
+func tryPrepareUbuntuUniverseRepository(ctx context.Context, packageName string, steps *[]map[string]any) bool {
+	packageName = strings.TrimSpace(packageName)
+	if !shouldPrepareUbuntuUniverseRepository(hostOSReleaseID(), packageName) {
+		return false
+	}
+	appendStep := func(step map[string]any) {
+		if steps != nil {
+			*steps = append(*steps, step)
+		}
+	}
+	appendStep(map[string]any{"stage": "repository_prepare", "repository": "ubuntu_universe", "package": packageName})
+	if _, ok := resolveExecutable("add-apt-repository", "/usr/bin/add-apt-repository"); !ok {
+		code, out := runInstallCommand(ctx, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "install", "-y", "software-properties-common")
+		appendStep(map[string]any{
+			"command":   []string{"env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "install", "-y", "software-properties-common"},
+			"exit_code": code,
+			"output":    truncate(out, 4000),
+		})
+		if code != 0 {
+			return false
+		}
+	}
+	code, out := runInstallCommand(ctx, "add-apt-repository", "-y", "universe")
+	appendStep(map[string]any{
+		"command":   []string{"add-apt-repository", "-y", "universe"},
+		"exit_code": code,
+		"output":    truncate(out, 4000),
+	})
+	if code != 0 {
+		return false
+	}
+	code, out = runInstallCommand(ctx, "apt-get", "-o", "Acquire::Retries=3", "-o", "Dpkg::Lock::Timeout=120", "update")
+	appendStep(map[string]any{
+		"command":   []string{"apt-get", "-o", "Acquire::Retries=3", "-o", "Dpkg::Lock::Timeout=120", "update"},
+		"exit_code": code,
+		"output":    truncate(out, 4000),
+	})
+	if code != 0 {
+		return false
+	}
+	return aptPackageCandidateAvailable(ctx, packageName, steps)
+}
+
+func shouldPrepareUbuntuUniverseRepository(osReleaseID, packageName string) bool {
+	return strings.EqualFold(strings.TrimSpace(osReleaseID), "ubuntu") && packageRequiresUbuntuUniverse(packageName)
+}
+
+func packageRequiresUbuntuUniverse(packageName string) bool {
+	switch strings.TrimSpace(packageName) {
+	case "shadowsocks-libev":
+		return true
+	default:
+		return false
+	}
+}
+
+func hostOSReleaseID() string {
+	b, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	return osReleaseIDFromContent(string(b))
+}
+
+func osReleaseIDFromContent(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok || key != "ID" {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+	return ""
 }
 
 func aptInstallCommandAttempts(name string, args ...string) int {

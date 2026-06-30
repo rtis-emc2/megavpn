@@ -101,6 +101,33 @@ func TestAptPolicyHasCandidate(t *testing.T) {
 	}
 }
 
+func TestUbuntuUniverseRepositoryPreparationSelection(t *testing.T) {
+	t.Parallel()
+
+	if !shouldPrepareUbuntuUniverseRepository("ubuntu", "shadowsocks-libev") {
+		t.Fatal("expected shadowsocks-libev on Ubuntu to request universe repository preparation")
+	}
+	if shouldPrepareUbuntuUniverseRepository("debian", "shadowsocks-libev") {
+		t.Fatal("did not expect Debian to request Ubuntu universe repository preparation")
+	}
+	if shouldPrepareUbuntuUniverseRepository("ubuntu", "openvpn") {
+		t.Fatal("did not expect mainline OpenVPN package to request universe repository preparation")
+	}
+}
+
+func TestOSReleaseIDFromContent(t *testing.T) {
+	t.Parallel()
+
+	got := osReleaseIDFromContent("NAME=\"Ubuntu\"\nID=ubuntu\nVERSION_ID=\"24.04\"\n")
+	if got != "ubuntu" {
+		t.Fatalf("os release id = %q, want ubuntu", got)
+	}
+	quoted := osReleaseIDFromContent("ID=\"ubuntu\"\n")
+	if quoted != "ubuntu" {
+		t.Fatalf("quoted os release id = %q, want ubuntu", quoted)
+	}
+}
+
 func TestShadowsocksUbuntuRuntimeInstallDoesNotEnablePackageUnit(t *testing.T) {
 	t.Parallel()
 
