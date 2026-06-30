@@ -540,9 +540,9 @@
             <div class="field-hint">Optional relative path under the control-plane artifact root. Leave empty for generated runtime-repository path.</div>
           </div>
           <div class="field full">
-            <label>Expected SHA-256</label>
+            <label id="binaryArtifactSHA256Label">Expected SHA-256</label>
             <input name="expected_sha256" pattern="[a-fA-F0-9]{64}" placeholder="optional 64 hex characters">
-            <div class="field-hint">Optional pin. If provided, the upload is rejected unless the calculated SHA-256 matches it.</div>
+            <div class="field-hint" id="binaryArtifactSHA256Hint">Leave empty for browser uploads unless you already have a known checksum.</div>
           </div>
           <div class="modal-actions field full">
             <button class="secondary-btn" type="button" id="cancelBinaryArtifactBtn">Cancel</button>
@@ -593,12 +593,21 @@
       const fileInput = document.querySelector('#binaryArtifactFileField input[name="file"]');
       const urlInput = document.querySelector('#binaryArtifactURLField input[name="source_url"]');
       const expectedSHAInput = document.querySelector('#binaryArtifactForm input[name="expected_sha256"]');
+      const expectedSHALabel = document.getElementById('binaryArtifactSHA256Label');
+      const expectedSHAHint = document.getElementById('binaryArtifactSHA256Hint');
       const submitButton = document.querySelector('#binaryArtifactForm button[type="submit"]');
       if (fileField) fileField.hidden = sourceMode !== 'upload';
       if (urlField) urlField.hidden = sourceMode !== 'url';
       if (fileInput) fileInput.required = sourceMode === 'upload';
       if (urlInput) urlInput.required = sourceMode === 'url';
       if (expectedSHAInput) expectedSHAInput.required = sourceMode === 'url';
+      if (expectedSHALabel) expectedSHALabel.textContent = sourceMode === 'url' ? 'Expected SHA-256 (required)' : 'Expected SHA-256 (optional)';
+      if (expectedSHAInput) expectedSHAInput.placeholder = sourceMode === 'url' ? 'required 64 hex SHA-256' : 'optional 64 hex characters';
+      if (expectedSHAHint) {
+        expectedSHAHint.textContent = sourceMode === 'url'
+          ? 'Required for URL fetches. Paste the vendor checksum, or download the same file locally, run shasum -a 256 <file>, and paste the 64-character hash.'
+          : 'Optional for browser uploads. Leave empty to let the control plane calculate and store SHA-256 after upload.';
+      }
       if (submitButton) submitButton.textContent = sourceMode === 'url' ? 'Fetch artifact' : 'Upload artifact';
       updateBinaryArtifactArchiveField();
     }
