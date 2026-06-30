@@ -398,6 +398,11 @@ func evaluateSystemdActiveCheck(input runtimeProjectionInput, check domain.Runti
 		check.Status = "warning"
 		check.Message = "Systemd unit is not active."
 	case "activating", "deactivating", "reloading":
+		if runtimeProjectionTransitioningButOperational(input) {
+			check.Status = "ok"
+			check.Message = "OpenVPN unit is still reporting " + observed + ", but the config and endpoint port are already observed."
+			return check
+		}
 		check.Status = "warning"
 		check.Message = "Systemd unit is transitioning."
 	default:
@@ -580,6 +585,19 @@ func runtimeProjectionHasListeningPort(ports []map[string]any, endpointPort int)
 		}
 	}
 	return false
+}
+
+func runtimeProjectionTransitioningButOperational(input runtimeProjectionInput) bool {
+	if driver.NormalizeCode(firstString(input.ServiceCode)) != driver.OpenVPN {
+		return false
+	}
+	if !runtimeProjectionTransitioningState(input.ActiveState) || runtimeProjectionDesiredStopped(input) {
+		return false
+	}
+	if strings.TrimSpace(firstString(input.ConfigHash, input.Result["config_hash"])) == "" {
+		return false
+	}
+	return runtimeProjectionHasListeningPort(input.ListeningPorts, input.EndpointPort)
 }
 
 func portFromRuntimeLocalAddress(value string) int64 {
@@ -1093,6 +1111,9 @@ func runtimeStatusFromAgentReport(instance domain.Instance, report domain.AgentI
 	case "failed":
 		return "failed"
 	case "activating", "deactivating", "reloading":
+		if openVPNRuntimeReportOperationalDuringTransition(instance, report) {
+			return "active"
+		}
 		return "transitioning"
 	default:
 		if !instance.Enabled || desiredInstanceStopped(instance) {
@@ -1111,6 +1132,9 @@ func healthStatusFromAgentReport(instance domain.Instance, report domain.AgentIn
 		return "unhealthy"
 	}
 	if runtimeProjectionTransitioningState(activeState) {
+		if openVPNRuntimeReportOperationalDuringTransition(instance, report) {
+			return "healthy"
+		}
 		return "provisioning"
 	}
 	checks := evaluateDriverHealthChecks(runtimeProjectionInput{
@@ -1171,6 +1195,9 @@ func driftStatusFromAgentReport(instance domain.Instance, report domain.AgentIns
 		return "drifted"
 	}
 	if !desiredInstanceStopped(instance) && runtimeProjectionTransitioningState(activeState) {
+		if openVPNRuntimeReportOperationalDuringTransition(instance, report) {
+			return "in_sync"
+		}
 		return "pending_apply"
 	}
 	if !desiredInstanceStopped(instance) && activeState != "active" {
@@ -1180,6 +1207,31 @@ func driftStatusFromAgentReport(instance domain.Instance, report domain.AgentIns
 		return "in_sync"
 	}
 	return "unknown"
+}
+
+func openVPNRuntimeReportOperationalDuringTransition(instance domain.Instance, report domain.AgentInstanceRuntimeReport) bool {
+	if driver.NormalizeCode(firstString(report.ServiceCode, instance.ServiceCode)) != driver.OpenVPN {
+		return false
+	}
+	if desiredInstanceStopped(instance) || !runtimeProjectionTransitioningState(report.ActiveState) {
+		return false
+	}
+	if strings.TrimSpace(report.ConfigHash) == "" {
+		return false
+	}
+	if !runtimeProjectionHasListeningPort(report.ListeningPorts, instance.EndpointPort) {
+		return false
+	}
+	if instance.CurrentRevisionID == nil || instance.LastAppliedRevisionID == nil {
+		return false
+	}
+	if strings.TrimSpace(*instance.CurrentRevisionID) != strings.TrimSpace(*instance.LastAppliedRevisionID) {
+		return false
+	}
+	if report.ObservedRevisionID == nil {
+		return false
+	}
+	return strings.TrimSpace(*report.ObservedRevisionID) == strings.TrimSpace(*instance.CurrentRevisionID)
 }
 
 func desiredInstanceStopped(instance domain.Instance) bool {

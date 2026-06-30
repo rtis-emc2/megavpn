@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -25,5 +26,16 @@ func TestVerifyFileSHA256(t *testing.T) {
 	}
 	if err := verifyFileSHA256(path, "not-a-sha"); err == nil {
 		t.Fatal("expected malformed checksum to be rejected")
+	}
+}
+
+func TestAptInstallFailureMessageForShadowsocks(t *testing.T) {
+	t.Parallel()
+
+	got := aptInstallFailureMessage("shadowsocks", "shadowsocks-libev", "apt update failed")
+	for _, want := range []string{"shadowsocks-libev", "ss-server", "apt repositories/network"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("message %q does not contain %q", got, want)
+		}
 	}
 }

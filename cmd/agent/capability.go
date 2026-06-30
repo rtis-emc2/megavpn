@@ -563,10 +563,10 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 		return map[string]any{"ok": false, "message": capabilityCode + " install requires root", "steps": steps}
 	}
 	if !run("apt-get", "update") {
-		return map[string]any{"ok": false, "message": "apt update failed before " + capabilityCode + " install", "steps": steps}
+		return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "apt update failed"), "steps": steps, "package": packageName}
 	}
 	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", packageName) {
-		return map[string]any{"ok": false, "message": capabilityCode + " package install failed", "steps": steps, "package": packageName}
+		return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "package install failed"), "steps": steps, "package": packageName}
 	}
 	for _, unit := range enableUnits {
 		_ = run("systemctl", "enable", "--now", unit)
@@ -591,6 +591,24 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 	verify["steps"] = steps
 	verify["package"] = packageName
 	return verify
+}
+
+func aptInstallFailureMessage(capabilityCode, packageName, reason string) string {
+	base := strings.TrimSpace(reason)
+	if base == "" {
+		base = "apt install failed"
+	}
+	if packageName != "" {
+		base += " for package " + packageName
+	}
+	switch normalizeCapabilityCode(capabilityCode) {
+	case driver.Shadowsocks:
+		return base + "; fix node apt repositories/network or install a pinned ss-server artifact from the runtime repository"
+	case driver.OpenVPN:
+		return base + "; fix node apt repositories/network and retry the OpenVPN runtime install"
+	default:
+		return base + "; fix node apt repositories/network and retry runtime install"
+	}
 }
 
 func verifyNginx(ctx context.Context) map[string]any {

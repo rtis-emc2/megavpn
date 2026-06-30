@@ -303,10 +303,11 @@
       const health = lowerStatus(row.health);
       const drift = lowerStatus(row.drift);
       const revision = lowerStatus(row.revision);
+      const activeStateTransitioning = ['activating', 'deactivating', 'reloading'].includes(lowerStatus(row.activeState));
       if (hasActiveInstanceJob(row)) return 'pending';
       if (['provisioning', 'transitioning', 'activating', 'deactivating', 'reloading'].includes(runtime)
           || ['provisioning', 'transitioning'].includes(health)
-          || ['activating', 'deactivating', 'reloading'].includes(lowerStatus(row.activeState))) {
+          || (activeStateTransitioning && !(runtime === 'active' && health === 'healthy'))) {
         return 'pending';
       }
       if (row.capabilityRequired && !runtimeCapabilityReady(row) && runtime !== 'active') return 'problem';
@@ -335,7 +336,7 @@
         reasons.push(`${row.latestJob.type || 'job'} is ${latestJobStatus}.`);
       }
       if (!activeJob && row.capabilityRequired && !runtimeCapabilityReady(row) && runtime !== 'active') {
-        reasons.push(`Runtime capability ${row.service} is ${row.capabilityStatus || 'missing'} on this node.`);
+        reasons.push(runtimeCapabilityIssueText(row));
       }
       if (!activeJob && status === 'failed') {
         reasons.push('Lifecycle is failed; check the latest apply job result.');
@@ -362,6 +363,20 @@
         status: bucket === 'problem' ? 'failed' : bucket,
         text: compactReason(reasons.filter(Boolean).slice(0, 3).join(' · ')),
       };
+    }
+
+    function runtimeCapabilityIssueText(row) {
+      const status = row.capabilityStatus || 'missing';
+      if (row.service === 'shadowsocks') {
+        return `ss-server runtime is ${status}; install shadowsocks-libev from APT or a pinned ss-server artifact before applying this instance.`;
+      }
+      if (row.service === 'openvpn') {
+        return `OpenVPN runtime is ${status}; install the openvpn package on this node before applying this instance.`;
+      }
+      if (row.service === 'xray-core') {
+        return `Xray runtime is ${status}; install a pinned xray artifact or the approved release installer before applying this instance.`;
+      }
+      return `Runtime capability ${row.service} is ${status} on this node.`;
     }
 
     function ensureInstanceListFilters() {
@@ -560,13 +575,27 @@
       return `
         <div class="instance-actions">
           <button class="secondary-btn instance-manage-btn" type="button" data-instance-id="${escapeHTML(row.id)}">Manage</button>
-          ${row.capabilityMissing ? `<button class="primary-btn instance-runtime-install-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-issue="${escapeHTML(row.issue?.text || row.latestJobSummary || '')}">Install runtime</button>` : ''}
+          ${row.capabilityMissing ? `<button class="primary-btn instance-runtime-install-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-issue="${escapeHTML(row.issue?.text || row.latestJobSummary || '')}">${escapeHTML(runtimeInstallActionLabel(row))}</button>` : ''}
           <button class="${row.capabilityMissing ? 'secondary-btn' : 'primary-btn'} instance-action-btn" type="button" data-action="apply" data-instance-id="${escapeHTML(row.id)}"${busyAttr || runtimeBlockedAttr}>Apply</button>
           <button class="secondary-btn instance-action-btn" type="button" data-action="restart" data-instance-id="${escapeHTML(row.id)}"${busyAttr || runtimeBlockedAttr}>Restart</button>
           <button class="secondary-btn instance-action-btn" type="button" data-action="start" data-instance-id="${escapeHTML(row.id)}"${busyAttr || runtimeBlockedAttr}>Start</button>
           <button class="secondary-btn instance-action-btn" type="button" data-action="stop" data-instance-id="${escapeHTML(row.id)}"${busyAttr}>Stop</button>
           <button class="danger-btn instance-delete-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-instance-name="${escapeHTML(row.name || 'instance')}">Delete</button>
         </div>`;
+    }
+
+    function runtimeInstallActionLabel(row) {
+      const failed = lowerStatus(row.capabilityStatus) === 'failed';
+      switch (row.service) {
+      case 'shadowsocks':
+        return failed ? 'Retry libev install' : 'Install libev';
+      case 'openvpn':
+        return failed ? 'Retry OpenVPN install' : 'Install OpenVPN';
+      case 'xray-core':
+        return failed ? 'Retry Xray install' : 'Install Xray';
+      default:
+        return failed ? 'Retry runtime install' : 'Install runtime';
+      }
     }
 
     function groupRowsByNode(rows) {

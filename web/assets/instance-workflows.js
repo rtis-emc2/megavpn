@@ -78,6 +78,19 @@
       return definition?.label || definition?.display_name || definition?.name || normalizeInstanceServiceCode(serviceCode) || 'runtime';
     }
 
+    function runtimeInstallSubmitLabel(serviceCode) {
+      switch (normalizeInstanceServiceCode(serviceCode)) {
+      case 'shadowsocks':
+        return 'Install libev / ss-server';
+      case 'openvpn':
+        return 'Install OpenVPN';
+      case 'xray-core':
+        return 'Install Xray';
+      default:
+        return 'Install runtime';
+      }
+    }
+
     function installersForService(serviceCode) {
       const code = normalizeInstanceServiceCode(serviceCode);
       return (state.serviceInstallers || [])
@@ -390,7 +403,7 @@
           </label>
           <div class="field full inline-actions">
             <button class="secondary-btn" id="cancelInstanceRuntimeInstallBtn" type="button">Cancel</button>
-            <button class="primary-btn" type="submit">Install runtime</button>
+            <button class="primary-btn" type="submit">${escapeHTML(runtimeInstallSubmitLabel(serviceCode))}</button>
           </div>
         </form>
         <div id="instanceRuntimeInstallResult" class="form-result"></div>`, { wide: true });

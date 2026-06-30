@@ -1957,6 +1957,10 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 			}
 			if status == "succeeded" {
 				s.queueApplyJobsForCapabilityDependents(ctx, idv, *scopeID, capCode, payload)
+			} else if jobType == "node.capability.install" && (status == "failed" || status == "cancelled") {
+				if err := s.markCapabilityInstallFailedForDependents(ctx, idv, *scopeID, capCode, status, payload, result); err != nil {
+					_ = s.AddJobLog(ctx, idv, "warn", "dependent runtime state was not updated after runtime install failure", map[string]any{"error": err.Error()})
+				}
 			}
 		}
 	}
@@ -2264,6 +2268,42 @@ func (s *Store) queueApplyJobsForCapabilityDependents(ctx context.Context, paren
 		}
 		_ = s.AddJobLog(ctx, job.ID, "info", "instance apply queued after runtime install", map[string]any{"instance_id": instance.ID, "runtime_service_code": capCode})
 	}
+}
+
+func (s *Store) markCapabilityInstallFailedForDependents(ctx context.Context, jobID, nodeID, capCode, status string, payload, result map[string]any) error {
+	capCode = runtimeCapabilityCodeForService(capCode)
+	if nodeID == "" || capCode == "" {
+		return nil
+	}
+	dependents := stringSetFromAny(payload["dependent_instance_ids"])
+	if len(dependents) == 0 {
+		return nil
+	}
+	for _, instanceID := range dependents {
+		instance, err := s.GetInstance(ctx, instanceID)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(instance.NodeID) != nodeID {
+			continue
+		}
+		if runtimeCapabilityCodeForService(instance.ServiceCode) != capCode {
+			continue
+		}
+		projection := cloneMap(result)
+		if projection == nil {
+			projection = map[string]any{}
+		}
+		if strings.TrimSpace(stringify(projection["message"])) == "" {
+			projection["message"] = "runtime install " + status
+		}
+		projection["service_code"] = capCode
+		projection["runtime_install_status"] = status
+		if err := s.upsertInstanceRuntimeStateForJob(ctx, instance.ID, jobID, "node.capability.install", status, projection); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func stringSetFromAny(value any) []string {
