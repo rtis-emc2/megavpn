@@ -117,7 +117,7 @@ func staticInstanceValidationErrors(spec map[string]any) []any {
 }
 
 func staticManagedFileErrors(raw any) []any {
-	list, ok := raw.([]any)
+	list, ok := managedFileItems(raw)
 	if !ok {
 		return []any{map[string]any{"stage": "static_validation", "message": "spec.files must be an array"}}
 	}
@@ -142,6 +142,21 @@ func staticManagedFileErrors(raw any) []any {
 		}
 	}
 	return errors
+}
+
+func managedFileItems(raw any) ([]any, bool) {
+	switch list := raw.(type) {
+	case []any:
+		return list, true
+	case []map[string]any:
+		out := make([]any, len(list))
+		for idx := range list {
+			out[idx] = list[idx]
+		}
+		return out, true
+	default:
+		return nil, false
+	}
 }
 
 func staticSingleConfigContent(spec map[string]any) (string, bool, error) {

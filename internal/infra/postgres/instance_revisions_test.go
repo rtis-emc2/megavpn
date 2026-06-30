@@ -27,6 +27,16 @@ func TestStaticManagedFileErrors(t *testing.T) {
 	}
 }
 
+func TestStaticManagedFileErrorsAcceptsRenderedNativeSlice(t *testing.T) {
+	errors := staticManagedFileErrors([]map[string]any{
+		{"path": "/etc/test.conf", "content": "ok\n"},
+		{"path": "/etc/test.json", "json": map[string]any{"ok": true}},
+	})
+	if len(errors) != 0 {
+		t.Fatalf("expected no validation errors for rendered native files, got %v", errors)
+	}
+}
+
 func TestRenderedInstanceSpecHashStable(t *testing.T) {
 	spec := map[string]any{
 		"config_json": map[string]any{
