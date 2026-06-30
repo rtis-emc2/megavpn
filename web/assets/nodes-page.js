@@ -18,6 +18,7 @@
       closeModal,
       renderActionResponse,
       hasPermission,
+      watchJob,
       openCreateNodeModal,
       openNodeControlModal,
       openEditNodeModal,
@@ -38,12 +39,17 @@
       typeof openModal !== 'function' ||
       typeof closeModal !== 'function' ||
       typeof renderActionResponse !== 'function' ||
+      typeof watchJob !== 'function' ||
       typeof openCreateNodeModal !== 'function' ||
       typeof openNodeControlModal !== 'function' ||
       typeof openEditNodeModal !== 'function' ||
       typeof openDeleteNodeModal !== 'function'
     ) {
       throw new Error('MegaVPNNodesPage requires page dependencies');
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
     function targetAgentVersion() {
@@ -242,8 +248,18 @@
         });
         target.innerHTML = `
           ${renderActionResponse(data, 'Agent update queued')}
-          <div class="empty">The agent version changes after the node completes bootstrap and sends the next heartbeat.</div>
-          <div class="modal-actions"><button class="primary-btn" id="closeAgentUpgradeBtn" type="button">Close</button></div>`;
+          <div class="empty">The agent version changes after the node completes bootstrap and sends the next heartbeat.</div>`;
+        if (data?.job?.id) {
+          await watchJob(data.job.id, target, 'Agent update', {
+            attempts: 120,
+            intervalMs: 2000,
+            context: {
+              node: node.name || node.id,
+              target_version: targetAgentVersion() || 'n/a',
+            },
+          });
+        }
+        target.innerHTML += '<div class="modal-actions"><button class="primary-btn" id="closeAgentUpgradeBtn" type="button">Close</button></div>';
         document.getElementById('closeAgentUpgradeBtn')?.addEventListener('click', closeModal);
         await refresh();
       } catch (err) {
@@ -251,30 +267,104 @@
       }
     }
 
+    function renderBulkAgentUpgradeResults(results, phase = 'queueing') {
+      const counts = results.reduce((acc, item) => {
+        const status = String(item.status || 'waiting').toLowerCase();
+        acc[status] = (acc[status] || 0) + 1;
+        return acc;
+      }, {});
+      return renderActionResponse({
+        phase,
+        target_version: targetAgentVersion() || 'n/a',
+        waiting: counts.waiting || 0,
+        checking: counts.checking || 0,
+        queueing: counts.queueing || 0,
+        queued: counts.queued || 0,
+        running: counts.running || 0,
+        retrying: counts.retrying || 0,
+        succeeded: counts.succeeded || 0,
+        failed: counts.failed || 0,
+        skipped: counts.skipped || 0,
+        results: results.map((item) => ({
+          node: item.node,
+          status: item.status,
+          job_id: item.job_id || '',
+          reason: item.reason || item.error || '',
+        })),
+      }, 'Agent update queue');
+    }
+
+    async function runLimited(items, limit, worker) {
+      let cursor = 0;
+      const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (cursor < items.length) {
+          const index = cursor;
+          cursor += 1;
+          await worker(items[index], index);
+        }
+      });
+      await Promise.all(workers);
+    }
+
+    async function pollBulkAgentUpgradeJobs(results, target) {
+      const terminal = new Set(['succeeded', 'failed', 'cancelled']);
+      const tracked = () => results.filter((item) => item.job_id && !terminal.has(String(item.status || '').toLowerCase()));
+      for (let attempt = 0; attempt < 120 && tracked().length; attempt += 1) {
+        await Promise.all(tracked().map(async (item) => {
+          try {
+            const job = await requestJSON(`/api/v1/jobs/${encodeURIComponent(item.job_id)}`);
+            item.status = String(job.status || item.status || 'queued');
+            if (job.result?.error || job.result?.message) {
+              item.reason = job.result.error || job.result.message;
+            }
+          } catch (err) {
+            item.status = 'failed';
+            item.error = err.message;
+          }
+        }));
+        target.innerHTML = renderBulkAgentUpgradeResults(results, 'watching jobs');
+        if (!tracked().length) break;
+        await sleep(2000);
+      }
+      if (tracked().length) {
+        target.innerHTML += '<div class="tag warn">job polling timed out; refresh Nodes or Jobs for the latest status</div>';
+      }
+    }
+
     async function queueAllAgentUpgrades(nodes) {
       const targets = nodes.filter(agentIsUpdateCandidate);
       openModal('Update all agents', `${targets.length} node(s)`, '<div id="bulkAgentUpgradeResult"><span class="tag warn">queueing</span></div>', { wide: true });
       const target = document.getElementById('bulkAgentUpgradeResult');
-      const results = [];
-      for (const node of targets) {
+      const results = targets.map((node) => ({ node: node.name || node.id, node_id: node.id, status: 'waiting' }));
+      target.innerHTML = renderBulkAgentUpgradeResults(results, 'checking nodes');
+      await runLimited(targets, 3, async (node, index) => {
+        const row = results[index];
         try {
+          row.status = 'checking';
+          target.innerHTML = renderBulkAgentUpgradeResults(results, 'checking ssh access');
           const blocked = agentUpdateBlockReason(node);
           if (blocked) {
-            results.push({ node: node.name || node.id, status: 'skipped', reason: blocked });
-            target.innerHTML = renderActionResponse({ target_version: targetAgentVersion(), results }, 'Agent update queue');
-            continue;
+            row.status = 'skipped';
+            row.reason = blocked;
+            target.innerHTML = renderBulkAgentUpgradeResults(results, 'checking ssh access');
+            return;
           }
           await ensureSSHBootstrapReady(node);
+          row.status = 'queueing';
+          target.innerHTML = renderBulkAgentUpgradeResults(results, 'queueing jobs');
           const data = await sendJSON(`/api/v1/nodes/${encodeURIComponent(node.id)}/bootstrap`, 'POST', {
             bootstrap_mode: 'ssh_bootstrap',
             reinstall_agent: true,
           });
-          results.push({ node: node.name || node.id, status: 'queued', job_id: data?.job?.id || '' });
+          row.status = data?.job?.status || 'queued';
+          row.job_id = data?.job?.id || '';
         } catch (err) {
-          results.push({ node: node.name || node.id, status: 'failed', error: err.message });
+          row.status = 'failed';
+          row.error = err.message;
         }
-        target.innerHTML = renderActionResponse({ target_version: targetAgentVersion(), results }, 'Agent update queue');
-      }
+        target.innerHTML = renderBulkAgentUpgradeResults(results, 'queueing jobs');
+      });
+      await pollBulkAgentUpgradeJobs(results, target);
       target.innerHTML += '<div class="modal-actions"><button class="primary-btn" id="closeBulkAgentUpgradeBtn" type="button">Close</button></div>';
       document.getElementById('closeBulkAgentUpgradeBtn')?.addEventListener('click', closeModal);
       await refresh();

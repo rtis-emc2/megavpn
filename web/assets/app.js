@@ -448,6 +448,7 @@
     closeModal,
     renderActionResponse,
     hasPermission,
+    watchJob: jobWorkflows.watchJob,
     openCreateNodeModal: nodeWorkflows.openCreateNodeModal,
     openNodeControlModal: nodeWorkflows.openNodeControlModal,
     openEditNodeModal: nodeWorkflows.openEditNodeModal,
