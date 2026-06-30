@@ -290,6 +290,38 @@ func TestPostgresIntegrationBinaryRepositoryTicketLifecycle(t *testing.T) {
 	if runtimeState.RuntimeStatus != "provisioning" || runtimeState.HealthStatus != "provisioning" || runtimeState.DriftStatus != "pending_apply" {
 		t.Fatalf("dependent runtime projection = runtime:%s health:%s drift:%s, want provisioning/provisioning/pending_apply", runtimeState.RuntimeStatus, runtimeState.HealthStatus, runtimeState.DriftStatus)
 	}
+	secondInstance, err := store.CreateInstanceDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "xray-second-" + suffix,
+		Slug:         "xray-second-" + suffix,
+		EndpointHost: "198.51.100.21",
+		EndpointPort: 8444,
+		Spec: map[string]any{
+			"config_json": map[string]any{"inbounds": []any{}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create second dependent draft instance: %v", err)
+	}
+	reusedJob, err := store.CreateNodeCapabilityInstallJobWithDependents(ctx, node.ID, "xray-core", "", "", []string{secondInstance.ID})
+	if err != nil {
+		t.Fatalf("reuse active capability install job: %v", err)
+	}
+	if reusedJob.ID != job.ID {
+		t.Fatalf("reused job id = %s, want active job %s", reusedJob.ID, job.ID)
+	}
+	dependentIDs := stringSetFromAny(reusedJob.Payload["dependent_instance_ids"])
+	if !containsString(dependentIDs, instance.ID) || !containsString(dependentIDs, secondInstance.ID) {
+		t.Fatalf("reused dependent ids = %#v, want both %s and %s", dependentIDs, instance.ID, secondInstance.ID)
+	}
+	secondRuntimeState, err := store.GetInstanceRuntimeState(ctx, secondInstance.ID)
+	if err != nil {
+		t.Fatalf("get second dependent runtime state: %v", err)
+	}
+	if secondRuntimeState.LastJobID == nil || *secondRuntimeState.LastJobID != job.ID || secondRuntimeState.LastJobType != "node.capability.install" || secondRuntimeState.LastJobStatus != "queued" {
+		t.Fatalf("second dependent runtime job state = %#v, want queued capability install job %s", secondRuntimeState, job.ID)
+	}
 	ticket, resolved, err := store.ResolveBinaryDownloadTicket(ctx, token, artifact.ID, node.ID, job.ID)
 	if err != nil {
 		t.Fatalf("resolve ticket: %v", err)
@@ -300,12 +332,278 @@ func TestPostgresIntegrationBinaryRepositoryTicketLifecycle(t *testing.T) {
 	if ticket.Status != "active" {
 		t.Fatalf("ticket status = %q, want active before download is marked complete", ticket.Status)
 	}
-	if err := store.MarkBinaryDownloadTicketUsed(ctx, ticket.ID, job.ID); err != nil {
-		t.Fatalf("mark ticket used: %v", err)
+	if _, _, err := store.ResolveBinaryDownloadTicket(ctx, token, artifact.ID, node.ID, job.ID); err != nil {
+		t.Fatalf("resolve ticket second time before completion: %v", err)
+	}
+	if err := store.CompleteJob(ctx, job.ID, "failed", map[string]any{
+		"message":      "install failed after verified download",
+		"service_code": "xray-core",
+		"binary_repository": map[string]any{
+			"download_verified":  true,
+			"download_ticket_id": ticket.ID,
+			"sha256":             artifact.SHA256,
+		},
+	}); err != nil {
+		t.Fatalf("complete capability install job: %v", err)
 	}
 	if _, _, err := store.ResolveBinaryDownloadTicket(ctx, token, artifact.ID, node.ID, job.ID); err == nil {
-		t.Fatal("download ticket must be single-use")
+		t.Fatal("download ticket must be single-use after verified completion")
 	}
+}
+
+func TestPostgresIntegrationCleanupBinaryDownloadTickets(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-cleanup-node-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "10.50.0.30",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	artifact, err := store.CreateBinaryArtifact(ctx, domain.BinaryArtifact{
+		Name:         "cleanup-install-" + suffix,
+		Kind:         "script",
+		ServiceCode:  "shadowsocks",
+		Version:      "1.2.3",
+		OSFamily:     "linux",
+		Architecture: "amd64",
+		StoragePath:  "runtime/cleanup-install.sh",
+		SHA256:       strings.Repeat("b", 64),
+		Metadata:     map[string]any{"install_mode": "shell_script"},
+	})
+	if err != nil {
+		t.Fatalf("create binary artifact: %v", err)
+	}
+
+	now := time.Now().UTC()
+	expiredActiveTicketID := id.New()
+	deletableUsedTicketID := id.New()
+	if _, err := store.db.Exec(ctx, `insert into binary_download_tickets(id,artifact_id,node_id,token_hash,token_hint,status,expires_at,created_at)
+		values($1,$2,$3,$4,$5,'active',$6,$7)`,
+		expiredActiveTicketID, artifact.ID, node.ID, hashToken("cleanup-active-"+suffix), "cleanup-active", now.Add(-time.Hour), now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("insert active expired ticket: %v", err)
+	}
+	if _, err := store.db.Exec(ctx, `insert into binary_download_tickets(id,artifact_id,node_id,token_hash,token_hint,status,expires_at,used_at,created_at)
+		values($1,$2,$3,$4,$5,'used',$6,$7,$8)`,
+		deletableUsedTicketID, artifact.ID, node.ID, hashToken("cleanup-used-"+suffix), "cleanup-used", now.Add(-72*time.Hour), now.Add(-48*time.Hour), now.Add(-72*time.Hour)); err != nil {
+		t.Fatalf("insert old used ticket: %v", err)
+	}
+
+	expired, deleted, err := store.CleanupBinaryDownloadTickets(ctx, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("cleanup binary download tickets: %v", err)
+	}
+	if expired < 1 {
+		t.Fatalf("expired tickets = %d, want at least 1", expired)
+	}
+	if deleted < 1 {
+		t.Fatalf("deleted tickets = %d, want at least 1", deleted)
+	}
+
+	var activeStatus string
+	if err := store.db.QueryRow(ctx, `select status from binary_download_tickets where id=$1`, expiredActiveTicketID).Scan(&activeStatus); err != nil {
+		t.Fatalf("query expired active ticket: %v", err)
+	}
+	if activeStatus != "expired" {
+		t.Fatalf("active ticket status = %q, want expired", activeStatus)
+	}
+	var oldTicketCount int
+	if err := store.db.QueryRow(ctx, `select count(*) from binary_download_tickets where id=$1`, deletableUsedTicketID).Scan(&oldTicketCount); err != nil {
+		t.Fatalf("query deleted old ticket: %v", err)
+	}
+	if oldTicketCount != 0 {
+		t.Fatalf("old used ticket count = %d, want 0", oldTicketCount)
+	}
+}
+
+func TestPostgresIntegrationCapabilityInstallMissingBinaryArtifactDiagnostic(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-missing-artifact-node-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "10.50.0.40",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "x86_64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	_, err = store.CreateNodeCapabilityInstallJobWithDependents(ctx, node.ID, "xray-core", "binary_repository", "", nil)
+	if err == nil {
+		t.Fatal("expected missing binary artifact error")
+	}
+	message := err.Error()
+	for _, want := range []string{
+		"binary repository artifact is not available",
+		"service_code=xray-core",
+		"os_family=linux",
+		"architecture=amd64",
+		"ubuntu-24.04",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("error = %q, want to contain %q", message, want)
+		}
+	}
+	if strings.Contains(message, "no rows") {
+		t.Fatalf("error = %q, should not expose raw database no rows", message)
+	}
+}
+
+func TestPostgresIntegrationDeletedInstanceDoesNotReserveSlugOrNodeName(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-recreate-node-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "10.50.0.50",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	first, err := store.CreateInstanceDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "wireguard",
+		Name:         "recreated-" + suffix,
+		Slug:         "recreated-" + suffix,
+		EndpointHost: "198.51.100.50",
+		EndpointPort: 51820,
+		Spec: map[string]any{
+			"network_cidr":   "10.70.0.0/24",
+			"server_address": "10.70.0.1/24",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create first instance: %v", err)
+	}
+	if _, err := store.db.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, first.ID); err != nil {
+		t.Fatalf("mark first instance deleted: %v", err)
+	}
+
+	second, err := store.CreateInstanceDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "wireguard",
+		Name:         first.Name,
+		Slug:         first.Slug,
+		EndpointHost: "198.51.100.50",
+		EndpointPort: 51820,
+		Spec: map[string]any{
+			"network_cidr":   "10.71.0.0/24",
+			"server_address": "10.71.0.1/24",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create replacement instance with same slug/name after delete: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Fatal("replacement instance must be a new row")
+	}
+	if second.Slug != first.Slug || second.Name != first.Name {
+		t.Fatalf("replacement identity = %s/%s, want %s/%s", second.Slug, second.Name, first.Slug, first.Name)
+	}
+}
+
+func TestPostgresIntegrationValidatedDraftRejectsInvalidCurrentRevision(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-validated-draft-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "10.50.0.60",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	slug := "invalid-xray-" + suffix
+	_, err = store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         slug,
+		Slug:         slug,
+		EndpointHost: "198.51.100.60",
+		EndpointPort: 8443,
+		Spec: map[string]any{
+			"config_json": map[string]any{"inbounds": []any{}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected invalid validated draft to fail")
+	}
+	if !strings.Contains(err.Error(), "initial instance revision is not apply-ready") || !strings.Contains(err.Error(), "xray config_json must contain at least one inbound") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var count int
+	if err := store.db.QueryRow(ctx, `select count(*) from instances where slug=$1`, slug).Scan(&count); err != nil {
+		t.Fatalf("count discarded instance: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("discarded instance count = %d, want 0", count)
+	}
+
+	draft, err := store.CreateInstanceDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         slug,
+		Slug:         slug,
+		EndpointHost: "198.51.100.60",
+		EndpointPort: 8443,
+		Spec: map[string]any{
+			"config_json": map[string]any{"inbounds": []any{}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("plain draft must still be persisted for manual repair: %v", err)
+	}
+	revisions, err := store.ListInstanceRevisions(ctx, draft.ID, 1)
+	if err != nil {
+		t.Fatalf("list draft revisions: %v", err)
+	}
+	if len(revisions) != 1 || revisions[0].Status != "draft" {
+		t.Fatalf("plain draft revision status = %#v, want draft", revisions)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPostgresIntegrationRecoverStaleJobLeases(t *testing.T) {

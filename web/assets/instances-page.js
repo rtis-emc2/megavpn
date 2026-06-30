@@ -806,7 +806,18 @@
             </div>
           </div>`;
       }
-      return `<div class="form-result"><span class="tag danger">${escapeHTML(result.message || 'create failed')}</span></div>`;
+      const details = result.payload && typeof result.payload === 'object' ? result.payload : {};
+      const facts = [
+        details.component ? renderInstanceFact('Component', details.component) : '',
+        details.discarded_count !== undefined ? renderInstanceFact('Discarded drafts', details.discarded_count) : '',
+        Array.isArray(details.created_instances) ? renderInstanceFact('Created before failure', details.created_instances.length) : '',
+      ].filter(Boolean).join('');
+      return `
+        <div class="form-result pack-create-result">
+          <span class="tag danger">${escapeHTML(result.message || 'create failed')}</span>
+          ${facts ? `<div class="response-grid">${facts}</div>` : ''}
+          ${Object.keys(details).length ? renderActionResponse(details, 'Service pack create failed') : ''}
+        </div>`;
     }
 
     function openCreateFromPackPage() {
@@ -947,7 +958,7 @@
         await refresh();
         renderCreateFromPackPage();
       } catch (err) {
-        state.instancesCreateResult = { status: 'failed', message: err.message || 'service pack create failed' };
+        state.instancesCreateResult = { status: 'failed', message: err.message || 'service pack create failed', payload: err.payload || null };
         renderCreateFromPackPage();
       }
     }

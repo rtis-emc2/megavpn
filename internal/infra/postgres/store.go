@@ -588,6 +588,18 @@ func (s *Store) CreateNodeCapabilityInstallJobWithDependents(ctx context.Context
 	if serviceCode == "" {
 		return domain.Job{}, errors.New("service_code is required")
 	}
+	dependentInstanceIDs = normalizedStringSet(dependentInstanceIDs)
+	if existing, ok, err := s.findActiveCapabilityInstallJob(ctx, nodeID, serviceCode); err != nil {
+		return domain.Job{}, err
+	} else if ok {
+		if err := s.mergeCapabilityInstallJobDependents(ctx, existing.ID, dependentInstanceIDs); err != nil {
+			return domain.Job{}, err
+		}
+		if err := s.markCapabilityInstallQueued(ctx, nodeID, serviceCode, existing, dependentInstanceIDs); err != nil {
+			return domain.Job{}, err
+		}
+		return s.GetJob(ctx, existing.ID)
+	}
 	var binaryArtifact domain.BinaryArtifact
 	binaryRepositoryAvailable := false
 	if strategy == "" || strategy == "binary_repository" {
@@ -600,7 +612,7 @@ func (s *Store) CreateNodeCapabilityInstallJobWithDependents(ctx context.Context
 				strategy = "binary_repository"
 			}
 		case strategy == "binary_repository":
-			return domain.Job{}, fmt.Errorf("binary repository artifact is not available for %s on node %s: %w", serviceCode, nodeID, err)
+			return domain.Job{}, s.binaryRuntimeArtifactUnavailableError(ctx, nodeID, serviceCode, err)
 		case !errors.Is(err, pgx.ErrNoRows):
 			return domain.Job{}, fmt.Errorf("binary repository preflight failed for %s on node %s: %w", serviceCode, nodeID, err)
 		}
@@ -622,13 +634,12 @@ func (s *Store) CreateNodeCapabilityInstallJobWithDependents(ctx context.Context
 		return domain.Job{}, fmt.Errorf("unsupported install strategy %q for %s", strategy, serviceCode)
 	}
 	payload := map[string]any{"node_id": nodeID, "service_code": serviceCode, "strategy": strategy, "channel": channel}
-	dependentInstanceIDs = normalizedStringSet(dependentInstanceIDs)
 	if len(dependentInstanceIDs) > 0 {
 		payload["dependent_instance_ids"] = dependentInstanceIDs
 	}
 	if strategy == "binary_repository" {
 		if !binaryRepositoryAvailable {
-			return domain.Job{}, fmt.Errorf("binary repository artifact is not available for %s on node %s", serviceCode, nodeID)
+			return domain.Job{}, s.binaryRuntimeArtifactUnavailableError(ctx, nodeID, serviceCode, nil)
 		}
 		jobID := id.New()
 		ticketJobID := jobID
@@ -637,23 +648,40 @@ func (s *Store) CreateNodeCapabilityInstallJobWithDependents(ctx context.Context
 			return domain.Job{}, fmt.Errorf("binary repository download ticket create failed: %w", err)
 		}
 		payload["binary_repository"] = binaryRepositoryPayload(binaryArtifact, ticket)
-		j, err := s.createCapabilityInstallJobWithBinaryTicket(ctx, domain.Job{ID: jobID, Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload}, ticket, nodeID, serviceCode, strategy)
-		if err == nil {
-			s.markCapabilityInstallQueued(ctx, nodeID, serviceCode, j, dependentInstanceIDs)
-		}
+		j, err := s.createCapabilityInstallJob(ctx, domain.Job{ID: jobID, Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload}, &ticket, nodeID, serviceCode, strategy, dependentInstanceIDs)
 		return j, err
 	}
-	j, err := s.CreateJob(ctx, domain.Job{Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload})
-	if err != nil {
-		return j, err
-	}
-	_, _ = s.db.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,$5,'queued','capability install queued',$6,now())`, id.New(), nodeID, j.ID, serviceCode, strategy, mustJSON(redactSensitiveMapForStorage(payload)))
-	s.markCapabilityInstallQueued(ctx, nodeID, serviceCode, j, dependentInstanceIDs)
-	_, _ = s.CreateAudit(ctx, "system", "node.capability.install", "node", &nodeID, "capability install queued: "+serviceCode)
-	return j, nil
+	return s.createCapabilityInstallJob(ctx, domain.Job{Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload}, nil, nodeID, serviceCode, strategy, dependentInstanceIDs)
 }
 
-func (s *Store) createCapabilityInstallJobWithBinaryTicket(ctx context.Context, j domain.Job, ticket domain.BinaryDownloadTicket, nodeID, serviceCode, strategy string) (domain.Job, error) {
+func (s *Store) binaryRuntimeArtifactUnavailableError(ctx context.Context, nodeID, serviceCode string, cause error) error {
+	var nodeName, osFamily, osVersion, arch string
+	err := s.db.QueryRow(ctx, `select name,coalesce(os_family,''),coalesce(os_version,''),coalesce(architecture,'') from nodes where id=$1 and status <> 'retired'`, nodeID).
+		Scan(&nodeName, &osFamily, &osVersion, &arch)
+	if err != nil {
+		if cause != nil {
+			return fmt.Errorf("binary repository artifact is not available for %s on node %s: %w", serviceCode, nodeID, cause)
+		}
+		return fmt.Errorf("binary repository artifact is not available for %s on node %s", serviceCode, nodeID)
+	}
+	osFamily = strings.ToLower(strings.TrimSpace(osFamily))
+	if osFamily == "" {
+		osFamily = "linux"
+	}
+	osVersion = strings.TrimSpace(osVersion)
+	arch = normalizeBinaryArtifactArchitecture(arch)
+	if arch == "" {
+		arch = "amd64"
+	}
+	versionRequirement := "empty os_version"
+	if osVersion != "" {
+		versionRequirement = "os_version=" + osVersion + " or empty os_version"
+	}
+	return fmt.Errorf("binary repository artifact is not available for %s on node %s (%s; %s/%s). Register an active runtime/package/script/bundle artifact with service_code=%s, os_family=%s, architecture=%s and %s, then retry Install runtime",
+		serviceCode, nodeName, nodeID, osFamily, arch, serviceCode, osFamily, arch, versionRequirement)
+}
+
+func (s *Store) createCapabilityInstallJob(ctx context.Context, j domain.Job, ticket *domain.BinaryDownloadTicket, nodeID, serviceCode, strategy string, dependentInstanceIDs []string) (domain.Job, error) {
 	j, payloadJSON, err := normalizeJobForInsert(j)
 	if err != nil {
 		return domain.Job{}, err
@@ -666,11 +694,16 @@ func (s *Store) createCapabilityInstallJobWithBinaryTicket(ctx context.Context, 
 	if err := insertJobRow(ctx, tx, j, payloadJSON); err != nil {
 		return domain.Job{}, err
 	}
-	if err := insertBinaryDownloadTicket(ctx, tx, ticket); err != nil {
-		return domain.Job{}, err
+	if ticket != nil {
+		if err := insertBinaryDownloadTicket(ctx, tx, *ticket); err != nil {
+			return domain.Job{}, err
+		}
 	}
 	eventPayload := redactSensitiveMapForStorage(j.Payload)
 	if _, err := tx.Exec(ctx, `insert into node_capability_install_events(id,node_id,job_id,capability_code,strategy,status,summary,payload_json,created_at) values($1,$2,$3,$4,$5,'queued','capability install queued',$6,now())`, id.New(), nodeID, j.ID, serviceCode, strategy, mustJSON(eventPayload)); err != nil {
+		return domain.Job{}, err
+	}
+	if err := s.markCapabilityInstallQueuedTx(ctx, tx, nodeID, serviceCode, j, dependentInstanceIDs); err != nil {
 		return domain.Job{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -681,14 +714,77 @@ func (s *Store) createCapabilityInstallJobWithBinaryTicket(ctx context.Context, 
 	return j, nil
 }
 
-func (s *Store) markCapabilityInstallQueued(ctx context.Context, nodeID, serviceCode string, job domain.Job, dependentInstanceIDs []string) {
+func (s *Store) findActiveCapabilityInstallJob(ctx context.Context, nodeID, serviceCode string) (domain.Job, bool, error) {
 	serviceCode = runtimeCapabilityCodeForService(serviceCode)
 	if nodeID == "" || serviceCode == "" {
-		return
+		return domain.Job{}, false, nil
 	}
-	_ = s.upsertNodeCapability(ctx, nodeID, serviceCode, "", "installing", "installer")
+	row := s.db.QueryRow(ctx, `select id,type,scope_type,scope_id,node_id,instance_id,status,priority,payload_json,coalesce(result_json,'{}'::jsonb),locked_by,locked_until,created_at,started_at,finished_at
+		from jobs
+		where node_id=$1
+		  and type='node.capability.install'
+		  and status in ('queued','running','retrying')
+		  and payload_json->>'service_code'=$2
+		order by created_at desc
+		limit 1`, nodeID, serviceCode)
+	job, err := scanJob(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Job{}, false, nil
+	}
+	if err != nil {
+		return domain.Job{}, false, err
+	}
+	return job, true, nil
+}
+
+func (s *Store) mergeCapabilityInstallJobDependents(ctx context.Context, jobID string, dependentInstanceIDs []string) error {
+	dependentInstanceIDs = normalizedStringSet(dependentInstanceIDs)
+	if len(dependentInstanceIDs) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var raw []byte
+	if err := tx.QueryRow(ctx, `select payload_json from jobs where id=$1 and type='node.capability.install' and status in ('queued','running','retrying') for update`, jobID).Scan(&raw); err != nil {
+		return err
+	}
+	payload := map[string]any{}
+	_ = json.Unmarshal(raw, &payload)
+	merged := normalizedStringSet(append(stringSetFromAny(payload["dependent_instance_ids"]), dependentInstanceIDs...))
+	if len(merged) > 0 {
+		payload["dependent_instance_ids"] = merged
+	}
+	if _, err := tx.Exec(ctx, `update jobs set payload_json=$2 where id=$1`, jobID, mustJSON(payload)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) markCapabilityInstallQueued(ctx context.Context, nodeID, serviceCode string, job domain.Job, dependentInstanceIDs []string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := s.markCapabilityInstallQueuedTx(ctx, tx, nodeID, serviceCode, job, dependentInstanceIDs); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) markCapabilityInstallQueuedTx(ctx context.Context, tx pgx.Tx, nodeID, serviceCode string, job domain.Job, dependentInstanceIDs []string) error {
+	serviceCode = runtimeCapabilityCodeForService(serviceCode)
+	if nodeID == "" || serviceCode == "" {
+		return nil
+	}
+	if err := upsertNodeCapabilityTx(ctx, tx, nodeID, serviceCode, "", "installing", "installer"); err != nil {
+		return err
+	}
 	for _, instanceID := range normalizedStringSet(dependentInstanceIDs) {
-		instance, err := s.GetInstance(ctx, instanceID)
+		instance, err := getInstanceTx(ctx, tx, instanceID)
 		if err != nil {
 			continue
 		}
@@ -698,8 +794,11 @@ func (s *Store) markCapabilityInstallQueued(ctx context.Context, nodeID, service
 		if runtimeCapabilityCodeForService(instance.ServiceCode) != serviceCode {
 			continue
 		}
-		_ = s.upsertInstanceRuntimeStateForQueuedJob(ctx, instance.ID, job)
+		if err := s.upsertInstanceRuntimeStateForQueuedJobTx(ctx, tx, instance, job); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func binaryRepositoryPayload(artifact domain.BinaryArtifact, ticket domain.BinaryDownloadTicket) map[string]any {
@@ -845,7 +944,7 @@ func (s *Store) importDiscoveryAsInstance(ctx context.Context, d domain.NodeServ
 	baseSlug := slug
 	for i := 2; ; i++ {
 		var exists bool
-		if err := s.db.QueryRow(ctx, `select exists(select 1 from instances where slug=$1)`, slug).Scan(&exists); err != nil {
+		if err := s.db.QueryRow(ctx, `select exists(select 1 from instances where slug=$1 and status <> 'deleted')`, slug).Scan(&exists); err != nil {
 			return domain.Instance{}, err
 		}
 		if !exists {
@@ -954,8 +1053,14 @@ func (s *Store) ListInstances(ctx context.Context) ([]domain.Instance, error) {
 }
 
 func (s *Store) GetInstance(ctx context.Context, instanceID string) (domain.Instance, error) {
+	return getInstanceTx(ctx, s.db, instanceID)
+}
+
+func getInstanceTx(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, instanceID string) (domain.Instance, error) {
 	var x domain.Instance
-	err := s.db.QueryRow(ctx, `select i.id,i.node_id,sd.code,i.name,i.slug,coalesce(i.systemd_unit,''),i.status,i.enabled,coalesce(i.endpoint_host,''),coalesce(i.endpoint_port,0),i.current_revision_id,i.last_applied_revision_id,i.created_at,i.updated_at from instances i join service_definitions sd on sd.id=i.service_definition_id where i.id=$1`, instanceID).Scan(&x.ID, &x.NodeID, &x.ServiceCode, &x.Name, &x.Slug, &x.SystemdUnit, &x.Status, &x.Enabled, &x.EndpointHost, &x.EndpointPort, &x.CurrentRevisionID, &x.LastAppliedRevisionID, &x.CreatedAt, &x.UpdatedAt)
+	err := q.QueryRow(ctx, `select i.id,i.node_id,sd.code,i.name,i.slug,coalesce(i.systemd_unit,''),i.status,i.enabled,coalesce(i.endpoint_host,''),coalesce(i.endpoint_port,0),i.current_revision_id,i.last_applied_revision_id,i.created_at,i.updated_at from instances i join service_definitions sd on sd.id=i.service_definition_id where i.id=$1`, instanceID).Scan(&x.ID, &x.NodeID, &x.ServiceCode, &x.Name, &x.Slug, &x.SystemdUnit, &x.Status, &x.Enabled, &x.EndpointHost, &x.EndpointPort, &x.CurrentRevisionID, &x.LastAppliedRevisionID, &x.CreatedAt, &x.UpdatedAt)
 	return x, err
 }
 
@@ -973,14 +1078,23 @@ func (s *Store) FindNodeInstanceByService(ctx context.Context, nodeID, serviceCo
 }
 
 func (s *Store) CreateInstance(ctx context.Context, x domain.Instance) (domain.Instance, error) {
-	return s.createInstance(ctx, x, true)
+	return s.createInstanceWithOptions(ctx, x, createInstanceOptions{queueInitialApply: true, requireApplyReadyRevision: true})
 }
 
 func (s *Store) CreateInstanceDraft(ctx context.Context, x domain.Instance) (domain.Instance, error) {
-	return s.createInstance(ctx, x, false)
+	return s.createInstanceWithOptions(ctx, x, createInstanceOptions{queueInitialApply: false})
 }
 
-func (s *Store) createInstance(ctx context.Context, x domain.Instance, queueInitialApply bool) (domain.Instance, error) {
+func (s *Store) CreateInstanceValidatedDraft(ctx context.Context, x domain.Instance) (domain.Instance, error) {
+	return s.createInstanceWithOptions(ctx, x, createInstanceOptions{queueInitialApply: false, requireApplyReadyRevision: true})
+}
+
+type createInstanceOptions struct {
+	queueInitialApply         bool
+	requireApplyReadyRevision bool
+}
+
+func (s *Store) createInstanceWithOptions(ctx context.Context, x domain.Instance, opts createInstanceOptions) (domain.Instance, error) {
 	if x.ID == "" {
 		x.ID = id.New()
 	}
@@ -1020,25 +1134,122 @@ func (s *Store) createInstance(ctx context.Context, x domain.Instance, queueInit
 	spec["name"] = x.Name
 	spec["endpoint_host"] = x.EndpointHost
 	spec["endpoint_port"] = x.EndpointPort
-	if _, err := s.createInstanceRevision(ctx, x.ID, "system", "validated", spec); err != nil {
-		s.releaseInstanceAddressPoolAllocations(ctx, x.ID)
-		_, _ = s.db.Exec(ctx, `delete from instances where id=$1`, x.ID)
+	rev, err := s.createInstanceRevision(ctx, x.ID, "system", "validated", spec)
+	if err != nil {
+		s.discardUnqueuedInstanceDraft(ctx, x.ID)
 		return x, err
 	}
-	if queueInitialApply {
+	if opts.requireApplyReadyRevision && !in(rev.Status, "validated", "applied") {
+		s.discardUnqueuedInstanceDraft(ctx, x.ID)
+		return x, initialRevisionNotApplyReadyError(rev)
+	}
+	if opts.queueInitialApply {
 		payload, payloadErr := s.buildInstanceJobPayload(ctx, x, "apply")
-		if payloadErr == nil {
-			if job, err := s.CreateJob(ctx, domain.Job{Type: "instance.apply", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload}); err == nil {
-				_, _ = s.db.Exec(ctx, `update instances set status='provisioning',updated_at=now() where id=$1 and status in ('draft','validated','failed')`, x.ID)
-				x.Status = "provisioning"
-				_ = s.upsertInstanceRuntimeStateForQueuedJob(ctx, x.ID, job)
-				_ = s.AddJobLog(ctx, job.ID, "info", "initial instance apply queued", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
-				_, _ = s.CreateAudit(ctx, "system", "instance.apply", "instance", &x.ID, "initial instance apply queued")
-			}
+		if payloadErr != nil {
+			s.discardUnqueuedInstanceDraft(ctx, x.ID)
+			return x, fmt.Errorf("initial instance apply payload is not queueable: %w", payloadErr)
 		}
+		job, err := s.CreateJob(ctx, domain.Job{Type: "instance.apply", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload})
+		if err != nil {
+			s.discardUnqueuedInstanceDraft(ctx, x.ID)
+			return x, fmt.Errorf("initial instance apply queue failed: %w", err)
+		}
+		_, _ = s.db.Exec(ctx, `update instances set status='provisioning',updated_at=now() where id=$1 and status in ('draft','validated','failed')`, x.ID)
+		x.Status = "provisioning"
+		_ = s.upsertInstanceRuntimeStateForQueuedJob(ctx, x.ID, job)
+		_ = s.AddJobLog(ctx, job.ID, "info", "initial instance apply queued", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
+		_, _ = s.CreateAudit(ctx, "system", "instance.apply", "instance", &x.ID, "initial instance apply queued")
 	}
 	_, _ = s.CreateAudit(ctx, "system", "instance.create", "instance", &x.ID, "instance created")
 	return x, nil
+}
+
+func (s *Store) DiscardInstanceDraft(ctx context.Context, instanceID string) error {
+	if strings.TrimSpace(instanceID) == "" {
+		return fmt.Errorf("instance id is required")
+	}
+	var status string
+	if err := s.db.QueryRow(ctx, `select status from instances where id=$1`, instanceID).Scan(&status); err != nil {
+		return err
+	}
+	if strings.TrimSpace(status) != "draft" {
+		return fmt.Errorf("instance %s is not discardable; status=%s", instanceID, strings.TrimSpace(status))
+	}
+	var refs int
+	if err := s.db.QueryRow(ctx, `select count(*) from service_accesses where instance_id=$1`, instanceID).Scan(&refs); err != nil {
+		return err
+	}
+	if refs > 0 {
+		return fmt.Errorf("instance %s is not discardable; service accesses exist", instanceID)
+	}
+	if err := s.db.QueryRow(ctx, `select count(*) from jobs where instance_id=$1`, instanceID).Scan(&refs); err != nil {
+		return err
+	}
+	if refs > 0 {
+		return fmt.Errorf("instance %s is not discardable; jobs exist", instanceID)
+	}
+	return s.discardUnqueuedInstanceDraft(ctx, instanceID)
+}
+
+func (s *Store) discardUnqueuedInstanceDraft(ctx context.Context, instanceID string) error {
+	if strings.TrimSpace(instanceID) == "" {
+		return nil
+	}
+	s.releaseInstanceAddressPoolAllocations(ctx, instanceID)
+	_, _ = s.db.Exec(ctx, `delete from instance_runtime_observations where instance_id=$1`, instanceID)
+	_, _ = s.db.Exec(ctx, `delete from instance_runtime_states where instance_id=$1`, instanceID)
+	_, _ = s.db.Exec(ctx, `delete from instance_revisions where instance_id=$1`, instanceID)
+	_, _ = s.db.Exec(ctx, `delete from instances where id=$1`, instanceID)
+	_, err := s.db.Exec(ctx, `delete from secret_refs
+		where meta_json->>'scope'='instance'
+		  and meta_json->>'instance_id'=$1`, instanceID)
+	return err
+}
+
+func initialRevisionNotApplyReadyError(rev domain.InstanceRevision) error {
+	status := strings.TrimSpace(rev.Status)
+	if status == "" {
+		status = "unknown"
+	}
+	messages := revisionValidationMessages(rev.ValidationErrors)
+	if len(messages) == 0 {
+		return fmt.Errorf("initial instance revision is not apply-ready; status=%s", status)
+	}
+	return fmt.Errorf("initial instance revision is not apply-ready; status=%s; validation: %s", status, strings.Join(messages, "; "))
+}
+
+func revisionValidationMessages(items []any) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		switch typed := item.(type) {
+		case map[string]any:
+			stage := strings.TrimSpace(stringify(typed["stage"]))
+			message := strings.TrimSpace(stringify(typed["message"]))
+			if message == "" {
+				message = strings.TrimSpace(stringify(typed["error"]))
+			}
+			if message == "" {
+				continue
+			}
+			if stage != "" {
+				out = append(out, stage+": "+message)
+			} else {
+				out = append(out, message)
+			}
+		case string:
+			if msg := strings.TrimSpace(typed); msg != "" {
+				out = append(out, msg)
+			}
+		default:
+			if msg := strings.TrimSpace(stringify(typed)); msg != "" {
+				out = append(out, msg)
+			}
+		}
+		if len(out) >= 4 {
+			break
+		}
+	}
+	return out
 }
 
 func (s *Store) UpdateInstanceStatus(ctx context.Context, instanceID, action string) (domain.Job, error) {
@@ -1691,6 +1902,11 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 		if err := s.insertCapabilityInstallEvent(ctx, *scopeID, idv, capCode, strategy, status, summary, resultJSON); err != nil {
 			return err
 		}
+		if jobType == "node.capability.install" {
+			if err := s.markBinaryDownloadTicketUsedFromJobResult(ctx, idv, result); err != nil {
+				_ = s.AddJobLog(ctx, idv, "warn", "binary download ticket was not marked used", map[string]any{"error": err.Error()})
+			}
+		}
 		if capCode != "" {
 			version := stringify(result["version"])
 			capStatus := "available"
@@ -1706,6 +1922,10 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 				s.queueApplyJobsForCapabilityDependents(ctx, idv, *scopeID, capCode, payload)
 			}
 		}
+	}
+
+	if strings.HasPrefix(jobType, "instance.") && instanceID != nil {
+		return s.applyInstanceJobCompletionSideEffects(ctx, *instanceID, idv, jobType, status, result)
 	}
 
 	if status == "succeeded" {
@@ -1754,39 +1974,6 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 			if nodeID != "" {
 				_ = s.applyNodeEmergencyCleanupResult(ctx, nodeID, payload)
 			}
-		case "instance.apply":
-			if instanceID != nil {
-				_, _ = s.db.Exec(ctx, `update instance_revisions
-					set status='superseded'
-					where id=(select last_applied_revision_id from instances where id=$1)
-					  and id is distinct from (select current_revision_id from instances where id=$1)
-					  and status='applied'`, *instanceID)
-				_, _ = s.db.Exec(ctx, `update instance_revisions
-					set status='applied',applied_at=now(),validation_errors_json='[]'::jsonb
-					where id=(select current_revision_id from instances where id=$1)`, *instanceID)
-				_, _ = s.db.Exec(ctx, `update instances set status='active',enabled=true,last_applied_revision_id=current_revision_id,updated_at=now() where id=$1`, *instanceID)
-				_, _ = s.db.Exec(ctx, `update service_accesses set status='active',updated_at=now() where instance_id=$1 and status='pending'`, *instanceID)
-				_, _ = s.db.Exec(ctx, `update client_access_routes set status='active',updated_at=now() where instance_id=$1 and status='pending'`, *instanceID)
-				s.queueRoutePolicyJobForInstance(ctx, *instanceID)
-			}
-		case "instance.start", "instance.enable":
-			if instanceID != nil {
-				_, _ = s.db.Exec(ctx, `update instances set status='active',enabled=true,updated_at=now() where id=$1`, *instanceID)
-				_, _ = s.db.Exec(ctx, `update client_access_routes set status='active',updated_at=now() where instance_id=$1 and status='disabled'`, *instanceID)
-				s.queueRoutePolicyJobForInstance(ctx, *instanceID)
-			}
-		case "instance.stop", "instance.disable":
-			if instanceID != nil {
-				_, _ = s.db.Exec(ctx, `update instances set status='disabled',enabled=false,updated_at=now() where id=$1`, *instanceID)
-				_, _ = s.db.Exec(ctx, `update client_access_routes set status='disabled',updated_at=now() where instance_id=$1 and status='active'`, *instanceID)
-				s.queueRoutePolicyJobForInstance(ctx, *instanceID)
-			}
-		case "instance.delete":
-			if instanceID != nil {
-				_, _ = s.db.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, *instanceID)
-				_, _ = s.db.Exec(ctx, `update client_access_routes set status='deleted',updated_at=now() where instance_id=$1 and status in ('pending','active','disabled')`, *instanceID)
-				s.releaseInstanceAddressPoolAllocations(ctx, *instanceID)
-			}
 		case "client.revoke":
 			if scopeID != nil {
 				_, _ = s.db.Exec(ctx, `update client_accounts set status='revoked',updated_at=now() where id=$1`, *scopeID)
@@ -1817,7 +2004,77 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 		_ = s.MarkControlPlaneTLSApplyResult(ctx, false, errText)
 	} else if jobType == "node.bootstrap" && scopeID != nil {
 		_, _ = s.db.Exec(ctx, `update nodes set status='draft',updated_at=now() where id=$1 and status='bootstrapping'`, *scopeID)
-	} else if jobType == "instance.apply" && instanceID != nil {
+	}
+
+	if jobType == "node.bootstrap" {
+		if _, err := s.db.Exec(ctx, `update node_bootstrap_runs set status=$2,result_payload_json=$3,finished_at=now() where job_id=$1`, idv, status, resultJSON); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) applyInstanceJobCompletionSideEffects(ctx context.Context, instanceID, jobID, jobType, status string, result map[string]any) error {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	routePolicyNeeded := false
+	if status == "succeeded" {
+		switch jobType {
+		case "instance.apply":
+			if _, err := tx.Exec(ctx, `update instance_revisions
+				set status='superseded'
+				where id=(select last_applied_revision_id from instances where id=$1)
+				  and id is distinct from (select current_revision_id from instances where id=$1)
+				  and status='applied'`, instanceID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `update instance_revisions
+				set status='applied',applied_at=now(),validation_errors_json='[]'::jsonb
+				where id=(select current_revision_id from instances where id=$1)`, instanceID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `update instances set status='active',enabled=true,last_applied_revision_id=current_revision_id,updated_at=now() where id=$1`, instanceID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `update service_accesses set status='active',updated_at=now() where instance_id=$1 and status='pending'`, instanceID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `update client_access_routes set status='active',updated_at=now() where instance_id=$1 and status='pending'`, instanceID); err != nil {
+				return err
+			}
+			routePolicyNeeded = true
+		case "instance.start", "instance.enable":
+			if _, err := tx.Exec(ctx, `update instances set status='active',enabled=true,updated_at=now() where id=$1`, instanceID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `update client_access_routes set status='active',updated_at=now() where instance_id=$1 and status='disabled'`, instanceID); err != nil {
+				return err
+			}
+			routePolicyNeeded = true
+		case "instance.stop", "instance.disable":
+			if _, err := tx.Exec(ctx, `update instances set status='disabled',enabled=false,updated_at=now() where id=$1`, instanceID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `update client_access_routes set status='disabled',updated_at=now() where instance_id=$1 and status='active'`, instanceID); err != nil {
+				return err
+			}
+			routePolicyNeeded = true
+		case "instance.delete":
+			if _, err := tx.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, instanceID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `update client_access_routes set status='deleted',updated_at=now() where instance_id=$1 and status in ('pending','active','disabled')`, instanceID); err != nil {
+				return err
+			}
+			if err := releaseInstanceAddressPoolAllocationsTx(ctx, tx, instanceID); err != nil && !isAddressPoolCatalogUnavailable(err) {
+				return err
+			}
+		}
+	} else if jobType == "instance.apply" {
 		validationErrors := []any{}
 		if errText := strings.TrimSpace(stringify(result["error"])); errText != "" {
 			validationErrors = append(validationErrors, map[string]any{"stage": "apply", "message": errText})
@@ -1826,23 +2083,32 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 		} else {
 			validationErrors = append(validationErrors, map[string]any{"stage": "apply", "message": "instance apply failed"})
 		}
-		_, _ = s.db.Exec(ctx, `update instance_revisions
+		if _, err := tx.Exec(ctx, `update instance_revisions
 			set status='failed',applied_at=null,validation_errors_json=$2
-			where id=(select current_revision_id from instances where id=$1)`, *instanceID, mustJSON(validationErrors))
-		_, _ = s.db.Exec(ctx, `update instances set status='failed',updated_at=now() where id=$1`, *instanceID)
-	} else if jobType == "instance.delete" && instanceID != nil {
-		_, _ = s.db.Exec(ctx, `update instances set status='failed',enabled=false,updated_at=now() where id=$1`, *instanceID)
+			where id=(select current_revision_id from instances where id=$1)`, instanceID, mustJSON(validationErrors)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `update instances set status='failed',updated_at=now() where id=$1`, instanceID); err != nil {
+			return err
+		}
+	} else if jobType == "instance.delete" {
+		if _, err := tx.Exec(ctx, `update instances set status='failed',enabled=false,updated_at=now() where id=$1`, instanceID); err != nil {
+			return err
+		}
 	}
 
-	if jobType == "node.bootstrap" {
-		if _, err := s.db.Exec(ctx, `update node_bootstrap_runs set status=$2,result_payload_json=$3,finished_at=now() where job_id=$1`, idv, status, resultJSON); err != nil {
-			return err
-		}
+	instance, err := getInstanceTx(ctx, tx, instanceID)
+	if err != nil {
+		return err
 	}
-	if strings.HasPrefix(jobType, "instance.") && instanceID != nil {
-		if err := s.upsertInstanceRuntimeStateForJob(ctx, *instanceID, idv, jobType, status, result); err != nil {
-			return err
-		}
+	if err := s.upsertInstanceRuntimeStateForJobTx(ctx, tx, instance, jobID, jobType, status, result); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if routePolicyNeeded {
+		s.queueRoutePolicyJobForInstance(ctx, instanceID)
 	}
 	return nil
 }
@@ -1917,6 +2183,12 @@ func (s *Store) insertCapabilityInstallEvent(ctx context.Context, nodeID, jobID,
 }
 
 func (s *Store) upsertNodeCapability(ctx context.Context, nodeID, capCode, version, status, source string) error {
+	return upsertNodeCapabilityTx(ctx, s.db, nodeID, capCode, version, status, source)
+}
+
+func upsertNodeCapabilityTx(ctx context.Context, exec interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, nodeID, capCode, version, status, source string) error {
 	if capCode == "" {
 		return nil
 	}
@@ -1926,7 +2198,7 @@ func (s *Store) upsertNodeCapability(ctx context.Context, nodeID, capCode, versi
 	if source == "" {
 		source = "installer"
 	}
-	_, err := s.db.Exec(ctx, `insert into node_capabilities(id,node_id,capability_code,version,status,detected_at,source) values($1,$2,$3,$4,$5,now(),$6) on conflict(node_id, capability_code) do update set version=excluded.version,status=excluded.status,detected_at=excluded.detected_at,source=excluded.source`, id.New(), nodeID, capCode, version, status, source)
+	_, err := exec.Exec(ctx, `insert into node_capabilities(id,node_id,capability_code,version,status,detected_at,source) values($1,$2,$3,$4,$5,now(),$6) on conflict(node_id, capability_code) do update set version=excluded.version,status=excluded.status,detected_at=excluded.detected_at,source=excluded.source`, id.New(), nodeID, capCode, version, status, source)
 	return err
 }
 

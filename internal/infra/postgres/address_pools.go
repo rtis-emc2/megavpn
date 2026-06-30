@@ -479,12 +479,23 @@ func (s *Store) releaseInstanceAddressPoolAllocations(ctx context.Context, insta
 	if instanceID == "" {
 		return
 	}
-	_, err := s.db.Exec(ctx, `update address_pool_allocations
-		set status='released',updated_at=now()
-		where instance_id=$1 and status in ('reserved','active')`, instanceID)
+	err := releaseInstanceAddressPoolAllocationsTx(ctx, s.db, instanceID)
 	if err != nil && !isAddressPoolCatalogUnavailable(err) {
 		_, _ = s.CreateAudit(ctx, "system", "address_pool.release_failed", "instance", &instanceID, err.Error())
 	}
+}
+
+func releaseInstanceAddressPoolAllocationsTx(ctx context.Context, exec interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, instanceID string) error {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return nil
+	}
+	_, err := exec.Exec(ctx, `update address_pool_allocations
+		set status='released',updated_at=now()
+		where instance_id=$1 and status in ('reserved','active')`, instanceID)
+	return err
 }
 
 func (s *Store) backfillAddressPoolAllocationsFromInstances(ctx context.Context) error {

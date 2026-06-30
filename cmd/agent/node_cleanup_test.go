@@ -99,3 +99,17 @@ func TestEmergencyCleanupServicesOnlyFileAllowlistPreservesBackhaulAndRoutePolic
 		}
 	}
 }
+
+func TestEmergencyCleanupManagedUnitPathUsesScope(t *testing.T) {
+	if got := emergencyManagedUnitFilePathForScope("megavpn-xray-edge.service", "services_only"); got != "/etc/systemd/system/megavpn-xray-edge.service" {
+		t.Fatalf("services_only service unit path = %q", got)
+	}
+	for _, unit := range []string{"megavpn-route-policy.service", "megavpn-backhaul-link.service"} {
+		if got := emergencyManagedUnitFilePathForScope(unit, "services_only"); got != "" {
+			t.Fatalf("services_only must preserve %s, got path %q", unit, got)
+		}
+	}
+	if got := emergencyManagedUnitFilePathForScope("megavpn-backhaul-link.service", "full_node"); got != "/etc/systemd/system/megavpn-backhaul-link.service" {
+		t.Fatalf("full_node backhaul unit path = %q", got)
+	}
+}

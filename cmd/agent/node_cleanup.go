@@ -115,7 +115,7 @@ func emergencyCleanupManagedLeftovers(ctx context.Context, cleanupScope string) 
 			stoppedUnits = append(stoppedUnits, unit)
 		}
 		_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", unit)
-		if path := emergencyManagedUnitFilePath(unit); path != "" {
+		if path := emergencyManagedUnitFilePathForScope(unit, cleanupScope); path != "" {
 			removed, err := removeManagedPath(path, false)
 			if err != nil {
 				warnings = append(warnings, path+": "+err.Error())
@@ -258,8 +258,12 @@ func isEmergencyManagedUnitForScope(unit, cleanupScope string) bool {
 }
 
 func emergencyManagedUnitFilePath(unit string) string {
+	return emergencyManagedUnitFilePathForScope(unit, "full_node")
+}
+
+func emergencyManagedUnitFilePathForScope(unit, cleanupScope string) string {
 	unit = strings.TrimSpace(unit)
-	if !isEmergencyManagedUnit(unit) {
+	if !isEmergencyManagedUnitForScope(unit, cleanupScope) {
 		return ""
 	}
 	unit = strings.TrimSuffix(unit, ".service") + ".service"

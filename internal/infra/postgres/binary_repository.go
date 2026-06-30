@@ -222,10 +222,9 @@ func (s *Store) MarkBinaryDownloadTicketUsed(ctx context.Context, ticketID, jobI
 	}
 	now := time.Now().UTC()
 	tag, err := s.db.Exec(ctx, `update binary_download_tickets
-		set status='used', used_at=$3, job_id=coalesce(job_id,$2)
+		set status='used', used_at=coalesce(used_at,$3), job_id=coalesce(job_id,$2)
 		where id=$1
-		  and status='active'
-		  and expires_at > $3
+		  and status in ('active','used')
 		  and (job_id is null or job_id=$2)`,
 		ticketID, jobID, now)
 	if err != nil {
@@ -235,6 +234,55 @@ func (s *Store) MarkBinaryDownloadTicketUsed(ctx context.Context, ticketID, jobI
 		return errors.New("download ticket cannot be marked used")
 	}
 	return nil
+}
+
+func (s *Store) markBinaryDownloadTicketUsedFromJobResult(ctx context.Context, jobID string, result map[string]any) error {
+	repo, _ := result["binary_repository"].(map[string]any)
+	if repo == nil {
+		return nil
+	}
+	if !truthy(repo["download_verified"]) {
+		return nil
+	}
+	ticketID := strings.TrimSpace(stringify(repo["download_ticket_id"]))
+	if ticketID == "" {
+		ticketID = strings.TrimSpace(stringify(repo["ticket_id"]))
+	}
+	if ticketID == "" {
+		return nil
+	}
+	return s.MarkBinaryDownloadTicketUsed(ctx, ticketID, jobID)
+}
+
+func (s *Store) CleanupBinaryDownloadTickets(ctx context.Context, retention time.Duration) (expired int64, deleted int64, err error) {
+	if retention <= 0 {
+		retention = 7 * 24 * time.Hour
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	now := time.Now().UTC()
+	expireTag, err := tx.Exec(ctx, `update binary_download_tickets
+		set status='expired'
+		where status='active'
+		  and expires_at < $1`, now)
+	if err != nil {
+		return 0, 0, err
+	}
+	cutoff := now.Add(-retention)
+	deleteTag, err := tx.Exec(ctx, `delete from binary_download_tickets
+		where status in ('used','expired','revoked')
+		  and coalesce(used_at, expires_at, created_at) < $1`, cutoff)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, err
+	}
+	return expireTag.RowsAffected(), deleteTag.RowsAffected(), nil
 }
 
 func normalizeBinaryArtifact(item *domain.BinaryArtifact) error {

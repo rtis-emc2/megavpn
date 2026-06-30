@@ -442,13 +442,16 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			EndpointPort: component.EndpointPort,
 			Spec:         spec,
 		}
-		createdInstance, err := s.store.CreateInstanceDraft(r.Context(), instance)
+		createdInstance, err := s.store.CreateInstanceValidatedDraft(r.Context(), instance)
 		if err != nil {
+			discarded := discardCreatedServicePackInstances(r.Context(), s.store, created)
 			writeJSON(w, 409, response{
 				"status":            "partial_failure",
-				"error":             err.Error(),
+				"error":             fmt.Sprintf("service pack component %q is not apply-ready: %v", servicePackComponentLabel(component), err),
+				"component":         servicePackComponentLabel(component),
 				"service_pack_key":  pack.Key,
 				"created_instances": created,
+				"discarded_count":   discarded,
 			})
 			return
 		}
@@ -509,6 +512,30 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 		"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
 		"apply_jobs":           redactedJobs(applyJobs),
 	})
+}
+
+func discardCreatedServicePackInstances(ctx context.Context, store interface {
+	DiscardInstanceDraft(context.Context, string) error
+}, instances []domain.Instance) int {
+	discarded := 0
+	for i := len(instances) - 1; i >= 0; i-- {
+		if strings.TrimSpace(instances[i].ID) == "" {
+			continue
+		}
+		if err := store.DiscardInstanceDraft(ctx, instances[i].ID); err == nil {
+			discarded++
+		}
+	}
+	return discarded
+}
+
+func servicePackComponentLabel(component domain.ServicePackComponent) string {
+	for _, value := range []string{component.Label, component.NameSuffix, component.SlugSuffix, component.ServiceCode} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return "component"
 }
 
 func missingServicePackRuntimeCapabilities(components []domain.ServicePackComponent, capabilities []domain.NodeCapability) []string {

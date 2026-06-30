@@ -17,6 +17,8 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/secrets"
 )
 
+const binaryDownloadTicketRetention = 7 * 24 * time.Hour
+
 func main() {
 	if platformversion.CommandRequested(os.Args[1:]) {
 		fmt.Println(platformversion.Version)
@@ -67,6 +69,12 @@ func runOnce(ctx context.Context, log interface {
 	Error(string, ...any)
 }, store *postgres.Store, cfg config.Config) {
 	workerID := cfg.Worker.WorkerID
+	expiredTickets, deletedTickets, err := store.CleanupBinaryDownloadTickets(ctx, binaryDownloadTicketRetention)
+	if err != nil {
+		log.Error("binary download ticket cleanup failed", "error", err)
+	} else if expiredTickets > 0 || deletedTickets > 0 {
+		log.Info("binary download ticket cleanup completed", "expired", expiredTickets, "deleted", deletedTickets)
+	}
 	job, ok, err := store.ClaimJob(ctx, workerID)
 	if err != nil {
 		log.Error("claim job failed", "error", err)

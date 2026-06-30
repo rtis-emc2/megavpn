@@ -1471,7 +1471,7 @@ func backhaulManifestPath(link domain.BackhaulLink, transport domain.BackhaulTra
 func renderBackhaulUnit(unitName, startCmd, stopCmd string) string {
 	lines := []string{
 		"[Unit]",
-		"Description=RTIS MegaVPN managed backhaul transport " + unitName,
+		"Description=MegaVPN managed backhaul transport " + unitName,
 		"After=network-online.target",
 		"Wants=network-online.target",
 		"",

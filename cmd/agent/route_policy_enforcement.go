@@ -312,7 +312,7 @@ func nftRoutePolicyMarkCommand(rule routePolicyKernelRule) string {
 func renderRoutePolicyUnit() string {
 	return strings.Join([]string{
 		"[Unit]",
-		"Description=RTIS MegaVPN route policy enforcement",
+		"Description=MegaVPN route policy enforcement",
 		"After=network-online.target",
 		"Wants=network-online.target",
 		"",

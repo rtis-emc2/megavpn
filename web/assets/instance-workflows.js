@@ -101,6 +101,44 @@
         <option value="${escapeHTML(installerValue(installer))}"${index === 0 ? ' selected' : ''}>${escapeHTML(installer.strategy || 'default')} · ${escapeHTML(installer.channel || 'default')}</option>`).join('');
     }
 
+    function normalizeRuntimeArchitecture(value) {
+      const arch = String(value || '').trim().toLowerCase();
+      if (arch === 'x86_64') return 'amd64';
+      if (arch === 'aarch64') return 'arm64';
+      return arch || 'amd64';
+    }
+
+    function binaryRepositoryArtifactsForNode(serviceCode, node) {
+      const code = normalizeInstanceServiceCode(serviceCode);
+      const osFamily = String(node?.os_family || 'linux').trim().toLowerCase() || 'linux';
+      const osVersion = String(node?.os_version || '').trim();
+      const arch = normalizeRuntimeArchitecture(node?.architecture);
+      return (state.binaryArtifacts || []).filter((artifact) => {
+        const kind = String(artifact.kind || '').trim().toLowerCase();
+        const artifactOSVersion = String(artifact.os_version || '').trim();
+        return String(artifact.status || 'active').toLowerCase() === 'active'
+          && normalizeInstanceServiceCode(artifact.service_code) === code
+          && ['runtime', 'package', 'script', 'bundle'].includes(kind)
+          && String(artifact.os_family || 'linux').trim().toLowerCase() === osFamily
+          && normalizeRuntimeArchitecture(artifact.architecture) === arch
+          && (!artifactOSVersion || artifactOSVersion === osVersion);
+      });
+    }
+
+    function runtimeInstallCatalogHint(serviceCode, node, installers) {
+      const hasBinaryRepositoryInstaller = (installers || []).some((installer) => String(installer.strategy || '') === 'binary_repository');
+      if (!hasBinaryRepositoryInstaller || typeof hasPermission === 'function' && !hasPermission('binary_repository.read')) return '';
+      const osFamily = String(node?.os_family || 'linux').trim().toLowerCase() || 'linux';
+      const osVersion = String(node?.os_version || '').trim();
+      const arch = normalizeRuntimeArchitecture(node?.architecture);
+      const artifacts = binaryRepositoryArtifactsForNode(serviceCode, node);
+      if (artifacts.length) {
+        const versions = artifacts.map((artifact) => artifact.version || artifact.name || artifact.id).filter(Boolean).slice(0, 3).join(', ');
+        return `<div class="field-hint">Binary repository: ${escapeHTML(String(artifacts.length))} matching artifact${artifacts.length === 1 ? '' : 's'} for ${escapeHTML(osFamily)} / ${escapeHTML(arch)}${versions ? ` · ${escapeHTML(versions)}` : ''}.</div>`;
+      }
+      return `<div class="notice subtle-notice">No active binary_repository artifact matches ${escapeHTML(normalizeInstanceServiceCode(serviceCode))} for ${escapeHTML(osFamily)}${osVersion ? ` ${escapeHTML(osVersion)}` : ''} / ${escapeHTML(arch)}. Register a runtime artifact in Services -> Runtime artifacts or choose another strategy.</div>`;
+    }
+
     function openCreateServicePackModal() {
       const initialPack = defaultServicePack();
       const hasPack = Boolean(initialPack);
@@ -173,7 +211,7 @@
         await refresh();
         window.setTimeout(closeModal, 500);
       } catch (err) {
-        target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        target.innerHTML = renderActionResponse({ error: err.message, details: err?.payload || null }, 'Service pack create failed');
       }
     }
 
@@ -295,6 +333,7 @@
             <label>Install strategy</label>
             <select name="installer" required>${installerOptions(serviceCode)}</select>
             <div class="field-hint">The job runs on the selected node through the agent capability installer.</div>
+            ${runtimeInstallCatalogHint(serviceCode, node, installers)}
           </div>
           <label class="choice-card full">
             <input name="apply_after_install" type="checkbox" checked />

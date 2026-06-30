@@ -111,6 +111,8 @@ type Store interface {
 	ListInstanceRevisions(context.Context, string, int) ([]domain.InstanceRevision, error)
 	CreateInstance(context.Context, domain.Instance) (domain.Instance, error)
 	CreateInstanceDraft(context.Context, domain.Instance) (domain.Instance, error)
+	CreateInstanceValidatedDraft(context.Context, domain.Instance) (domain.Instance, error)
+	DiscardInstanceDraft(context.Context, string) error
 	ReplaceInstanceSpec(context.Context, string, string, map[string]any) (domain.InstanceRevision, error)
 	RollbackInstanceRevision(context.Context, string, string, string) (domain.InstanceRevision, error)
 	UpdateInstanceStatus(context.Context, string, string) (domain.Job, error)

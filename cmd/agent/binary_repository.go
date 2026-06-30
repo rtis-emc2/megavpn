@@ -54,8 +54,9 @@ func (c client) installBinaryRepositoryCapability(ctx context.Context, j job, se
 	if mode == "" {
 		mode = defaultBinaryInstallMode(serviceCode, artifact.Kind, artifact.Path)
 	}
+	repositoryResult := binaryRepositoryInstallResult(repo, artifact, mode)
 	if mode == "" {
-		return map[string]any{"ok": false, "message": "binary repository artifact install_mode is unsupported", "kind": artifact.Kind, "steps": steps}
+		return map[string]any{"ok": false, "message": "binary repository artifact install_mode is unsupported", "kind": artifact.Kind, "steps": steps, "binary_repository": repositoryResult}
 	}
 	run := func(name string, args ...string) bool {
 		code, out := runInstallCommand(ctx, name, args...)
@@ -65,29 +66,24 @@ func (c client) installBinaryRepositoryCapability(ctx context.Context, j job, se
 	switch mode {
 	case "xray_install_script":
 		if serviceCode != "xray-core" {
-			return map[string]any{"ok": false, "message": "xray_install_script mode is only valid for xray-core", "steps": steps}
+			return map[string]any{"ok": false, "message": "xray_install_script mode is only valid for xray-core", "steps": steps, "binary_repository": repositoryResult}
 		}
 		if err := os.Chmod(artifact.Path, 0o700); err != nil {
-			return map[string]any{"ok": false, "message": "binary repository script chmod failed", "error": err.Error(), "steps": steps}
+			return map[string]any{"ok": false, "message": "binary repository script chmod failed", "error": err.Error(), "steps": steps, "binary_repository": repositoryResult}
 		}
 		if !run("bash", artifact.Path, "install") {
-			return map[string]any{"ok": false, "message": "xray-core repository install script failed", "steps": steps}
+			return map[string]any{"ok": false, "message": "xray-core repository install script failed", "steps": steps, "binary_repository": repositoryResult}
 		}
 	case "deb_package":
 		if !run("dpkg", "-i", artifact.Path) {
 			_ = run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-f", "install", "-y")
 		}
 	default:
-		return map[string]any{"ok": false, "message": "unsupported binary repository install_mode", "install_mode": mode, "steps": steps}
+		return map[string]any{"ok": false, "message": "unsupported binary repository install_mode", "install_mode": mode, "steps": steps, "binary_repository": repositoryResult}
 	}
 	verify := verifyInstalledCapability(ctx, serviceCode)
 	verify["steps"] = steps
-	verify["binary_repository"] = map[string]any{
-		"kind":         artifact.Kind,
-		"version":      artifact.Version,
-		"sha256":       artifact.SHA256,
-		"install_mode": mode,
-	}
+	verify["binary_repository"] = repositoryResult
 	return verify
 }
 
@@ -206,6 +202,19 @@ func (c client) verifyBinaryRepositoryDownloadSignature(req *http.Request, resp 
 func binaryInstallMode(repo map[string]any) string {
 	metadata, _ := repo["metadata"].(map[string]any)
 	return stringify(metadata["install_mode"])
+}
+
+func binaryRepositoryInstallResult(repo map[string]any, artifact downloadedBinaryArtifact, mode string) map[string]any {
+	result := map[string]any{
+		"kind":                 artifact.Kind,
+		"version":              artifact.Version,
+		"sha256":               artifact.SHA256,
+		"install_mode":         mode,
+		"download_verified":    true,
+		"download_ticket_id":   stringify(repo["ticket_id"]),
+		"download_ticket_hint": stringify(repo["ticket_hint"]),
+	}
+	return result
 }
 
 func defaultBinaryInstallMode(serviceCode, kind, path string) string {

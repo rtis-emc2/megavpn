@@ -57,17 +57,13 @@ func (s *Server) agentBinaryArtifactDownload(w http.ResponseWriter, r *http.Requ
 		writeErr(w, 401, "agent unauthorized")
 		return
 	}
-	ticket, artifact, err := s.store.ResolveBinaryDownloadTicket(r.Context(), token, artifactID, nodeID, jobID)
+	_, artifact, err := s.store.ResolveBinaryDownloadTicket(r.Context(), token, artifactID, nodeID, jobID)
 	if err != nil {
 		writeSignedAgentJSON(w, r, agentToken, 403, response{"error": err.Error()})
 		return
 	}
 	if _, _, _, err := s.resolveBinaryArtifactFile(artifact); err != nil {
 		writeSignedAgentJSON(w, r, agentToken, artifactHTTPStatus(err), response{"error": err.Error()})
-		return
-	}
-	if err := s.store.MarkBinaryDownloadTicketUsed(r.Context(), ticket.ID, jobID); err != nil {
-		writeSignedAgentJSON(w, r, agentToken, 403, response{"error": err.Error()})
 		return
 	}
 	if err := s.serveBinaryArtifactDownload(w, r, artifact, agentToken); err != nil {

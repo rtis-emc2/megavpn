@@ -599,6 +599,18 @@ func (s *Store) upsertInstanceRuntimeStateForJob(ctx context.Context, instanceID
 	if err != nil {
 		return err
 	}
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := s.upsertInstanceRuntimeStateForJobTx(ctx, tx, instance, jobID, jobType, jobStatus, result); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) upsertInstanceRuntimeStateForJobTx(ctx context.Context, tx pgx.Tx, instance domain.Instance, jobID, jobType, jobStatus string, result map[string]any) error {
 	if result == nil {
 		result = map[string]any{}
 	}
@@ -613,12 +625,7 @@ func (s *Store) upsertInstanceRuntimeStateForJob(ctx context.Context, instanceID
 	resultRaw := mustJSON(result)
 	now := time.Now().UTC()
 	stateID := id.New()
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `insert into instance_runtime_states(
+	_, err := tx.Exec(ctx, `insert into instance_runtime_states(
 			id,instance_id,node_id,service_code,systemd_unit,desired_status,runtime_status,health_status,drift_status,active_state,
 			enabled_state,config_hash,last_job_id,last_job_type,last_job_status,applied_revision_id,observed_revision_id,endpoint_host,endpoint_port,listening_ports_json,result_json,error_text,agent_reported_at,checked_at,updated_at
 		) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'','',$11,$12,$13,$14,$15,$16,nullif($17,0),'[]'::jsonb,$18,$19,null,$20,$20)
@@ -695,7 +702,7 @@ func (s *Store) upsertInstanceRuntimeStateForJob(ctx context.Context, instanceID
 	}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (s *Store) upsertInstanceRuntimeStateForQueuedJob(ctx context.Context, instanceID string, job domain.Job) error {
@@ -703,6 +710,18 @@ func (s *Store) upsertInstanceRuntimeStateForQueuedJob(ctx context.Context, inst
 	if err != nil {
 		return err
 	}
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := s.upsertInstanceRuntimeStateForQueuedJobTx(ctx, tx, instance, job); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) upsertInstanceRuntimeStateForQueuedJobTx(ctx context.Context, tx pgx.Tx, instance domain.Instance, job domain.Job) error {
 	jobStatus := strings.TrimSpace(job.Status)
 	if jobStatus == "" {
 		jobStatus = "queued"
@@ -718,12 +737,7 @@ func (s *Store) upsertInstanceRuntimeStateForQueuedJob(ctx context.Context, inst
 	resultRaw := mustJSON(result)
 	now := time.Now().UTC()
 	stateID := id.New()
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `insert into instance_runtime_states(
+	_, err := tx.Exec(ctx, `insert into instance_runtime_states(
 			id,instance_id,node_id,service_code,systemd_unit,desired_status,runtime_status,health_status,drift_status,active_state,
 			enabled_state,config_hash,last_job_id,last_job_type,last_job_status,applied_revision_id,observed_revision_id,endpoint_host,endpoint_port,listening_ports_json,result_json,error_text,agent_reported_at,checked_at,updated_at
 		) values($1,$2,$3,$4,$5,$6,$7,$8,$9,'','','',$10,$11,$12,$13,null,$14,nullif($15,0),'[]'::jsonb,$16,'',null,$17,$17)
@@ -795,7 +809,7 @@ func (s *Store) upsertInstanceRuntimeStateForQueuedJob(ctx context.Context, inst
 	}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (s *Store) upsertInstanceRuntimeStateForAgentReport(ctx context.Context, nodeID string, report domain.AgentInstanceRuntimeReport) (domain.InstanceRuntimeState, error) {
