@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/netip"
 	"strings"
 
@@ -336,7 +337,11 @@ func ensureShadowsocksInstanceDriverState(ctx context.Context, store *postgres.S
 
 		password := firstNonEmpty(stringify(meta["password"]), stringify(meta["shadowsocks_password"]))
 		if rotate || password == "" {
-			password = randomHexString(16)
+			var passwordErr error
+			password, passwordErr = randomStrongPassword(32)
+			if passwordErr != nil {
+				return passwordErr
+			}
 			meta["password"] = password
 			meta["shadowsocks_password"] = password
 			delete(meta, "rotate_credentials")
@@ -930,6 +935,69 @@ func randomHexString(n int) string {
 		return strings.Repeat("0", n*2)
 	}
 	return fmt.Sprintf("%x", buf)
+}
+
+func randomStrongPassword(n int) (string, error) {
+	sets := []string{
+		"abcdefghijklmnopqrstuvwxyz",
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+		"0123456789",
+		"!#$%&()*+,-.:=?@_~",
+	}
+	if n <= 0 {
+		n = 32
+	}
+	if n < len(sets) {
+		n = len(sets)
+	}
+	var all strings.Builder
+	out := make([]byte, 0, n)
+	for _, set := range sets {
+		ch, err := randomChar(set)
+		if err != nil {
+			return "", err
+		}
+		out = append(out, ch)
+		all.WriteString(set)
+	}
+	allChars := all.String()
+	for len(out) < n {
+		ch, err := randomChar(allChars)
+		if err != nil {
+			return "", err
+		}
+		out = append(out, ch)
+	}
+	for i := len(out) - 1; i > 0; i-- {
+		j, err := randomBoundedInt(i + 1)
+		if err != nil {
+			return "", err
+		}
+		out[i], out[j] = out[j], out[i]
+	}
+	return string(out), nil
+}
+
+func randomChar(characters string) (byte, error) {
+	if characters == "" {
+		return 0, errors.New("random character set is empty")
+	}
+	idx, err := randomBoundedInt(len(characters))
+	if err != nil {
+		return 0, err
+	}
+	return characters[idx], nil
+}
+
+func randomBoundedInt(max int) (int, error) {
+	if max <= 0 {
+		return 0, errors.New("random max must be positive")
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0, err
+	}
+	return int(n.Int64()), nil
 }
 
 func sanitizeCommonName(value string) string {

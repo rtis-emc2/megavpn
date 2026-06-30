@@ -207,7 +207,7 @@ func (s *Store) materializeShadowsocksDefaults(ctx context.Context, instance dom
 	if passwordRefID == "" {
 		if password == "" {
 			var err error
-			password, err = randomBase64(32)
+			password, err = randomStrongPassword(32)
 			if err != nil {
 				return nil, err
 			}

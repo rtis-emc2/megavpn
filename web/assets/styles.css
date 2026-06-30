@@ -466,6 +466,19 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 .field-hint { color: var(--muted-2); font-size: 12px; line-height: 1.45; }
 .field.full { grid-column: 1 / -1; }
 .field textarea { min-height: 120px; resize: vertical; }
+.input-with-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+.input-with-button button {
+  min-height: 44px;
+  padding-inline: 16px;
+}
+.generated-secret-field input {
+  font-family: var(--mono);
+}
 .choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .choice-card {
   display: grid;

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -1808,6 +1809,69 @@ func randomBase64(size int) (string, error) {
 		return "", err
 	}
 	return base64.RawStdEncoding.EncodeToString(raw), nil
+}
+
+func randomStrongPassword(size int) (string, error) {
+	sets := []string{
+		"abcdefghijklmnopqrstuvwxyz",
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+		"0123456789",
+		"!#$%&()*+,-.:=?@_~",
+	}
+	if size <= 0 {
+		size = 32
+	}
+	if size < len(sets) {
+		size = len(sets)
+	}
+	var all strings.Builder
+	out := make([]byte, 0, size)
+	for _, set := range sets {
+		ch, err := randomCharacter(set)
+		if err != nil {
+			return "", err
+		}
+		out = append(out, ch)
+		all.WriteString(set)
+	}
+	allCharacters := all.String()
+	for len(out) < size {
+		ch, err := randomCharacter(allCharacters)
+		if err != nil {
+			return "", err
+		}
+		out = append(out, ch)
+	}
+	for i := len(out) - 1; i > 0; i-- {
+		j, err := randomInt(i + 1)
+		if err != nil {
+			return "", err
+		}
+		out[i], out[j] = out[j], out[i]
+	}
+	return string(out), nil
+}
+
+func randomCharacter(characters string) (byte, error) {
+	if characters == "" {
+		return 0, fmt.Errorf("random character set is empty")
+	}
+	idx, err := randomInt(len(characters))
+	if err != nil {
+		return 0, err
+	}
+	return characters[idx], nil
+}
+
+func randomInt(max int) (int, error) {
+	if max <= 0 {
+		return 0, fmt.Errorf("random max must be positive")
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0, err
+	}
+	return int(n.Int64()), nil
 }
 
 func (s *Store) resolveSecretString(ctx context.Context, ref any) (string, error) {

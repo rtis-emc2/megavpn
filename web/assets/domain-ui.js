@@ -228,6 +228,54 @@
       return normalized || fallback;
     }
 
+    const strongPasswordCharacterSets = [
+      'abcdefghijklmnopqrstuvwxyz',
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+      '0123456789',
+      '!#$%&()*+,-.:=?@_~',
+    ];
+
+    function secureRandomInt(max) {
+      if (!Number.isFinite(max) || max <= 0) return 0;
+      const cryptoSource = window.crypto || window.msCrypto;
+      if (!cryptoSource?.getRandomValues) {
+        throw new Error('Secure random generator is not available');
+      }
+      const values = new Uint32Array(1);
+      const limit = Math.floor(0x100000000 / max) * max;
+      do {
+        cryptoSource.getRandomValues(values);
+      } while (values[0] >= limit);
+      return values[0] % max;
+    }
+
+    function generateStrongPassword(length = 32) {
+      const size = Math.max(Number(length) || 32, strongPasswordCharacterSets.length);
+      const allCharacters = strongPasswordCharacterSets.join('');
+      const out = [];
+      for (const set of strongPasswordCharacterSets) {
+        out.push(set[secureRandomInt(set.length)]);
+      }
+      while (out.length < size) {
+        out.push(allCharacters[secureRandomInt(allCharacters.length)]);
+      }
+      for (let i = out.length - 1; i > 0; i -= 1) {
+        const j = secureRandomInt(i + 1);
+        [out[i], out[j]] = [out[j], out[i]];
+      }
+      return out.join('');
+    }
+
+    function generatedSecretValue(existing) {
+      const current = String(existing || '').trim();
+      if (current) return current;
+      try {
+        return generateStrongPassword(32);
+      } catch (_) {
+        return '';
+      }
+    }
+
     const instanceServiceCatalog = window.MegaVPNInstanceCatalog || {};
     const INSTANCE_SERVICE_ORDER = Array.isArray(instanceServiceCatalog.serviceOrder)
       ? instanceServiceCatalog.serviceOrder
@@ -447,6 +495,8 @@
             ovpn_proxy_host: stringValue(spec.socks_proxy_host, spec.http_proxy_host, spec.proxy_host, '127.0.0.1'),
             ovpn_proxy_port: numberValue(spec.socks_proxy_port, spec.http_proxy_port, spec.proxy_port, 1080),
             ovpn_server_extra_lines: Array.isArray(spec.server_extra_lines) ? spec.server_extra_lines.join('\n') : stringValue(spec.server_extra_lines),
+            ovpn_client_extra_lines: Array.isArray(spec.client_extra_lines) ? spec.client_extra_lines.join('\n') : stringValue(spec.client_extra_lines),
+            ovpn_client_template: stringValue(spec.ovpn_inline, spec.client_ovpn_inline),
             config_body: stringValue(spec.config_content),
           }, presetKey);
         case 'wireguard':
@@ -626,6 +676,16 @@
             <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/etc/openvpn/server/server.conf')}" /></div>
             <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0644')}" /></div>
             <div class="field full"><label>Server extra lines</label><textarea name="ovpn_server_extra_lines" rows="5" placeholder="push &quot;redirect-gateway def1&quot;&#10;push &quot;dhcp-option DNS 1.1.1.1&quot;">${escapeHTML(draft.ovpn_server_extra_lines || '')}</textarea></div>
+            <div class="field full">
+              <label>Client config extra lines</label>
+              <textarea name="ovpn_client_extra_lines" rows="6" placeholder="# Operator notes for generated client configs&#10;# socks-proxy 127.0.0.1 1080">${escapeHTML(draft.ovpn_client_extra_lines || '')}</textarea>
+              <div class="field-hint">Appended to every generated client .ovpn after certificates and keys. Use this for operator comments, proxy examples and client-side route hints.</div>
+            </div>
+            <div class="field full">
+              <label>Full client config template</label>
+              <textarea name="ovpn_client_template" rows="8" placeholder="Optional advanced override. Leave empty to keep generated client configs. Variables: {{CLIENT_NAME}}, {{CLIENT_USERNAME}}, {{INSTANCE_NAME}}, {{INSTANCE_SLUG}}, {{ENDPOINT_HOST}}, {{ENDPOINT_PORT}}.">${escapeHTML(draft.ovpn_client_template || '')}</textarea>
+              <div class="field-hint">Advanced mode replaces the generated client .ovpn body. Prefer extra lines unless you intentionally own the complete client config format.</div>
+            </div>
             <div class="field full"><label>Advanced server config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated OpenVPN server config.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
         case 'wireguard':
           return `${intro}
@@ -719,6 +779,7 @@
             <div class="field full"><label>Options override</label><textarea name="xl2tpd_options_body" rows="8" placeholder="Leave empty to use generated PPP options.">${escapeHTML(draft.xl2tpd_options_body || '')}</textarea></div>
             <div class="field full"><label>Advanced config override</label><textarea name="config_body" rows="12" placeholder="Leave empty to use generated xl2tpd.conf.">${escapeHTML(draft.config_body || '')}</textarea></div>`;
         case 'shadowsocks':
+          const ssPassword = generatedSecretValue(draft.ss_password);
           return `${intro}
             <div class="field"><label>Method</label><input name="ss_method" value="${escapeHTML(draft.ss_method || 'chacha20-ietf-poly1305')}" placeholder="chacha20-ietf-poly1305" /></div>
             <div class="field"><label>Mode</label><select name="ss_mode">
@@ -727,7 +788,14 @@
               <option value="udp_only"${draft.ss_mode === 'udp_only' ? ' selected' : ''}>udp_only</option>
             </select></div>
             <div class="field"><label>Timeout</label><input name="ss_timeout" type="number" min="30" max="3600" value="${escapeHTML(draft.ss_timeout || 300)}" /></div>
-            <div class="field"><label>Bootstrap password</label><input name="ss_password" value="${escapeHTML(draft.ss_password || '')}" placeholder="required before first apply" /></div>
+            <div class="field generated-secret-field">
+              <label>Bootstrap password</label>
+              <div class="input-with-button">
+                <input name="ss_password" value="${escapeHTML(ssPassword)}" autocomplete="new-password" placeholder="generated automatically" />
+                <button class="secondary-btn ss-password-generate-btn" type="button">Generate</button>
+              </div>
+              <div class="field-hint">Generated automatically: 32 characters with lowercase, uppercase, digits and symbols.</div>
+            </div>
             <div class="field"><label>Access port base</label><input name="ss_access_port_base" type="number" min="1" max="65535" value="${escapeHTML(draft.ss_access_port_base || draft.endpoint_port || 8388)}" /></div>
             <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/etc/shadowsocks-libev/shadowsocks.json')}" /></div>
             <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
@@ -750,6 +818,21 @@
       const resolvedDraft = draft || buildInstanceSpecDraft(serviceCode, null, options.presetKey || '');
       const container = form.querySelector('.service-fields');
       if (container) container.innerHTML = renderInstanceServiceFields(serviceCode, resolvedDraft);
+      const passwordButton = form.querySelector('.ss-password-generate-btn');
+      if (passwordButton) {
+        passwordButton.addEventListener('click', () => {
+          const input = form.querySelector('input[name="ss_password"]');
+          if (!input) return;
+          try {
+            input.value = generateStrongPassword(32);
+            input.setCustomValidity('');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          } catch (err) {
+            input.setCustomValidity(err?.message || 'Secure random generator is not available');
+            input.reportValidity();
+          }
+        });
+      }
       const portInput = form.querySelector('input[name="endpoint_port"]');
       if (portInput && resolvedDraft.endpoint_port) {
         applyAutoFieldValue(portInput, String(resolvedDraft.endpoint_port), options.forceDefaults);
@@ -841,6 +924,16 @@
           spec.http_proxy_port = Number(form.get('ovpn_proxy_port') || 8080) || 8080;
         }
         spec.server_extra_lines = String(form.get('ovpn_server_extra_lines') || '').trim();
+        const clientExtraLines = String(form.get('ovpn_client_extra_lines') || '').trim();
+        if (clientExtraLines) spec.client_extra_lines = clientExtraLines;
+        else delete spec.client_extra_lines;
+        const clientTemplate = String(form.get('ovpn_client_template') || '').trim();
+        if (clientTemplate) {
+          spec.ovpn_inline = clientTemplate;
+        } else {
+          delete spec.ovpn_inline;
+          delete spec.client_ovpn_inline;
+        }
         if (configBody) spec.config_content = configBody;
         else delete spec.config_content;
         delete spec.config_json;
@@ -1014,7 +1107,7 @@
         spec.method = String(form.get('ss_method') || 'chacha20-ietf-poly1305').trim();
         spec.mode = String(form.get('ss_mode') || 'tcp_and_udp').trim();
         spec.timeout = Number(form.get('ss_timeout') || 300) || 300;
-        spec.password = String(form.get('ss_password') || '').trim();
+        spec.password = String(form.get('ss_password') || '').trim() || generateStrongPassword(32);
         if (configBody) {
           spec.config_json = JSON.parse(configBody);
           delete spec.config_content;
