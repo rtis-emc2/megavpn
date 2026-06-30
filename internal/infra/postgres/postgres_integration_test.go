@@ -351,6 +351,61 @@ func TestPostgresIntegrationBinaryRepositoryTicketLifecycle(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationShadowsocksUbuntuInstallCarriesBinaryFallback(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-ss-node-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "10.50.0.25",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "x86_64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	artifact, err := store.CreateBinaryArtifact(ctx, domain.BinaryArtifact{
+		Name:         "ss-server-" + suffix,
+		Kind:         "runtime",
+		ServiceCode:  "shadowsocks",
+		Version:      "3.3.5",
+		OSFamily:     "linux",
+		Architecture: "amd64",
+		StoragePath:  "runtime/ss-server",
+		SHA256:       strings.Repeat("c", 64),
+		Metadata: map[string]any{
+			"install_mode": "copy_binary",
+			"install_path": "/usr/local/bin/ss-server",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create binary artifact: %v", err)
+	}
+	job, err := store.CreateNodeCapabilityInstallJobWithDependents(ctx, node.ID, "shadowsocks", "ubuntu_repo", "", nil)
+	if err != nil {
+		t.Fatalf("create shadowsocks capability install job: %v", err)
+	}
+	if got := job.Payload["strategy"]; got != "ubuntu_repo" {
+		t.Fatalf("strategy = %v, want ubuntu_repo; payload=%#v", got, job.Payload)
+	}
+	fallback, ok := job.Payload["binary_repository_fallback"].(map[string]any)
+	if !ok {
+		t.Fatalf("binary_repository_fallback payload missing: %#v", job.Payload)
+	}
+	if got := fallback["artifact_id"]; got != artifact.ID {
+		t.Fatalf("fallback artifact_id = %v, want %s", got, artifact.ID)
+	}
+	if token := stringify(fallback["download_token"]); token == "" {
+		t.Fatal("fallback download token must be present for the agent payload")
+	}
+}
+
 func TestPostgresIntegrationCleanupBinaryDownloadTickets(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 

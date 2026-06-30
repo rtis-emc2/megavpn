@@ -135,8 +135,12 @@
     function installerOptions(serviceCode, node = null) {
       const installers = installersForService(serviceCode);
       const preferred = preferredInstallerValue(serviceCode, node, installers);
-      return installers.map((installer, index) => `
-        <option value="${escapeHTML(installerValue(installer))}"${installerValue(installer) === preferred || (!preferred && index === 0) ? ' selected' : ''}>${escapeHTML(installer.strategy || 'default')} · ${escapeHTML(installer.channel || 'default')}</option>`).join('');
+      const automatic = installers.length
+        ? `<option value="|" selected>Automatic · platform default</option>`
+        : '';
+      const options = installers.map((installer, index) => `
+        <option value="${escapeHTML(installerValue(installer))}"${!automatic && (installerValue(installer) === preferred || (!preferred && index === 0)) ? ' selected' : ''}>${escapeHTML(installer.strategy || 'default')} · ${escapeHTML(installer.channel || 'default')}</option>`).join('');
+      return automatic + options;
     }
 
     function normalizeRuntimeArchitecture(value) {

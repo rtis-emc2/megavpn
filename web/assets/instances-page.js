@@ -311,11 +311,14 @@
         return 'pending';
       }
       if (row.capabilityRequired && !runtimeCapabilityReady(row) && runtime !== 'active') return 'problem';
-      if (status === 'failed' || runtime === 'failed' || ['failed', 'degraded', 'unhealthy', 'error'].includes(health)) {
+      if (status === 'failed' || runtime === 'failed') {
         return 'problem';
       }
       if (revision && revision !== 'applied' && revision !== 'n/a') return 'pending';
       if (['pending_apply', 'pending', 'drifted', 'out_of_sync'].includes(drift)) return 'pending';
+      if (['failed', 'degraded', 'unhealthy', 'error'].includes(health)) {
+        return 'problem';
+      }
       if (status === 'active' && runtime === 'active' && health === 'healthy' && drift === 'in_sync') return 'healthy';
       return 'unknown';
     }

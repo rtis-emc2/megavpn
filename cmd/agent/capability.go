@@ -273,6 +273,22 @@ func (c client) installCapability(ctx context.Context, j job, st agentState) (st
 		}
 		started := time.Now()
 		res := installUbuntuPackageCapability(ctx, "shadowsocks", "shadowsocks-libev", "shadowsocks-libev", ubuntuPackageEnableUnits("shadowsocks"))
+		if res["ok"] != true && hasBinaryRepositoryInstallPayload(j, "binary_repository_fallback") {
+			ubuntuResult := cloneInstallResult(res)
+			fallback := c.installBinaryRepositoryCapabilityFromPayload(ctx, j, serviceCode, "binary_repository_fallback")
+			fallback["fallback_from"] = "ubuntu_repo"
+			fallback["ubuntu_repo_result"] = ubuntuResult
+			fallback["message"] = firstNonEmptyString(stringFromMap(fallback, "message"), "shadowsocks binary repository fallback completed")
+			inv := collectInventory()
+			_ = c.submitInventory(ctx, st.NodeID, "inventory", inv)
+			fallback = normalizeInstallResult(fallback, serviceCode, "binary_repository", started)
+			fallback["requested_strategy"] = strategy
+			fallback["agent_version"] = appVersion
+			if fallback["ok"] == true {
+				return "succeeded", fallback
+			}
+			return "failed", fallback
+		}
 		inv := collectInventory()
 		_ = c.submitInventory(ctx, st.NodeID, "inventory", inv)
 		res = normalizeInstallResult(res, serviceCode, strategy, started)
@@ -284,6 +300,31 @@ func (c client) installCapability(ctx context.Context, j job, st agentState) (st
 	default:
 		return "failed", map[string]any{"error": "capability is not whitelisted for install", "service_code": serviceCode}
 	}
+}
+
+func hasBinaryRepositoryInstallPayload(j job, key string) bool {
+	repo, ok := j.Payload[strings.TrimSpace(key)].(map[string]any)
+	return ok && repo != nil
+}
+
+func cloneInstallResult(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func (c client) verifyCapability(ctx context.Context, j job, st agentState) (string, map[string]any) {

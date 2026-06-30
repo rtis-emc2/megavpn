@@ -32,13 +32,21 @@ type downloadedBinaryArtifact struct {
 }
 
 func (c client) installBinaryRepositoryCapability(ctx context.Context, j job, serviceCode string) map[string]any {
+	return c.installBinaryRepositoryCapabilityFromPayload(ctx, j, serviceCode, "binary_repository")
+}
+
+func (c client) installBinaryRepositoryCapabilityFromPayload(ctx context.Context, j job, serviceCode, payloadKey string) map[string]any {
 	startedSteps := []map[string]any{}
 	if os.Geteuid() != 0 {
 		return map[string]any{"ok": false, "message": serviceCode + " binary repository install requires root", "steps": startedSteps}
 	}
-	repo, ok := j.Payload["binary_repository"].(map[string]any)
+	payloadKey = strings.TrimSpace(payloadKey)
+	if payloadKey == "" {
+		payloadKey = "binary_repository"
+	}
+	repo, ok := j.Payload[payloadKey].(map[string]any)
 	if !ok || repo == nil {
-		return map[string]any{"ok": false, "message": "binary repository payload is missing", "steps": startedSteps}
+		return map[string]any{"ok": false, "message": payloadKey + " payload is missing", "steps": startedSteps}
 	}
 	artifact, err := c.downloadBinaryRepositoryArtifact(ctx, j, repo)
 	if err != nil {

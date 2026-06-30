@@ -602,7 +602,8 @@ func (s *Store) CreateNodeCapabilityInstallJobWithDependents(ctx context.Context
 	}
 	var binaryArtifact domain.BinaryArtifact
 	binaryRepositoryAvailable := false
-	if strategy == "" || strategy == "binary_repository" {
+	checkBinaryRepository := strategy == "" || strategy == "binary_repository" || (strategy == "ubuntu_repo" && serviceCode == driver.Shadowsocks)
+	if checkBinaryRepository {
 		artifact, err := s.FindBinaryRuntimeArtifactForNode(ctx, nodeID, serviceCode)
 		switch {
 		case err == nil:
@@ -648,6 +649,17 @@ func (s *Store) CreateNodeCapabilityInstallJobWithDependents(ctx context.Context
 			return domain.Job{}, fmt.Errorf("binary repository download ticket create failed: %w", err)
 		}
 		payload["binary_repository"] = binaryRepositoryPayload(binaryArtifact, ticket)
+		j, err := s.createCapabilityInstallJob(ctx, domain.Job{ID: jobID, Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload}, &ticket, nodeID, serviceCode, strategy, dependentInstanceIDs)
+		return j, err
+	}
+	if strategy == "ubuntu_repo" && serviceCode == driver.Shadowsocks && binaryRepositoryAvailable {
+		jobID := id.New()
+		ticketJobID := jobID
+		ticket, err := newBinaryDownloadTicket(binaryArtifact.ID, nodeID, &ticketJobID, 2*time.Hour)
+		if err != nil {
+			return domain.Job{}, fmt.Errorf("binary repository fallback download ticket create failed: %w", err)
+		}
+		payload["binary_repository_fallback"] = binaryRepositoryPayload(binaryArtifact, ticket)
 		j, err := s.createCapabilityInstallJob(ctx, domain.Job{ID: jobID, Type: "node.capability.install", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Priority: 60, Payload: payload}, &ticket, nodeID, serviceCode, strategy, dependentInstanceIDs)
 		return j, err
 	}

@@ -863,6 +863,7 @@ func (s *Store) upsertInstanceRuntimeStateForAgentReport(ctx context.Context, no
 	report.ConfigHash = strings.TrimSpace(report.ConfigHash)
 	report.ConfigPath = strings.TrimSpace(report.ConfigPath)
 	report.ErrorText = strings.TrimSpace(report.ErrorText)
+	report = normalizeRuntimeReportBeforeProjection(instance, report)
 	runtimeStatus := runtimeStatusFromAgentReport(instance, report)
 	healthStatus := healthStatusFromAgentReport(instance, report)
 	driftStatus := driftStatusFromAgentReport(instance, report)
@@ -968,6 +969,30 @@ func (s *Store) upsertInstanceRuntimeStateForAgentReport(ctx context.Context, no
 		return domain.InstanceRuntimeState{}, err
 	}
 	return s.GetInstanceRuntimeState(ctx, instance.ID)
+}
+
+func normalizeRuntimeReportBeforeProjection(instance domain.Instance, report domain.AgentInstanceRuntimeReport) domain.AgentInstanceRuntimeReport {
+	if runtimeReportConfigMissingBeforeApply(instance, report) {
+		report.ErrorText = ""
+	}
+	return report
+}
+
+func runtimeReportConfigMissingBeforeApply(instance domain.Instance, report domain.AgentInstanceRuntimeReport) bool {
+	if strings.TrimSpace(report.ConfigHash) != "" || strings.TrimSpace(report.ErrorText) == "" {
+		return false
+	}
+	lower := strings.ToLower(report.ErrorText)
+	if !strings.Contains(lower, "no such file or directory") {
+		return false
+	}
+	if instance.CurrentRevisionID == nil || strings.TrimSpace(*instance.CurrentRevisionID) == "" {
+		return true
+	}
+	if instance.LastAppliedRevisionID == nil || strings.TrimSpace(*instance.LastAppliedRevisionID) != strings.TrimSpace(*instance.CurrentRevisionID) {
+		return true
+	}
+	return false
 }
 
 func insertInstanceRuntimeObservation(ctx context.Context, tx pgx.Tx, obs domain.InstanceRuntimeObservation) error {

@@ -219,6 +219,42 @@ func TestAgentRuntimeReportDerivationOpenVPNOperationalWhileSystemdActivating(t 
 	}
 }
 
+func TestRuntimeReportConfigMissingBeforeApplyIsNotHardFailure(t *testing.T) {
+	t.Parallel()
+
+	instance := domain.Instance{
+		CurrentRevisionID:     stringPtr("rev-2"),
+		LastAppliedRevisionID: stringPtr("rev-1"),
+	}
+	report := domain.AgentInstanceRuntimeReport{
+		ConfigHash:  "",
+		ActiveState: "inactive",
+		ErrorText:   "open /etc/shadowsocks-libev/access.json: no such file or directory",
+	}
+	normalized := normalizeRuntimeReportBeforeProjection(instance, report)
+	if normalized.ErrorText != "" {
+		t.Fatalf("normalized error = %q, want empty before current revision is applied", normalized.ErrorText)
+	}
+}
+
+func TestRuntimeReportConfigMissingAfterApplyRemainsFailure(t *testing.T) {
+	t.Parallel()
+
+	instance := domain.Instance{
+		CurrentRevisionID:     stringPtr("rev-1"),
+		LastAppliedRevisionID: stringPtr("rev-1"),
+	}
+	report := domain.AgentInstanceRuntimeReport{
+		ConfigHash:  "",
+		ActiveState: "inactive",
+		ErrorText:   "open /etc/shadowsocks-libev/access.json: no such file or directory",
+	}
+	normalized := normalizeRuntimeReportBeforeProjection(instance, report)
+	if normalized.ErrorText == "" {
+		t.Fatal("expected config missing to stay visible after current revision was applied")
+	}
+}
+
 func TestRuntimeProjectionBuildsDriverHealthChecks(t *testing.T) {
 	t.Parallel()
 

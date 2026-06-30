@@ -111,3 +111,17 @@ func TestShadowsocksUbuntuRuntimeInstallDoesNotEnablePackageUnit(t *testing.T) {
 		t.Fatalf("openvpn runtime install enable units = %#v, want [openvpn]", got)
 	}
 }
+
+func TestHasBinaryRepositoryInstallPayload(t *testing.T) {
+	t.Parallel()
+
+	j := job{Payload: map[string]any{
+		"binary_repository_fallback": map[string]any{"artifact_id": "artifact-1"},
+	}}
+	if !hasBinaryRepositoryInstallPayload(j, "binary_repository_fallback") {
+		t.Fatal("expected fallback binary repository payload to be detected")
+	}
+	if hasBinaryRepositoryInstallPayload(j, "binary_repository") {
+		t.Fatal("unexpected primary binary repository payload")
+	}
+}
