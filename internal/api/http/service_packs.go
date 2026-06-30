@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	nethttp "net/http"
@@ -17,6 +18,8 @@ import (
 
 type servicePackComponent = domain.ServicePackComponent
 type servicePackDefinition = domain.ServicePackDefinition
+
+var errDefaultPlatformLeafCertificateNotFound = errors.New("default platform leaf certificate not found")
 
 type servicePackCatalogStore interface {
 	EnsureDefaultServicePacks(context.Context, []domain.ServicePackDefinition) error
@@ -402,6 +405,14 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			missingRuntimes[serviceCode] = true
 		}
 	}
+	if req.CertificateID == "" && servicePackUsesTLSEdgeCertificate(pack) {
+		certificateID, err := s.defaultPlatformLeafCertificateID(r.Context())
+		if err != nil && !errors.Is(err, errDefaultPlatformLeafCertificateNotFound) {
+			writeErr(w, 409, "default TLS edge certificate preflight failed: "+err.Error())
+			return
+		}
+		req.CertificateID = certificateID
+	}
 	created := make([]domain.Instance, 0, len(pack.Components))
 	applyNowInstanceIDs := []string{}
 	dependentInstanceIDsByRuntime := map[string][]string{}
@@ -419,15 +430,8 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			"base_name":      req.BaseName,
 			"component_slug": slug,
 		})
-		if req.CertificateID != "" {
-			switch component.ServiceCode {
-			case "nginx":
-				spec["certificate_id"] = req.CertificateID
-			case "xray-core":
-				if strings.EqualFold(firstStringHTTP(spec["security"]), "tls") {
-					spec["certificate_id"] = req.CertificateID
-				}
-			}
+		if req.CertificateID != "" && servicePackComponentUsesTLSEdgeCertificate(component) {
+			spec["certificate_id"] = req.CertificateID
 		}
 		if component.ServiceCode == "openvpn" && req.OpenVPNPKIProfile != "" {
 			spec["pki_scope"] = "platform"
@@ -536,6 +540,47 @@ func servicePackComponentLabel(component domain.ServicePackComponent) string {
 		}
 	}
 	return "component"
+}
+
+func servicePackUsesTLSEdgeCertificate(pack domain.ServicePackDefinition) bool {
+	for _, component := range pack.Components {
+		if servicePackComponentUsesTLSEdgeCertificate(component) {
+			return true
+		}
+	}
+	return false
+}
+
+func servicePackComponentUsesTLSEdgeCertificate(component domain.ServicePackComponent) bool {
+	switch driver.NormalizeCode(component.ServiceCode) {
+	case driver.Nginx:
+		return true
+	case driver.XrayCore:
+		return strings.EqualFold(firstStringHTTP(component.Spec["security"], component.Spec["tls_security"]), "tls")
+	default:
+		return false
+	}
+}
+
+func (s *Server) defaultPlatformLeafCertificateID(ctx context.Context) (string, error) {
+	items, err := s.store.ListPlatformCertificates(ctx)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC()
+	for _, item := range items {
+		if !item.IsDefault || !strings.EqualFold(strings.TrimSpace(item.Kind), "leaf") || !strings.EqualFold(strings.TrimSpace(item.Status), "active") {
+			continue
+		}
+		if item.KeySecretRefID == nil || strings.TrimSpace(*item.KeySecretRefID) == "" {
+			continue
+		}
+		if item.NotAfter != nil && !item.NotAfter.After(now) {
+			continue
+		}
+		return item.ID, nil
+	}
+	return "", errDefaultPlatformLeafCertificateNotFound
 }
 
 func missingServicePackRuntimeCapabilities(components []domain.ServicePackComponent, capabilities []domain.NodeCapability) []string {

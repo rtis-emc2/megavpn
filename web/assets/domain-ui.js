@@ -23,6 +23,24 @@
       return availableServicePacks().find((pack) => pack.key === packKey) || null;
     }
 
+    function servicePackComponents(pack) {
+      return Array.isArray(pack?.components) ? pack.components : [];
+    }
+
+    function servicePackComponentUsesTLSEdgeCertificate(component) {
+      const serviceCode = normalizeInstanceServiceCode(component?.service_code);
+      const spec = component?.spec && typeof component.spec === 'object' ? component.spec : {};
+      if (serviceCode === 'nginx') return true;
+      if (serviceCode === 'xray-core') {
+        return String(spec.security || spec.tls_security || '').trim().toLowerCase() === 'tls';
+      }
+      return false;
+    }
+
+    function servicePackUsesTLSEdgeCertificate(pack) {
+      return servicePackComponents(pack).some(servicePackComponentUsesTLSEdgeCertificate);
+    }
+
     function defaultServicePack() {
       return availableServicePacks()[0] || null;
     }
@@ -44,6 +62,14 @@
           if (Boolean(left.is_default) !== Boolean(right.is_default)) return left.is_default ? -1 : 1;
           return String(left.name || left.common_name || left.id).localeCompare(String(right.name || right.common_name || right.id), 'en');
         });
+    }
+
+    function defaultLeafCertificate() {
+      return activeLeafCertificates().find((item) => Boolean(item.is_default)) || null;
+    }
+
+    function defaultLeafCertificateID() {
+      return defaultLeafCertificate()?.id || '';
     }
 
     function activeManagedAuthorities() {
@@ -1066,9 +1092,14 @@
       instanceServiceOptions,
       availableServicePacks,
       servicePackByKey,
+      servicePackComponents,
+      servicePackComponentUsesTLSEdgeCertificate,
+      servicePackUsesTLSEdgeCertificate,
       defaultServicePack,
       servicePackOptions,
       activeLeafCertificates,
+      defaultLeafCertificate,
+      defaultLeafCertificateID,
       activeManagedAuthorities,
       activeServicePKIRoots,
       certificateIsExpired,

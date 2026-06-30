@@ -112,6 +112,46 @@ func TestMissingServicePackRuntimeCapabilitiesDeduplicatesRuntime(t *testing.T) 
 	}
 }
 
+func TestServicePackTLSEdgeCertificateScope(t *testing.T) {
+	cases := []struct {
+		name      string
+		component domain.ServicePackComponent
+		want      bool
+	}{
+		{
+			name:      "nginx always terminates edge TLS",
+			component: domain.ServicePackComponent{ServiceCode: "nginx", Spec: map[string]any{}},
+			want:      true,
+		},
+		{
+			name:      "xray tls uses edge certificate",
+			component: domain.ServicePackComponent{ServiceCode: "xray-core", Spec: map[string]any{"security": "tls"}},
+			want:      true,
+		},
+		{
+			name:      "xray reality does not use leaf TLS certificate",
+			component: domain.ServicePackComponent{ServiceCode: "xray-core", Spec: map[string]any{"security": "reality"}},
+			want:      false,
+		},
+		{
+			name:      "openvpn uses service pki profile instead",
+			component: domain.ServicePackComponent{ServiceCode: "openvpn", Spec: map[string]any{}},
+			want:      false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := servicePackComponentUsesTLSEdgeCertificate(tc.component); got != tc.want {
+				t.Fatalf("servicePackComponentUsesTLSEdgeCertificate() = %v, want %v", got, tc.want)
+			}
+			pack := domain.ServicePackDefinition{Components: []domain.ServicePackComponent{tc.component}}
+			if got := servicePackUsesTLSEdgeCertificate(pack); got != tc.want {
+				t.Fatalf("servicePackUsesTLSEdgeCertificate() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDefaultServicePackDefinitionsReturnsCopy(t *testing.T) {
 	first := DefaultServicePackDefinitions()
 	if len(first) == 0 || len(first[0].Components) == 0 {

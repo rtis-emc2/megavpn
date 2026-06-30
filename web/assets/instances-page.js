@@ -34,6 +34,8 @@
       typeof domainUI.nodeOptions !== 'function' ||
       typeof domainUI.normalizeInstanceServiceCode !== 'function' ||
       typeof domainUI.certificateOptions !== 'function' ||
+      typeof domainUI.defaultLeafCertificateID !== 'function' ||
+      typeof domainUI.servicePackUsesTLSEdgeCertificate !== 'function' ||
       typeof domainUI.servicePKIProfileOptions !== 'function' ||
       typeof renderActionResponse !== 'function' ||
       typeof sendJSON !== 'function' ||
@@ -51,7 +53,14 @@
       throw new Error('MegaVPNInstancesPage requires page dependencies');
     }
 
-    const { certificateOptions, nodeOptions, normalizeInstanceServiceCode, servicePKIProfileOptions } = domainUI;
+    const {
+      certificateOptions,
+      defaultLeafCertificateID,
+      nodeOptions,
+      normalizeInstanceServiceCode,
+      servicePackUsesTLSEdgeCertificate,
+      servicePKIProfileOptions,
+    } = domainUI;
     const INSTANCE_PAGE_SIZE = 100;
 
     function instanceEndpoint(instance) {
@@ -838,8 +847,9 @@
       const packs = servicePackCatalogItems();
       const selectedPack = ensureCreatePackSelection(packs);
       const nodeSelect = nodeOptions();
-      const certificateSelect = certificateOptions('', true);
       const usesOpenVPN = packUsesService(selectedPack, 'openvpn');
+      const usesTLSEdgeCertificate = servicePackUsesTLSEdgeCertificate(selectedPack);
+      const certificateSelect = certificateOptions(defaultLeafCertificateID(), true);
       const baseName = selectedPack?.base_name_template || 'edge-service-pack';
       const endpointHint = selectedPack?.endpoint_hint || 'edge.example.com';
       const endpointRequired = Boolean(selectedPack?.requires_endpoint_host);
@@ -881,11 +891,12 @@
                     <label>Endpoint host</label>
                     <input name="endpoint_host" placeholder="${escapeHTML(endpointHint)}"${endpointRequired ? ' required' : ''}>
                   </div>
-                  <div class="field full">
-                    <label>TLS edge certificate</label>
-                    <select name="certificate_id">${certificateSelect}</select>
-                    <div class="field-hint">Used by TLS-facing Nginx or Xray components only. OpenVPN uses the Service CA profile below.</div>
-                  </div>
+                  ${usesTLSEdgeCertificate ? `
+                    <div class="field full">
+                      <label>TLS edge certificate</label>
+                      <select name="certificate_id">${certificateSelect}</select>
+                      <div class="field-hint">Optional override for TLS-facing Nginx or Xray TLS components. The platform default certificate is selected automatically.</div>
+                    </div>` : ''}
                   ${usesOpenVPN ? `
                     <div class="field full">
                       <label>OpenVPN CA profile</label>
