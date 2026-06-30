@@ -167,7 +167,7 @@
               <div class="service-strategy-row">
                 <div>
                 <div class="inline-actions" style="justify-content:flex-start;gap:10px">
-                  <strong>${escapeHTML(installer.strategy)}</strong>
+                  <strong>${escapeHTML(serviceInstallerDisplayLabel(installer, item.serviceCode))}</strong>
                   ${serviceInstallerStateTag(installer, capability)}
                   ${String(installer.strategy || '') === 'binary_repository' ? binaryArtifactSummary(item.serviceCode) : ''}
                 </div>
@@ -175,7 +175,7 @@
               </div>
               <div class="inline-actions">
                   <button class="secondary-btn service-verify-btn" type="button" data-service-code="${escapeHTML(item.serviceCode)}">Verify</button>
-                  <button class="primary-btn service-install-btn" type="button" data-service-code="${escapeHTML(item.serviceCode)}" data-strategy="${escapeHTML(installer.strategy || '')}" data-channel="${escapeHTML(installer.channel || '')}"${node ? '' : ' disabled'}>${escapeHTML(serviceInstallerPrimaryLabel(installer, capability))}</button>
+                  <button class="primary-btn service-install-btn" type="button" data-service-code="${escapeHTML(item.serviceCode)}" data-strategy="${escapeHTML(installer.strategy || '')}" data-channel="${escapeHTML(installer.channel || '')}" title="${escapeHTML(installer.description || '')}"${node ? '' : ' disabled'}>${escapeHTML(serviceInstallerPrimaryLabel(installer, capability, item.serviceCode))}</button>
                 </div>
               </div>
             `).join('')}
@@ -183,13 +183,44 @@
         </section>`;
     }
 
-    function serviceInstallerPrimaryLabel(installer, capability) {
+    function serviceInstallerDisplayLabel(installer, serviceCode = '') {
+      const strategy = String(installer?.strategy || '').trim();
+      switch (strategy) {
+      case 'binary_repository':
+        return 'Pinned artifact';
+      case 'xtls_install_release':
+        return 'XTLS release script';
+      case 'nginx_org_repo':
+        return 'nginx.org repo';
+      case 'ubuntu_repo':
+        return String(serviceCode || '').trim() === 'shadowsocks' ? 'Ubuntu package: libev' : 'Ubuntu package';
+      case 'manual_present':
+        return 'Already installed';
+      default:
+        return strategy || 'Default';
+      }
+    }
+
+    function serviceInstallerPrimaryLabel(installer, capability, serviceCode = '') {
       const strategy = String(installer?.strategy || '').trim();
       const status = String(capability?.status || '').trim().toLowerCase();
-      if (strategy === 'manual_present') {
+      switch (strategy) {
+      case 'manual_present':
         return status === 'available' ? 'Re-verify' : 'Register';
+      case 'binary_repository':
+        return status === 'available' ? 'Reinstall artifact' : 'Install artifact';
+      case 'xtls_install_release':
+        return status === 'available' ? 'Reinstall XTLS' : 'Install XTLS';
+      case 'nginx_org_repo':
+        return status === 'available' ? 'Reinstall nginx.org' : 'Install nginx.org';
+      case 'ubuntu_repo':
+        if (String(serviceCode || '').trim() === 'shadowsocks') {
+          return status === 'available' ? 'Reinstall libev' : 'Install libev';
+        }
+        return status === 'available' ? 'Reinstall Ubuntu pkg' : 'Install Ubuntu pkg';
+      default:
+        return status === 'available' ? 'Reinstall' : 'Install';
       }
-      return status === 'available' ? 'Reinstall' : 'Install';
     }
 
     function serviceInstallerStateTag(installer, capability) {
@@ -293,7 +324,7 @@
               <td>
                 <div class="runtime-installer-list">
                   ${item.installers.map((installer) => `
-                    <span class="tag" title="${escapeHTML(installer.description || '')}">${escapeHTML(installer.strategy || 'default')}</span>
+                    <span class="tag" title="${escapeHTML(installer.description || '')}">${escapeHTML(serviceInstallerDisplayLabel(installer, item.serviceCode))}</span>
                   `).join('')}
                 </div>
               </td>
@@ -301,7 +332,7 @@
                 <div class="runtime-action-grid">
                   <button class="secondary-btn service-verify-btn" type="button" data-service-code="${escapeHTML(item.serviceCode)}">Verify</button>
                   ${item.installers.map((installer) => `
-                    <button class="primary-btn service-install-btn" type="button" data-service-code="${escapeHTML(item.serviceCode)}" data-strategy="${escapeHTML(installer.strategy || '')}" data-channel="${escapeHTML(installer.channel || '')}"${node ? '' : ' disabled'}>${escapeHTML(serviceInstallerPrimaryLabel(installer, capability))}</button>
+                    <button class="${String(installer.strategy || '') === 'manual_present' ? 'secondary-btn' : 'primary-btn'} service-install-btn" type="button" data-service-code="${escapeHTML(item.serviceCode)}" data-strategy="${escapeHTML(installer.strategy || '')}" data-channel="${escapeHTML(installer.channel || '')}" title="${escapeHTML(installer.description || '')}"${node ? '' : ' disabled'}>${escapeHTML(serviceInstallerPrimaryLabel(installer, capability, item.serviceCode))}</button>
                   `).join('')}
                 </div>
               </td>

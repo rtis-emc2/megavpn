@@ -709,9 +709,9 @@ func (s *Server) listServiceInstallers(w nethttp.ResponseWriter, r *nethttp.Requ
 		{"service_code": "http_proxy", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed Squid runtime."},
 		{"service_code": "xl2tpd", "strategy": "ubuntu_repo", "channel": "stable", "description": "Install xl2tpd from the Ubuntu repository for L2TP support."},
 		{"service_code": "xl2tpd", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed xl2tpd runtime."},
-		{"service_code": "shadowsocks", "strategy": "binary_repository", "channel": "stable", "description": "Install Shadowsocks from a pinned control-plane binary repository artifact."},
-		{"service_code": "shadowsocks", "strategy": "ubuntu_repo", "channel": "stable", "description": "Install shadowsocks-libev from the Ubuntu repository."},
-		{"service_code": "shadowsocks", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed Shadowsocks runtime."},
+		{"service_code": "shadowsocks", "strategy": "binary_repository", "channel": "stable", "description": "Install a pinned ss-server binary from the control-plane binary repository."},
+		{"service_code": "shadowsocks", "strategy": "ubuntu_repo", "channel": "stable", "description": "Install shadowsocks-libev from the Ubuntu repository; this provides the ss-server runtime used by managed instances."},
+		{"service_code": "shadowsocks", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed ss-server runtime."},
 	})
 }
 
