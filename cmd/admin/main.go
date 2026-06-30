@@ -185,24 +185,25 @@ func importBinaryArtifact(args []string) error {
 	fs.SetOutput(os.Stderr)
 
 	var (
-		databaseDSN  = fs.String("database-dsn", "", "PostgreSQL DSN; defaults to MEGAVPN_DATABASE_DSN")
-		envFile      = fs.String("env-file", "/etc/megavpn/megavpn.env", "runtime environment file loaded before reading env vars; empty disables file loading")
-		artifactRoot = fs.String("artifact-root", "", "artifact storage root; defaults to MEGAVPN_ARTIFACT_ROOT")
-		sourceFile   = fs.String("file", "", "local artifact file to import")
-		name         = fs.String("name", "", "artifact name; defaults to source filename")
-		kind         = fs.String("kind", "", "artifact kind: script, package, runtime or bundle; defaults from file extension")
-		serviceCode  = fs.String("service-code", "", "runtime service code, for example xray-core or shadowsocks")
-		version      = fs.String("version", "", "runtime artifact version")
-		osFamily     = fs.String("os-family", "linux", "target OS family")
-		osVersion    = fs.String("os-version", "", "target OS version, empty means any")
-		architecture = fs.String("architecture", "amd64", "target architecture: amd64 or arm64")
-		installMode  = fs.String("install-mode", "", "optional installer mode, for example xray_install_script or deb_package")
-		installPath  = fs.String("install-path", "", "optional target executable path for copy_binary mode")
-		expectedSHA  = fs.String("expected-sha256", "", "optional expected SHA-256 pin checked while importing")
-		signature    = fs.String("signature", "", "optional detached signature or signature reference")
-		storagePath  = fs.String("storage-path", "", "optional relative repository path under artifact root")
-		replace      = fs.Bool("replace-file", false, "replace an existing file at the repository storage path")
-		timeout      = fs.Duration("timeout", 10*time.Second, "database operation timeout")
+		databaseDSN       = fs.String("database-dsn", "", "PostgreSQL DSN; defaults to MEGAVPN_DATABASE_DSN")
+		envFile           = fs.String("env-file", "/etc/megavpn/megavpn.env", "runtime environment file loaded before reading env vars; empty disables file loading")
+		artifactRoot      = fs.String("artifact-root", "", "artifact storage root; defaults to MEGAVPN_ARTIFACT_ROOT")
+		sourceFile        = fs.String("file", "", "local artifact file to import")
+		name              = fs.String("name", "", "artifact name; defaults to source filename")
+		kind              = fs.String("kind", "", "artifact kind: script, package, runtime or bundle; defaults from file extension")
+		serviceCode       = fs.String("service-code", "", "runtime service code, for example xray-core or shadowsocks")
+		version           = fs.String("version", "", "runtime artifact version")
+		osFamily          = fs.String("os-family", "linux", "target OS family")
+		osVersion         = fs.String("os-version", "", "target OS version, empty means any")
+		architecture      = fs.String("architecture", "amd64", "target architecture: amd64 or arm64")
+		installMode       = fs.String("install-mode", "", "optional installer mode, for example zip_binary, xray_install_script or deb_package")
+		installPath       = fs.String("install-path", "", "optional target executable path for copy_binary mode")
+		archiveBinaryPath = fs.String("archive-binary-path", "", "optional executable member path inside zip or bundle artifacts")
+		expectedSHA       = fs.String("expected-sha256", "", "optional expected SHA-256 pin checked while importing")
+		signature         = fs.String("signature", "", "optional detached signature or signature reference")
+		storagePath       = fs.String("storage-path", "", "optional relative repository path under artifact root")
+		replace           = fs.Bool("replace-file", false, "replace an existing file at the repository storage path")
+		timeout           = fs.Duration("timeout", 10*time.Second, "database operation timeout")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -225,20 +226,21 @@ func importBinaryArtifact(args []string) error {
 	}
 
 	artifact, err := prepareBinaryArtifactImport(root, binaryArtifactImportRequest{
-		SourceFile:   *sourceFile,
-		Name:         *name,
-		Kind:         *kind,
-		ServiceCode:  *serviceCode,
-		Version:      *version,
-		OSFamily:     *osFamily,
-		OSVersion:    *osVersion,
-		Architecture: *architecture,
-		InstallMode:  *installMode,
-		InstallPath:  *installPath,
-		ExpectedSHA:  *expectedSHA,
-		Signature:    *signature,
-		StoragePath:  *storagePath,
-		ReplaceFile:  *replace,
+		SourceFile:        *sourceFile,
+		Name:              *name,
+		Kind:              *kind,
+		ServiceCode:       *serviceCode,
+		Version:           *version,
+		OSFamily:          *osFamily,
+		OSVersion:         *osVersion,
+		Architecture:      *architecture,
+		InstallMode:       *installMode,
+		InstallPath:       *installPath,
+		ArchiveBinaryPath: *archiveBinaryPath,
+		ExpectedSHA:       *expectedSHA,
+		Signature:         *signature,
+		StoragePath:       *storagePath,
+		ReplaceFile:       *replace,
 	})
 	if err != nil {
 		return err
@@ -373,38 +375,40 @@ func parseAdminEnvValue(raw string) (string, error) {
 }
 
 type binaryArtifactImportRequest struct {
-	SourceFile   string
-	Name         string
-	Kind         string
-	ServiceCode  string
-	Version      string
-	OSFamily     string
-	OSVersion    string
-	Architecture string
-	InstallMode  string
-	InstallPath  string
-	ExpectedSHA  string
-	Signature    string
-	StoragePath  string
-	ReplaceFile  bool
+	SourceFile        string
+	Name              string
+	Kind              string
+	ServiceCode       string
+	Version           string
+	OSFamily          string
+	OSVersion         string
+	Architecture      string
+	InstallMode       string
+	InstallPath       string
+	ArchiveBinaryPath string
+	ExpectedSHA       string
+	Signature         string
+	StoragePath       string
+	ReplaceFile       bool
 }
 
 func prepareBinaryArtifactImport(root string, req binaryArtifactImportRequest) (domain.BinaryArtifact, error) {
 	return binaryrepo.ImportFile(root, binaryrepo.ImportRequest{
-		SourceFile:     req.SourceFile,
-		Name:           req.Name,
-		Kind:           req.Kind,
-		ServiceCode:    req.ServiceCode,
-		Version:        req.Version,
-		OSFamily:       req.OSFamily,
-		OSVersion:      req.OSVersion,
-		Architecture:   req.Architecture,
-		InstallMode:    req.InstallMode,
-		InstallPath:    req.InstallPath,
-		ExpectedSHA256: req.ExpectedSHA,
-		Signature:      req.Signature,
-		StoragePath:    req.StoragePath,
-		ReplaceFile:    req.ReplaceFile,
+		SourceFile:        req.SourceFile,
+		Name:              req.Name,
+		Kind:              req.Kind,
+		ServiceCode:       req.ServiceCode,
+		Version:           req.Version,
+		OSFamily:          req.OSFamily,
+		OSVersion:         req.OSVersion,
+		Architecture:      req.Architecture,
+		InstallMode:       req.InstallMode,
+		InstallPath:       req.InstallPath,
+		ArchiveBinaryPath: req.ArchiveBinaryPath,
+		ExpectedSHA256:    req.ExpectedSHA,
+		Signature:         req.Signature,
+		StoragePath:       req.StoragePath,
+		ReplaceFile:       req.ReplaceFile,
 	})
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,6 +20,7 @@ import (
 )
 
 const binaryDownloadTicketHeader = "X-MegaVPN-Binary-Ticket"
+const maxExtractedBinaryBytes int64 = 256 * 1024 * 1024
 
 type downloadedBinaryArtifact struct {
 	Path    string
@@ -73,6 +76,22 @@ func (c client) installBinaryRepositoryCapability(ctx context.Context, j job, se
 			return map[string]any{"ok": false, "message": "binary repository executable install failed", "error": err.Error(), "steps": steps, "binary_repository": repositoryResult}
 		}
 		repositoryResult["install_path"] = targetPath
+		steps = append(steps, map[string]any{"stage": "install", "mode": mode, "install_path": targetPath})
+	case "zip_binary":
+		targetPath := binaryInstallPath(serviceCode, repo)
+		if err := validateBinaryInstallPath(serviceCode, targetPath); err != nil {
+			return map[string]any{"ok": false, "message": "binary repository install_path is not allowed", "error": err.Error(), "steps": steps, "binary_repository": repositoryResult}
+		}
+		binaryPath, member, err := extractZipBinaryArtifact(artifact.Path, artifact.Dir, serviceCode, binaryArchiveBinaryPath(repo))
+		if err != nil {
+			return map[string]any{"ok": false, "message": "binary repository zip extraction failed", "error": err.Error(), "steps": steps, "binary_repository": repositoryResult}
+		}
+		steps = append(steps, map[string]any{"stage": "extract", "mode": mode, "archive_binary_path": member})
+		if err := installBinaryExecutable(binaryPath, targetPath); err != nil {
+			return map[string]any{"ok": false, "message": "binary repository executable install failed", "error": err.Error(), "steps": steps, "binary_repository": repositoryResult}
+		}
+		repositoryResult["install_path"] = targetPath
+		repositoryResult["archive_binary_path"] = member
 		steps = append(steps, map[string]any{"stage": "install", "mode": mode, "install_path": targetPath})
 	case "xray_install_script":
 		if serviceCode != "xray-core" {
@@ -222,6 +241,11 @@ func binaryInstallPath(serviceCode string, repo map[string]any) string {
 	return defaultBinaryInstallPath(serviceCode)
 }
 
+func binaryArchiveBinaryPath(repo map[string]any) string {
+	metadata, _ := repo["metadata"].(map[string]any)
+	return strings.TrimSpace(stringify(metadata["archive_binary_path"]))
+}
+
 func binaryRepositoryInstallResult(repo map[string]any, artifact downloadedBinaryArtifact, mode string) map[string]any {
 	result := map[string]any{
 		"kind":                 artifact.Kind,
@@ -243,6 +267,12 @@ func defaultBinaryInstallMode(serviceCode, kind, path string) string {
 	}
 	if kind == "package" || strings.HasSuffix(strings.ToLower(path), ".deb") {
 		return "deb_package"
+	}
+	if kind == "bundle" {
+		switch serviceCode {
+		case "xray-core":
+			return "zip_binary"
+		}
 	}
 	if kind == "runtime" {
 		switch serviceCode {
@@ -327,6 +357,168 @@ func installBinaryExecutable(source, target string) error {
 	}
 	removeTmp = false
 	return nil
+}
+
+func extractZipBinaryArtifact(archivePath, workDir, serviceCode, preferredMember string) (string, string, error) {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return "", "", errors.New("work directory is required")
+	}
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return "", "", fmt.Errorf("open zip artifact: %w", err)
+	}
+	defer reader.Close()
+
+	member, err := selectZipBinaryMember(reader.File, serviceCode, preferredMember)
+	if err != nil {
+		return "", "", err
+	}
+	if member.UncompressedSize64 == 0 {
+		return "", "", fmt.Errorf("zip member %s is empty", member.Name)
+	}
+	if member.UncompressedSize64 > uint64(maxExtractedBinaryBytes) {
+		return "", "", fmt.Errorf("zip member %s exceeds maximum extracted size", member.Name)
+	}
+
+	in, err := member.Open()
+	if err != nil {
+		return "", "", fmt.Errorf("open zip member %s: %w", member.Name, err)
+	}
+	defer in.Close()
+
+	outPath := filepath.Join(workDir, "extracted-"+safeExtractedBinaryName(path.Base(normalizeArchiveMemberPath(member.Name))))
+	out, err := os.OpenFile(outPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+	if err != nil {
+		return "", "", fmt.Errorf("create extracted binary: %w", err)
+	}
+	limited := &io.LimitedReader{R: in, N: maxExtractedBinaryBytes + 1}
+	written, copyErr := io.Copy(out, limited)
+	closeErr := out.Close()
+	if copyErr != nil || closeErr != nil {
+		_ = os.Remove(outPath)
+		if copyErr != nil {
+			return "", "", fmt.Errorf("extract zip member %s: %w", member.Name, copyErr)
+		}
+		return "", "", fmt.Errorf("close extracted binary: %w", closeErr)
+	}
+	if written > maxExtractedBinaryBytes {
+		_ = os.Remove(outPath)
+		return "", "", fmt.Errorf("zip member %s exceeds maximum extracted size", member.Name)
+	}
+	if written == 0 {
+		_ = os.Remove(outPath)
+		return "", "", fmt.Errorf("zip member %s is empty", member.Name)
+	}
+	if err := os.Chmod(outPath, 0o700); err != nil {
+		_ = os.Remove(outPath)
+		return "", "", fmt.Errorf("chmod extracted binary: %w", err)
+	}
+	return outPath, normalizeArchiveMemberPath(member.Name), nil
+}
+
+func selectZipBinaryMember(files []*zip.File, serviceCode, preferredMember string) (*zip.File, error) {
+	preferred := normalizeArchiveMemberPath(preferredMember)
+	if preferred != "" && !safeArchiveMemberPath(preferred) {
+		return nil, fmt.Errorf("archive_binary_path %q is not safe", preferredMember)
+	}
+	var selected *zip.File
+	selectedRank := 1 << 30
+	for _, file := range files {
+		name := normalizeArchiveMemberPath(file.Name)
+		if !usableZipFileMember(file, name) {
+			continue
+		}
+		if preferred != "" {
+			if name == preferred || (!strings.Contains(preferred, "/") && path.Base(name) == preferred) {
+				return file, nil
+			}
+			continue
+		}
+		for _, candidate := range defaultArchiveBinaryCandidates(serviceCode) {
+			rank := archiveCandidateRank(name, candidate)
+			if rank < selectedRank {
+				selected = file
+				selectedRank = rank
+			}
+		}
+	}
+	if preferred != "" {
+		return nil, fmt.Errorf("archive_binary_path %q was not found in zip artifact", preferredMember)
+	}
+	if selected == nil {
+		return nil, fmt.Errorf("zip artifact does not contain a known executable for %s; set archive_binary_path metadata", serviceCode)
+	}
+	return selected, nil
+}
+
+func usableZipFileMember(file *zip.File, name string) bool {
+	if file == nil || file.FileInfo().IsDir() {
+		return false
+	}
+	return safeArchiveMemberPath(name)
+}
+
+func normalizeArchiveMemberPath(value string) string {
+	value = filepath.ToSlash(strings.TrimSpace(value))
+	for strings.HasPrefix(value, "./") {
+		value = strings.TrimPrefix(value, "./")
+	}
+	return value
+}
+
+func safeArchiveMemberPath(value string) bool {
+	value = normalizeArchiveMemberPath(value)
+	return value != "" &&
+		value != "." &&
+		value != ".." &&
+		!strings.HasPrefix(value, "/") &&
+		!strings.HasPrefix(value, "../") &&
+		!strings.Contains(value, "/../") &&
+		!strings.Contains(value, "\\") &&
+		!strings.Contains(value, "\x00")
+}
+
+func defaultArchiveBinaryCandidates(serviceCode string) []string {
+	switch strings.TrimSpace(serviceCode) {
+	case "xray-core":
+		return []string{"xray"}
+	case "shadowsocks":
+		return []string{"ss-server"}
+	default:
+		return nil
+	}
+}
+
+func archiveCandidateRank(member, candidate string) int {
+	if candidate == "" {
+		return 1 << 30
+	}
+	if member == candidate {
+		return 0
+	}
+	if path.Base(member) == candidate {
+		return strings.Count(member, "/") + 1
+	}
+	return 1 << 30
+}
+
+func safeExtractedBinaryName(value string) string {
+	value = strings.TrimSpace(value)
+	var b strings.Builder
+	for _, r := range value {
+		allowed := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
+		if allowed {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), ".-_")
+	if out == "" {
+		return "binary"
+	}
+	return out
 }
 
 func verifyInstalledCapability(ctx context.Context, serviceCode string) map[string]any {

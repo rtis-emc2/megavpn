@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -81,6 +83,9 @@ func TestBinaryRepositoryRuntimeDefaultsToCopyBinary(t *testing.T) {
 	if got := defaultBinaryInstallMode("shadowsocks", "runtime", "/tmp/artifact"); got != "copy_binary" {
 		t.Fatalf("shadowsocks runtime mode = %q, want copy_binary", got)
 	}
+	if got := defaultBinaryInstallMode("xray-core", "bundle", "/tmp/artifact"); got != "zip_binary" {
+		t.Fatalf("xray bundle mode = %q, want zip_binary", got)
+	}
 	if got := defaultBinaryInstallPath("xray-core"); got != "/usr/local/bin/xray" {
 		t.Fatalf("xray default install path = %q", got)
 	}
@@ -89,6 +94,51 @@ func TestBinaryRepositoryRuntimeDefaultsToCopyBinary(t *testing.T) {
 	}
 	if err := validateBinaryInstallPath("shadowsocks", "/usr/local/bin/ss-server"); err != nil {
 		t.Fatalf("validateBinaryInstallPath rejected ss-server path: %v", err)
+	}
+}
+
+func TestExtractZipBinaryArtifactSelectsXrayBinary(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, "xray.zip")
+	writeTestZip(t, archivePath, map[string]string{
+		"README.md": "runtime archive",
+		"xray":      "#!/bin/sh\nexit 0\n",
+	})
+
+	extracted, member, err := extractZipBinaryArtifact(archivePath, dir, "xray-core", "")
+	if err != nil {
+		t.Fatalf("extract zip binary: %v", err)
+	}
+	if member != "xray" {
+		t.Fatalf("selected member = %q, want xray", member)
+	}
+	body, err := os.ReadFile(extracted)
+	if err != nil {
+		t.Fatalf("read extracted binary: %v", err)
+	}
+	if string(body) != "#!/bin/sh\nexit 0\n" {
+		t.Fatalf("extracted body = %q", string(body))
+	}
+	info, err := os.Stat(extracted)
+	if err != nil {
+		t.Fatalf("stat extracted binary: %v", err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("extracted mode = %v, want 0700", info.Mode().Perm())
+	}
+}
+
+func TestExtractZipBinaryArtifactRejectsUnsafePreferredMember(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, "xray.zip")
+	writeTestZip(t, archivePath, map[string]string{"xray": "binary"})
+	_, _, err := extractZipBinaryArtifact(archivePath, dir, "xray-core", "../xray")
+	if err == nil || !strings.Contains(err.Error(), "not safe") {
+		t.Fatalf("unsafe preferred member error = %v, want safety error", err)
 	}
 }
 
@@ -113,6 +163,30 @@ func binaryRepositoryTestPayload(sha string) map[string]any {
 		"ticket_hint":     "tick...cret",
 		"service_code":    "xray-core",
 		"binary_artifact": "test",
+	}
+}
+
+func writeTestZip(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create zip: %v", err)
+	}
+	writer := zip.NewWriter(file)
+	for name, body := range files {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatalf("create zip member %s: %v", name, err)
+		}
+		if _, err := entry.Write([]byte(body)); err != nil {
+			t.Fatalf("write zip member %s: %v", name, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close zip file: %v", err)
 	}
 }
 

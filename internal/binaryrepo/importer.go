@@ -13,22 +13,23 @@ import (
 )
 
 type ImportRequest struct {
-	SourceFile     string
-	SourceFilename string
-	Name           string
-	Kind           string
-	ServiceCode    string
-	Version        string
-	OSFamily       string
-	OSVersion      string
-	Architecture   string
-	InstallMode    string
-	InstallPath    string
-	Signature      string
-	StoragePath    string
-	ExpectedSHA256 string
-	ReplaceFile    bool
-	MaxBytes       int64
+	SourceFile        string
+	SourceFilename    string
+	Name              string
+	Kind              string
+	ServiceCode       string
+	Version           string
+	OSFamily          string
+	OSVersion         string
+	Architecture      string
+	InstallMode       string
+	InstallPath       string
+	ArchiveBinaryPath string
+	Signature         string
+	StoragePath       string
+	ExpectedSHA256    string
+	ReplaceFile       bool
+	MaxBytes          int64
 }
 
 func ImportFile(root string, req ImportRequest) (domain.BinaryArtifact, error) {
@@ -112,6 +113,9 @@ func ImportReader(root string, reader io.Reader, req ImportRequest) (domain.Bina
 	if installPath := strings.TrimSpace(req.InstallPath); installPath != "" {
 		metadata["install_path"] = installPath
 	}
+	if archiveBinaryPath := strings.TrimSpace(req.ArchiveBinaryPath); archiveBinaryPath != "" {
+		metadata["archive_binary_path"] = archiveBinaryPath
+	}
 	return domain.BinaryArtifact{
 		Name:         name,
 		Kind:         kind,
@@ -135,6 +139,8 @@ func InferKind(path string) string {
 		return "script"
 	case ".deb":
 		return "package"
+	case ".zip":
+		return "bundle"
 	default:
 		return "runtime"
 	}

@@ -37,6 +37,90 @@
       throw new Error('MegaVPNServicesPage requires page dependencies');
     }
 
+    const binaryArtifactServices = ['xray-core', 'shadowsocks', 'openvpn', 'wireguard', 'nginx'];
+    const binaryArtifactPresets = [
+      {
+        key: 'xray_release_zip',
+        label: 'Xray release ZIP',
+        summary: 'GitHub ZIP/bundle. Agent extracts the xray executable and installs it.',
+        source_mode: 'url',
+        service_code: 'xray-core',
+        kind: 'bundle',
+        install_mode: 'zip_binary',
+        install_path: '/usr/local/bin/xray',
+        archive_binary_path: 'xray',
+        name: 'xray-core-release',
+        version: '',
+        os_family: 'linux',
+        architecture: 'amd64',
+        url_placeholder: 'https://github.com/XTLS/Xray-core/releases/download/vX.Y.Z/Xray-linux-64.zip',
+      },
+      {
+        key: 'xray_binary',
+        label: 'Xray single binary',
+        summary: 'Already extracted executable. Agent copies it to the allowlisted xray path.',
+        source_mode: 'upload',
+        service_code: 'xray-core',
+        kind: 'runtime',
+        install_mode: 'copy_binary',
+        install_path: '/usr/local/bin/xray',
+        archive_binary_path: '',
+        name: 'xray-core-binary',
+        version: '',
+        os_family: 'linux',
+        architecture: 'amd64',
+        url_placeholder: '',
+      },
+      {
+        key: 'shadowsocks_binary',
+        label: 'Shadowsocks ss-server binary',
+        summary: 'Standalone ss-server executable. Agent copies it to the allowlisted path.',
+        source_mode: 'upload',
+        service_code: 'shadowsocks',
+        kind: 'runtime',
+        install_mode: 'copy_binary',
+        install_path: '/usr/local/bin/ss-server',
+        archive_binary_path: '',
+        name: 'shadowsocks-ss-server',
+        version: '',
+        os_family: 'linux',
+        architecture: 'amd64',
+        url_placeholder: '',
+      },
+      {
+        key: 'shadowsocks_deb',
+        label: 'Shadowsocks Debian package',
+        summary: 'Pinned .deb package. Agent installs it through dpkg.',
+        source_mode: 'upload',
+        service_code: 'shadowsocks',
+        kind: 'package',
+        install_mode: 'deb_package',
+        install_path: '',
+        archive_binary_path: '',
+        name: 'shadowsocks-package',
+        version: '',
+        os_family: 'linux',
+        architecture: 'amd64',
+        url_placeholder: '',
+      },
+      {
+        key: 'custom',
+        label: 'Custom artifact',
+        summary: 'Manual metadata for a non-standard runtime artifact.',
+        source_mode: 'upload',
+        service_code: '',
+        kind: 'runtime',
+        install_mode: '',
+        install_path: '',
+        archive_binary_path: '',
+        name: '',
+        version: '',
+        os_family: 'linux',
+        architecture: 'amd64',
+        url_placeholder: '',
+      },
+    ];
+
     function selectedNode() {
       return state.nodes.find((node) => node.id === state.servicesNodeID) || state.nodes[0] || null;
     }
@@ -175,6 +259,7 @@
             <td>
               ${escapeHTML(entry.kind || 'n/a')}
               ${entry.metadata?.install_mode ? `<div class="muted small">${escapeHTML(entry.metadata.install_mode)}</div>` : ''}
+              ${entry.metadata?.archive_binary_path ? `<div class="muted small">member: ${escapeHTML(entry.metadata.archive_binary_path)}</div>` : ''}
             </td>
             <td>${escapeHTML(entry.version || 'n/a')}</td>
             <td>${escapeHTML(entry.os_family || 'linux')} · ${escapeHTML(entry.os_version || 'any')} · ${escapeHTML(entry.architecture || 'arch')}</td>
@@ -186,6 +271,73 @@
           </tr>`).join('')
         : '<tr><td colspan="7"><div class="empty">No runtime artifacts registered. Add a pinned artifact before using binary_repository installs.</div></td></tr>';
       return `<table><thead><tr><th>Artifact</th><th>Service</th><th>Kind</th><th>Version</th><th>Target</th><th>SHA-256</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function renderRuntimeServicesTable(runtimeServices, node, capabilities) {
+      const rows = runtimeServices.length
+        ? runtimeServices.map((item) => {
+          const capability = (capabilities || []).find((entry) => entry.capability_code === item.serviceCode);
+          const definition = (state.servicesCatalog || []).find((entry) => entry.code === item.serviceCode || (item.serviceCode === 'xray-core' && entry.code === 'xray'));
+          const hasBinaryRepository = item.installers.some((installer) => String(installer.strategy || '') === 'binary_repository');
+          return `
+            <tr>
+              <td>
+                <strong>${escapeHTML(definition?.name || item.serviceCode)}</strong>
+                <div class="mono small">${escapeHTML(item.serviceCode)}</div>
+              </td>
+              <td>
+                ${statusTag(capability?.status || 'missing')}
+                <div class="muted small">${escapeHTML(capability?.version || 'not registered')}</div>
+              </td>
+              <td>${hasBinaryRepository ? binaryArtifactSummary(item.serviceCode) : '<span class="tag">not used</span>'}</td>
+              <td>
+                <div class="runtime-installer-list">
+                  ${item.installers.map((installer) => `
+                    <span class="tag" title="${escapeHTML(installer.description || '')}">${escapeHTML(installer.strategy || 'default')}</span>
+                  `).join('')}
+                </div>
+              </td>
+              <td>
+                <div class="runtime-action-grid">
+                  <button class="secondary-btn service-verify-btn" type="button" data-service-code="${escapeHTML(item.serviceCode)}">Verify</button>
+                  ${item.installers.map((installer) => `
+                    <button class="primary-btn service-install-btn" type="button" data-service-code="${escapeHTML(item.serviceCode)}" data-strategy="${escapeHTML(installer.strategy || '')}" data-channel="${escapeHTML(installer.channel || '')}"${node ? '' : ' disabled'}>${escapeHTML(serviceInstallerPrimaryLabel(installer, capability))}</button>
+                  `).join('')}
+                </div>
+              </td>
+            </tr>`;
+        }).join('')
+        : '<tr><td colspan="5"><div class="empty">No runtime installers loaded.</div></td></tr>';
+      return `<table class="runtime-services-table"><thead><tr><th>Runtime</th><th>Node status</th><th>Repository</th><th>Install methods</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function renderRepositoryWorkflow() {
+      return `
+        <div class="artifact-workflow">
+          <div><strong>1. Register</strong><span>Upload from this computer or let the control plane fetch a pinned HTTPS URL.</span></div>
+          <div><strong>2. Pin</strong><span>Store SHA-256, target OS/architecture and install metadata once.</span></div>
+          <div><strong>3. Install</strong><span>Agents download the signed artifact only for their own install job.</span></div>
+        </div>`;
+    }
+
+    function renderNodeRuntimeTarget(node) {
+      return `
+        <section class="card service-node-target-card">
+          <div>
+            <div class="mini-label">Node runtime status</div>
+            <h2>Install and verify target</h2>
+            <p>Selecting a node changes only the capability status, verify jobs and install jobs below. Repository artifacts are global.</p>
+          </div>
+          <div class="inline-actions">
+            <div class="field" style="min-width:320px">
+              <label>Target node</label>
+              <select id="servicesNodeSelect">
+                ${state.nodes.map((item) => `<option value="${escapeHTML(item.id)}"${item.id === node?.id ? ' selected' : ''}>${escapeHTML(item.name)} · ${escapeHTML(item.address)} · ${escapeHTML(item.agent_status || 'unknown')}</option>`).join('')}
+              </select>
+            </div>
+            <button class="secondary-btn" id="refreshServicesBtn" type="button">Refresh state</button>
+          </div>
+        </section>`;
     }
 
     function shortHash(value) {
@@ -213,33 +365,32 @@
       const binaryArtifacts = Array.isArray(state.binaryArtifacts) ? state.binaryArtifacts : [];
       const canManageBinaryRepository = hasPermission('binary_repository.manage');
       el('content').innerHTML = `
-        <section class="card">
-          <div class="inline-actions">
-            <div class="field" style="min-width:280px">
-              <label>Target node</label>
-              <select id="servicesNodeSelect">
-                ${state.nodes.map((item) => `<option value="${escapeHTML(item.id)}"${item.id === node?.id ? ' selected' : ''}>${escapeHTML(item.name)} · ${escapeHTML(item.address)} · ${escapeHTML(item.agent_status || 'unknown')}</option>`).join('')}
-              </select>
-            </div>
-            <button class="secondary-btn" id="refreshServicesBtn" type="button">Refresh service state</button>
-          </div>
-        </section>
-        <section class="table-card">
+        <section class="table-card services-repository-card">
           <div class="table-head">
             <div>
+              <div class="mini-label">Global runtime repository</div>
               <h2>Runtime Binary Repository</h2>
-              <p>Runtime installers can use pinned control-plane artifacts instead of external node downloads.</p>
+              <p>Store Xray, Shadowsocks and other pinned runtime artifacts once on the control plane. Nodes receive them through signed job-scoped downloads.</p>
             </div>
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(binaryArtifacts.length))} artifacts</span>
               ${canManageBinaryRepository ? '<button class="secondary-btn" id="addBinaryArtifactBtn" type="button">Add artifact</button>' : ''}
             </div>
           </div>
+          ${renderRepositoryWorkflow()}
           <div class="table-wrap">${renderBinaryArtifactsTable(binaryArtifacts)}</div>
         </section>
-        <div class="services-grid">
-          ${runtimeServices.map((item) => renderServiceRuntimeCard(item, node, capabilities)).join('')}
-        </div>
+        ${renderNodeRuntimeTarget(node)}
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Runtime Capabilities</h2>
+              <p>Capability status and installer actions for the selected node.</p>
+            </div>
+            <div class="table-tools">${node ? `<span class="tag">${escapeHTML(node.name)}</span>` : '<span class="tag warn">no node</span>'}</div>
+          </div>
+          <div class="table-wrap">${renderRuntimeServicesTable(runtimeServices, node, capabilities)}</div>
+        </section>
         <section class="table-card">
           <div class="table-head"><h2>Capability Matrix</h2><div class="table-tools"><span class="tag">${escapeHTML(String(state.nodes.length))} nodes</span></div></div>
           <div class="table-wrap">${renderCapabilityMatrix(state.nodes, state.serviceCapabilitiesByNode)}</div>
@@ -297,13 +448,21 @@
         openUnavailableAction('Binary repository', 'Your role can read runtime artifacts but cannot register new artifacts.');
         return;
       }
+      const initialPreset = initialBinaryArtifactPreset(prefillServiceCode);
       openModal('Add runtime artifact', 'Binary repository', `
         <form id="binaryArtifactForm" class="form-grid">
+          <div class="field full">
+            <label>Artifact type</label>
+            <select name="preset_key" id="binaryArtifactPreset">
+              ${binaryArtifactPresets.map((preset) => `<option value="${escapeHTML(preset.key)}"${preset.key === initialPreset.key ? ' selected' : ''}>${escapeHTML(preset.label)}</option>`).join('')}
+            </select>
+            <div class="field-hint" id="binaryArtifactPresetHint">${escapeHTML(initialPreset.summary || '')}</div>
+          </div>
           <div class="field">
             <label>Source</label>
             <select name="source_mode" id="binaryArtifactSourceMode">
-              <option value="upload">Upload from browser</option>
-              <option value="url">Fetch from HTTPS URL</option>
+              <option value="upload">Upload from this computer</option>
+              <option value="url">Fetch by control plane from HTTPS URL</option>
             </select>
           </div>
           <div class="field full" id="binaryArtifactFileField">
@@ -313,17 +472,18 @@
           </div>
           <div class="field full" id="binaryArtifactURLField" hidden>
             <label>Source URL</label>
-            <input name="source_url" type="url" placeholder="https://downloads.example.com/runtime/xray">
+            <input name="source_url" type="url" placeholder="${escapeHTML(initialPreset.url_placeholder || 'https://host/path/artifact')}">
             <div class="field-hint">The control plane downloads this URL directly. HTTPS and expected SHA-256 are required; private/loopback targets are rejected.</div>
           </div>
           <div class="field">
             <label>Name</label>
-            <input name="name" placeholder="xray-install-1.8.24" required>
+            <input name="name" placeholder="xray-core-release" required>
           </div>
           <div class="field">
             <label>Service</label>
-            <select name="service_code">
-              ${['xray-core', 'shadowsocks', 'openvpn', 'wireguard', 'nginx'].map((code) => `<option value="${escapeHTML(code)}"${code === prefillServiceCode ? ' selected' : ''}>${escapeHTML(code)}</option>`).join('')}
+            <select name="service_code" required>
+              <option value="">Select service</option>
+              ${binaryArtifactServices.map((code) => `<option value="${escapeHTML(code)}"${code === initialPreset.service_code ? ' selected' : ''}>${escapeHTML(code)}</option>`).join('')}
             </select>
           </div>
           <div class="field">
@@ -359,6 +519,7 @@
             <select name="install_mode">
               <option value="">auto by kind</option>
               <option value="copy_binary">copy_binary</option>
+              <option value="zip_binary">zip_binary</option>
               <option value="xray_install_script">xray_install_script</option>
               <option value="deb_package">deb_package</option>
             </select>
@@ -366,7 +527,12 @@
           <div class="field">
             <label>Install path</label>
             <input name="install_path" placeholder="/usr/local/bin/xray or /usr/local/bin/ss-server">
-            <div class="field-hint">Only service-specific allowlisted paths are accepted by the agent for copy_binary.</div>
+            <div class="field-hint">Only service-specific allowlisted paths are accepted by the agent for binary copy modes.</div>
+          </div>
+          <div class="field" id="binaryArtifactArchivePathField" hidden>
+            <label>Binary path inside archive</label>
+            <input name="archive_binary_path" placeholder="xray">
+            <div class="field-hint">For ZIP/bundle artifacts, this is the executable member extracted by the agent.</div>
           </div>
           <div class="field full">
             <label>Repository path</label>
@@ -385,7 +551,13 @@
         </form>
         <div id="binaryArtifactResult" class="form-result"></div>`);
       document.getElementById('cancelBinaryArtifactBtn')?.addEventListener('click', closeModal);
+      document.getElementById('binaryArtifactPreset')?.addEventListener('change', () => applyBinaryArtifactPreset(true));
       document.getElementById('binaryArtifactSourceMode')?.addEventListener('change', updateBinaryArtifactSourceMode);
+      document.querySelector('#binaryArtifactFileField input[name="file"]')?.addEventListener('change', inferBinaryArtifactFromFile);
+      document.querySelector('#binaryArtifactURLField input[name="source_url"]')?.addEventListener('input', inferBinaryArtifactFromURL);
+      document.querySelector('#binaryArtifactForm select[name="kind"]')?.addEventListener('change', updateBinaryArtifactArchiveField);
+      document.querySelector('#binaryArtifactForm select[name="install_mode"]')?.addEventListener('change', updateBinaryArtifactArchiveField);
+      applyBinaryArtifactPreset(true);
       updateBinaryArtifactSourceMode();
       document.getElementById('binaryArtifactForm')?.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -421,11 +593,122 @@
       const fileInput = document.querySelector('#binaryArtifactFileField input[name="file"]');
       const urlInput = document.querySelector('#binaryArtifactURLField input[name="source_url"]');
       const expectedSHAInput = document.querySelector('#binaryArtifactForm input[name="expected_sha256"]');
+      const submitButton = document.querySelector('#binaryArtifactForm button[type="submit"]');
       if (fileField) fileField.hidden = sourceMode !== 'upload';
       if (urlField) urlField.hidden = sourceMode !== 'url';
       if (fileInput) fileInput.required = sourceMode === 'upload';
       if (urlInput) urlInput.required = sourceMode === 'url';
       if (expectedSHAInput) expectedSHAInput.required = sourceMode === 'url';
+      if (submitButton) submitButton.textContent = sourceMode === 'url' ? 'Fetch artifact' : 'Upload artifact';
+      updateBinaryArtifactArchiveField();
+    }
+
+    function initialBinaryArtifactPreset(serviceCode) {
+      const code = String(serviceCode || '').trim();
+      if (code === 'xray-core') return binaryArtifactPresets.find((preset) => preset.key === 'xray_release_zip') || binaryArtifactPresets[0];
+      if (code === 'shadowsocks') return binaryArtifactPresets.find((preset) => preset.key === 'shadowsocks_binary') || binaryArtifactPresets[0];
+      return binaryArtifactPresets[0];
+    }
+
+    function selectedBinaryArtifactPreset() {
+      const key = String(document.getElementById('binaryArtifactPreset')?.value || '').trim();
+      return binaryArtifactPresets.find((preset) => preset.key === key) || binaryArtifactPresets[0];
+    }
+
+    function applyBinaryArtifactPreset(overwrite) {
+      const form = document.getElementById('binaryArtifactForm');
+      if (!form) return;
+      const preset = selectedBinaryArtifactPreset();
+      const setValue = (name, value) => {
+        const input = form.elements[name];
+        if (!input) return;
+        if (overwrite || String(input.value || '').trim() === '') {
+          input.value = value || '';
+        }
+      };
+      setValue('source_mode', preset.source_mode);
+      setValue('service_code', preset.service_code);
+      setValue('kind', preset.kind);
+      setValue('install_mode', preset.install_mode);
+      setValue('install_path', preset.install_path);
+      setValue('archive_binary_path', preset.archive_binary_path);
+      setValue('name', preset.name);
+      setValue('version', preset.version);
+      setValue('os_family', preset.os_family);
+      setValue('architecture', preset.architecture);
+      const hint = document.getElementById('binaryArtifactPresetHint');
+      if (hint) hint.textContent = preset.summary || '';
+      const urlInput = form.elements.source_url;
+      if (urlInput) urlInput.placeholder = preset.url_placeholder || 'https://host/path/artifact';
+      updateBinaryArtifactSourceMode();
+      updateBinaryArtifactArchiveField();
+    }
+
+    function updateBinaryArtifactArchiveField() {
+      const form = document.getElementById('binaryArtifactForm');
+      const field = document.getElementById('binaryArtifactArchivePathField');
+      if (!form || !field) return;
+      const kind = String(form.elements.kind?.value || '').trim();
+      const mode = String(form.elements.install_mode?.value || '').trim();
+      const visible = kind === 'bundle' || mode === 'zip_binary';
+      field.hidden = !visible;
+      const input = form.elements.archive_binary_path;
+      if (input) input.required = visible && mode === 'zip_binary';
+    }
+
+    function inferBinaryArtifactFromFile(event) {
+      const file = event.currentTarget?.files?.[0];
+      if (!file) return;
+      inferBinaryArtifactFromName(file.name);
+    }
+
+    function inferBinaryArtifactFromURL(event) {
+      const value = String(event.currentTarget?.value || '').trim();
+      if (!value) return;
+      try {
+        const url = new URL(value);
+        const filename = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || '');
+        inferBinaryArtifactFromName(filename || value);
+        const version = inferVersionFromText(value);
+        if (version) setBinaryArtifactFieldIfBlank('version', version);
+      } catch {
+        const version = inferVersionFromText(value);
+        if (version) setBinaryArtifactFieldIfBlank('version', version);
+      }
+    }
+
+    function inferBinaryArtifactFromName(name) {
+      const cleanName = String(name || '').trim();
+      if (!cleanName) return;
+      const form = document.getElementById('binaryArtifactForm');
+      if (!form) return;
+      const lower = cleanName.toLowerCase();
+      if (lower.endsWith('.zip')) {
+        setBinaryArtifactFieldIfBlank('kind', 'bundle');
+        setBinaryArtifactFieldIfBlank('install_mode', 'zip_binary');
+      } else if (lower.endsWith('.deb')) {
+        setBinaryArtifactFieldIfBlank('kind', 'package');
+        setBinaryArtifactFieldIfBlank('install_mode', 'deb_package');
+      } else if (lower.endsWith('.sh')) {
+        setBinaryArtifactFieldIfBlank('kind', 'script');
+      }
+      const version = inferVersionFromText(cleanName);
+      if (version) setBinaryArtifactFieldIfBlank('version', version);
+      const baseName = cleanName.replace(/\.[^.]+$/, '');
+      setBinaryArtifactFieldIfBlank('name', baseName);
+      updateBinaryArtifactArchiveField();
+    }
+
+    function inferVersionFromText(value) {
+      const match = String(value || '').match(/(?:^|[^0-9])v?(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?)(?:[^0-9]|$)/);
+      return match ? match[1] : '';
+    }
+
+    function setBinaryArtifactFieldIfBlank(name, value) {
+      const input = document.getElementById('binaryArtifactForm')?.elements?.[name];
+      if (input && String(input.value || '').trim() === '') {
+        input.value = value || '';
+      }
     }
 
     function binaryArtifactURLPayload(data) {
@@ -440,6 +723,7 @@
         architecture: String(data.get('architecture') || '').trim(),
         install_mode: String(data.get('install_mode') || '').trim(),
         install_path: String(data.get('install_path') || '').trim(),
+        archive_binary_path: String(data.get('archive_binary_path') || '').trim(),
         storage_path: String(data.get('storage_path') || '').trim(),
         expected_sha256: String(data.get('expected_sha256') || '').trim().toLowerCase(),
         replace_file: false,

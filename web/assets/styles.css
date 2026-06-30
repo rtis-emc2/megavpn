@@ -381,6 +381,38 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 .split { display: grid; grid-template-columns: 1.45fr 0.9fr; gap: 16px; }
 .services-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .service-runtime-card h2 { margin: 8px 0 10px; }
+.services-repository-card .table-head { align-items: flex-start; }
+.artifact-workflow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 18px 16px;
+}
+.artifact-workflow div {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(7,16,24,0.24);
+}
+.artifact-workflow strong { display: block; margin-bottom: 4px; color: var(--text); }
+.artifact-workflow span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.service-node-target-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+}
+.service-node-target-card h2 { margin: 4px 0 6px; }
+.service-node-target-card p { margin: 0; color: var(--muted); max-width: 760px; }
+.runtime-services-table td { vertical-align: top; }
+.runtime-installer-list { display: flex; flex-wrap: wrap; gap: 6px; max-width: 440px; }
+.runtime-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(118px, 1fr));
+  gap: 8px;
+  min-width: 250px;
+}
+.runtime-action-grid button { width: 100%; }
 .service-strategy-list { display: grid; gap: 12px; margin-top: 18px; }
 .service-strategy-row {
   display: grid;
@@ -2750,6 +2782,8 @@ tr:hover td { background: #f8fafc; }
   .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .split { grid-template-columns: 1fr; }
   .services-grid { grid-template-columns: 1fr; }
+  .service-node-target-card { grid-template-columns: 1fr; }
+  .artifact-workflow { grid-template-columns: 1fr; }
   .login-shell, .settings-layout, .panel-banner { grid-template-columns: 1fr; }
   .login-points { grid-template-columns: 1fr; }
   .overview-grid, .node-console-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -2821,6 +2855,7 @@ tr:hover td { background: #f8fafc; }
   .dashboard-stat-grid {
     grid-template-columns: 1fr;
   }
+  .runtime-action-grid { grid-template-columns: 1fr; min-width: 0; }
   .service-strategy-row { grid-template-columns: 1fr; }
   .login-hero h2 { font-size: 34px; max-width: none; }
   .panel-banner { padding: 20px; }

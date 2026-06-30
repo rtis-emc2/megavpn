@@ -63,21 +63,22 @@ func (s *Server) importBinaryArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 	artifact, err := binaryrepo.ImportReader(root, file, binaryrepo.ImportRequest{
-		SourceFilename: strings.TrimSpace(header.Filename),
-		Name:           formValue(r, "name"),
-		Kind:           formValue(r, "kind"),
-		ServiceCode:    formValue(r, "service_code"),
-		Version:        formValue(r, "version"),
-		OSFamily:       formValue(r, "os_family"),
-		OSVersion:      formValue(r, "os_version"),
-		Architecture:   formValue(r, "architecture"),
-		InstallMode:    formValue(r, "install_mode"),
-		InstallPath:    formValue(r, "install_path"),
-		Signature:      formValue(r, "signature"),
-		StoragePath:    formValue(r, "storage_path"),
-		ExpectedSHA256: formValue(r, "expected_sha256"),
-		ReplaceFile:    formBool(r, "replace_file"),
-		MaxBytes:       maxBinaryArtifactUploadBytes,
+		SourceFilename:    strings.TrimSpace(header.Filename),
+		Name:              formValue(r, "name"),
+		Kind:              formValue(r, "kind"),
+		ServiceCode:       formValue(r, "service_code"),
+		Version:           formValue(r, "version"),
+		OSFamily:          formValue(r, "os_family"),
+		OSVersion:         formValue(r, "os_version"),
+		Architecture:      formValue(r, "architecture"),
+		InstallMode:       formValue(r, "install_mode"),
+		InstallPath:       formValue(r, "install_path"),
+		ArchiveBinaryPath: formValue(r, "archive_binary_path"),
+		Signature:         formValue(r, "signature"),
+		StoragePath:       formValue(r, "storage_path"),
+		ExpectedSHA256:    formValue(r, "expected_sha256"),
+		ReplaceFile:       formBool(r, "replace_file"),
+		MaxBytes:          maxBinaryArtifactUploadBytes,
 	})
 	if err != nil {
 		writeErr(w, 400, err.Error())
@@ -93,20 +94,21 @@ func (s *Server) importBinaryArtifact(w http.ResponseWriter, r *http.Request) {
 }
 
 type binaryArtifactURLImportRequest struct {
-	SourceURL      string `json:"source_url"`
-	Name           string `json:"name"`
-	Kind           string `json:"kind"`
-	ServiceCode    string `json:"service_code"`
-	Version        string `json:"version"`
-	OSFamily       string `json:"os_family"`
-	OSVersion      string `json:"os_version"`
-	Architecture   string `json:"architecture"`
-	InstallMode    string `json:"install_mode"`
-	InstallPath    string `json:"install_path"`
-	Signature      string `json:"signature"`
-	StoragePath    string `json:"storage_path"`
-	ExpectedSHA256 string `json:"expected_sha256"`
-	ReplaceFile    bool   `json:"replace_file"`
+	SourceURL         string `json:"source_url"`
+	Name              string `json:"name"`
+	Kind              string `json:"kind"`
+	ServiceCode       string `json:"service_code"`
+	Version           string `json:"version"`
+	OSFamily          string `json:"os_family"`
+	OSVersion         string `json:"os_version"`
+	Architecture      string `json:"architecture"`
+	InstallMode       string `json:"install_mode"`
+	InstallPath       string `json:"install_path"`
+	ArchiveBinaryPath string `json:"archive_binary_path"`
+	Signature         string `json:"signature"`
+	StoragePath       string `json:"storage_path"`
+	ExpectedSHA256    string `json:"expected_sha256"`
+	ReplaceFile       bool   `json:"replace_file"`
 }
 
 func (s *Server) importBinaryArtifactFromURL(w http.ResponseWriter, r *http.Request) {
@@ -155,21 +157,22 @@ func (s *Server) importBinaryArtifactFromURL(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	artifact, err := binaryrepo.ImportReader(root, resp.Body, binaryrepo.ImportRequest{
-		SourceFilename: remoteArtifactFilename(sourceURL, resp.Header.Get("Content-Disposition")),
-		Name:           strings.TrimSpace(req.Name),
-		Kind:           strings.TrimSpace(req.Kind),
-		ServiceCode:    strings.TrimSpace(req.ServiceCode),
-		Version:        strings.TrimSpace(req.Version),
-		OSFamily:       strings.TrimSpace(req.OSFamily),
-		OSVersion:      strings.TrimSpace(req.OSVersion),
-		Architecture:   strings.TrimSpace(req.Architecture),
-		InstallMode:    strings.TrimSpace(req.InstallMode),
-		InstallPath:    strings.TrimSpace(req.InstallPath),
-		Signature:      strings.TrimSpace(req.Signature),
-		StoragePath:    strings.TrimSpace(req.StoragePath),
-		ExpectedSHA256: strings.TrimSpace(req.ExpectedSHA256),
-		ReplaceFile:    req.ReplaceFile,
-		MaxBytes:       maxBinaryArtifactUploadBytes,
+		SourceFilename:    remoteArtifactFilename(sourceURL, resp.Header.Get("Content-Disposition")),
+		Name:              strings.TrimSpace(req.Name),
+		Kind:              strings.TrimSpace(req.Kind),
+		ServiceCode:       strings.TrimSpace(req.ServiceCode),
+		Version:           strings.TrimSpace(req.Version),
+		OSFamily:          strings.TrimSpace(req.OSFamily),
+		OSVersion:         strings.TrimSpace(req.OSVersion),
+		Architecture:      strings.TrimSpace(req.Architecture),
+		InstallMode:       strings.TrimSpace(req.InstallMode),
+		InstallPath:       strings.TrimSpace(req.InstallPath),
+		ArchiveBinaryPath: strings.TrimSpace(req.ArchiveBinaryPath),
+		Signature:         strings.TrimSpace(req.Signature),
+		StoragePath:       strings.TrimSpace(req.StoragePath),
+		ExpectedSHA256:    strings.TrimSpace(req.ExpectedSHA256),
+		ReplaceFile:       req.ReplaceFile,
+		MaxBytes:          maxBinaryArtifactUploadBytes,
 	})
 	if err != nil {
 		writeErr(w, 400, err.Error())
