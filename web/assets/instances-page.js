@@ -368,13 +368,13 @@
     function runtimeCapabilityIssueText(row) {
       const status = row.capabilityStatus || 'missing';
       if (row.service === 'shadowsocks') {
-        return `ss-server runtime is ${status}; install shadowsocks-libev from APT or a pinned ss-server artifact before applying this instance.`;
+        return `ss-server runtime is ${status}; Apply will install shadowsocks-libev automatically before the instance is applied.`;
       }
       if (row.service === 'openvpn') {
-        return `OpenVPN runtime is ${status}; install the openvpn package on this node before applying this instance.`;
+        return `OpenVPN runtime is ${status}; Apply will install the openvpn package automatically before the instance is applied.`;
       }
       if (row.service === 'xray-core') {
-        return `Xray runtime is ${status}; install a pinned xray artifact or the approved release installer before applying this instance.`;
+        return `Xray runtime is ${status}; Apply will run the approved runtime installer before the instance is applied.`;
       }
       return `Runtime capability ${row.service} is ${status} on this node.`;
     }
@@ -571,31 +571,23 @@
       const busy = hasActiveInstanceJob(row);
       const busyAttr = busy ? ' disabled title="Current instance job is still queued or running"' : '';
       const runtimeBlocked = row.capabilityMissing;
-      const runtimeBlockedAttr = runtimeBlocked ? ' disabled title="Install the runtime capability before applying or controlling this instance"' : '';
+      const runtimeControlBlockedAttr = runtimeBlocked ? ' disabled title="Runtime capability must be installed before controlling this instance"' : '';
+      const applyAttr = busy ? busyAttr : (runtimeBlocked ? ' title="Queues runtime install first, then applies this instance after the install succeeds"' : '');
+      const controlAttr = busy ? busyAttr : runtimeControlBlockedAttr;
       return `
         <div class="instance-actions">
           <button class="secondary-btn instance-manage-btn" type="button" data-instance-id="${escapeHTML(row.id)}">Manage</button>
-          ${row.capabilityMissing ? `<button class="primary-btn instance-runtime-install-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-issue="${escapeHTML(row.issue?.text || row.latestJobSummary || '')}">${escapeHTML(runtimeInstallActionLabel(row))}</button>` : ''}
-          <button class="${row.capabilityMissing ? 'secondary-btn' : 'primary-btn'} instance-action-btn" type="button" data-action="apply" data-instance-id="${escapeHTML(row.id)}"${busyAttr || runtimeBlockedAttr}>Apply</button>
-          <button class="secondary-btn instance-action-btn" type="button" data-action="restart" data-instance-id="${escapeHTML(row.id)}"${busyAttr || runtimeBlockedAttr}>Restart</button>
-          <button class="secondary-btn instance-action-btn" type="button" data-action="start" data-instance-id="${escapeHTML(row.id)}"${busyAttr || runtimeBlockedAttr}>Start</button>
+          ${row.capabilityMissing ? `<button class="secondary-btn instance-runtime-install-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-issue="${escapeHTML(row.issue?.text || row.latestJobSummary || '')}">${escapeHTML(runtimeInstallActionLabel(row))}</button>` : ''}
+          <button class="primary-btn instance-action-btn" type="button" data-action="apply" data-instance-id="${escapeHTML(row.id)}"${applyAttr}>${runtimeBlocked ? 'Install + apply' : 'Apply'}</button>
+          <button class="secondary-btn instance-action-btn" type="button" data-action="restart" data-instance-id="${escapeHTML(row.id)}"${controlAttr}>Restart</button>
+          <button class="secondary-btn instance-action-btn" type="button" data-action="start" data-instance-id="${escapeHTML(row.id)}"${controlAttr}>Start</button>
           <button class="secondary-btn instance-action-btn" type="button" data-action="stop" data-instance-id="${escapeHTML(row.id)}"${busyAttr}>Stop</button>
           <button class="danger-btn instance-delete-btn" type="button" data-instance-id="${escapeHTML(row.id)}" data-instance-name="${escapeHTML(row.name || 'instance')}">Delete</button>
         </div>`;
     }
 
     function runtimeInstallActionLabel(row) {
-      const failed = lowerStatus(row.capabilityStatus) === 'failed';
-      switch (row.service) {
-      case 'shadowsocks':
-        return failed ? 'Retry libev install' : 'Install libev';
-      case 'openvpn':
-        return failed ? 'Retry OpenVPN install' : 'Install OpenVPN';
-      case 'xray-core':
-        return failed ? 'Retry Xray install' : 'Install Xray';
-      default:
-        return failed ? 'Retry runtime install' : 'Install runtime';
-      }
+      return 'Runtime options';
     }
 
     function groupRowsByNode(rows) {
@@ -987,6 +979,7 @@
         endpoint_host: String(data.get('endpoint_host') || '').trim(),
         certificate_id: String(data.get('certificate_id') || '').trim(),
         openvpn_pki_profile: String(data.get('openvpn_pki_profile') || '').trim(),
+        auto_install_runtime: true,
       };
       if (!packKey) {
         state.instancesCreateResult = { status: 'failed', message: 'service pack is required' };

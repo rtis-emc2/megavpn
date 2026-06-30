@@ -555,17 +555,35 @@ func verifyFileSHA256(path, expectedHex string) error {
 func installUbuntuPackageCapability(ctx context.Context, capabilityCode, packageName, verifyHint string, enableUnits []string) map[string]any {
 	steps := []map[string]any{}
 	run := func(name string, args ...string) bool {
-		code, out := runInstallCommand(ctx, name, args...)
-		steps = append(steps, map[string]any{"command": append([]string{name}, args...), "exit_code": code, "output": truncate(out, 4000)})
-		return code == 0
+		command := append([]string{name}, args...)
+		maxAttempts := aptInstallCommandAttempts(name, args...)
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			code, out := runInstallCommand(ctx, name, args...)
+			step := map[string]any{"command": command, "exit_code": code, "output": truncate(out, 4000), "attempt": attempt}
+			if code == 0 {
+				steps = append(steps, step)
+				return true
+			}
+			if !shouldRetryAptInstallCommand(name, args, code, out) || attempt == maxAttempts {
+				steps = append(steps, step)
+				return false
+			}
+			delay := aptInstallRetryDelay(attempt)
+			step["retry_after_seconds"] = int(delay.Seconds())
+			steps = append(steps, step)
+			if err := sleepContext(ctx, delay); err != nil {
+				return false
+			}
+		}
+		return false
 	}
 	if os.Geteuid() != 0 {
 		return map[string]any{"ok": false, "message": capabilityCode + " install requires root", "steps": steps}
 	}
-	if !run("apt-get", "update") {
+	if !run("apt-get", "-o", "Acquire::Retries=3", "-o", "Dpkg::Lock::Timeout=120", "update") {
 		return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "apt update failed"), "steps": steps, "package": packageName}
 	}
-	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", packageName) {
+	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "install", "-y", packageName) {
 		return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "package install failed"), "steps": steps, "package": packageName}
 	}
 	for _, unit := range enableUnits {
@@ -591,6 +609,79 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 	verify["steps"] = steps
 	verify["package"] = packageName
 	return verify
+}
+
+func aptInstallCommandAttempts(name string, args ...string) int {
+	if aptInstallCommandVerb(name, args...) == "" {
+		return 1
+	}
+	return 3
+}
+
+func aptInstallCommandVerb(name string, args ...string) string {
+	if name == "apt-get" {
+		for _, arg := range args {
+			switch arg {
+			case "update", "install":
+				return arg
+			}
+		}
+		return ""
+	}
+	if name == "env" {
+		for idx, arg := range args {
+			if arg != "apt-get" {
+				continue
+			}
+			return aptInstallCommandVerb(arg, args[idx+1:]...)
+		}
+	}
+	return ""
+}
+
+func shouldRetryAptInstallCommand(name string, args []string, exitCode int, output string) bool {
+	if exitCode == 0 || aptInstallCommandVerb(name, args...) == "" {
+		return false
+	}
+	lower := strings.ToLower(output)
+	if strings.Contains(lower, "unable to locate package") || strings.Contains(lower, "has no installation candidate") {
+		return false
+	}
+	return aptFailureLooksTransient(output)
+}
+
+func aptFailureLooksTransient(output string) bool {
+	lower := strings.ToLower(output)
+	for _, marker := range []string{
+		"could not get lock",
+		"unable to acquire the dpkg frontend lock",
+		"is another process using it",
+		"temporary failure resolving",
+		"temporary failure",
+		"failed to fetch",
+		"connection timed out",
+		"could not connect",
+		"connection failed",
+		"hash sum mismatch",
+		"mirror sync in progress",
+		"resource temporarily unavailable",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func aptInstallRetryDelay(attempt int) time.Duration {
+	switch attempt {
+	case 1:
+		return 5 * time.Second
+	case 2:
+		return 15 * time.Second
+	default:
+		return 30 * time.Second
+	}
 }
 
 func aptInstallFailureMessage(capabilityCode, packageName, reason string) string {

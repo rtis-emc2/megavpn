@@ -39,3 +39,53 @@ func TestAptInstallFailureMessageForShadowsocks(t *testing.T) {
 		}
 	}
 }
+
+func TestAptInstallCommandRetryClassification(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		command string
+		args    []string
+		output  string
+		want    bool
+	}{
+		{
+			name:    "apt update network failure retries",
+			command: "apt-get",
+			args:    []string{"update"},
+			output:  "Temporary failure resolving archive.ubuntu.com",
+			want:    true,
+		},
+		{
+			name:    "env apt install lock retries",
+			command: "env",
+			args:    []string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "shadowsocks-libev"},
+			output:  "Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 123",
+			want:    true,
+		},
+		{
+			name:    "missing package does not retry",
+			command: "env",
+			args:    []string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "missing-package"},
+			output:  "E: Unable to locate package missing-package",
+			want:    false,
+		},
+		{
+			name:    "non apt command does not retry",
+			command: "systemctl",
+			args:    []string{"enable", "--now", "shadowsocks-libev"},
+			output:  "failed",
+			want:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldRetryAptInstallCommand(tc.command, tc.args, 100, tc.output)
+			if got != tc.want {
+				t.Fatalf("shouldRetryAptInstallCommand() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

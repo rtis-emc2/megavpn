@@ -112,6 +112,21 @@ func TestMissingServicePackRuntimeCapabilitiesDeduplicatesRuntime(t *testing.T) 
 	}
 }
 
+func TestMissingServicePackRuntimeCapabilitiesTreatsFailedRuntimeAsMissing(t *testing.T) {
+	components := []domain.ServicePackComponent{
+		{ServiceCode: "shadowsocks"},
+		{ServiceCode: "openvpn"},
+	}
+	capabilities := []domain.NodeCapability{
+		{CapabilityCode: "shadowsocks", Status: "failed"},
+		{CapabilityCode: "openvpn", Status: "available"},
+	}
+	got := missingServicePackRuntimeCapabilities(components, capabilities)
+	if len(got) != 1 || got[0] != "shadowsocks" {
+		t.Fatalf("missing runtime capabilities = %#v, want [shadowsocks]", got)
+	}
+}
+
 func TestServicePackTLSEdgeCertificateScope(t *testing.T) {
 	cases := []struct {
 		name      string

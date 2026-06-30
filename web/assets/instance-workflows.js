@@ -264,6 +264,7 @@
           endpoint_host: String(form.get('endpoint_host') || '').trim(),
           certificate_id: String(form.get('certificate_id') || '').trim(),
           openvpn_pki_profile: String(form.get('openvpn_pki_profile') || '').trim(),
+          auto_install_runtime: true,
         };
         const data = await sendJSON(`/api/v1/service-packs/${encodeURIComponent(packKey)}/instances`, 'POST', payload);
         target.innerHTML = renderActionResponse(data, 'Service pack creation');
