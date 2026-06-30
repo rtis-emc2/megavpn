@@ -70,6 +70,8 @@ func TestRenderControlPlaneNginxConfigSupportsWebSocketUpgrade(t *testing.T) {
 		"proxy_buffering off;",
 		"proxy_read_timeout 2h;",
 		"proxy_send_timeout 2h;",
+		"location = /api/v1/binary-artifacts/import",
+		"client_max_body_size 513m;",
 	} {
 		if !strings.Contains(conf, want) {
 			t.Fatalf("rendered nginx config does not contain %q:\n%s", want, conf)

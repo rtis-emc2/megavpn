@@ -7,6 +7,7 @@
       setTitle,
       el,
       fetchJSON,
+      requestJSON,
       sendJSON,
       watchJob,
       openModal,
@@ -22,6 +23,7 @@
       typeof setTitle !== 'function' ||
       typeof el !== 'function' ||
       typeof fetchJSON !== 'function' ||
+      typeof requestJSON !== 'function' ||
       typeof sendJSON !== 'function' ||
       typeof watchJob !== 'function' ||
       typeof openModal !== 'function' ||
@@ -170,14 +172,35 @@
           <tr>
             <td><strong>${escapeHTML(entry.name || 'artifact')}</strong><div class="mono small">${escapeHTML(entry.id || '')}</div></td>
             <td>${escapeHTML(entry.service_code || 'n/a')}</td>
-            <td>${escapeHTML(entry.kind || 'n/a')}</td>
+            <td>
+              ${escapeHTML(entry.kind || 'n/a')}
+              ${entry.metadata?.install_mode ? `<div class="muted small">${escapeHTML(entry.metadata.install_mode)}</div>` : ''}
+            </td>
             <td>${escapeHTML(entry.version || 'n/a')}</td>
             <td>${escapeHTML(entry.os_family || 'linux')} · ${escapeHTML(entry.os_version || 'any')} · ${escapeHTML(entry.architecture || 'arch')}</td>
-            <td><span class="mono small">${escapeHTML(entry.sha256 || '')}</span></td>
+            <td>
+              <span class="mono small" title="${escapeHTML(entry.sha256 || '')}">${escapeHTML(shortHash(entry.sha256 || ''))}</span>
+              <div class="muted small">${escapeHTML(formatBytes(entry.size_bytes || 0))}</div>
+            </td>
             <td>${statusTag(entry.status || 'unknown')}</td>
           </tr>`).join('')
         : '<tr><td colspan="7"><div class="empty">No runtime artifacts registered. Add a pinned artifact before using binary_repository installs.</div></td></tr>';
       return `<table><thead><tr><th>Artifact</th><th>Service</th><th>Kind</th><th>Version</th><th>Target</th><th>SHA-256</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function shortHash(value) {
+      const hash = String(value || '').trim();
+      if (hash.length <= 24) return hash || 'n/a';
+      return `${hash.slice(0, 12)}...${hash.slice(-8)}`;
+    }
+
+    function formatBytes(value) {
+      const size = Number(value || 0);
+      if (!Number.isFinite(size) || size <= 0) return '0 B';
+      if (size < 1024) return `${size} B`;
+      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`;
+      if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MiB`;
+      return `${(size / 1024 / 1024 / 1024).toFixed(1)} GiB`;
     }
 
     function render() {
@@ -276,6 +299,11 @@
       }
       openModal('Add runtime artifact', 'Binary repository', `
         <form id="binaryArtifactForm" class="form-grid">
+          <div class="field full">
+            <label>Artifact file</label>
+            <input name="file" type="file" required>
+            <div class="field-hint">The control plane stores the file under the configured artifact root and calculates SHA-256 before registration.</div>
+          </div>
           <div class="field">
             <label>Name</label>
             <input name="name" placeholder="xray-install-1.8.24" required>
@@ -318,22 +346,29 @@
             <label>Install mode</label>
             <select name="install_mode">
               <option value="">auto by kind</option>
+              <option value="copy_binary">copy_binary</option>
               <option value="xray_install_script">xray_install_script</option>
               <option value="deb_package">deb_package</option>
             </select>
           </div>
-          <div class="field full">
-            <label>Storage path</label>
-            <input name="storage_path" placeholder="runtime/xray-install.sh" required>
-            <div class="field-hint">Relative paths are resolved under the control-plane artifact root.</div>
+          <div class="field">
+            <label>Install path</label>
+            <input name="install_path" placeholder="/usr/local/bin/xray or /usr/local/bin/ss-server">
+            <div class="field-hint">Only service-specific allowlisted paths are accepted by the agent for copy_binary.</div>
           </div>
           <div class="field full">
-            <label>SHA-256</label>
-            <input name="sha256" pattern="[a-fA-F0-9]{64}" placeholder="64 hex characters" required>
+            <label>Repository path</label>
+            <input name="storage_path" placeholder="auto-generated when empty">
+            <div class="field-hint">Optional relative path under the control-plane artifact root. Leave empty for generated runtime-repository path.</div>
+          </div>
+          <div class="field full">
+            <label>Expected SHA-256</label>
+            <input name="expected_sha256" pattern="[a-fA-F0-9]{64}" placeholder="optional 64 hex characters">
+            <div class="field-hint">Optional pin. If provided, the upload is rejected unless the calculated SHA-256 matches it.</div>
           </div>
           <div class="modal-actions field full">
             <button class="secondary-btn" type="button" id="cancelBinaryArtifactBtn">Cancel</button>
-            <button class="primary-btn" type="submit">Register artifact</button>
+            <button class="primary-btn" type="submit">Upload artifact</button>
           </div>
         </form>
         <div id="binaryArtifactResult" class="form-result"></div>`);
@@ -342,27 +377,15 @@
         event.preventDefault();
         const form = event.currentTarget;
         const result = document.getElementById('binaryArtifactResult');
-        const data = Object.fromEntries(new FormData(form).entries());
-        const metadata = {};
-        if (String(data.install_mode || '').trim()) metadata.install_mode = String(data.install_mode || '').trim();
-        const payload = {
-          name: String(data.name || '').trim(),
-          service_code: String(data.service_code || '').trim(),
-          kind: String(data.kind || '').trim(),
-          version: String(data.version || '').trim(),
-          os_family: String(data.os_family || 'linux').trim(),
-          os_version: String(data.os_version || '').trim(),
-          architecture: String(data.architecture || '').trim(),
-          storage_path: String(data.storage_path || '').trim(),
-          sha256: String(data.sha256 || '').trim().toLowerCase(),
-          status: 'active',
-          metadata,
-        };
-        result.innerHTML = '<span class="tag warn">registering artifact</span>';
+        const data = new FormData(form);
+        result.innerHTML = '<span class="tag warn">uploading artifact</span>';
         try {
-          await sendJSON('/api/v1/binary-artifacts', 'POST', payload);
+          await requestJSON('/api/v1/binary-artifacts/import', {
+            method: 'POST',
+            body: data,
+          });
           state.binaryArtifacts = await fetchJSON('/api/v1/binary-artifacts', []);
-          result.innerHTML = '<span class="tag ok">artifact registered</span>';
+          result.innerHTML = '<span class="tag ok">artifact uploaded</span>';
           render();
         } catch (err) {
           result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;

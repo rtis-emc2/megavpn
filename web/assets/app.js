@@ -317,6 +317,7 @@
     setTitle,
     el,
     fetchJSON,
+    requestJSON,
     sendJSON,
     watchJob: jobWorkflows.watchJob,
     openModal,

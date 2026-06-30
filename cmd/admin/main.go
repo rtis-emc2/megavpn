@@ -3,11 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +12,7 @@ import (
 
 	apihttp "github.com/rtis-emc2/megavpn/internal/api/http"
 	authn "github.com/rtis-emc2/megavpn/internal/auth"
+	"github.com/rtis-emc2/megavpn/internal/binaryrepo"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/infra/postgres"
 	"github.com/rtis-emc2/megavpn/internal/platform/config"
@@ -199,6 +197,8 @@ func importBinaryArtifact(args []string) error {
 		osVersion    = fs.String("os-version", "", "target OS version, empty means any")
 		architecture = fs.String("architecture", "amd64", "target architecture: amd64 or arm64")
 		installMode  = fs.String("install-mode", "", "optional installer mode, for example xray_install_script or deb_package")
+		installPath  = fs.String("install-path", "", "optional target executable path for copy_binary mode")
+		expectedSHA  = fs.String("expected-sha256", "", "optional expected SHA-256 pin checked while importing")
 		signature    = fs.String("signature", "", "optional detached signature or signature reference")
 		storagePath  = fs.String("storage-path", "", "optional relative repository path under artifact root")
 		replace      = fs.Bool("replace-file", false, "replace an existing file at the repository storage path")
@@ -234,6 +234,8 @@ func importBinaryArtifact(args []string) error {
 		OSVersion:    *osVersion,
 		Architecture: *architecture,
 		InstallMode:  *installMode,
+		InstallPath:  *installPath,
+		ExpectedSHA:  *expectedSHA,
 		Signature:    *signature,
 		StoragePath:  *storagePath,
 		ReplaceFile:  *replace,
@@ -380,193 +382,53 @@ type binaryArtifactImportRequest struct {
 	OSVersion    string
 	Architecture string
 	InstallMode  string
+	InstallPath  string
+	ExpectedSHA  string
 	Signature    string
 	StoragePath  string
 	ReplaceFile  bool
 }
 
 func prepareBinaryArtifactImport(root string, req binaryArtifactImportRequest) (domain.BinaryArtifact, error) {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return domain.BinaryArtifact{}, fmt.Errorf("artifact root is required")
-	}
-	source := strings.TrimSpace(req.SourceFile)
-	if source == "" {
-		return domain.BinaryArtifact{}, fmt.Errorf("--file is required")
-	}
-	info, err := os.Stat(source)
-	if err != nil {
-		return domain.BinaryArtifact{}, fmt.Errorf("stat source file: %w", err)
-	}
-	if info.IsDir() {
-		return domain.BinaryArtifact{}, fmt.Errorf("source file must not be a directory")
-	}
-
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		name = filepath.Base(source)
-	}
-	kind := strings.ToLower(strings.TrimSpace(req.Kind))
-	if kind == "" {
-		kind = inferBinaryArtifactKind(source)
-	}
-	serviceCode := strings.TrimSpace(req.ServiceCode)
-	version := strings.TrimSpace(req.Version)
-	if serviceCode == "" {
-		return domain.BinaryArtifact{}, fmt.Errorf("--service-code is required")
-	}
-	if version == "" {
-		return domain.BinaryArtifact{}, fmt.Errorf("--version is required")
-	}
-	arch := strings.TrimSpace(req.Architecture)
-	if arch == "" {
-		arch = "amd64"
-	}
-	storagePath := strings.TrimSpace(req.StoragePath)
-	if storagePath == "" {
-		storagePath = generatedBinaryArtifactStoragePath(serviceCode, arch, version, kind, filepath.Base(source))
-	}
-	storagePath, err = cleanRelativeRepositoryPath(storagePath)
-	if err != nil {
-		return domain.BinaryArtifact{}, err
-	}
-	sha, size, err := copyBinaryArtifactFile(root, source, storagePath, req.ReplaceFile)
-	if err != nil {
-		return domain.BinaryArtifact{}, err
-	}
-	metadata := map[string]any{}
-	if installMode := strings.TrimSpace(req.InstallMode); installMode != "" {
-		metadata["install_mode"] = installMode
-	}
-	return domain.BinaryArtifact{
-		Name:         name,
-		Kind:         kind,
-		ServiceCode:  serviceCode,
-		Version:      version,
-		OSFamily:     strings.TrimSpace(req.OSFamily),
-		OSVersion:    strings.TrimSpace(req.OSVersion),
-		Architecture: arch,
-		StoragePath:  storagePath,
-		SizeBytes:    size,
-		SHA256:       sha,
-		Signature:    strings.TrimSpace(req.Signature),
-		Status:       "active",
-		Metadata:     metadata,
-	}, nil
+	return binaryrepo.ImportFile(root, binaryrepo.ImportRequest{
+		SourceFile:     req.SourceFile,
+		Name:           req.Name,
+		Kind:           req.Kind,
+		ServiceCode:    req.ServiceCode,
+		Version:        req.Version,
+		OSFamily:       req.OSFamily,
+		OSVersion:      req.OSVersion,
+		Architecture:   req.Architecture,
+		InstallMode:    req.InstallMode,
+		InstallPath:    req.InstallPath,
+		ExpectedSHA256: req.ExpectedSHA,
+		Signature:      req.Signature,
+		StoragePath:    req.StoragePath,
+		ReplaceFile:    req.ReplaceFile,
+	})
 }
 
 func inferBinaryArtifactKind(path string) string {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".sh":
-		return "script"
-	case ".deb":
-		return "package"
-	default:
-		return "runtime"
-	}
+	return binaryrepo.InferKind(path)
 }
 
 func generatedBinaryArtifactStoragePath(serviceCode, arch, version, kind, filename string) string {
-	return filepath.ToSlash(filepath.Join(
-		"runtime-repository",
-		safeArtifactPathSegment(serviceCode),
-		safeArtifactPathSegment(arch),
-		safeArtifactPathSegment(version),
-		safeArtifactPathSegment(kind)+"-"+safeArtifactPathSegment(filename),
-	))
+	return binaryrepo.GeneratedStoragePath(serviceCode, arch, version, kind, filename)
 }
 
 func safeArtifactPathSegment(value string) string {
-	value = strings.TrimSpace(value)
-	var b strings.Builder
-	lastDash := false
-	for _, r := range value {
-		allowed := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
-		if allowed {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	out := strings.Trim(b.String(), ".-_")
-	if out == "" {
-		return "artifact"
-	}
-	return out
+	return binaryrepo.SafePathSegment(value)
 }
 
 func cleanRelativeRepositoryPath(path string) (string, error) {
-	path = filepath.ToSlash(strings.TrimSpace(path))
-	if path == "" {
-		return "", fmt.Errorf("storage path is required")
-	}
-	if filepath.IsAbs(path) || strings.HasPrefix(path, "/") {
-		return "", fmt.Errorf("storage path must be relative to artifact root")
-	}
-	if strings.Contains(path, "\x00") {
-		return "", fmt.Errorf("storage path contains NUL")
-	}
-	cleaned := filepath.ToSlash(filepath.Clean(path))
-	if cleaned == "." || cleaned == "" || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") {
-		return "", fmt.Errorf("storage path must not escape artifact root")
-	}
-	return cleaned, nil
+	return binaryrepo.CleanRelativePath(path)
 }
 
 func copyBinaryArtifactFile(root, source, storagePath string, replace bool) (string, int64, error) {
-	root = filepath.Clean(strings.TrimSpace(root))
-	destination := filepath.Join(root, filepath.FromSlash(storagePath))
-	rel, err := filepath.Rel(root, destination)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", 0, fmt.Errorf("destination escapes artifact root")
-	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
-		return "", 0, fmt.Errorf("create artifact directory: %w", err)
-	}
-	if !replace {
-		if _, err := os.Stat(destination); err == nil {
-			return "", 0, fmt.Errorf("artifact file already exists: %s", destination)
-		} else if !os.IsNotExist(err) {
-			return "", 0, fmt.Errorf("stat artifact file: %w", err)
-		}
-	}
-
 	src, err := os.Open(source)
 	if err != nil {
 		return "", 0, fmt.Errorf("open source file: %w", err)
 	}
 	defer src.Close()
-
-	tmp := destination + ".tmp-" + fmt.Sprintf("%d", time.Now().UTC().UnixNano())
-	dst, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
-	if err != nil {
-		return "", 0, fmt.Errorf("create artifact file: %w", err)
-	}
-	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(dst, hash), src)
-	closeErr := dst.Close()
-	if copyErr != nil || closeErr != nil {
-		_ = os.Remove(tmp)
-		if copyErr != nil {
-			return "", 0, fmt.Errorf("copy artifact file: %w", copyErr)
-		}
-		return "", 0, fmt.Errorf("close artifact file: %w", closeErr)
-	}
-	if replace {
-		if err := os.Rename(tmp, destination); err != nil {
-			_ = os.Remove(tmp)
-			return "", 0, fmt.Errorf("store artifact file: %w", err)
-		}
-	} else {
-		if err := os.Link(tmp, destination); err != nil {
-			_ = os.Remove(tmp)
-			return "", 0, fmt.Errorf("store artifact file: %w", err)
-		}
-		_ = os.Remove(tmp)
-	}
-	return hex.EncodeToString(hash.Sum(nil)), written, nil
+	return binaryrepo.CopyArtifact(root, src, storagePath, binaryrepo.CopyOptions{ReplaceFile: replace})
 }

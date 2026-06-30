@@ -322,6 +322,20 @@ Generated client artifacts are stored under `MEGAVPN_ARTIFACT_ROOT`, defaulting 
 export MEGAVPN_ARTIFACT_ROOT=/var/lib/megavpn/artifacts
 ```
 
+Runtime binaries that are not installed from the operating system package repository can be pinned in the same artifact root through Services -> Runtime Binary Repository or through the offline admin CLI. The API upload path stores the file under `MEGAVPN_ARTIFACT_ROOT`, calculates SHA-256, records the metadata in PostgreSQL and later issues a short-lived node/job-bound download ticket for the agent. Updated agents reject unsigned downloads, verify the response signature and verify the artifact SHA-256 before installation.
+
+```bash
+sudo -E /opt/megavpn/bin/megavpn-admin import-binary-artifact \
+  --file /path/to/runtime-or-installer \
+  --service-code xray-core \
+  --kind runtime \
+  --version 1.0.0 \
+  --architecture amd64 \
+  --install-mode copy_binary
+```
+
+`copy_binary` is agent-policy restricted to service-specific executable paths such as `/usr/local/bin/xray` and `/usr/local/bin/ss-server`. For `.deb` uploads use `--kind package --install-mode deb_package`; for pinned Xray installer scripts use `--kind script --install-mode xray_install_script`. The bundled nginx templates keep normal API requests at `16m` but allow `513m` only for `/api/v1/binary-artifacts/import`.
+
 Create the secret master key before enabling secret-backed bootstrap, token rotation, platform certificates or service PKI:
 
 ```bash

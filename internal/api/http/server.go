@@ -312,6 +312,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("DELETE /api/v1/service-packs/{key}", "settings.manage", s.setServicePackStatus("deleted"))
 	protected("GET /api/v1/binary-artifacts", "binary_repository.read", s.listBinaryArtifacts)
 	protected("POST /api/v1/binary-artifacts", "binary_repository.manage", s.createBinaryArtifact)
+	protected("POST /api/v1/binary-artifacts/import", "binary_repository.manage", s.importBinaryArtifact)
 	protected("GET /api/v1/nodes", "node.read", s.listNodes)
 	protected("POST /api/v1/nodes", "node.write", s.createNode)
 	protected("GET /api/v1/nodes/{id}", "node.read", s.getNode)
@@ -428,9 +429,23 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	mux.HandleFunc("POST /agent/jobs/{id}/result", s.agentJobResult)
 	handler := nethttp.Handler(mux)
 	if s.maxRequestBytes > 0 {
-		handler = nethttp.MaxBytesHandler(handler, s.maxRequestBytes)
+		handler = maxRequestBytesHandler(handler, s.maxRequestBytes)
 	}
 	return recoverer(log, requestLogger(log, securityHeaders(strings.HasPrefix(s.publicBaseURL, "https://"), handler)))
+}
+
+func maxRequestBytesHandler(next nethttp.Handler, defaultLimit int64) nethttp.Handler {
+	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		limit := defaultLimit
+		if r.Method == nethttp.MethodPost && r.URL != nil && r.URL.Path == "/api/v1/binary-artifacts/import" {
+			artifactLimit := maxBinaryArtifactUploadBytes + 1024*1024
+			if artifactLimit > limit {
+				limit = artifactLimit
+			}
+		}
+		r.Body = nethttp.MaxBytesReader(w, r.Body, limit)
+		next.ServeHTTP(w, r)
+	})
 }
 
 type response map[string]any
@@ -697,33 +712,6 @@ func (s *Server) listServiceInstallers(w nethttp.ResponseWriter, r *nethttp.Requ
 		{"service_code": "shadowsocks", "strategy": "ubuntu_repo", "channel": "stable", "description": "Install shadowsocks-libev from the Ubuntu repository."},
 		{"service_code": "shadowsocks", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed Shadowsocks runtime."},
 	})
-}
-
-func (s *Server) listBinaryArtifacts(w nethttp.ResponseWriter, r *nethttp.Request) {
-	includeInactive := r.URL.Query().Get("include_inactive") == "1"
-	items, err := s.store.ListBinaryArtifacts(r.Context(), includeInactive)
-	if err != nil {
-		writeErr(w, 500, "list binary artifacts failed")
-		return
-	}
-	if items == nil {
-		items = []domain.BinaryArtifact{}
-	}
-	writeJSON(w, 200, items)
-}
-
-func (s *Server) createBinaryArtifact(w nethttp.ResponseWriter, r *nethttp.Request) {
-	var req domain.BinaryArtifact
-	if !decode(r, &req) {
-		writeErr(w, 400, "invalid binary artifact payload")
-		return
-	}
-	item, err := s.store.CreateBinaryArtifact(r.Context(), req)
-	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, 201, item)
 }
 
 func (s *Server) listNodes(w nethttp.ResponseWriter, r *nethttp.Request) {

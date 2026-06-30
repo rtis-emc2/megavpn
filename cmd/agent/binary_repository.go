@@ -64,6 +64,16 @@ func (c client) installBinaryRepositoryCapability(ctx context.Context, j job, se
 		return code == 0
 	}
 	switch mode {
+	case "copy_binary":
+		targetPath := binaryInstallPath(serviceCode, repo)
+		if err := validateBinaryInstallPath(serviceCode, targetPath); err != nil {
+			return map[string]any{"ok": false, "message": "binary repository install_path is not allowed", "error": err.Error(), "steps": steps, "binary_repository": repositoryResult}
+		}
+		if err := installBinaryExecutable(artifact.Path, targetPath); err != nil {
+			return map[string]any{"ok": false, "message": "binary repository executable install failed", "error": err.Error(), "steps": steps, "binary_repository": repositoryResult}
+		}
+		repositoryResult["install_path"] = targetPath
+		steps = append(steps, map[string]any{"stage": "install", "mode": mode, "install_path": targetPath})
 	case "xray_install_script":
 		if serviceCode != "xray-core" {
 			return map[string]any{"ok": false, "message": "xray_install_script mode is only valid for xray-core", "steps": steps, "binary_repository": repositoryResult}
@@ -204,6 +214,14 @@ func binaryInstallMode(repo map[string]any) string {
 	return stringify(metadata["install_mode"])
 }
 
+func binaryInstallPath(serviceCode string, repo map[string]any) string {
+	metadata, _ := repo["metadata"].(map[string]any)
+	if path := strings.TrimSpace(stringify(metadata["install_path"])); path != "" {
+		return path
+	}
+	return defaultBinaryInstallPath(serviceCode)
+}
+
 func binaryRepositoryInstallResult(repo map[string]any, artifact downloadedBinaryArtifact, mode string) map[string]any {
 	result := map[string]any{
 		"kind":                 artifact.Kind,
@@ -226,7 +244,89 @@ func defaultBinaryInstallMode(serviceCode, kind, path string) string {
 	if kind == "package" || strings.HasSuffix(strings.ToLower(path), ".deb") {
 		return "deb_package"
 	}
+	if kind == "runtime" {
+		switch serviceCode {
+		case "xray-core", "shadowsocks":
+			return "copy_binary"
+		}
+	}
 	return ""
+}
+
+func defaultBinaryInstallPath(serviceCode string) string {
+	switch strings.TrimSpace(serviceCode) {
+	case "xray-core":
+		return "/usr/local/bin/xray"
+	case "shadowsocks":
+		return "/usr/local/bin/ss-server"
+	default:
+		return ""
+	}
+}
+
+func validateBinaryInstallPath(serviceCode, target string) error {
+	target = filepath.Clean(strings.TrimSpace(target))
+	if target == "." || !filepath.IsAbs(target) {
+		return errors.New("install_path must be absolute")
+	}
+	for _, allowed := range allowedBinaryInstallPaths(serviceCode) {
+		if target == allowed {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s is not allowed for %s", target, serviceCode)
+}
+
+func allowedBinaryInstallPaths(serviceCode string) []string {
+	switch strings.TrimSpace(serviceCode) {
+	case "xray-core":
+		return []string{"/usr/local/bin/xray", "/usr/bin/xray", "/opt/xray/xray"}
+	case "shadowsocks":
+		return []string{"/usr/local/bin/ss-server", "/usr/bin/ss-server"}
+	default:
+		return nil
+	}
+}
+
+func installBinaryExecutable(source, target string) error {
+	target = filepath.Clean(target)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("create binary directory: %w", err)
+	}
+	src, err := os.Open(source)
+	if err != nil {
+		return fmt.Errorf("open downloaded artifact: %w", err)
+	}
+	defer src.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*")
+	if err != nil {
+		return fmt.Errorf("create binary temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := io.Copy(tmp, src); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("copy binary: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close binary temp file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0o755); err != nil {
+		return fmt.Errorf("chmod binary: %w", err)
+	}
+	if err := os.Chown(tmpPath, 0, 0); err != nil && os.Geteuid() == 0 {
+		return fmt.Errorf("chown binary: %w", err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return fmt.Errorf("install binary: %w", err)
+	}
+	removeTmp = false
+	return nil
 }
 
 func verifyInstalledCapability(ctx context.Context, serviceCode string) map[string]any {

@@ -188,6 +188,21 @@ server {
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     client_max_body_size 16m;
 
+    location = /api/v1/binary-artifacts/import {
+        client_max_body_size 513m;
+        proxy_pass %s;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout 2h;
+        proxy_send_timeout 2h;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port %d;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
     location / {
         proxy_pass %s;
         proxy_http_version 1.1;
@@ -204,7 +219,7 @@ server {
         proxy_set_header X-Forwarded-Proto https;
     }
 }
-`, settings.ListenPort, settings.ServerName, certPath, keyPath, settings.UpstreamURL, settings.ListenPort)) + "\n"
+`, settings.ListenPort, settings.ServerName, certPath, keyPath, settings.UpstreamURL, settings.ListenPort, settings.UpstreamURL, settings.ListenPort)) + "\n"
 }
 
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {

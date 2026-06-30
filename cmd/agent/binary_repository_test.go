@@ -72,6 +72,26 @@ func TestDownloadBinaryRepositoryArtifactRejectsTamperedSignedBody(t *testing.T)
 	}
 }
 
+func TestBinaryRepositoryRuntimeDefaultsToCopyBinary(t *testing.T) {
+	t.Parallel()
+
+	if got := defaultBinaryInstallMode("xray-core", "runtime", "/tmp/artifact"); got != "copy_binary" {
+		t.Fatalf("xray runtime mode = %q, want copy_binary", got)
+	}
+	if got := defaultBinaryInstallMode("shadowsocks", "runtime", "/tmp/artifact"); got != "copy_binary" {
+		t.Fatalf("shadowsocks runtime mode = %q, want copy_binary", got)
+	}
+	if got := defaultBinaryInstallPath("xray-core"); got != "/usr/local/bin/xray" {
+		t.Fatalf("xray default install path = %q", got)
+	}
+	if err := validateBinaryInstallPath("xray-core", "/etc/passwd"); err == nil {
+		t.Fatal("validateBinaryInstallPath accepted disallowed path")
+	}
+	if err := validateBinaryInstallPath("shadowsocks", "/usr/local/bin/ss-server"); err != nil {
+		t.Fatalf("validateBinaryInstallPath rejected ss-server path: %v", err)
+	}
+}
+
 func binaryRepositoryTestJob() job {
 	return job{
 		ID: "job-1",
