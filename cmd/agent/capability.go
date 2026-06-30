@@ -632,7 +632,16 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 	} else if !aptPackageCandidateAvailable(ctx, packageName, &steps) {
 		_ = tryPrepareUbuntuUniverseRepository(ctx, packageName, &steps)
 	}
-	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "install", "-y", packageName) {
+	cleanupServiceAutostart := func() {}
+	if shouldPreventPackageServiceAutostart(capabilityCode) {
+		cleanup, err := preventPackageServiceAutostart(&steps)
+		if err != nil {
+			return map[string]any{"ok": false, "message": capabilityCode + " install failed before package install", "error": err.Error(), "steps": steps, "package": packageName}
+		}
+		cleanupServiceAutostart = cleanup
+	}
+	defer cleanupServiceAutostart()
+	if !run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "UCF_FORCE_CONFFOLD=1", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "install", "-y", packageName) {
 		return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "package install failed"), "steps": steps, "package": packageName}
 	}
 	for _, unit := range enableUnits {
@@ -667,6 +676,39 @@ func ubuntuPackageEnableUnits(capabilityCode string, units ...string) []string {
 	default:
 		return append([]string(nil), units...)
 	}
+}
+
+func shouldPreventPackageServiceAutostart(capabilityCode string) bool {
+	switch normalizeCapabilityCode(capabilityCode) {
+	case driver.Shadowsocks:
+		return true
+	default:
+		return false
+	}
+}
+
+func preventPackageServiceAutostart(steps *[]map[string]any) (func(), error) {
+	const path = "/usr/sbin/policy-rc.d"
+	appendStep := func(step map[string]any) {
+		if steps != nil {
+			*steps = append(*steps, step)
+		}
+	}
+	if _, err := os.Stat(path); err == nil {
+		appendStep(map[string]any{"stage": "package_service_autostart", "path": path, "action": "existing_policy_left_unchanged"})
+		return func() {}, nil
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 101\n"), 0o755); err != nil {
+		return nil, err
+	}
+	appendStep(map[string]any{"stage": "package_service_autostart", "path": path, "action": "temporary_policy_created"})
+	return func() {
+		if err := os.Remove(path); err == nil {
+			appendStep(map[string]any{"stage": "package_service_autostart", "path": path, "action": "temporary_policy_removed"})
+		}
+	}, nil
 }
 
 func aptPackageCandidateAvailable(ctx context.Context, packageName string, steps *[]map[string]any) bool {

@@ -139,6 +139,17 @@ func TestShadowsocksUbuntuRuntimeInstallDoesNotEnablePackageUnit(t *testing.T) {
 	}
 }
 
+func TestPackageServiceAutostartPreventionSelection(t *testing.T) {
+	t.Parallel()
+
+	if !shouldPreventPackageServiceAutostart("shadowsocks") {
+		t.Fatal("expected Shadowsocks package install to block distro service autostart")
+	}
+	if shouldPreventPackageServiceAutostart("openvpn") {
+		t.Fatal("did not expect OpenVPN package install to block distro service autostart")
+	}
+}
+
 func TestHasBinaryRepositoryInstallPayload(t *testing.T) {
 	t.Parallel()
 
