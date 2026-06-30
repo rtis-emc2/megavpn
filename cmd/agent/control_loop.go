@@ -83,10 +83,35 @@ func syncWithCore(ctx context.Context, log agentLogger, c *client, st *agentStat
 	}
 	log.Info("agent job received", "job_id", j.ID, "type", j.Type)
 	status, result := c.execute(ctx, j, st)
+	logAgentJobResult(log, j, status, result)
 	if err := c.submit(ctx, j.ID, status, result); err != nil {
 		return fmt.Errorf("submit job result failed: %w", err)
 	}
 	return nil
+}
+
+func logAgentJobResult(log agentLogger, j job, status string, result map[string]any) {
+	if status == "succeeded" {
+		log.Info("agent job completed", "job_id", j.ID, "type", j.Type, "status", status, "message", jobResultText(result, "message"))
+		return
+	}
+	log.Error(
+		"agent job failed",
+		"job_id", j.ID,
+		"type", j.Type,
+		"status", status,
+		"message", jobResultText(result, "message"),
+		"error", jobResultText(result, "error"),
+		"last_failed_command", jobResultText(result, "last_failed_command"),
+		"last_failed_exit_code", jobResultText(result, "last_failed_exit_code"),
+	)
+}
+
+func jobResultText(result map[string]any, key string) string {
+	if result == nil {
+		return ""
+	}
+	return truncate(stringify(result[key]), 500)
 }
 
 func retryDelay(attempt int, minWait, maxWait time.Duration) time.Duration {

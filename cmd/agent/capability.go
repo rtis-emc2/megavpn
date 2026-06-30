@@ -623,7 +623,7 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 	}
 	if !run("apt-get", "-o", "Acquire::Retries=3", "-o", "Dpkg::Lock::Timeout=120", "update") {
 		if !aptPackageCandidateAvailable(ctx, packageName, &steps) {
-			return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "apt update failed"), "steps": steps, "package": packageName}
+			return aptInstallFailureResult(capabilityCode, packageName, "apt update failed", steps)
 		}
 		steps = append(steps, map[string]any{
 			"command": []string{"apt-cache", "policy", packageName},
@@ -642,7 +642,7 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 	}
 	defer cleanupServiceAutostart()
 	if !run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "UCF_FORCE_CONFFOLD=1", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "install", "-y", packageName) {
-		return map[string]any{"ok": false, "message": aptInstallFailureMessage(capabilityCode, packageName, "package install failed"), "steps": steps, "package": packageName}
+		return aptInstallFailureResult(capabilityCode, packageName, "package install failed", steps)
 	}
 	for _, unit := range enableUnits {
 		_ = run("systemctl", "enable", "--now", unit)
@@ -886,6 +886,110 @@ func aptInstallFailureMessage(capabilityCode, packageName, reason string) string
 		return base + "; fix node apt repositories/network and retry the OpenVPN runtime install"
 	default:
 		return base + "; fix node apt repositories/network and retry runtime install"
+	}
+}
+
+func aptInstallFailureResult(capabilityCode, packageName, reason string, steps []map[string]any) map[string]any {
+	detail := lastFailedInstallCommand(steps)
+	message := aptInstallFailureMessage(capabilityCode, packageName, reason)
+	if detail.command != "" {
+		message += "; failed command: " + detail.command
+	}
+	if detail.outputLine != "" {
+		message += "; output: " + detail.outputLine
+	}
+	result := map[string]any{"ok": false, "message": message, "steps": steps, "package": packageName}
+	if detail.command != "" {
+		result["last_failed_command"] = detail.command
+	}
+	if detail.exitCode != nil {
+		result["last_failed_exit_code"] = *detail.exitCode
+	}
+	if detail.output != "" {
+		result["last_failed_output"] = detail.output
+	}
+	return result
+}
+
+type failedInstallCommand struct {
+	command    string
+	exitCode   *int
+	output     string
+	outputLine string
+}
+
+func lastFailedInstallCommand(steps []map[string]any) failedInstallCommand {
+	for idx := len(steps) - 1; idx >= 0; idx-- {
+		step := steps[idx]
+		code, ok := intFromInstallStep(step["exit_code"])
+		if !ok || code == 0 {
+			continue
+		}
+		command := commandLineFromStep(step["command"])
+		if command == "" {
+			continue
+		}
+		output := strings.TrimSpace(stringify(step["output"]))
+		codeCopy := code
+		return failedInstallCommand{
+			command:    command,
+			exitCode:   &codeCopy,
+			output:     truncate(output, 4000),
+			outputLine: firstLine(output),
+		}
+	}
+	return failedInstallCommand{}
+}
+
+func commandLineFromStep(raw any) string {
+	switch value := raw.(type) {
+	case []string:
+		return strings.Join(value, " ")
+	case []any:
+		parts := make([]string, 0, len(value))
+		for _, item := range value {
+			part := stringify(item)
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+		return strings.Join(parts, " ")
+	case string:
+		return strings.TrimSpace(value)
+	default:
+		return ""
+	}
+}
+
+func intFromInstallStep(raw any) (int, bool) {
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int8:
+		return int(value), true
+	case int16:
+		return int(value), true
+	case int32:
+		return int(value), true
+	case int64:
+		return int(value), true
+	case uint:
+		return int(value), true
+	case uint8:
+		return int(value), true
+	case uint16:
+		return int(value), true
+	case uint32:
+		return int(value), true
+	case uint64:
+		if value > uint64(^uint(0)>>1) {
+			return 0, false
+		}
+		return int(value), true
+	case float64:
+		return int(value), value == float64(int(value))
+	default:
+		return 0, false
 	}
 }
 

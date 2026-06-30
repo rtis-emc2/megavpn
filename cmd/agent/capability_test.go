@@ -40,6 +40,36 @@ func TestAptInstallFailureMessageForShadowsocks(t *testing.T) {
 	}
 }
 
+func TestAptInstallFailureResultIncludesLastFailedCommand(t *testing.T) {
+	t.Parallel()
+
+	result := aptInstallFailureResult("shadowsocks", "shadowsocks-libev", "package install failed", []map[string]any{
+		{
+			"command":   []string{"apt-get", "update"},
+			"exit_code": 0,
+			"output":    "ok",
+		},
+		{
+			"command":   []string{"env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "shadowsocks-libev"},
+			"exit_code": 100,
+			"output":    "E: Sub-process /usr/bin/dpkg returned an error code (1)\nsecond line",
+		},
+	})
+	message := stringify(result["message"])
+	if !strings.Contains(message, "failed command: env DEBIAN_FRONTEND=noninteractive apt-get install -y shadowsocks-libev") {
+		t.Fatalf("message missing command: %q", message)
+	}
+	if !strings.Contains(message, "output: E: Sub-process /usr/bin/dpkg returned an error code (1)") {
+		t.Fatalf("message missing first output line: %q", message)
+	}
+	if got := stringify(result["last_failed_command"]); got == "" {
+		t.Fatal("last_failed_command is empty")
+	}
+	if got := result["last_failed_exit_code"]; got != 100 {
+		t.Fatalf("last_failed_exit_code = %#v, want 100", got)
+	}
+}
+
 func TestAptInstallCommandRetryClassification(t *testing.T) {
 	t.Parallel()
 
