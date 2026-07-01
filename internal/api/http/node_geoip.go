@@ -138,18 +138,36 @@ func parseNodeGeoIPResponse(provider, fallbackIP string, payload map[string]any)
 	}
 	now := time.Now().UTC()
 	ip := firstNonEmptyGeoIP(jsonString(payload, "ip", "query"), fallbackIP)
-	countryCode := strings.ToUpper(jsonString(payload, "country_code", "countryCode", "country"))
-	countryName := jsonString(payload, "country_name", "country")
+	countryCode := strings.ToUpper(firstNonEmptyGeoIP(jsonString(payload, "country_code", "countryCode"), jsonNestedString(payload, "country", "iso_code"), jsonString(payload, "country")))
+	countryName := firstNonEmptyGeoIP(jsonString(payload, "country_name", "countryName"), jsonNestedString(payload, "country", "names", "en"), jsonString(payload, "country"))
 	if countryName == countryCode {
 		countryName = ""
 	}
-	region := jsonString(payload, "region", "regionName")
-	city := jsonString(payload, "city")
-	org := firstNonEmptyGeoIP(jsonString(payload, "org", "organization", "isp"), jsonString(payload, "as"))
-	asn := jsonString(payload, "asn")
+	region := firstNonEmptyGeoIP(jsonString(payload, "region", "regionName", "region_name"), jsonNestedString(payload, "subdivisions", "0", "names", "en"))
+	city := firstNonEmptyGeoIP(jsonString(payload, "city"), jsonNestedString(payload, "city", "names", "en"))
+	org := firstNonEmptyGeoIP(
+		jsonString(payload, "org", "organization", "isp", "asn_org", "as_name"),
+		jsonNestedString(payload, "connection", "org"),
+		jsonNestedString(payload, "connection", "isp"),
+		jsonNestedString(payload, "asn", "name"),
+		jsonNestedString(payload, "as", "name"),
+		jsonNestedString(payload, "company", "name"),
+		jsonNestedString(payload, "traits", "isp"),
+		jsonNestedString(payload, "traits", "organization"),
+		jsonNestedString(payload, "traits", "autonomous_system_organization"),
+		jsonString(payload, "as"),
+	)
+	asn := firstNonEmptyGeoIP(
+		jsonString(payload, "asn", "as_number", "autonomous_system_number"),
+		jsonNestedString(payload, "connection", "asn"),
+		jsonNestedString(payload, "asn", "asn"),
+		jsonNestedString(payload, "as", "number"),
+		jsonNestedString(payload, "traits", "autonomous_system_number"),
+	)
 	if asn == "" {
 		asn = parseASN(jsonString(payload, "as", "org"))
 	}
+	asn = normalizeASN(asn)
 	label := nodeGeoIPLocationLabel(city, region, countryName, countryCode, org)
 	return domain.NodeGeoIP{
 		Provider:         strings.TrimSpace(provider),
@@ -190,18 +208,65 @@ func nodeGeoIPLocationLabel(parts ...string) string {
 
 func jsonString(payload map[string]any, keys ...string) string {
 	for _, key := range keys {
-		switch value := payload[key].(type) {
-		case string:
-			if v := strings.TrimSpace(value); v != "" {
-				return v
-			}
-		case json.Number:
-			return value.String()
-		case float64:
-			return fmt.Sprintf("%.0f", value)
+		if v := jsonScalarString(payload[key]); v != "" {
+			return v
 		}
 	}
 	return ""
+}
+
+func jsonNestedString(payload map[string]any, path ...string) string {
+	var current any = payload
+	for _, key := range path {
+		switch typed := current.(type) {
+		case map[string]any:
+			current = typed[key]
+		case []any:
+			idx, err := strconv.Atoi(key)
+			if err != nil || idx < 0 || idx >= len(typed) {
+				return ""
+			}
+			current = typed[idx]
+		default:
+			return ""
+		}
+	}
+	return jsonScalarString(current)
+}
+
+func jsonScalarString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case json.Number:
+		return typed.String()
+	case float64:
+		return fmt.Sprintf("%.0f", typed)
+	case float32:
+		return fmt.Sprintf("%.0f", typed)
+	case int:
+		return strconv.Itoa(typed)
+	case int8:
+		return strconv.FormatInt(int64(typed), 10)
+	case int16:
+		return strconv.FormatInt(int64(typed), 10)
+	case int32:
+		return strconv.FormatInt(int64(typed), 10)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case uint:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint64:
+		return strconv.FormatUint(typed, 10)
+	default:
+		return ""
+	}
 }
 
 func jsonNumber(payload map[string]any, keys ...string) (float64, bool) {
@@ -248,10 +313,27 @@ func firstNonEmptyGeoIP(values ...string) string {
 func parseASN(value string) string {
 	for _, field := range strings.Fields(strings.TrimSpace(value)) {
 		field = strings.Trim(field, ",;")
-		upper := strings.ToUpper(field)
-		if strings.HasPrefix(upper, "AS") && len(upper) > 2 {
+		if asn := normalizeASN(field); asn != "" {
+			return asn
+		}
+	}
+	return ""
+}
+
+func normalizeASN(value string) string {
+	value = strings.TrimSpace(strings.Trim(value, ",;"))
+	if value == "" {
+		return ""
+	}
+	upper := strings.ToUpper(value)
+	if strings.HasPrefix(upper, "AS") {
+		if _, err := strconv.Atoi(strings.TrimPrefix(upper, "AS")); err == nil {
 			return upper
 		}
+		return ""
+	}
+	if _, err := strconv.Atoi(upper); err == nil {
+		return "AS" + upper
 	}
 	return ""
 }

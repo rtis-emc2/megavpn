@@ -14,7 +14,7 @@ MegaVPN consists of:
 - Generated VPN/proxy service configs and client artifacts.
 - Runtime binary repository and pinned node downloads.
 - Managed ingress-to-egress backhaul route projection.
-- Future topology map and VLESS subscription endpoints.
+- Node topology map with GeoIP metadata and managed backhaul overlay, plus VLESS subscription endpoints.
 
 ## Trust Boundaries
 

@@ -20,10 +20,11 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | 6 | [Threat model](THREAT_MODEL.md) | Security model и остаточные риски |
 | 7 | [RBAC matrix](RBAC_MATRIX.md) | Роли, permissions и privileged job rules |
 | 8 | [Managed backhaul](BACKHAUL.md) | Модель связи ingress -> egress |
-| 9 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
-| 10 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
-| 11 | [Security review](SECURITY_REVIEW_7.0.1.1.md) | Security и release review artifact |
-| 12 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
+| 9 | [Карта нод](NODE_MAP_RU.md) | GeoIP-размещение нод и overlay managed backhaul |
+| 10 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
+| 11 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
+| 12 | [Security review](SECURITY_REVIEW_7.0.1.1.md) | Security и release review artifact |
+| 13 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
 
 ## Владение документацией
 
@@ -35,6 +36,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md` | Release evidence, self-test и smoke gates. |
 | Security | `docs/THREAT_MODEL.md`, `docs/RBAC_MATRIX.md` | Threat model, roles, permissions и privileged jobs. |
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection и troubleshooting. |
+| Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP-размещение нод, map tiles, node owner metadata и backhaul overlay. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic и tactical product planning. |
 
 ## Языковая политика
@@ -73,5 +75,4 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
   PostgreSQL и offline install.
 - Двуязычная troubleshooting matrix по всем сервисам.
 - Service-specific примеры клиентских конфигов.
-- Отдельная deep-dive документация по эксплуатации topology map и VLESS
-  subscriptions.
+- Отдельная deep-dive документация по VLESS subscriptions.

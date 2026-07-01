@@ -33,6 +33,7 @@ Operator
 - [Threat model](docs/THREAT_MODEL.md)
 - [RBAC matrix](docs/RBAC_MATRIX.md)
 - [Managed backhaul](docs/BACKHAUL.md)
+- [Карта нод](docs/NODE_MAP_RU.md)
 - [Self-testing](docs/SELF_TESTING.md)
 - [Roadmap и техническая спецификация](ROADMAP_V1_AND_TZ_RU.md)
 

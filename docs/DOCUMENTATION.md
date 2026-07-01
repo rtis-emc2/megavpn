@@ -20,10 +20,11 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | 6 | [Threat model](THREAT_MODEL.md) | Security model and residual risks |
 | 7 | [RBAC matrix](RBAC_MATRIX.md) | Roles, permissions and privileged job rules |
 | 8 | [Managed backhaul](BACKHAUL.md) | Ingress-to-egress transport model |
-| 9 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
-| 10 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
-| 11 | [Security review](SECURITY_REVIEW_7.0.1.1.md) | Security and release review artifact |
-| 12 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
+| 9 | [Node map](NODE_MAP.md) | GeoIP node placement and backhaul topology overlay |
+| 10 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
+| 11 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
+| 12 | [Security review](SECURITY_REVIEW_7.0.1.1.md) | Security and release review artifact |
+| 13 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
 
 ## Documentation Ownership
 
@@ -35,6 +36,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md` | Release evidence, self-test and smoke gates. |
 | Security | `docs/THREAT_MODEL.md`, `docs/RBAC_MATRIX.md` | Threat model, roles, permissions and privileged jobs. |
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection and troubleshooting. |
+| Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP node placement, map tiles, node owner metadata and backhaul overlay. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic and tactical product planning. |
 
 ## Language Policy
@@ -72,5 +74,4 @@ These items must be closed before a stable release claim:
   PostgreSQL and offline installs.
 - Bilingual troubleshooting matrix for every supported service.
 - Service-specific client configuration examples.
-- Dedicated deep-dive documentation for topology map operations and VLESS
-  subscriptions.
+- Dedicated deep-dive documentation for VLESS subscriptions.

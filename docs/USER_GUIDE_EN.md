@@ -388,6 +388,26 @@ kernel routes on a systemd timer. If a candidate interface disappears or its
 peer probe fails, only that candidate route is removed; the next metric remains
 available for traffic.
 
+### 12.1 Node Map
+
+Open `Node Map` to inspect approximate node placement and managed backhaul
+overlay. Node coordinates, country, city, ASN and network owner are resolved
+automatically from the public node address through GeoIP. Operators do not enter
+map coordinates manually.
+
+Use the map for topology orientation:
+
+- node pins show resolved GeoIP placement and node role/status;
+- node cards show country, city, network owner, GeoIP source and related
+  backhaul links;
+- backhaul lines show drawable ingress-to-egress links when both endpoint nodes
+  have coordinates;
+- the topology list below the map shows every non-deleted backhaul link with
+  direction, driver, metric, endpoint and selected transport status.
+
+Use `Backhaul` for apply/probe/cleanup and transport diagnostics. Node Map is a
+visual topology view.
+
 ## 13. Create Service Instances
 
 There are two supported paths.

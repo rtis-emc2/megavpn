@@ -66,7 +66,8 @@ These gaps should be tracked before a stable release:
 3. Internal agent API contract.
 4. Service-specific troubleshooting matrix in Russian and English.
 5. Client configuration examples per service.
-6. Topology map documentation after feature implementation.
+6. Dedicated VLESS subscription and route-group deep-dive after those workflows
+   are finalized.
 7. VLESS subscription documentation after feature implementation.
 8. Traffic camouflage and Nginx edge profile documentation after feature
    implementation.

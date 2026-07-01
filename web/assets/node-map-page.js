@@ -50,6 +50,12 @@
         .filter((item) => item.location);
     }
 
+    function nodesByID() {
+      return new Map((Array.isArray(state.nodes) ? state.nodes : [])
+        .map((node) => [String(node.id || ''), node])
+        .filter(([id]) => id));
+    }
+
     function unresolvedNodes() {
       return (Array.isArray(state.nodes) ? state.nodes : []).filter((node) => !nodeLocation(node));
     }
@@ -76,6 +82,56 @@
       const asn = String(node.geoip_asn || '').trim();
       if (org && asn && !org.toLowerCase().includes(asn.toLowerCase())) return `${asn} · ${org}`;
       return org || asn || 'provider pending';
+    }
+
+    function geoSourceLabel(node) {
+      const provider = String(node.geoip_provider || '').trim();
+      const ip = String(node.geoip_ip || '').trim();
+      if (provider && ip) return `${provider} · ${ip}`;
+      return provider || ip || 'pending';
+    }
+
+    function selectedTransport(link) {
+      const transports = Array.isArray(link?.transports) ? link.transports : [];
+      const selectedID = String(link?.selected_transport_id || '').trim();
+      return transports.find((transport) => String(transport.id || '').trim() === selectedID)
+        || transports.find((transport) => String(transport.driver || '').trim() === String(link?.desired_driver || '').trim())
+        || transports[0]
+        || null;
+    }
+
+    function backhaulStatus(link) {
+      const transport = selectedTransport(link);
+      return String(transport?.status || link?.status || 'unknown').trim().toLowerCase() || 'unknown';
+    }
+
+    function backhaulLabel(link) {
+      const transport = selectedTransport(link);
+      const driver = String(transport?.driver || link?.desired_driver || '').trim();
+      const status = backhaulStatus(link);
+      const metric = Number(link?.route_metric || 0);
+      return [
+        String(link?.name || 'backhaul').trim(),
+        driver,
+        status,
+        metric > 0 ? `metric ${metric}` : '',
+      ].filter(Boolean).join(' · ');
+    }
+
+    function activeBackhaulLinks() {
+      return (Array.isArray(state.backhaulLinks) ? state.backhaulLinks : [])
+        .filter((link) => String(link.status || '').toLowerCase() !== 'deleted');
+    }
+
+    function drawableBackhaulLinks(items) {
+      const located = new Map(items.map((item) => [String(item.node.id || ''), item]));
+      return activeBackhaulLinks()
+        .map((link) => ({
+          link,
+          ingress: located.get(String(link.ingress_node_id || '')),
+          egress: located.get(String(link.egress_node_id || '')),
+        }))
+        .filter((item) => item.ingress && item.egress);
     }
 
     function tileURL(z, x, y) {
@@ -171,18 +227,114 @@
       }).join('');
     }
 
+    function renderBackhaulOverlay(items, viewport) {
+      const lines = drawableBackhaulLinks(items).map(({ link, ingress, egress }) => {
+        const a = markerPosition(ingress.location, viewport);
+        const b = markerPosition(egress.location, viewport);
+        const status = safeClassToken(backhaulStatus(link));
+        const title = backhaulLabel(link);
+        const midX = (a.x + b.x) / 2;
+        const midY = (a.y + b.y) / 2;
+        return `
+          <g class="node-map-backhaul-link ${status}">
+            <line x1="${a.x.toFixed(3)}" y1="${a.y.toFixed(3)}" x2="${b.x.toFixed(3)}" y2="${b.y.toFixed(3)}">
+              <title>${escapeHTML(title)}</title>
+            </line>
+            <circle cx="${midX.toFixed(3)}" cy="${midY.toFixed(3)}" r="1.15">
+              <title>${escapeHTML(title)}</title>
+            </circle>
+          </g>`;
+      }).join('');
+      if (!lines) return '';
+      return `<svg class="node-map-backhaul-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Managed backhaul links">${lines}</svg>`;
+    }
+
     function countryCount(items) {
       return new Set(items.map(({ node }) => String(node.geoip_country_code || node.geoip_country_name || '').trim()).filter(Boolean)).size;
+    }
+
+    function nodeBackhaulSummary(node, links, nodeLookup) {
+      const nodeID = String(node.id || '');
+      const related = links.filter((link) => String(link.ingress_node_id || '') === nodeID || String(link.egress_node_id || '') === nodeID);
+      if (!related.length) return 'none';
+      return related.slice(0, 3).map((link) => {
+        const isIngress = String(link.ingress_node_id || '') === nodeID;
+        const peerID = isIngress ? link.egress_node_id : link.ingress_node_id;
+        const peer = nodeLookup.get(String(peerID || ''));
+        const direction = isIngress ? 'to' : 'from';
+        const transport = selectedTransport(link);
+        const driver = String(transport?.driver || link?.desired_driver || '').trim();
+        const metric = Number(link?.route_metric || 0);
+        return [
+          `${direction} ${peer?.name || 'node'}`,
+          driver,
+          metric > 0 ? `metric ${metric}` : '',
+          backhaulStatus(link),
+        ].filter(Boolean).join(' · ');
+      }).join('; ');
+    }
+
+    function renderBackhaulDirectory(links, nodeLookup) {
+      if (!links.length) {
+        return `
+          <section class="section-card node-map-backhaul-directory">
+            <div class="section-head">
+              <div>
+                <h2>Backhaul topology</h2>
+                <p>No managed backhaul links are configured.</p>
+              </div>
+            </div>
+          </section>`;
+      }
+      const rows = links.map((link) => {
+        const transport = selectedTransport(link);
+        const ingress = nodeLookup.get(String(link.ingress_node_id || ''));
+        const egress = nodeLookup.get(String(link.egress_node_id || ''));
+        const status = backhaulStatus(link);
+        const driver = String(transport?.driver || link?.desired_driver || 'driver pending').trim();
+        const endpoint = String(transport?.endpoint || '').trim();
+        const routeMetric = Number(link?.route_metric || 0);
+        const drawable = nodeLocation(ingress) && nodeLocation(egress);
+        return `
+          <div class="node-map-backhaul-row">
+            <div class="node-map-backhaul-route">
+              <strong>${escapeHTML(link.name || 'backhaul')}</strong>
+              <span>${escapeHTML(ingress?.name || 'ingress pending')} -> ${escapeHTML(egress?.name || 'egress pending')}</span>
+            </div>
+            <div class="node-map-backhaul-meta">
+              ${statusTag(driver)}
+              ${routeMetric > 0 ? statusTag(`metric ${routeMetric}`) : ''}
+              ${statusTag(drawable ? 'on map' : 'pending geoip')}
+            </div>
+            <div class="node-map-backhaul-state">
+              ${statusTag(status)}
+              ${endpoint ? `<span class="muted-mono">${escapeHTML(endpoint)}</span>` : ''}
+            </div>
+          </div>`;
+      }).join('');
+      return `
+        <section class="section-card node-map-backhaul-directory">
+          <div class="section-head">
+            <div>
+              <h2>Backhaul topology</h2>
+              <p>Ingress-to-egress managed links shown on the map when both endpoint nodes have GeoIP coordinates.</p>
+            </div>
+          </div>
+          <div class="node-map-backhaul-list">${rows}</div>
+        </section>`;
     }
 
     function renderNodeCards(nodes) {
       if (!nodes.length) {
         return '<div class="node-map-empty-state">No nodes registered yet.</div>';
       }
+      const links = activeBackhaulLinks();
+      const nodeLookup = nodesByID();
       return nodes.map((node) => {
         const loc = nodeLocation(node);
         const coords = loc ? `${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}` : 'pending';
         const issue = String(node.geoip_error || '').trim();
+        const relatedBackhaul = nodeBackhaulSummary(node, links, nodeLookup);
         return `
           <article class="node-map-node-card">
             <div class="node-map-node-card-main">
@@ -198,8 +350,10 @@
             <div class="node-map-node-facts">
               <div><span>Location</span><strong>${escapeHTML(locationLabel(node))}</strong></div>
               <div><span>Country</span><strong>${escapeHTML(countryLabel(node))}</strong></div>
-              <div><span>Provider</span><strong>${escapeHTML(ownerLabel(node))}</strong></div>
+              <div><span>Network owner</span><strong>${escapeHTML(ownerLabel(node))}</strong></div>
+              <div><span>GeoIP source</span><strong>${escapeHTML(geoSourceLabel(node))}</strong></div>
               <div><span>Coordinates</span><strong>${escapeHTML(coords)}</strong></div>
+              <div><span>Backhaul</span><strong>${escapeHTML(relatedBackhaul)}</strong></div>
             </div>
             ${issue ? `<div class="node-map-node-issue">${escapeHTML(issue)}</div>` : ''}
             <div class="node-map-node-actions">
@@ -221,6 +375,9 @@
       const nodes = Array.isArray(state.nodes) ? state.nodes : [];
       const located = locatedNodes();
       const unresolved = unresolvedNodes();
+      const backhaulLinks = activeBackhaulLinks();
+      const drawableLinks = drawableBackhaulLinks(located);
+      const nodeLookup = nodesByID();
       const viewport = mapViewport(located);
 
       el('content').innerHTML = `
@@ -234,6 +391,7 @@
               <div class="fact-card"><div class="mini-label">Nodes</div><div class="metric-caption strong">${escapeHTML(String(nodes.length))}</div><div class="metric-caption">registered</div></div>
               <div class="fact-card"><div class="mini-label">Located</div><div class="metric-caption strong">${escapeHTML(String(located.length))}</div><div class="metric-caption">${escapeHTML(String(unresolved.length))} pending</div></div>
               <div class="fact-card"><div class="mini-label">Countries</div><div class="metric-caption strong">${escapeHTML(String(countryCount(located)))}</div><div class="metric-caption">resolved by IP</div></div>
+              <div class="fact-card"><div class="mini-label">Backhaul</div><div class="metric-caption strong">${escapeHTML(String(drawableLinks.length))}</div><div class="metric-caption">${escapeHTML(String(backhaulLinks.length))} configured</div></div>
             </div>
           </div>
 
@@ -241,10 +399,13 @@
             <div class="node-real-map" role="img" aria-label="World map with node locations">
               <div class="node-map-tile-layer">${renderTiles(viewport)}</div>
               <div class="node-map-shade"></div>
+              ${renderBackhaulOverlay(located, viewport)}
               <div class="node-map-pin-layer">${renderMarkers(located, viewport)}</div>
               ${located.length ? '' : '<div class="node-map-empty">GeoIP coordinates are not available yet. Public node addresses are resolved automatically by the API.</div>'}
             </div>
           </section>
+
+          ${renderBackhaulDirectory(backhaulLinks, nodeLookup)}
 
           <section class="section-card node-map-directory">
             <div class="section-head">

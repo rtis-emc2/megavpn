@@ -32,6 +32,7 @@ Start here:
 - [Threat model](docs/THREAT_MODEL.md)
 - [RBAC matrix](docs/RBAC_MATRIX.md)
 - [Managed backhaul](docs/BACKHAUL.md)
+- [Node map](docs/NODE_MAP.md)
 - [Self-testing](docs/SELF_TESTING.md)
 - [Roadmap and technical specification](ROADMAP_V1_AND_TZ.md)
 

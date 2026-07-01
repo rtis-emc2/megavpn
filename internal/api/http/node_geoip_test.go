@@ -39,6 +39,26 @@ func TestParseNodeGeoIPResponseCommonSchemas(t *testing.T) {
 			wantCountry: "",
 			wantASN:     "AS64501",
 		},
+		{
+			name: "nested_asn_company",
+			payload: map[string]any{
+				"ip":  "192.0.2.44",
+				"lat": 50.45,
+				"lon": 30.52,
+				"country": map[string]any{
+					"iso_code": "UA",
+					"names": map[string]any{
+						"en": "Ukraine",
+					},
+				},
+				"asn": map[string]any{
+					"asn":  64502,
+					"name": "Example Datacenter",
+				},
+			},
+			wantCountry: "Ukraine",
+			wantASN:     "AS64502",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
