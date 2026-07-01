@@ -40,6 +40,8 @@ type createServicePackRequest struct {
 	EndpointHost       string `json:"endpoint_host"`
 	CertificateID      string `json:"certificate_id"`
 	OpenVPNPKIProfile  string `json:"openvpn_pki_profile"`
+	XrayEgressMode     string `json:"xray_egress_mode"`
+	XrayEgressNodeID   string `json:"xray_egress_node_id"`
 	AutoInstallRuntime *bool  `json:"auto_install_runtime"`
 }
 
@@ -393,6 +395,12 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 	req.EndpointHost = strings.TrimSpace(req.EndpointHost)
 	req.CertificateID = strings.TrimSpace(req.CertificateID)
 	req.OpenVPNPKIProfile = strings.TrimSpace(req.OpenVPNPKIProfile)
+	req.XrayEgressNodeID = strings.TrimSpace(req.XrayEgressNodeID)
+	req.XrayEgressMode, err = normalizeXrayEgressModeHTTP(req.XrayEgressMode, req.XrayEgressNodeID)
+	if err != nil {
+		writeErr(w, 400, "invalid service pack payload: "+err.Error())
+		return
+	}
 	if req.BaseName == "" {
 		req.BaseName = pack.BaseNameTemplate
 	}
@@ -447,6 +455,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			spec["pki_scope"] = "platform"
 			spec["pki_profile"] = req.OpenVPNPKIProfile
 		}
+		applyXrayEgressOverrideHTTP(component, spec, req.XrayEgressMode, req.XrayEgressNodeID)
 		instance := domain.Instance{
 			NodeID:       req.NodeID,
 			ServiceCode:  component.ServiceCode,
@@ -550,6 +559,51 @@ func servicePackComponentLabel(component domain.ServicePackComponent) string {
 		}
 	}
 	return "component"
+}
+
+func normalizeXrayEgressModeHTTP(mode string, egressNodeID string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	egressNodeID = strings.TrimSpace(egressNodeID)
+	if mode == "" {
+		if egressNodeID != "" {
+			return "egress_node", nil
+		}
+		return "", nil
+	}
+	switch mode {
+	case "auto":
+		return "auto", nil
+	case "egress_node", "remote_egress", "remote_node", "node":
+		if egressNodeID == "" {
+			return "", errors.New("xray_egress_node_id is required when xray_egress_mode is egress_node")
+		}
+		return "egress_node", nil
+	case "local_breakout", "local", "direct":
+		return "local_breakout", nil
+	default:
+		return "", fmt.Errorf("unsupported xray_egress_mode %q", mode)
+	}
+}
+
+func applyXrayEgressOverrideHTTP(component domain.ServicePackComponent, spec map[string]any, mode string, egressNodeID string) {
+	if driver.NormalizeCode(component.ServiceCode) != driver.XrayCore {
+		return
+	}
+	mode = strings.TrimSpace(mode)
+	egressNodeID = strings.TrimSpace(egressNodeID)
+	if mode == "" && egressNodeID == "" {
+		return
+	}
+	if mode == "" {
+		mode = "egress_node"
+	}
+	spec["egress_mode"] = mode
+	egress := map[string]any{"mode": mode}
+	if egressNodeID != "" {
+		spec["egress_node_id"] = egressNodeID
+		egress["egress_node_id"] = egressNodeID
+	}
+	spec["xray_egress"] = egress
 }
 
 func servicePackUsesTLSEdgeCertificate(pack domain.ServicePackDefinition) bool {

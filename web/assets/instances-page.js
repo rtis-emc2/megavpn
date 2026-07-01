@@ -745,8 +745,35 @@
     }
 
     function packUsesService(pack, serviceCode) {
-      const expected = String(serviceCode || '').trim().toLowerCase();
-      return servicePackComponents(pack).some((component) => String(component?.service_code || '').trim().toLowerCase() === expected);
+      const expected = normalizeInstanceServiceCode(serviceCode);
+      return servicePackComponents(pack).some((component) => normalizeInstanceServiceCode(component?.service_code) === expected);
+    }
+
+    function renderXrayEgressPackFields(pack) {
+      if (!packUsesService(pack, 'xray-core')) return '';
+      const egressNodes = nodeOptions('', { roles: ['egress'], includeEmpty: true, emptyLabel: 'Select egress node' });
+      return `
+        <div class="field full pack-egress-control">
+          <div class="instance-panel-label">VLESS routing</div>
+          <div class="pack-create-form-grid compact">
+            <div class="field">
+              <label>Egress mode</label>
+              <select name="xray_egress_mode" data-pack-egress-mode>
+                <option value="auto" selected>Auto through managed backhaul</option>
+                <option value="egress_node">Use selected egress node</option>
+                <option value="local_breakout">Local breakout on ingress node</option>
+              </select>
+              <div class="field-hint">Auto uses the active ingress-to-egress backhaul when the route is unambiguous.</div>
+            </div>
+            <div class="field">
+              <label>Egress node</label>
+              <select name="xray_egress_node_id" data-pack-egress-node disabled>
+                ${egressNodes || '<option value="">No egress nodes available</option>'}
+              </select>
+              <div class="field-hint">Required only when a concrete egress node is selected.</div>
+            </div>
+          </div>
+        </div>`;
     }
 
     function endpointRequirementLabel(pack) {
@@ -880,6 +907,7 @@
       const selectedPack = ensureCreatePackSelection(packs);
       const nodeSelect = nodeOptions();
       const usesOpenVPN = packUsesService(selectedPack, 'openvpn');
+      const usesXray = packUsesService(selectedPack, 'xray-core');
       const usesTLSEdgeCertificate = servicePackUsesTLSEdgeCertificate(selectedPack);
       const certificateSelect = certificateOptions(defaultLeafCertificateID(), true);
       const baseName = selectedPack?.base_name_template || 'edge-service-pack';
@@ -935,6 +963,7 @@
                       <select name="openvpn_pki_profile">${servicePKIProfileOptions('openvpn', 'default')}</select>
                       <div class="field-hint">OpenVPN instances created with this profile trust the same service CA root, which is required for a shared endpoint fleet.</div>
                     </div>` : ''}
+                  ${usesXray ? renderXrayEgressPackFields(selectedPack) : ''}
                 </div>
                 <div class="pack-create-actions">
                   <button class="primary-btn" type="submit"${selectedPack && nodeSelect ? '' : ' disabled'}>Create instances</button>
@@ -963,11 +992,29 @@
         });
       });
       document.getElementById('createServicePackPageForm')?.addEventListener('submit', submitCreateFromPackPage);
+      bindPackEgressControls();
       document.getElementById('openInstancesAfterPackCreateBtn')?.addEventListener('click', openInstancesListPage);
       document.getElementById('createAnotherFromPackBtn')?.addEventListener('click', () => {
         state.instancesCreateResult = null;
         renderCreateFromPackPage();
       });
+    }
+
+    function bindPackEgressControls() {
+      const form = document.getElementById('createServicePackPageForm');
+      if (!form) return;
+      const modeSelect = form.querySelector('[data-pack-egress-mode]');
+      const nodeSelect = form.querySelector('[data-pack-egress-node]');
+      if (!modeSelect || !nodeSelect) return;
+      const sync = () => {
+        const mode = String(modeSelect.value || 'auto');
+        const needsNode = mode === 'egress_node';
+        nodeSelect.disabled = !needsNode;
+        nodeSelect.required = needsNode;
+        if (!needsNode) nodeSelect.value = '';
+      };
+      modeSelect.addEventListener('change', sync);
+      sync();
     }
 
     async function submitCreateFromPackPage(event) {
@@ -982,6 +1029,8 @@
         endpoint_host: String(data.get('endpoint_host') || '').trim(),
         certificate_id: String(data.get('certificate_id') || '').trim(),
         openvpn_pki_profile: String(data.get('openvpn_pki_profile') || '').trim(),
+        xray_egress_mode: String(data.get('xray_egress_mode') || '').trim(),
+        xray_egress_node_id: String(data.get('xray_egress_node_id') || '').trim(),
         auto_install_runtime: true,
       };
       if (!packKey) {

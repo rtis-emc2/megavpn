@@ -2695,6 +2695,37 @@ tr:hover td { background: #f8fafc; }
   border-radius: 9px;
   font-size: 13px;
 }
+.vless-groups-editor {
+  display: grid;
+  gap: 10px;
+}
+.vless-groups-grid {
+  display: grid;
+  gap: 10px;
+}
+.vless-group-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(96px, 0.5fr);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.vless-group-remove-field {
+  align-self: end;
+}
+.vless-groups-preview {
+  color: var(--muted);
+}
+.vless-groups-preview summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.vless-groups-preview textarea {
+  margin-top: 8px;
+}
 .instance-list-toolbar-actions {
   display: flex;
   align-items: center;
@@ -3250,6 +3281,13 @@ tr:hover td { background: #f8fafc; }
 .pack-create-form-grid.stable .field-hint {
   min-height: 36px;
 }
+.pack-create-form-grid.compact {
+  margin-top: 8px;
+  gap: 10px;
+}
+.pack-egress-control {
+  padding-top: 2px;
+}
 .pack-create-actions {
   display: flex;
   justify-content: flex-start;
@@ -3426,7 +3464,8 @@ tr:hover td { background: #f8fafc; }
   .client-inbound-grid,
   .pack-create-form-grid,
   .pack-create-summary,
-  .pack-component-grid {
+  .pack-component-grid,
+  .vless-group-row {
     grid-template-columns: 1fr;
   }
   .table-head,

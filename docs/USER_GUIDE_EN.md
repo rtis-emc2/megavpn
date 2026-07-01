@@ -387,8 +387,14 @@ Use this for standard production baselines.
 5. Set base name and endpoint host.
 6. Select a TLS edge certificate if the pack contains Nginx/Xray TLS.
 7. Select an OpenVPN CA profile if the pack contains OpenVPN.
-8. Create the instances.
-9. Select `Apply` or `Install + apply` if runtime is missing.
+8. If the pack contains VLESS, select `VLESS routing`:
+   - `Auto through managed backhaul` for a single unambiguous active backhaul;
+   - `Use selected egress node` when the VLESS instance must exit through a
+     specific remote egress node;
+   - `Local breakout on ingress node` only when direct exit from the ingress
+     node is intended.
+9. Create the instances.
+10. Select `Apply` or `Install + apply` if runtime is missing.
 
 Service packs must not store runtime secrets. Passwords, private keys, UUIDs,
 Reality keys and similar secrets should be generated during revision/apply and
@@ -448,6 +454,10 @@ Correct model:
 Where to configure it:
 
 - `Backhaul`: create the `ingress -> egress` link, click `Apply`, then `Test`.
+- `Instances -> Create from pack`: for packs that contain VLESS, use
+  `VLESS routing` before creation. This writes the egress choice into every
+  generated Xray/VLESS instance without changing the reusable service-pack
+  template.
 - `Instances -> Manage` for the Xray/VLESS instance: select `Egress mode`.
   Use `egress node` when the whole VLESS instance must exit through a remote
   egress node. Select the exact `Egress node` when more than one link exists or
@@ -466,7 +476,8 @@ Minimal path for “enter through VLESS and exit through another node”:
 1. The ingress node and egress node must be online.
 2. Backhaul between them must be `active` and tested.
 3. The VLESS instance must run on the ingress node.
-4. In `Instances -> Manage`, set `Egress mode = egress node` for the VLESS
+4. Either select `Use selected egress node` during `Create from pack`, or open
+   `Instances -> Manage`, set `Egress mode = egress node` for the VLESS
    instance and select the target egress node.
 5. Click `Apply` on the instance.
 6. If client route rules are used, run `Sync route policy`.

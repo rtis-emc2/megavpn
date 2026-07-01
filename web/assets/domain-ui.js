@@ -380,6 +380,83 @@
       return out;
     }
 
+    function parseVLESSGroupsDraft(raw) {
+      if (Array.isArray(raw)) return raw;
+      const body = String(raw || '').trim();
+      if (!body) {
+        return [{ key: 'default', label: 'Default access', outbound_tag: 'direct' }];
+      }
+      try {
+        const parsed = JSON.parse(body);
+        return Array.isArray(parsed) && parsed.length ? parsed : [{ key: 'default', label: 'Default access', outbound_tag: 'direct' }];
+      } catch (_) {
+        return [{ key: 'default', label: 'Default access', outbound_tag: 'direct' }];
+      }
+    }
+
+    function normalizeVLESSGroupForEditor(group, index) {
+      const source = group && typeof group === 'object' ? group : {};
+      const key = String(source.key || source.name || source.id || (index === 0 ? 'default' : `group-${index + 1}`)).trim();
+      return {
+        key,
+        label: String(source.label || source.title || key || `Group ${index + 1}`).trim(),
+        outbound_tag: String(source.outbound_tag || source.outboundTag || source.tag || 'direct').trim() || 'direct',
+        rules: Array.isArray(source.rules) ? source.rules : [],
+      };
+    }
+
+    function renderVLESSGroupRow(group, index) {
+      const normalized = normalizeVLESSGroupForEditor(group, index);
+      const rulesBody = normalized.rules.length ? JSON.stringify(normalized.rules, null, 2) : '';
+      const outboundOptions = ['direct', 'block', 'egress-default'];
+      return `
+        <div class="vless-group-row" data-vless-group-row>
+          <div class="field compact">
+            <label>Key</label>
+            <input data-vless-group-key value="${escapeHTML(normalized.key)}" placeholder="default" />
+          </div>
+          <div class="field compact">
+            <label>Label</label>
+            <input data-vless-group-label value="${escapeHTML(normalized.label)}" placeholder="Default access" />
+          </div>
+          <div class="field compact">
+            <label>Outbound</label>
+            <select data-vless-group-outbound>
+              ${outboundOptions.map((item) => `<option value="${escapeHTML(item)}"${item === normalized.outbound_tag ? ' selected' : ''}>${escapeHTML(item)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field compact vless-group-remove-field">
+            <label>Action</label>
+            <button class="secondary-btn vless-group-remove-btn" type="button">Remove</button>
+          </div>
+          <div class="field full compact">
+            <label>Rules JSON</label>
+            <textarea data-vless-group-rules rows="3" placeholder='[{"domain":["geosite:category-ads-all"],"outbound_tag":"block"}]'>${escapeHTML(rulesBody)}</textarea>
+          </div>
+        </div>`;
+    }
+
+    function renderVLESSGroupEditor(draft = {}) {
+      const groups = parseVLESSGroupsDraft(draft.xray_vless_groups).map(normalizeVLESSGroupForEditor);
+      const json = JSON.stringify(groups, null, 2);
+      return `
+        <div class="field full vless-groups-editor" data-vless-groups-editor>
+          <label>VLESS outbound groups</label>
+          <input type="hidden" name="xray_vless_groups" data-vless-groups-json value="${escapeHTML(json)}">
+          <div class="vless-groups-grid" data-vless-group-rows>
+            ${groups.map(renderVLESSGroupRow).join('')}
+          </div>
+          <div class="inline-actions compact-actions">
+            <button class="secondary-btn vless-group-add-btn" type="button">Add group</button>
+          </div>
+          <details class="vless-groups-preview">
+            <summary>Generated JSON preview</summary>
+            <textarea data-vless-groups-preview rows="7" readonly>${escapeHTML(json)}</textarea>
+          </details>
+          <div class="field-hint">Groups are provision-time access profiles for VLESS users. Instance egress above decides whether direct traffic exits locally or through managed backhaul.</div>
+        </div>`;
+    }
+
     function renderInstanceServiceProfilePanel(serviceCode, draft = {}) {
       const blueprint = instanceServiceBlueprint(serviceCode);
       if (!blueprint) return '';
@@ -671,11 +748,7 @@
             <div class="field"><label>Default outbound group</label><input name="xray_default_vless_group" value="${escapeHTML(draft.xray_default_vless_group || 'default')}" placeholder="default" /></div>
             <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/usr/local/etc/xray/xray.json')}" /></div>
             <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
-            <div class="field full">
-              <label>VLESS outbound groups</label>
-              <textarea name="xray_vless_groups" rows="8" placeholder='[{"key":"default","label":"Default direct","outbound_tag":"direct"},{"key":"restricted","label":"Restricted","outbound_tag":"block","rules":[{"domain":["geosite:category-ads-all"],"outbound_tag":"block"}]}]'>${escapeHTML(draft.xray_vless_groups || '')}</textarea>
-              <div class="field-hint">Groups are Xray routing profiles for provisioned VLESS users. Remote node exit is selected above at instance level.</div>
-            </div>
+            ${renderVLESSGroupEditor(draft)}
             <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"inbounds":[...],"outbounds":[...]}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
         case 'openvpn':
           return `${intro}
@@ -861,6 +934,7 @@
           }
         });
       }
+      bindVLESSGroupsEditor(form);
       const portInput = form.querySelector('input[name="endpoint_port"]');
       if (portInput && resolvedDraft.endpoint_port) {
         applyAutoFieldValue(portInput, String(resolvedDraft.endpoint_port), options.forceDefaults);
@@ -874,6 +948,93 @@
           syncInstanceServiceFields(formID, serviceCode, null, { forceDefaults: true, presetKey: presetSelect.value });
           }, { once: true });
       }
+    }
+
+    function bindVLESSGroupsEditor(form) {
+      const editor = form.querySelector('[data-vless-groups-editor]');
+      if (!editor) return;
+      const rowsContainer = editor.querySelector('[data-vless-group-rows]');
+      const hidden = editor.querySelector('[data-vless-groups-json]');
+      const preview = editor.querySelector('[data-vless-groups-preview]');
+      const addButton = editor.querySelector('.vless-group-add-btn');
+      if (!rowsContainer || !hidden) return;
+
+      const serialize = () => {
+        const groups = [];
+        let valid = true;
+        rowsContainer.querySelectorAll('[data-vless-group-row]').forEach((row, index) => {
+          const keyInput = row.querySelector('[data-vless-group-key]');
+          const labelInput = row.querySelector('[data-vless-group-label]');
+          const outboundSelect = row.querySelector('[data-vless-group-outbound]');
+          const rulesInput = row.querySelector('[data-vless-group-rules]');
+          const key = String(keyInput?.value || '').trim();
+          if (keyInput) {
+            keyInput.setCustomValidity(key ? '' : 'Group key is required');
+            if (!key) valid = false;
+          }
+          const group = {
+            key,
+            label: String(labelInput?.value || key || `Group ${index + 1}`).trim(),
+            outbound_tag: String(outboundSelect?.value || 'direct').trim() || 'direct',
+          };
+          const rulesBody = String(rulesInput?.value || '').trim();
+          if (rulesInput) rulesInput.setCustomValidity('');
+          if (rulesBody) {
+            try {
+              const parsedRules = JSON.parse(rulesBody);
+              if (!Array.isArray(parsedRules)) throw new Error('Rules JSON must be an array');
+              group.rules = parsedRules;
+            } catch (err) {
+              if (rulesInput) rulesInput.setCustomValidity(err?.message || 'Invalid rules JSON');
+              valid = false;
+            }
+          }
+          if (key) groups.push(group);
+        });
+        if (!groups.length) {
+          groups.push({ key: 'default', label: 'Default access', outbound_tag: 'direct' });
+        }
+        const json = JSON.stringify(groups, null, 2);
+        hidden.value = json;
+        if (preview) preview.value = json;
+        return valid;
+      };
+
+      editor.addEventListener('input', serialize);
+      editor.addEventListener('change', serialize);
+      rowsContainer.addEventListener('click', (event) => {
+        const button = event.target?.closest?.('.vless-group-remove-btn');
+        if (!button) return;
+        const row = button.closest('[data-vless-group-row]');
+        if (!row) return;
+        if (rowsContainer.querySelectorAll('[data-vless-group-row]').length <= 1) {
+          row.querySelector('[data-vless-group-key]').value = 'default';
+          row.querySelector('[data-vless-group-label]').value = 'Default access';
+          row.querySelector('[data-vless-group-outbound]').value = 'direct';
+          row.querySelector('[data-vless-group-rules]').value = '';
+        } else {
+          row.remove();
+        }
+        serialize();
+      });
+      addButton?.addEventListener('click', () => {
+        const nextIndex = rowsContainer.querySelectorAll('[data-vless-group-row]').length;
+        rowsContainer.insertAdjacentHTML('beforeend', renderVLESSGroupRow({
+          key: `group-${nextIndex + 1}`,
+          label: `Group ${nextIndex + 1}`,
+          outbound_tag: 'direct',
+          rules: [],
+        }, nextIndex));
+        serialize();
+      });
+      form.addEventListener('submit', (event) => {
+        if (serialize()) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const invalid = editor.querySelector(':invalid');
+        if (invalid?.reportValidity) invalid.reportValidity();
+      }, true);
+      serialize();
     }
 
     function buildInstanceSpecPayload(serviceCode, form, baseSpec = {}, endpointPort = 0) {

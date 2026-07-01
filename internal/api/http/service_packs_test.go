@@ -167,6 +167,75 @@ func TestServicePackTLSEdgeCertificateScope(t *testing.T) {
 	}
 }
 
+func TestNormalizeXrayEgressModeHTTP(t *testing.T) {
+	cases := []struct {
+		name         string
+		mode         string
+		egressNodeID string
+		want         string
+		wantErr      bool
+	}{
+		{name: "empty without node keeps pack default", mode: "", want: ""},
+		{name: "empty with node becomes explicit egress node", mode: "", egressNodeID: "node-2", want: "egress_node"},
+		{name: "auto", mode: "auto", want: "auto"},
+		{name: "remote alias", mode: "remote_egress", egressNodeID: "node-2", want: "egress_node"},
+		{name: "explicit egress node requires node id", mode: "egress_node", wantErr: true},
+		{name: "local alias", mode: "direct", want: "local_breakout"},
+		{name: "reject unknown", mode: "proxy", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeXrayEgressModeHTTP(tc.mode, tc.egressNodeID)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("mode = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyXrayEgressOverrideHTTP(t *testing.T) {
+	xraySpec := map[string]any{"service_profile": "reality_tcp"}
+	applyXrayEgressOverrideHTTP(
+		domain.ServicePackComponent{ServiceCode: "xray-core"},
+		xraySpec,
+		"egress_node",
+		"egress-node-id",
+	)
+	if xraySpec["egress_mode"] != "egress_node" {
+		t.Fatalf("egress_mode = %v, want egress_node", xraySpec["egress_mode"])
+	}
+	if xraySpec["egress_node_id"] != "egress-node-id" {
+		t.Fatalf("egress_node_id = %v, want egress-node-id", xraySpec["egress_node_id"])
+	}
+	nested, ok := xraySpec["xray_egress"].(map[string]any)
+	if !ok {
+		t.Fatalf("xray_egress = %#v, want object", xraySpec["xray_egress"])
+	}
+	if nested["mode"] != "egress_node" || nested["egress_node_id"] != "egress-node-id" {
+		t.Fatalf("xray_egress = %#v", nested)
+	}
+
+	openVPNSpec := map[string]any{"service_profile": "udp_1194"}
+	applyXrayEgressOverrideHTTP(
+		domain.ServicePackComponent{ServiceCode: "openvpn"},
+		openVPNSpec,
+		"egress_node",
+		"egress-node-id",
+	)
+	if _, exists := openVPNSpec["egress_mode"]; exists {
+		t.Fatalf("non-xray spec must not receive egress override: %#v", openVPNSpec)
+	}
+}
+
 func TestDefaultServicePackDefinitionsReturnsCopy(t *testing.T) {
 	first := DefaultServicePackDefinitions()
 	if len(first) == 0 || len(first[0].Components) == 0 {
