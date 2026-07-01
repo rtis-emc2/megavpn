@@ -1,5 +1,7 @@
 # Security and Release Review: 0.7.0.1-beta
 
+**Release:** `0.7.0.1-beta`
+
 Date: 2026-07-01
 
 Scope:

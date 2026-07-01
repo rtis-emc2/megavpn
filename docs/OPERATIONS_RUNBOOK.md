@@ -1,5 +1,7 @@
 # Operations Runbook
 
+**Release:** `0.7.0.1-beta`
+
 ## Deployment Model
 
 Production topology:

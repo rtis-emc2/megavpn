@@ -1,1069 +1,189 @@
-# RTIS MegaVPN Platform v1.0 Roadmap and Technical Specification
+# RTIS MegaVPN Roadmap and Technical Specification
 
-Дата анализа: 2026-07-01  
-Базовая версия кода: RTIS MegaVPN 0.7.0.1-beta
-Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
-Канонический репозиторий: `github.com/rtis-emc2/megavpn`
+**Release:** `0.7.0.1-beta`
 
-## 1. Назначение документа
+**Analysis date:** 2026-07-01
+**Code baseline:** RTIS MegaVPN `0.7.0.1-beta`
+**Canonical repository:** `github.com/rtis-emc2/megavpn`
 
-Документ фиксирует фактическое состояние репозитория RTIS MegaVPN и целевой план доведения платформы до production-ready релиза v1.0.
+This document is the English roadmap and technical specification for the
+current beta baseline. The Russian companion is
+[`ROADMAP_V1_AND_TZ_RU.md`](ROADMAP_V1_AND_TZ_RU.md).
 
-Decision Sheet v1 считается базовым продуктово-архитектурным решением. Текущий код уже реализует существенную часть foundation-слоя, но v1.0 требует закрыть несколько критичных enterprise-разрывов: безопасный agent transport, полноценный desired-state/revision workflow, production UI, тестовую базу, observability, deployment hardening и формальные release gates.
+## 1. Purpose
 
-## 2. Executive Summary
+RTIS MegaVPN is a self-hosted control plane for managed VPN, proxy and edge
+service infrastructure. The platform coordinates remote nodes, agents, service
+instances, clients, route policy, runtime artifacts, certificates, jobs and
+audit events.
 
-RTIS MegaVPN сейчас находится не в состоянии "прототипа", а в состоянии ранней control-plane платформы: есть PostgreSQL-backed API, RBAC, session auth, node enrollment, agent pull loop, job queue, locks, node inventory, service discovery, capability install, bootstrap через SSH/manual bundle, static operational UI, secrets storage, client provisioning, artifacts/share links и часть service-specific rendering.
+The purpose of this roadmap is to keep product direction, engineering scope and
+release evidence aligned. It is not a changelog. Operational procedures live in
+the runbook and user guides.
 
-Главный архитектурный риск: текущая реализация быстрее растет как вертикальная монолитная codebase, чем как формализованная driver/revision/platform архитектура. Для v1.0 нужно стабилизировать контракты и границы:
+## 2. Current Baseline
 
-- Public API contract для UI.
-- Internal Agent API contract.
-- Driver interface и payload schemas.
-- Desired state -> validated revision -> locked job -> agent apply -> runtime state.
-- Security baseline: TLS/mTLS или эквивалентная agent identity model, signed jobs, hardened secrets, audit completeness.
-- Test and release pipeline.
+`0.7.0.1-beta` is the boundary between alpha feature expansion and production
+hardening. The codebase already has a working control-plane foundation:
 
-## 2.1 Beta 0.7 Scope
+- Go API, worker, agent, migration and admin binaries.
+- PostgreSQL-backed persistence and ordered migrations.
+- Web UI served by the API.
+- Session auth, roles, permissions and audit events.
+- Node enrollment, heartbeat, inventory and runtime capability reporting.
+- Signed agent transport, typed privileged job flows and job leases.
+- Service catalog, service packs, manual instance creation and revisions.
+- Runtime binary repository and node capability install/verify jobs.
+- OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, HTTP Proxy, MTProto, IPsec/L2TP
+  and Nginx service-driver foundation.
+- Managed ingress-to-egress backhaul.
+- Client provisioning, artifacts, share links and email delivery.
+- Backup/restore, deployment scripts, self-test and release gates.
 
-`0.7.0.1-beta` является boundary-релизом между alpha-доработками и production hardening. Цель этой ветки - не добавлять хаотично новые сервисы, а стабилизировать три слоя:
+The beta is not a stable production release yet. It is a hardening baseline that
+must produce repeatable evidence for install, migration, agent transport,
+runtime apply, route policy and recovery scenarios.
 
-- **Topology model:** node location map, ingress/egress/runtime role visualization, managed links, route status and failed-hop diagnostics.
-- **Access model:** service packs, manual instances, client inbound selection, VLESS subscription export and explicit access groups.
-- **Runtime model:** pinned runtime artifacts, node capability install/verify/apply, systemd/nginx validation, node cleanup, rollback and install-on-clean-host evidence.
+## 3. Release Blockers
 
-Beta release blockers:
+The following blockers must be closed before promotion beyond the beta line:
 
-- clean install on a new Ubuntu host from `scripts/control-plane-install.sh` or documented manual steps
-- migrations green on disposable PostgreSQL database
-- API, worker and agent binaries build from a clean checkout
-- `go test -race ./...` green
-- OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, Nginx and Backhaul smoke matrix documented with pass/fail evidence
-- no unsigned agent job/runtime-target responses accepted by default
-- no generic privileged job API for apply, cleanup, capability install or route policy mutation
-- security review report with explicit coverage limits
+| Area | Required outcome |
+| --- | --- |
+| Clean install | Fresh Ubuntu host can install API, worker, migrations, Web UI, Nginx edge and systemd units from documented steps. |
+| Database | Migrations apply on a disposable PostgreSQL database and a pre-beta upgrade database. |
+| Build and tests | `go test ./...`, `go vet ./...`, binary build and optional race gate are green. |
+| Agent channel | Unsigned job/runtime responses are rejected by default; signed empty responses are handled explicitly. |
+| Privileged jobs | Apply, cleanup, route policy and capability installation are typed and permission-scoped. |
+| Node policy | Agent file writes stay inside canonical managed roots with symlink-safe validation and strict systemd allowlists. |
+| Runtime install | Xray and Shadowsocks can be installed from pinned control-plane artifacts or verified OS repositories. |
+| Instance apply | Service packs and manual instances converge without false early failure while jobs are queued or running. |
+| Backhaul | Ingress-to-egress links apply, probe and clean up without breaking unrelated managed state. |
+| Clients | Provisioning requires explicit inbound-service selection and produces verifiable artifacts. |
+| Observability | Jobs, runtime logs, health, drift and failure reasons are visible in the UI. |
+| Security | Threat model, RBAC matrix, release gates and self-test evidence are updated with each release. |
 
-## 2.2 Product Roadmap After 0.7.0.1-beta
+## 4. Architecture Direction
 
-| Area | Goal | Implementation Direction | Release Risk |
+The platform should continue toward explicit contracts and stable boundaries:
+
+1. Public API contract for the Web UI and external automation.
+2. Internal agent API contract for jobs, heartbeat, runtime targets and reports.
+3. Driver interfaces for render, validate, apply, stop, cleanup and probe.
+4. Desired state -> candidate revision -> validation -> apply-ready revision.
+5. Locked job -> current lease owner -> agent execution -> signed result.
+6. Runtime observation -> health/drift projection -> operator-visible action.
+7. Audit event for every bootstrap, apply, cleanup, capability and share-link
+   operation.
+
+This architecture keeps the control plane deterministic, debuggable and safe to
+operate across multiple nodes.
+
+## 5. Product Roadmap
+
+| Area | Goal | Implementation direction | Risk |
 | --- | --- | --- | --- |
-| Node map | Show node location, role, health, public/private addresses and workload density | Add topology API projection and UI map/table hybrid; store optional coordinates/region/provider labels on nodes | Medium: needs stable node metadata schema |
-| Node links | Show managed backhaul and route-policy paths between nodes | Reuse Backhaul links plus runtime probe history; render ingress->egress graph with active/degraded/failed edges | Low/medium: data exists, UI and diagnostics need polish |
-| VLESS subscription | Export per-client VLESS subscription containing allowed inbound services | Add authenticated subscription endpoint, per-client token rotation, QR/text export, and config versioning | Medium: requires careful token lifecycle and cache headers |
-| Traffic camouflage | Formalize public edge profiles for VLESS/WebSocket/gRPC and fallback websites | Move Nginx/Xray camouflage options into reusable templates with validation and preview | High: TLS/SNI/fallback mistakes can break public edge |
-| Nginx edge | Make Nginx profile management first-class | Add edge profile catalog, nginx -t preview/apply, cert binding, rollback and config diff | Medium: systemd/nginx apply must remain atomic |
-| Runtime artifacts | Reduce manual binary upload friction | Add preset fetchers, SHA-256 calculation, artifact status, signed download URL and install logs | Low: foundation exists |
-| Security gate | Make release security evidence repeatable | Keep threat model, RBAC matrix, release gate, self-test and scan artifacts in docs | Medium: exhaustive scan requires delegated workers |
-
-Дополнительный программный контекст на текущую фазу:
-
-- История репозитория перезапущена как clean import в `rtis-emc2/megavpn`.
-- Продуктовое имя `MegaVPN` сохраняется как часть бренда `RTIS MegaVPN`.
-- Operator-facing branding должен быть переведен с legacy-упоминаний на RTIS без изменения внутренних технических префиксов в один шаг.
-- Ребрендинг должен идти после стабилизации CI и публичной документации, чтобы не смешивать инфраструктурные и визуальные изменения в одном неконтролируемом релизе.
-
-## 3. Фактически Реализовано
-
-### 3.1 Backend / Control Plane
-
-Реализовано:
-
-- Go API server: `cmd/api`.
-- PostgreSQL store: `internal/infra/postgres`.
-- Migration runner: `cmd/migrate`.
-- Dashboard counters.
-- Health/ready/version endpoints.
-- Static web asset serving.
-- Structured logging через `slog`.
-- Context-aware DB/API paths в основных слоях.
-
-Фактические API domains:
-
-- Auth: login/logout/me/change-password.
-- Admin users and sessions.
-- Mail settings and invite flow.
-- Nodes, diagnostics, access methods, bootstrap runs.
-- Enrollment tokens and agent identity rotation/revoke.
-- Node inventory, capabilities, capability install/verify events.
-- Service discovery and discovery import.
-- Services catalog and installer catalog.
-- Instances, revisions, spec replacement, lifecycle actions.
-- Clients, service accesses, provisioning/revoke/rotate.
-- Artifacts and share links.
-- Jobs, job logs, cancellation.
-- Audit.
-- Agent endpoints: register, heartbeat, inventory, runtime targets/reports, next job, job result.
-
-### 3.2 Database / Domain Model
-
-Реализованы миграции `000001`-`000031`.
-
-Есть таблицы или расширения для:
-
-- `nodes`, `node_agents`.
-- `service_definitions`.
-- `instances`, `instance_revisions`.
-- `client_accounts`, `service_accesses`.
-- `artifacts`, `share_links`.
-- `jobs`, `job_logs`, `resource_locks`.
-- `audit_events`.
-- `node_enrollment_tokens`.
-- `node_inventory_snapshots`, `node_capabilities`.
-- `node_service_discoveries`, `node_service_discovery_events`.
-- `node_capability_install_events`.
-- `platform_users`, `roles`, `permissions`, `role_permissions`, `platform_user_roles`, `user_sessions`.
-- `secret_refs`, `agent_trust_roots`, `node_agent_certificates`.
-- `node_access_methods`, `node_bootstrap_runs`.
-- `platform_mail_settings`, `platform_user_invites`, `client_email_deliveries`.
-- Agent communication diagnostics fields.
-- `instance_runtime_states` для нормализованной runtime projection, health и drift статусов instance, включая agent-observed systemd state, config hash, listening ports и report timestamp.
-- `instance_runtime_observations` для retained history job-derived и agent-derived runtime snapshots с retention cleanup.
-- Typed driver operation interface for OpenVPN, Xray, WireGuard, IPsec, HTTP Proxy, Shadowsocks, MTProto and Nginx lifecycle operations.
-- Typed driver health-check definitions for systemd active state, rendered config observation and endpoint listening-port runtime signals.
-- Agent runtime execution split into operation-aware dispatch, apply/systemd execution, render/file materialization and validation modules.
-- Service-specific agent validation registry for OpenVPN, Xray, WireGuard, IPsec, HTTP Proxy, Shadowsocks, MTProto and Nginx.
-- Driver-backed runtime health checks, health reasons and drift reasons are derived for runtime state APIs and the Instances UI without adding a new storage table.
-- Client access route-policy payloads classify routes as L3/L4 enforcement candidates or observe-only routes with explicit reasons, project ingress egress/output decisions, and agent route-policy results state that the current apply stage is snapshot-only.
-- Interactive Control Plane installer captures public URL/domain, TLS mode, PostgreSQL connectivity, secret master key, artifact storage, bootstrap admin and systemd/nginx setup with repeatable `MEGAVPN_CP_*` overrides, including sudo/snap Go PATH normalization and systemd oneshot migration result handling for Ubuntu deployments.
-
-Частично отсутствует по ERD v1:
-
-- `credentials` / `credential_materials` как отдельный слой.
-- `presets`, `strategies`, `strategy_rules`.
-- `virtual_endpoints`, `endpoint_backends`.
-- `instance_ports`, `instance_networks`, `instance_health_checks`.
-- `share_link_events`.
-- `telemetry_sources`, `session_snapshots`.
-- `backup_snapshots`, `import_runs`, `import_conflicts`.
-- `platform_settings` как универсальный settings слой.
-
-### 3.3 Identity, Auth, RBAC
-
-Реализовано:
-
-- Platform users.
-- Roles and permissions.
-- Session tokens with hash storage.
-- Cookie and bearer auth.
-- Session revoke.
-- Invite flow with one-time accept link.
-- Password hashing via PBKDF2-SHA256.
-- Audit for auth/admin operations.
-- Basic in-process rate limiting for login, invite accept, public share download and agent registration.
-- Trusted proxy header mode via `MEGAVPN_TRUST_PROXY_HEADERS`.
-- API request body size limit via `MEGAVPN_API_MAX_REQUEST_BYTES`.
-- Strict JSON decoding for API request bodies.
-- CSRF guard for cookie-authenticated mutating API requests.
-- Bundled Web UI uses HttpOnly session cookie + CSRF header and clears legacy bearer tokens from `localStorage`.
-- Shared `MEGAVPN_AGENT_TOKEN` fallback for node/job agent endpoints is limited to explicit auto-register mode.
-- Agent-to-server runtime requests and server-to-agent job/runtime-target responses are HMAC-signed with per-node persistent tokens and verified with timestamp/body-hash/nonce replay-window checks; strict request enforcement is controlled by `MEGAVPN_AGENT_SIGNATURE_ENFORCE`.
-- Failed operator login attempts are recorded as audit events.
-- Platform-scoped OpenVPN CA root model via `platform_service_pki_roots`; OpenVPN instances get server certificates from the shared `openvpn/default` CA by default.
-- OpenVPN config paths are slug-scoped to match `openvpn-server@<slug>` systemd units.
-- Settings UI exposes a `Platform CA Center`, and `GET /api/v1/platform/pki-roots` exposes platform PKI root inventory without exposing CA private key secret references.
-- `ACME / Let's Encrypt` intentionally remains paused at this stage; the UI keeps the operator-facing slot visible, but automated issuance is not part of the active delivery scope until a canonical challenge strategy is approved.
-
-Текущие ограничения:
-
-- Password policy усилена до 12 символов, но для v1.0 нужен enterprise policy profile.
-- Нет MFA/2FA.
-- Нет account lockout.
-- Нет external proxy/WAF-level rate limiting profile.
-- Нет CIDR-scoped trusted proxy allowlist; текущий режим доверия proxy headers включается целиком через env и должен использоваться только за доверенным reverse proxy.
-- CSRF защита есть для cookie-auth mutating API, но v1.0 еще требует финальный frontend/API auth mode decision: bearer-only, CSRF token rotation или hybrid.
-
-### 3.4 Secret Management
-
-Реализовано:
-
-- `secret_refs`.
-- AES-GCM encryption service.
-- External master key file через `MEGAVPN_MASTER_KEY_PATH`.
-- Secret-backed provisioning для чувствительных материалов.
-- UI/API создание secret refs для bootstrap.
-
-Ограничения:
-
-- Это single KEK file model, не envelope encryption с key hierarchy.
-- Нет rotation workflow для KEK.
-- Нет Vault/KMS abstraction.
-- Нет per-secret access audit на каждое раскрытие.
-- Если master key path не настроен, часть secret-backed provisioning отключается.
-
-### 3.5 Node Enrollment / Bootstrap / Agent
-
-Реализовано:
-
-- One-time enrollment tokens.
-- Server-side token hashing and token hints.
-- Persistent agent identity/token.
-- Agent state file.
-- Agent bootstrap env cleanup после enroll.
-- Agent heartbeat.
-- Pull-based job polling.
-- Job result submission.
-- Agent communication diagnostics.
-- Agent token rotation and identity revoke.
-- Node access methods.
-- SSH bootstrap job.
-- Manual bootstrap bundle generation.
-- Inventory sync and service discovery sync.
-
-Ограничения:
-
-- Transport сейчас REST over configured URL; mTLS из Decision Sheet еще не завершен как обязательный runtime contract.
-- Mandatory mTLS is not completed yet; current HMAC layer protects agent-to-server requests and server-to-agent job/runtime-target responses.
-- Agent API authentication основана на bearer-like token model, а не полноценной mTLS identity per node.
-- Agent выполняет allowlist job types, что правильно, но payload schema validation нужно формализовать.
-
-### 3.6 Jobs / Locks / Execution
-
-Реализовано:
-
-- PostgreSQL-backed jobs.
-- Worker job claim.
-- Agent job claim for node-scoped jobs.
-- Job logs.
-- Resource locks для mutating jobs.
-- Locked by / locked until.
-- Capability install/verify jobs.
-- Node bootstrap jobs.
-- Instance lifecycle jobs.
-- Client provisioning jobs.
-- Remediation actions for stuck jobs/channel probe/stale token rotation.
-
-Ограничения:
-
-- Нет retry policy на уровне job definition.
-- Нет dead-letter queue.
-- Нет эксплицитной idempotency key model.
-- Нет typed job payload schemas.
-- Нет full cancellation propagation до agent runtime process.
-- `artifact.build` объявлен, но worker явно возвращает not implemented.
-
-### 3.7 Service Catalog and Capabilities
-
-Реализовано:
-
-- Service catalog seeded.
-- Installer catalog API.
-- Capability install/verify через agent.
-- Поддержанные install/verify capabilities:
-  - nginx.
-  - xray-core.
-  - openvpn.
-  - wireguard.
-  - ipsec / strongSwan.
-  - http proxy / squid.
-  - xl2tpd.
-  - shadowsocks-libev.
-- Источники:
-  - nginx.org repo или Ubuntu repo.
-  - XTLS/Xray-install flow.
-  - Ubuntu repo для OpenVPN/IPsec/xl2tpd/Shadowsocks.
-- Node capability matrix в UI.
-
-Ограничения:
-
-- WireGuard install/provision/apply path реализован, но ему еще нужны integration tests, runtime hardening и production smoke.
-- HTTP Proxy install/verify реализован, но полноценный instance/provision/apply path еще не реализован.
-- MTProto пока profile/overlay/future.
-- Capability drift сейчас минимальный и hardcoded под nginx/xray.
-
-### 3.8 Instances / Revisions / Desired State
-
-Реализовано:
-
-- CRUD для instances.
-- Instance revisions.
-- Spec replacement.
-- Revision list.
-- Rollback flow from revision history.
-- Lifecycle actions: apply/restart/start/stop/enable/disable.
-- Instance soft delete with service-access guard.
-- Agent-side materialization of managed config files.
-- Validation:
-  - `nginx -t`.
-  - `xray run -test` / `xray -test`.
-- Default systemd units and config paths.
-- Renderers для Xray, Nginx, OpenVPN, IPsec, xl2tpd, Shadowsocks на store/worker side.
-
-Ограничения:
-
-- Revision workflow пока не доведен до strict candidate -> validated -> applied model.
-- Нет обязательного diff before apply.
-- Нет persisted `instance_health_checks`/`instance_ports` таблиц; текущий health/drift detail слой вычисляется из `instance_runtime_states`, observation history и driver contract.
-- Нет port/subnet conflict engine.
-- Нет kernel-level route-policy enforcement stage через nftables/ipset/policy routing; `node.route_policy.apply` сейчас materializes signed policy snapshot, enforceability projection and explicit egress/output projection only.
-- Нет full schema validation для raw/structured configs.
-- Нет session listing.
-
-### 3.9 Client Provisioning / Artifacts / Share Links
-
-Реализовано:
-
-- Client accounts.
-- Service accesses.
-- Client provisioning job.
-- Provisioning/access rotation для OpenVPN, Xray, IPsec, Shadowsocks.
-- Artifact generation:
-  - OpenVPN `.ovpn`.
-  - Xray URI/text artifacts.
-  - Shadowsocks artifacts.
-  - IPsec/L2TP bundle artifacts.
-  - ZIP bundle.
-- Artifact storage in local filesystem.
-- Share links with token and TTL.
-- Public share download endpoint.
-- Client email delivery with attachments/share links.
-
-Ограничения:
-
-- Отдельные credential entities из ERD отсутствуют.
-- Share link events/download audit не реализованы как отдельная таблица.
-- Нет max downloads policy.
-- Нет object storage abstraction.
-- Нет QR generation.
-- Нет client self-service portal.
-
-### 3.10 Web UI
-
-Реализовано:
-
-- Static HTML/CSS/JavaScript UI.
-- Operational views:
-  - Dashboard.
-  - Nodes.
-  - Instances.
-  - Clients.
-  - Jobs.
-  - Artifacts.
-  - Share links.
-  - Services.
-  - Revisions.
-  - Audit.
-  - Settings/Auth/Mail.
-- Forms/modals for core operations.
-- Live calls to API.
-- `app.js` gradually split into focused static modules:
-  - API client.
-  - Domain UI helpers.
-  - Node UI helpers.
-  - Instances page.
-  - Revisions page.
-  - Services page.
-  - Audit/Telemetry pages.
-  - Clients page.
-  - Artifacts/Share links page.
-- Compact Instances/Revisions operational pages with safe action flows.
-
-Расхождение с Decision Sheet:
-
-- Decision Sheet требует React + TypeScript + TanStack Query/Router + AG Grid + MUI + Zustand + Monaco + zod.
-- Текущий UI является production-useful admin UI, но не целевым frontend stack для v1.0.
-
-### 3.11 Deployment / Infrastructure
-
-Реализовано:
-
-- Build scripts.
-- Local run script.
-- Install scripts.
-- systemd units for API, agent, worker.
-- nginx reverse proxy example.
-- FHS layout documented:
-  - `/opt/megavpn`.
-  - `/etc/megavpn`.
-  - `/var/lib/megavpn`.
-- Smoke scripts for enrollment, inventory, discovery, capabilities, failures.
-
-Ограничения:
-
-- systemd services run as root. Agent может требовать root для service management, но API/worker должны быть hardenable under dedicated user.
-- nginx example HTTP-only; TLS production profile не готов.
-- Нет Docker/Kubernetes packaging.
-- Нет backup/restore scripts.
-- Нет migration rollback policy.
-
-### 3.12 Verification Status
-
-В текущей среде `go` недоступен, поэтому `go test`, `go vet` и `go build` не были выполнены. В репозитории отсутствуют `*_test.go`.
-
-Это означает:
-
-- Кодовая база имеет smoke scripts, но не имеет достаточного automated regression coverage.
-- Для v1.0 testing foundation является release blocker.
-
-## 4. Gap Analysis Against Decision Sheet v1
-
-| Area | Decision Sheet Target | Current State | v1.0 Gap |
-|---|---|---|---|
-| Control plane / execution separation | Required | Mostly implemented | Formalize contracts and payload schemas |
-| PostgreSQL source of truth | Required | Implemented | Add missing v1 entities |
-| Desired state -> revision -> job -> apply | Required | Partially implemented | Strict revision state machine, validation, rollback |
-| No direct shell from API | Required | API queues jobs | Keep; audit all mutating endpoints |
-| Agent pull model | Required | Implemented | Harden auth, mTLS/signatures |
-| mTLS identity per node | Required | DB tables exist, runtime incomplete | Implement or explicitly defer with accepted risk |
-| Job signature validation | Required | HMAC-signed job responses implemented | Decide whether mTLS is mandatory before v1.0 |
-| Service drivers | Required | Practical render/apply exists | Extract typed driver contracts |
-| OpenVPN | Tier A | Partial provisioning/apply | Complete lifecycle, revoke, health, tests |
-| Xray | Tier A | Partial provisioning/apply | Complete Reality/XHTTP/fallback support and validation |
-| Nginx | Tier A | Install/render/apply partial | Complete managed sites/stream/fallback model |
-| IPsec | Tier A | IPsec/xl2tpd partial | Define supported subset, harden configs |
-| WireGuard | Tier B | Not implemented | Decide v1.0 inclusion or v1.1 deferral |
-| Shadowsocks | Tier B | Partial | Complete lifecycle or mark operational support |
-| Artifacts | Required | Implemented local | Add events, QR, policy |
-| RBAC | Required | Implemented foundation | Permission review, sensitive action gates |
-| Secrets | Encrypted PG + external KEK | Implemented partially | KEK rotation, reveal audit, policy |
-| UI stack | React/TS/MUI/etc. | Static JS UI | Rebuild or accept scope change |
-| Observability | Node/instance/jobs/errors/sessions/audit | Partial | Metrics/logs/runtime/session snapshots |
-| Retention | Required | Not enforced | Cleanup jobs and policy settings |
-
-## 5. Целевое ТЗ v1.0
-
-### 5.1 Назначение системы
-
-RTIS MegaVPN Platform v1.0 является self-hosted distributed control plane для управления VPN/proxy/edge-инфраструктурой через web UI и agent-managed nodes.
-
-Система должна:
-
-- Централизованно управлять nodes, service capabilities, instances, clients, credentials, artifacts and jobs.
-- Работать по модели desired state.
-- Выполнять runtime изменения только через jobs.
-- Обеспечивать audit trail для security-sensitive операций.
-- Поддерживать Ubuntu 24.04 LTS amd64 как primary target и arm64 как secondary target.
-- Быть пригодной для enterprise deployment 24/7.
-
-### 5.2 Пользовательские роли
-
-Роли v1.0:
-
-- `superadmin`: полный доступ, нельзя удалить последнего superadmin.
-- `admin`: полный operational доступ без нарушения superadmin invariants.
-- `engineer`: nodes/services/clients/jobs/artifacts без platform/security settings.
-- `readonly`: read-only доступ.
-
-Sensitive actions должны требовать отдельные permissions:
-
-- Secret reveal/resolve.
-- Artifact export.
-- Share link publish/revoke.
-- Config edit.
-- Instance apply/restart/stop.
-- Destructive delete/revoke.
-- Node bootstrap/agent identity rotation.
-
-### 5.3 Functional Requirements
-
-#### Platform and Auth
-
-- Bootstrap первого superadmin из env только если нет пользователей.
-- Login/logout/session management.
-- Invite operator flow.
-- Password policy:
-  - минимум 12 символов для production profile;
-  - запрет common passwords;
-  - audit password changes/resets.
-- Session policy:
-  - configurable TTL;
-  - revoke own session/all user sessions;
-  - secure cookie production mode.
-- Optional v1.0 hardening: TOTP MFA for admin/superadmin.
-
-#### Nodes
-
-- Create node in draft state.
-- Configure access methods.
-- Generate/rotate enrollment token.
-- SSH bootstrap.
-- Manual bundle bootstrap.
-- Agent enrollment.
-- Agent heartbeat.
-- Agent diagnostics.
-- Agent token rotation.
-- Agent identity revoke.
-- Maintenance mode.
-- Retire node only when no active instances remain.
-- Inventory sync and service discovery.
-- Import discovered services as managed/unmanaged instances.
-
-#### Services and Capabilities
-
-- Service catalog must expose supported service definitions with tier, capability and account/artifact support flags.
-- Agent must support install/verify jobs for v1.0 supported runtimes.
-- Capability status must be derived from inventory and explicit verification.
-- Capability drift must compare required runtime capabilities for active instances.
-
-v1.0 service support:
-
-- Tier A release-critical:
-  - OpenVPN.
-  - Xray-core.
-  - Nginx.
-  - IPsec/L2TP scoped to explicitly documented modes.
-- Tier B operational:
-  - Shadowsocks.
-- Explicit decision required:
-  - WireGuard in v1.0 or v1.1.
-
-#### Instances
-
-- Create instance only on node with required capability or explicit override.
-- Maintain structured spec and rendered files.
-- Create revision for each spec change.
-- Validate revision before apply.
-- Show diff before apply in UI.
-- Enqueue one mutating job per instance at a time.
-- Apply/restart/start/stop/enable/disable through agent.
-- Store apply result, active state, error summary and last applied revision.
-- Rollback to previous applied revision.
-
-#### Client Provisioning
-
-- Create/suspend/activate/delete client account.
-- Assign client to selected instances or strategy-selected instances.
-- Create service access records.
-- Generate credentials and artifacts.
-- Revoke access.
-- Rotate access per service.
-- Send artifacts by email.
-- Publish/revoke share links.
-- Audit all provisioning, revoke, rotate, export, download operations.
-
-#### Artifacts
-
-- Store artifacts locally in v1.0.
-- Support:
-  - `.ovpn`.
-  - Xray URI/text.
-  - Shadowsocks URI/text.
-  - IPsec/L2TP profile bundle.
-  - ZIP bundle.
-  - QR where protocol supports URI.
-- Enforce TTL and status.
-- Record download/share events.
-- Support cleanup of expired/revoked artifacts and links.
-
-#### Jobs
-
-- Job states:
-  - queued.
-  - running.
-  - succeeded.
-  - failed.
-  - canceled.
-  - expired.
-- Job lease and lock semantics.
-- Retry policy per job type.
-- Dead-letter visibility for repeated failures.
-- Typed payload schemas.
-- Idempotency keys for externally triggered mutating operations.
-- Job logs with structured payload.
-
-#### Audit
-
-Audit must include:
-
-- actor type and id;
-- action;
-- resource type/id;
-- IP/user-agent for UI operations where available;
-- success/failure;
-- sensitive metadata without leaking secrets;
-- timestamp.
-
-Audit retention target: at least 1 year.
-
-### 5.4 Non-Functional Requirements
-
-Reliability:
-
-- API graceful shutdown.
-- Worker graceful shutdown.
-- Agent cancellation-aware loop.
-- DB transaction boundaries for every state mutation.
-- Idempotent bootstrap/enrollment/provisioning operations where feasible.
-
-Security:
-
-- HTTPS-only production deployment.
-- Agent identity per node.
-- mTLS or signed job/result payloads as mandatory control.
-- No secret in logs.
-- Secrets encrypted at rest.
-- RBAC for every protected API route.
-- Rate limiting for auth and public share endpoints.
-- Strict input validation.
-- Secure headers.
-
-Performance targets:
-
-- API p95 < 300 ms for common list/detail endpoints at target scale.
-- Job enqueue < 1 s.
-- Provisioning < 30-90 s excluding package installation.
-- Heartbeat interval 15-30 s.
-- Offline detection < 2 min.
-
-Capacity targets:
-
-- Nodes: 20.
-- Instances: 200.
-- Clients: 10,000.
-- Concurrent jobs: 50.
-- Operators: 100.
-
-Observability:
-
-- Dashboard for node/instance/client/job health.
-- Metrics endpoint or external collector integration.
-- Structured logs.
-- Job and agent diagnostics.
-- Session snapshots for supported services where possible.
-- Backup and restore status.
-
-Deployment:
-
-- Production systemd deployment.
-- Hardened service users for API/worker.
-- Agent root privileges minimized and justified.
-- Nginx TLS reverse proxy profile.
-- DB migration documented.
-- Backup/restore documented.
-
-## 6. Roadmap to v1.0
-
-### Phase 0 - Stabilization Baseline
-
-Goal: make the current state reproducible and measurable.
-
-Deliverables:
-
-- Install Go toolchain in CI/dev environment and verify `go test`, `go vet`, `go build`.
-- Add CI pipeline for build/vet/test.
-- Replace outdated `docs/NEXT_STEPS.md` with current roadmap reference or mark as historical.
-- Add API route inventory document.
-- Add migration inventory document.
-- Add local development quickstart.
-- Define release versioning policy.
-
-Exit criteria:
-
-- Clean build for API/agent/worker/migrate.
-- CI runs on every PR.
-- Smoke scripts are documented and runnable.
-
-### Phase 1 - Architecture Contracts
-
-Goal: stop implicit behavior from spreading.
-
-Deliverables:
-
-- Define driver interface:
-  - ValidateSpec.
-  - Render.
-  - ApplyPayload.
-  - Provision.
-  - Revoke.
-  - Rotate.
-  - ExportArtifacts.
-  - Health.
-- Define typed job payload schemas.
-- Define internal agent API schemas.
-- Define public frontend API contract, preferably OpenAPI.
-- Define revision state machine.
-- Define error taxonomy and API error format.
-
-Exit criteria:
-
-- New service driver cannot be added without schema and tests.
-- Mutating endpoints use typed request validation.
-
-### Phase 2 - Security Hardening
-
-Goal: close v1.0 audit/security blockers.
-
-Deliverables:
-
-- Enforce HTTPS production settings.
-- Decide whether mTLS is mandatory on top of signed HTTP messages.
-- Sign jobs and verify job signatures on agent is implemented for job/runtime-target responses; continue hardening with key rotation and release gates.
-- Sign/verify agent results.
-- Extend rate limiting beyond the current in-process baseline:
-  - login.
-  - invite accept.
-  - public share download.
-  - agent register.
-- Add CIDR-scoped trusted proxy config for client IP.
-- Expand password policy into production profile.
-- Finalize CSRF/auth mode strategy beyond the current cookie-auth mutating request guard.
-- Add secret access audit.
-- Add KEK rotation plan or documented v1 limitation.
-- Harden systemd units for API/worker.
-
-Exit criteria:
-
-- Security review finds no blocker for exposing UI behind TLS.
-- Agent identity is revocable and cryptographically bound to node.
-
-### Phase 3 - Database Model Completion
-
-Goal: align schema with ERD v1 where required for v1.0.
-
-Deliverables:
-
-- Add `credentials` and `credential_materials` or explicitly document metadata-based credential storage as v1.0 deviation.
-- Add `share_link_events`.
-- Runtime observation history and retention for agent-observed `instance_runtime_states` is implemented; driver-backed health/drift details are API-derived.
-- Add persisted `instance_health_checks` only if v1.0 audit queries require check-level retention beyond `instance_runtime_observations`.
-- Add `platform_settings`.
-- Add `presets` and minimal `strategies` if strategy-based provisioning is v1.0 scope.
-- Add `virtual_endpoints` and `endpoint_backends` if endpoint abstraction is v1.0 scope.
-- Add retention cleanup jobs for audit/jobs/share links/artifacts.
-
-Exit criteria:
-
-- ERD v1 deviations are intentional and documented.
-- Runtime state no longer lives only in job result payloads.
-
-### Phase 4 - Desired State, Revisions and Apply
-
-Goal: make config changes safe, reviewable and reversible.
-
-Deliverables:
-
-- Candidate revision creation.
-- Schema validation.
-- Render validation.
-- Diff preview.
-- Approve/apply.
-- Mark applied revision.
-- Rollback to previous applied revision.
-- Prevent apply of invalid/unvalidated revision.
-- Port/subnet conflict checks.
-- Per-instance lock enforcement tests.
-
-Exit criteria:
-
-- Every instance mutation produces auditable revision and job.
-- Operator can see what will change before apply.
-- Failed apply preserves enough state to recover.
-
-### Phase 5 - Service Driver Completion
-
-Goal: deliver stable v1.0 service support.
-
-Deliverables by service:
-
-OpenVPN:
-
-- Structured instance spec.
-- PKI model: platform shared CA default via `platform_service_pki_roots`; optional explicit per-instance CA remains as compatibility escape hatch.
-- Server config render.
-- Server cert/key generation from the active OpenVPN PKI root.
-- Client cert issuance with CA tracking in service access metadata.
-- Revoke flow and CRL update.
-- Embedded `.ovpn` export.
-- Health check.
-- Apply/rollback tests.
-
-Xray:
-
-- Structured VLESS Reality.
-- Structured VLESS XHTTP.
-- Multi-SNI/fallback via Nginx.
-- Raw JSON advanced mode with validation.
-- Client UUID provisioning/rotation/revoke.
-- URI and QR export.
-- Health check.
-
-Nginx:
-
-- Managed reverse proxy configs.
-- TLS termination profile.
-- Xray fallback profile.
-- Stream proxy where required.
-- Config validation.
-- Reload without downtime where possible.
-
-IPsec/L2TP:
-
-- Explicitly define supported v1 modes.
-- strongSwan config render.
-- xl2tpd config render.
-- PSK/cert/EAP scope decision.
-- Client bundle export.
-- Revoke/rotate.
-
-Shadowsocks:
-
-- Standalone mode.
-- Xray inbound mode decision.
-- URI export.
-- Revoke/rotate.
-
-WireGuard:
-
-- Product decision required:
-  - include in v1.0 with peer provisioning and config export;
-  - or move to v1.1 and remove from v1.0 acceptance criteria.
-
-Exit criteria:
-
-- Tier A services pass install, create instance, provision client, apply, rotate, revoke, artifact export and rollback scenarios.
-
-### Phase 6 - Frontend v1.0
-
-Goal: replace or formalize current static UI as production UI.
-
-Decision required:
-
-- Option A: rebuild with Decision Sheet stack: React + TypeScript + TanStack Query/Router + AG Grid + MUI + Zustand + Monaco + react-hook-form + zod.
-- Option B: keep static UI for v1.0 and update Decision Sheet formally.
-
-Recommended path: Option A for maintainability.
-
-Deliverables:
-
-- Typed API client.
-- Auth/session shell.
-- Dashboard.
-- Nodes workflow.
-- Services/capability matrix.
-- Instance editor with schema forms and raw Monaco editor.
-- Revision diff/apply/rollback view.
-- Clients/provisioning/artifacts/share links.
-- Jobs/logs/detail view.
-- Audit filters.
-- Settings/admin/mail.
-- Accessibility and responsive checks.
-
-Exit criteria:
-
-- UI has no stub/future screens for v1.0 scope.
-- All sensitive operations require explicit confirmation.
-- Validation errors are field-level and actionable.
-
-### Phase 7 - Observability and Operations
-
-Goal: make the platform supportable in production.
-
-Deliverables:
-
-- Metrics endpoint or collector integration.
-- Structured log conventions.
-- Node communication health model.
-- Instance runtime state model.
-- Service session snapshots where supported.
-- Retention cleanup worker.
-- Backup script and restore runbook.
-- Operational runbooks:
-  - bootstrap failure.
-  - agent offline.
-  - stuck job.
-  - failed apply.
-  - expired share link.
-  - lost master key.
-
-Exit criteria:
-
-- Operator can diagnose common failures from UI and logs.
-- Backup/restore tested on clean environment.
-
-### Phase 8 - Testing and Release Hardening
-
-Goal: make v1.0 releasable without manual heroics.
-
-Deliverables:
-
-- Unit tests for:
-  - auth/password/session.
-  - secrets.
-  - job locking.
-  - revision state machine.
-  - driver renderers.
-  - artifact generation.
-- Integration tests with PostgreSQL.
-- Agent contract tests.
-- End-to-end smoke tests.
-- Race detector job for selected packages.
-- Static analysis: `go vet`, `gofmt`, optional `staticcheck`.
-- Security scan for dependencies and code.
-- Release checklist.
-- Upgrade test from current migrations to latest.
-
-Exit criteria:
-
-- CI green.
-- Critical path E2E green.
-- No release-blocking security findings.
-
-## 7. v1.0 Release Criteria
-
-v1.0 can be released only when:
-
-- API, worker, agent and migrate build reproducibly.
-- PostgreSQL migrations apply cleanly on empty DB and existing v0.6.x DB.
-- Auth/RBAC protects every non-public route.
-- Agent communication is cryptographically hardened.
-- OpenVPN, Xray, Nginx and scoped IPsec/L2TP workflows are complete.
-- Client provisioning produces valid artifacts and applies runtime state.
-- Revoke/rotate flows work for supported services.
-- Instance revision apply/rollback is implemented.
-- Jobs are locked, observable and recoverable.
-- Audit covers sensitive operations.
-- UI has no unfinished v1.0 operational screens.
-- Backup/restore documented and tested.
-- Smoke and integration tests pass.
-- Production deployment guide exists.
-
-## 8. Recommended Milestones
-
-| Milestone | Focus | Result |
-|---|---|---|
-| 0.7.0 | CI, contracts, current-state docs | Reproducible engineering baseline |
-| 0.8.0 | Security transport, job schemas, secret audit | Security foundation |
-| 0.8.5 | Revision/apply/rollback | Safe config lifecycle |
-| 0.9.0 | Tier A drivers complete | Feature-complete backend |
-| 0.9.5 | Frontend v1, observability, retention | Release candidate platform |
-| 1.0.0-rc1 | Testing, migration, deployment hardening | RC |
-| 1.0.0 | Production release | Stable v1 |
-
-## 9. Main Risks
-
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Mandatory mTLS decision delayed | Security blocker | Decide before v1.0 release gate |
-| UI stack mismatch | Long-term maintainability risk | Decide now: rebuild or amend Decision Sheet |
-| No automated tests | Regression risk | Phase 0/8 must be non-negotiable |
-| Service drivers remain implicit | Hard to maintain | Extract typed contracts and schemas |
-| Secrets model too simple | Audit/key-rotation risk | Define KEK rotation/Vault-compatible future path |
-| IPsec scope expands | Schedule risk | Freeze v1 supported modes |
-| WireGuard ambiguity | Scope creep | Explicit v1/v1.1 decision |
-| Root services | Security audit issue | Harden API/worker users, constrain agent |
+| Node map | Show location, role, workload and health for every node. | Add topology projection, optional coordinates, region/provider labels and map/table UI. | Medium |
+| Node links | Visualize backhaul and route-policy paths. | Reuse managed backhaul links and runtime probes; render healthy/degraded/failed edges. | Medium |
+| VLESS subscriptions | Export per-client subscriptions for selected inbound services. | Add subscription token, rotation, QR/text export, cache-control and provisioning result state. | Medium |
+| Traffic camouflage | Formalize WebSocket/gRPC/fallback edge profiles. | Move Xray/Nginx camouflage into reusable profiles with validation and preview. | High |
+| Nginx edge | Make edge profiles first-class. | Add profile catalog, certificate binding, config diff, `nginx -t`, atomic apply and rollback. | Medium |
+| Runtime artifacts | Reduce manual binary handling. | Add preset fetchers, SHA-256 calculation, artifact status, signed download tickets and install logs. | Low |
+| Service logs | Make node-side debugging available in UI. | Add scoped log retrieval for managed units with redaction and retention controls. | Medium |
+| Address pools | Centralize network allocation. | Keep reusable pools, allocations, edit/delete guardrails and route-between-pools policy. | Medium |
+| OpenVPN templates | Allow controlled client config customization. | Add managed client-template profiles with validation and safe variables. | Medium |
+| Security evidence | Make release review repeatable. | Keep threat model, RBAC matrix, self-test, release gates and scan artifacts current. | Medium |
+
+## 6. Runtime and Instance Strategy
+
+Service packs and manual instances must use the same backend mechanism:
+
+- A service pack is a predefined set of instance specifications.
+- Manual creation is a single instance specification edited in detail.
+- Both paths produce revisions.
+- Only validated apply-ready revisions can be applied.
+- Secrets are generated at revision/apply time and stored as secret references.
+- Network pools are allocated by the platform unless the operator explicitly
+  overrides them.
+- Runtime capability installation is a node-level prerequisite, not a hidden
+  side effect of a broken apply.
+
+The UI should group instances by node while still preserving the instance as the
+primary entity. Operators need both views:
+
+- Fleet view: all instances with filters, status, issue and actions.
+- Node workload view: what is installed on a selected node.
+
+## 7. Routing and Backhaul Strategy
+
+VLESS, OpenVPN, WireGuard and Shadowsocks are ingress services. The exit path is
+controlled by route policy and managed backhaul:
+
+1. A client connects to an ingress instance.
+2. The service accepts traffic locally.
+3. Instance route policy chooses local breakout or managed egress.
+4. Backhaul transport carries traffic to the egress node when required.
+5. Health and drift projections show whether the desired path is active.
+
+Node cleanup must be scoped to managed state. It must not remove unrelated
+interfaces, routes, firewall rules or backhaul state outside the managed
+allowlist.
+
+## 8. Documentation Policy
+
+Documentation is split by language:
+
+- Base filenames are English.
+- Russian counterparts use the `_RU.md` suffix.
+- `README.md` is English.
+- `README_RU.md` is Russian.
+- `docs/DOCUMENTATION.md` and `docs/DOCUMENTATION_RU.md` are the entry indexes.
+- User-facing workflows need both English and Russian instructions before they
+  are considered production-ready.
+
+Every maintained release document must declare the current code release near
+the top of the file.
+
+## 9. Release Evidence
+
+The beta release gate is documented in
+[`docs/RELEASE_GATES.md`](docs/RELEASE_GATES.md). The local self-test is
+documented in [`docs/SELF_TESTING.md`](docs/SELF_TESTING.md).
+
+Required evidence:
+
+- Build and unit-test results.
+- Optional race detector result or an explicit waiver.
+- Migration result on a disposable database.
+- API, worker and agent smoke tests.
+- Node enrollment and update flow.
+- Runtime capability install/verify.
+- Service pack create/apply/delete.
+- Client provisioning and artifact generation.
+- Backhaul apply/probe/delete.
+- Backup/restore drill.
+- Security review and threat-model update.
 
 ## 10. Open Questions
 
-1. WireGuard должен входить в v1.0 или переносим в v1.1?
-2. Frontend обязательно переводим на React/TypeScript stack из Decision Sheet или официально меняем Decision Sheet и оставляем static UI на v1.0?
-3. Agent security для v1.0: строго mTLS или допускается signed jobs/results поверх HTTPS с per-node key material?
-4. IPsec v1.0 scope: только L2TP+PSK или также cert/IKEv2 EAP?
-5. Нужен ли self-service portal для клиентов в v1.0 или это post-v1?
-6. Нужна ли DNS provider automation в v1.0 или достаточно manual virtual endpoint model?
-7. Где должен жить production artifact storage: local filesystem only или сразу закладываем S3-compatible abstraction?
-8. Требуется ли MFA для admin/superadmin в v1.0?
+1. Should strict mTLS become mandatory for the agent channel before stable v1,
+   or is HMAC-signed HTTPS sufficient for beta with a documented migration path?
+2. Should the static Web UI remain the supported production UI for v1, or should
+   the project switch to a typed frontend stack before stable?
+3. What exact IPsec scope is required for stable: L2TP/PSK only, IKEv2, or both?
+4. Should client self-service be included in stable v1 or remain a post-v1
+   feature?
+5. Which artifact storage backend is required first: local filesystem only or an
+   S3-compatible abstraction?
+6. Is MFA mandatory for admin/superadmin before stable?
 
-## 11. Release 0.6.10.4-alpha Closure
+## 11. Immediate Next Actions
 
-Цель релиза `0.6.10.4-alpha`: закрыть backhaul apply/cleanup operational truth перед следующей итерацией `0.6.10.5-alpha`.
-
-Зафиксировано в этом релизе:
-
-- HTTP security hardening: strict JSON decoding, request body limit, CSRF guard for cookie-auth mutating requests, trusted proxy mode.
-- Web UI больше не хранит bearer token в `localStorage` и работает через HttpOnly session cookie.
-- Agent shared-token fallback ограничен explicit auto-register mode; per-node identity остается основным runtime-путем.
-- OpenVPN получил platform-scoped PKI foundation: один CA на service/profile, server/client certificates подписываются этим CA.
-- Managed Backhaul получил bidirectional probe jobs с RTT/packet-loss projection в `health_json`.
-- Managed Backhaul delete больше не является только soft-delete: cleanup jobs удаляют управляемые systemd units и backhaul directories на ingress/egress nodes.
-- Managed Backhaul apply больше не считается успешным, если systemd unit не active или tunnel interface не появился на node.
-- Managed Backhaul cleanup стал idempotent: отсутствующие managed units/files/directories возвращаются как `not found - skip`, а не ломают удаление.
-- OpenVPN UDP backhaul profile усилен совместимым static-key fallback профилем с HMAC-SHA256, replay window, keepalive, MTU/MSS параметрами и operator profile JSON.
-- Backhaul UI перестал жестко падать при частично обновленных/закешированных frontend assets; startup errors теперь показываются как понятный аварийный экран вместо белой страницы.
-- OpenVPN instance config path стал slug-scoped, что соответствует `openvpn-server@<slug>`.
-- Deploy script подтверждает обновление из GitHub, проверяет dirty worktree и требует `rsync`.
-- Добавлен PKI root inventory endpoint/UI для операторского контроля текущих platform CA roots.
-
-Что сознательно остается на `0.6.10.4-alpha+`:
-
-- Automatic health-based backhaul failover между несколькими transport profiles.
-- OpenVPN revoke/rotation runtime state validation на удаленном тесте.
-- mTLS decision for agent transport; bidirectional HMAC-signed HTTP messages are implemented as rollout-compatible integrity baseline.
-- Revision diff/apply/rollback workflow.
-- Go build/test CI baseline на машине с установленным Go toolchain.
-
-## 12. Release 0.6.10.5-alpha Closure
-
-Цель релиза `0.6.10.5-alpha`: убрать deadlock-сценарий, когда зависший `running` cleanup job блокировал managed backhaul delete.
-
-Зафиксировано в этом релизе:
-
-- Введен общий backend recovery для stale job leases: `running` jobs с истекшим `locked_until` возвращаются в `retrying`.
-- Legacy `running` jobs без `locked_until` восстанавливаются после защитного TTL, чтобы старые записи не зависали навсегда.
-- Jobs API и Backhaul delete запускают recovery перед чтением/новым cleanup batch, поэтому оператору не нужно вручную дергать диагностику ноды.
-- Cancel job теперь сначала выполняет recovery, поэтому stale `running` job можно отменить после возврата в `retrying`.
-- Backhaul UI сообщает, что offline agents оставляют jobs в очереди, а stale leases восстанавливаются backend maintenance.
-
-Что сознательно остается на `0.6.10.5-alpha+`:
-
-- Lease owner token для защиты от позднего результата старого агента после retry.
-- Отдельный операторский action `force detach` для ситуации, когда node потеряна навсегда и cleanup физически невозможен.
-- Автоматический health-based backhaul failover между несколькими transport profiles.
-
-## 13. Release 0.6.10.6-alpha Closure
-
-Цель релиза `0.6.10.6-alpha`: сделать agent version drift видимым и управляемым из Nodes без ручного захода в диагностику каждой ноды.
-
-Зафиксировано в этом релизе:
-
-- Agent register/heartbeat передают `agent_version` и `protocol_version` в Control Plane.
-- `/api/v1/nodes` возвращает версию агента, protocol version, registered/last_seen timestamps из `node_agents`.
-- `/api/v1/version` публикует `agent_target_version`, используемую UI как целевую версию агентского runtime.
-- Nodes UI показывает версию агента и `Update` для remote nodes с устаревшей/legacy версией.
-- Nodes UI получил верхнюю bulk action `Update all agents`, которая ставит SSH-bootstrap reinstall jobs для всех outdated remote agents.
-- Обновление агента идет через существующий audited `node.bootstrap` path с `reinstall_agent=true`; без enabled SSH access method API откажет безопасной ошибкой.
-
-Что сознательно остается на `0.6.10.6-alpha+`:
-
-- Отдельный binary artifact registry для agent packages вместо copy-from-current-checkout bootstrap path.
-- Фоновый automatic agent rollout policy с maintenance windows и canary rollout.
-- Dedicated agent upgrade endpoint с dry-run/eligibility report вместо UI loop over node bootstrap endpoint.
-
-## 14. Release 0.6.10.7-alpha Closure
-
-Цель релиза `0.6.10.7-alpha`: сделать managed backhaul profiles честными и применяемыми по всем выбранным transport-драйверам без ложного `active` для materialize-only профилей.
-
-Зафиксировано в этом релизе:
-
-- Backhaul apply теперь создает `node.backhaul.apply` jobs для каждого выбранного transport profile, а не только для preferred driver.
-- WireGuard и OpenVPN UDP/TCP остаются managed-systemd драйверами: агент пишет конфиги, ставит systemd unit, запускает сервис, проверяет unit/interface и сохраняет health.
-- Egress-side WireGuard/OpenVPN start scripts продолжают включать `net.ipv4.ip_forward=1` и managed nftables masquerade для backhaul интерфейса.
-- IPsec/IKEv2/L2TP и Xray/VLESS профили после успешного apply получают статус `materialized`, а не `active`, пока нет driver-specific safety gate.
-- Link status теперь зависит от selected transport: remote route projection использует только selected transport в статусе `active`.
-- UI Backhaul Create переименовал секцию в ingress-to-egress transport profiles, показывает `auto-start service` vs `profile only` и больше не рисует выбранные карточки как disabled-серые блоки.
-- Явный список drivers из UI больше не расширяется автоматически до всего driver catalog; preferred driver добавляется безопасно, если оператор снял его checkbox.
-
-Что сознательно остается на `0.6.10.7-alpha+`:
-
-- Controlled Xray TUN activation с policy routing, loop protection и edge TLS/camouflage validation.
-- strongSwan/IKEv2 activation gate с проверкой host profile, firewall и rollback.
-- Автоматический health-based failover между active backhaul transports.
-- Throughput/MTU/MSS probes поверх текущего RTT/packet-loss health baseline.
-
-## 15. Release 0.7.0.1-beta Closure
-
-Цель релиза `0.7.0.1-beta`: исправить реальный отказ backhaul apply на чистых nodes, где WireGuard/OpenVPN runtime packages еще не установлены, и убрать конфликт одинаковых L3 tunnel CIDR между auto-start transport profiles.
-
-Зафиксировано в этом релизе:
-
-- Agent `node.backhaul.apply` для WireGuard/OpenVPN теперь выполняет runtime verify/install inline перед записью конфигов и запуском systemd unit.
-- WireGuard apply устанавливает `wireguard-tools`, OpenVPN apply устанавливает `openvpn`; egress apply дополнительно требует `iproute2` и `nftables` для managed forwarding/NAT.
-- Ошибка capability install теперь попадает прямо в job result: stage `ensure_capability`, runtime output и понятный `message`.
-- Каждый L3 transport profile получает уникальный `/30`; duplicate failed profiles нормализуются при следующем Apply без пересоздания backhaul link.
-- Node job lock теперь использует реальный `node_id` для `node.*` jobs, даже если scope is `backhaul`, поэтому ingress/egress jobs не блокируют друг друга по link id.
-- Долгие node jobs (`node.capability.install`, `node.backhaul.apply`, `instance.apply`) получили 15-minute lease, чтобы `apt-get install` не превращался в stale retry через 2 минуты.
-- Backhaul apply modal и Jobs page показывают result/error/message, чтобы failed jobs были диагностируемы без ручного открытия API.
-
-Что сознательно остается на `0.7.0.1-beta+`:
-
-- Проверить на реальных nodes, что после обновления агента повторный Apply поднимает WireGuard/OpenVPN и Test показывает RTT.
-- Добавить controlled rollback/remove для route-policy rules при удалении access routes.
-- Добавить health-based failover между active backhaul transports.
-- Реализовать Xray TUN/strongSwan activation gates.
-
-## 16. Immediate Next Actions
-
-1. Принять решения по open questions 1-4, потому что они влияют на scope, schema и frontend.
-2. Поднять Go toolchain/CI и зафиксировать build/test baseline.
-3. Создать OpenAPI/internal-agent-contract draft.
-4. Спроектировать mTLS/signed-job implementation.
-5. Вынести service driver contracts и начать с OpenVPN/Xray.
-6. Синхронизировать `docs/NEXT_STEPS.md` с этим документом.
+1. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
+2. Run disposable PostgreSQL migrations and integration tests.
+3. Verify runtime artifact upload/fetch/install for Xray and Shadowsocks.
+4. Validate service-pack creation, apply, runtime logs and cleanup on real nodes.
+5. Validate OpenVPN client config generation and customizable templates.
+6. Validate VLESS ingress with managed egress route policy.
+7. Complete topology-map and node-link design before implementing the UI.
+8. Keep release banners and English/Russian documentation pairs synchronized.

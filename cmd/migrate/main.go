@@ -32,6 +32,9 @@ func main() {
 	if _, err = db.Pool.Exec(ctx, `create table if not exists schema_migrations(version text primary key, applied_at timestamptz not null default now())`); err != nil {
 		log.Fatal(err)
 	}
+	if err := ensureSquashedMigrationCompatibility(ctx, db); err != nil {
+		log.Fatal(err)
+	}
 	migrationsDir, err := resolveMigrationsDir(os.Getenv("MEGAVPN_MIGRATIONS_DIR"))
 	if err != nil {
 		log.Fatal(err)
@@ -77,6 +80,43 @@ func main() {
 		}
 		fmt.Println("applied", version)
 	}
+}
+
+func ensureSquashedMigrationCompatibility(ctx context.Context, db *database.DB) error {
+	const baselineVersion = "000001_control_plane"
+	const latestLegacyVersion = "000044_vless_outbound_groups"
+	const latestBaselineAuditAction = "migration.vless_outbound_groups"
+
+	var applied int
+	var hasBaseline bool
+	var hasLatestLegacy bool
+	if err := db.Pool.QueryRow(ctx, `
+		select
+		  count(*),
+		  coalesce(bool_or(version = $1), false),
+		  coalesce(bool_or(version = $2), false)
+		from schema_migrations
+	`, baselineVersion, latestLegacyVersion).Scan(&applied, &hasBaseline, &hasLatestLegacy); err != nil {
+		return err
+	}
+	if applied == 0 || !hasBaseline || hasLatestLegacy {
+		return nil
+	}
+
+	var hasAuditEvents bool
+	if err := db.Pool.QueryRow(ctx, `select to_regclass(current_schema() || '.audit_events') is not null`).Scan(&hasAuditEvents); err != nil {
+		return err
+	}
+	if hasAuditEvents {
+		var hasBaselineState bool
+		if err := db.Pool.QueryRow(ctx, `select exists(select 1 from audit_events where action = $1)`, latestBaselineAuditAction).Scan(&hasBaselineState); err != nil {
+			return err
+		}
+		if hasBaselineState {
+			return nil
+		}
+	}
+	return fmt.Errorf("database has partial legacy migration history before the consolidated baseline; apply the previous release migrations through %s before deploying this squashed migration set", latestLegacyVersion)
 }
 
 func resolveMigrationsDir(configured string) (string, error) {

@@ -1,5 +1,7 @@
 # Threat Model
 
+**Release:** `0.7.0.1-beta`
+
 ## Scope
 
 MegaVPN consists of:

@@ -1,0 +1,550 @@
+# Руководство пользователя
+
+**Релиз:** `0.7.0.1-beta`
+
+Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
+Plane на чистый сервер до настройки nodes, runtime capabilities, service
+instances, backhaul, клиентов и клиентских artifacts.
+
+## 1. Базовые понятия
+
+| Термин | Значение |
+| --- | --- |
+| Control Plane | Центральный API/UI, который хранит состояние и управляет инфраструктурой. |
+| Node | Сервер, на котором запускаются VPN/proxy/edge сервисы. |
+| Agent | Приложение на node, которое получает jobs, применяет конфигурации и отправляет runtime reports. |
+| Ingress node | Node, принимающая клиентские подключения. |
+| Egress node | Node, через которую должен выходить клиентский трафик. |
+| Service | Тип runtime: OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, Nginx и другие. |
+| Service pack | Шаблон, который создает один или несколько service instances с безопасными defaults. |
+| Instance | Конкретный сервис на конкретной node: endpoint, spec, revision, runtime state. |
+| Revision | Версия desired config для instance. Применять можно только apply-ready revision. |
+| Runtime capability | Наличие нужного бинарника/пакета на node, например `openvpn`, `xray`, `ss-server`. |
+| Backhaul | Управляемая связь ingress -> egress для удаленного выхода трафика. |
+| Client | Клиентская учетная запись, для которой выбираются доступные входные сервисы. |
+| Artifact | Сгенерированный клиентский конфиг или bundle. |
+| Share link | Временная ссылка на artifact. Plaintext token показывается только один раз. |
+
+## 2. Подготовка сервера Control Plane
+
+Минимальная production-модель:
+
+- Ubuntu/Linux host с systemd.
+- PostgreSQL database, доступная Control Plane.
+- Публичный HTTPS endpoint.
+- Nginx как TLS reverse proxy.
+- Go toolchain для сборки из source checkout.
+- Persistent storage для `/var/lib/megavpn/artifacts`.
+- Secret master key вне database backup.
+
+Базовые системные зависимости:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl rsync openssl ca-certificates nginx postgresql-client
+```
+
+Если PostgreSQL работает на том же сервере, создайте database/user отдельно.
+Для production предпочтителен TLS DSN с проверкой сертификата. `sslmode=disable`
+допустим только для lab или доверенного local-only PostgreSQL.
+
+## 3. Установка Control Plane
+
+Рекомендуемый путь - `scripts/control-plane-install.sh`. Скрипт выполняет
+полный bootstrap:
+
+- проверяет параметры;
+- при необходимости устанавливает базовые apt packages;
+- копирует source tree в `/opt/megavpn`;
+- создает `/etc/megavpn/megavpn.env`;
+- создает или сохраняет `/etc/megavpn/master.key`;
+- собирает binaries;
+- устанавливает Web UI;
+- устанавливает systemd units;
+- запускает migrations;
+- запускает API и worker;
+- в режиме `self-signed-nginx` создает локальный HTTPS edge;
+- выполняет health check.
+
+Интерактивный запуск:
+
+```bash
+sudo ./scripts/control-plane-install.sh
+```
+
+Пример non-interactive запуска:
+
+```bash
+sudo MEGAVPN_CP_ASSUME_YES=1 \
+  MEGAVPN_CP_TLS_MODE=self-signed-nginx \
+  MEGAVPN_CP_PUBLIC_BASE_URL=https://control.example.com \
+  MEGAVPN_CP_DATABASE_DSN='postgres://megavpn:password@127.0.0.1:5432/megavpn?sslmode=disable' \
+  MEGAVPN_CP_ADMIN_USERNAME=superadmin \
+  MEGAVPN_CP_ADMIN_EMAIL=admin@control.example.com \
+  ./scripts/control-plane-install.sh
+```
+
+Проверить те же параметры без изменений на host:
+
+```bash
+sudo MEGAVPN_CP_VALIDATE_ONLY=1 \
+  MEGAVPN_CP_ASSUME_YES=1 \
+  MEGAVPN_CP_TLS_MODE=self-signed-nginx \
+  MEGAVPN_CP_PUBLIC_BASE_URL=https://control.example.com \
+  MEGAVPN_CP_DATABASE_DSN='postgres://megavpn:password@127.0.0.1:5432/megavpn?sslmode=disable' \
+  MEGAVPN_CP_ADMIN_PASSWORD='replace-this-before-real-install' \
+  ./scripts/control-plane-install.sh
+```
+
+Основные install variables:
+
+| Variable | Назначение |
+| --- | --- |
+| `MEGAVPN_CP_PUBLIC_BASE_URL` | Публичный URL, который будут использовать браузер и agents. |
+| `MEGAVPN_CP_TLS_MODE` | `self-signed-nginx`, `external-https` или lab-only `http-direct`. |
+| `MEGAVPN_CP_DATABASE_DSN` | PostgreSQL DSN. |
+| `MEGAVPN_CP_APP_DIR` | Каталог установки, по умолчанию `/opt/megavpn`. |
+| `MEGAVPN_CP_ENV_FILE` | Runtime env file, по умолчанию `/etc/megavpn/megavpn.env`. |
+| `MEGAVPN_CP_MASTER_KEY_PATH` | Secret master key path. |
+| `MEGAVPN_CP_ARTIFACT_ROOT` | Persistent artifact storage. |
+| `MEGAVPN_CP_ADMIN_USERNAME` | Bootstrap admin username. |
+| `MEGAVPN_CP_ADMIN_EMAIL` | Bootstrap admin email. |
+| `MEGAVPN_CP_ADMIN_PASSWORD` | Bootstrap admin password; если пусто, installer сгенерирует его. |
+| `MEGAVPN_CP_RUN_TESTS` | Запустить `go test ./...` во время установки. |
+| `MEGAVPN_CP_VALIDATE_ONLY` | Проверить параметры и выйти до изменений на host. |
+| `MEGAVPN_CP_GO_TARBALL_URL` | Optional pinned Go toolchain tarball URL, если версия Go на host слишком старая. |
+| `MEGAVPN_CP_GO_TARBALL_SHA256` | Обязательный SHA-256 pin, если задан `MEGAVPN_CP_GO_TARBALL_URL`. |
+
+Installer проверяет, что Go toolchain соответствует `go.mod`. Если версия Go на
+host слишком старая, разрешите установку через OS package manager или задайте
+pinned tarball URL вместе с SHA-256. Непривязанные downloads toolchain
+отклоняются.
+
+Если installer генерирует пароль, он сохраняет root-only файл:
+
+```bash
+sudo cat /root/megavpn-control-plane-admin.txt
+```
+
+После первого успешного входа и создания operator account уберите bootstrap
+password из runtime environment или замените env file на версию без
+`MEGAVPN_BOOTSTRAP_ADMIN_PASSWORD`, затем перезапустите API. Bootstrap env не
+сбрасывает существующих пользователей, но хранить пароль в env дольше
+нежелательно.
+
+## 4. Ручная установка
+
+Ручной путь нужен для контролируемых production-окружений, где installer не
+должен сам ставить пакеты или писать Nginx config.
+
+1. Скопируйте source tree в `/opt/megavpn`:
+
+```bash
+sudo install -d -m 0755 /opt/megavpn
+sudo rsync -a --delete ./ /opt/megavpn/
+cd /opt/megavpn
+```
+
+2. Создайте env:
+
+```bash
+sudo install -d -m 0750 /etc/megavpn
+sudo install -m 0600 deploy/env/megavpn.production.env.example /etc/megavpn/megavpn.env
+sudo editor /etc/megavpn/megavpn.env
+```
+
+3. Создайте master key:
+
+```bash
+sudo MEGAVPN_MASTER_KEY_PATH=/etc/megavpn/master.key scripts/generate-master-key.sh
+```
+
+4. Соберите binaries и Web UI. `scripts/build.sh` должен выполняться из
+   `/opt/megavpn`, чтобы binaries оказались в `/opt/megavpn/bin`:
+
+```bash
+./scripts/build.sh
+sudo ./scripts/install-web.sh /opt/megavpn/web
+```
+
+5. Установите systemd units:
+
+```bash
+sudo install -m 0644 deploy/systemd/megavpn-*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+```
+
+6. Запустите migrations:
+
+```bash
+sudo systemctl start megavpn-migrate.service
+sudo systemctl status megavpn-migrate.service --no-pager -l
+```
+
+7. Запустите API и worker:
+
+```bash
+sudo systemctl enable --now megavpn-api.service megavpn-worker.service
+sudo systemctl status megavpn-api.service megavpn-worker.service --no-pager -l
+```
+
+8. Настройте Nginx reverse proxy. Базовый пример:
+   `deploy/nginx/megavpn-web.conf`.
+
+```bash
+sudo install -m 0644 deploy/nginx/megavpn-web.conf /etc/nginx/conf.d/megavpn-web.conf
+sudo editor /etc/nginx/conf.d/megavpn-web.conf
+```
+
+Перед включением замените `server_name`, пути к сертификатам и
+`X-Forwarded-Port`. Оставьте `Upgrade`/`Connection` headers из template: они
+нужны для WebSocket terminal и долгоживущих browser connections.
+
+9. Проверьте:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+curl -fsS http://127.0.0.1:8080/healthz
+```
+
+## 5. Проверка после установки
+
+После установки проверьте:
+
+```bash
+sudo systemctl status megavpn-api megavpn-worker --no-pager -l
+sudo journalctl -u megavpn-api -u megavpn-worker -n 120 --no-pager
+curl -fsS http://127.0.0.1:8080/healthz
+```
+
+В UI проверьте:
+
+1. Login работает.
+2. Dashboard открывается без 500 ошибок.
+3. `Settings -> Control Plane TLS` содержит корректный public URL.
+4. `/api/v1/ready` показывает `ready` только при корректном production preflight.
+5. `Jobs`, `Nodes`, `Services`, `Instances`, `Clients`, `Backhaul`,
+   `Certificates` открываются без ошибок.
+6. `Instances -> Create from pack` показывает каталог service packs. Default
+   templates создаются consolidated baseline migration; если список пустой,
+   проверьте, что migrations применены к той же базе, которую использует API.
+
+Если installer использовал self-signed TLS, замените его через:
+
+1. `Certificates -> Add certificate`.
+2. `Settings -> Control Plane TLS`.
+3. Выбор imported/managed certificate.
+4. `Apply edge`.
+5. Проверка `nginx -t` и публичного HTTPS URL.
+
+## 6. Первичная настройка системы
+
+До добавления production nodes настройте:
+
+- SMTP settings, если нужны invite/email delivery.
+- Artifact root и backup policy.
+- Secret master key backup policy.
+- Operator roles и минимальные permissions.
+- Control Plane TLS profile.
+- Runtime binary repository для сервисов, которые нельзя ставить из OS repo.
+- Address pools для OpenVPN/WireGuard/client networks.
+
+Production defaults:
+
+- `MEGAVPN_PRODUCTION_MODE=true`;
+- `MEGAVPN_AGENT_ALLOW_AUTO_REGISTER=false`;
+- `MEGAVPN_AGENT_SIGNATURE_ENFORCE=true`;
+- `MEGAVPN_TRUST_PROXY_HEADERS=true` только за доверенным reverse proxy;
+- API слушает loopback, публичный доступ идет через HTTPS edge.
+
+## 7. Первый вход и readiness
+
+1. Откройте публичный HTTPS URL Control Plane.
+2. Войдите под операторской учетной записью.
+3. Проверьте верхний правый статус:
+   - `ready` означает, что API считает runtime preflight успешным;
+   - degraded/blocked требует проверки Settings, Jobs или Runtime preflight.
+4. Откройте Dashboard и убедитесь, что API, Jobs и Nodes отображаются без 500
+   ошибок.
+
+## 8. Добавление node
+
+1. Откройте `Nodes`.
+2. Нажмите `Add node`.
+3. Укажите:
+   - понятное имя;
+   - role: `ingress`, `egress` или runtime-specific role;
+   - публичный или management address;
+   - setup method.
+4. Для SSH bootstrap добавьте SSH access method:
+   - `ssh_user`;
+   - `ssh_host`;
+   - `ssh_port`;
+   - `ssh_host_key_sha256`;
+   - private key secret.
+5. Запустите bootstrap или enrollment flow.
+6. Дождитесь heartbeat: node должна перейти в `online`.
+
+`ssh_host_key_sha256` защищает bootstrap от MITM. Fingerprint должен
+соответствовать реальному host key node.
+
+## 9. Runtime capabilities
+
+Перед применением service instance node должна иметь нужный runtime:
+
+- OpenVPN: `openvpn`;
+- WireGuard: `wg`, `wg-quick`;
+- Xray/VLESS: `xray`;
+- Shadowsocks: `ss-server`;
+- Nginx edge: `nginx`.
+
+Workflow:
+
+1. Откройте `Services`.
+2. Выберите target node.
+3. Нажмите `Verify`, чтобы получить фактическое состояние.
+4. Если runtime отсутствует, используйте `Install runtime` или установку через
+   runtime artifact.
+5. После установки повторите `Verify`.
+
+Если пакет нельзя надежно установить из OS repository, загрузите runtime в
+`Runtime Binary Repository`. Control Plane сохранит artifact, рассчитает SHA-256
+и выдаст agent короткоживущий signed download ticket.
+
+## 10. Certificates и PKI
+
+Есть два разных класса certificate material:
+
+| Тип | Где используется |
+| --- | --- |
+| TLS edge certificate | Nginx/Xray TLS-facing endpoints, public HTTPS/SNI. |
+| Service CA profile | OpenVPN CA root для server/client certificates. |
+
+Для OpenVPN fleet, где несколько ingress nodes обслуживают один общий endpoint,
+используйте общий OpenVPN CA profile. Тогда client certificates будут доверять
+одному CA, а instance server certificates будут выпускаться из той же service CA.
+
+Managed certificate в service-pack форме нужен для TLS-facing компонентов:
+Nginx edge или Xray TLS. OpenVPN использует Service CA profile, а не TLS edge
+certificate.
+
+## 11. Address pools
+
+Address pools должны быть централизованы. Оператор не должен вручную вспоминать,
+какая подсеть свободна.
+
+Рабочий принцип:
+
+1. В разделе address pools задается базовый диапазон.
+2. Система выделяет свободные подсети для OpenVPN/WireGuard/service instances.
+3. Если свободных подсетей нет, оператор должен получить понятное сообщение:
+   нужно добавить новый pool или расширить существующий.
+4. Между pool можно включать или запрещать маршрутизацию согласно policy.
+
+Default pool `remote_access_v4` создается consolidated baseline migration.
+Pack/manual specs с `address_pool_mode=auto` получают свободную подсеть из
+catalog. Ручной CIDR используйте только как осознанное переопределение;
+активные allocations блокируют удаление pool.
+
+## 12. Managed backhaul
+
+Backhaul нужен, когда вход находится на ingress node, а выход трафика должен
+быть через egress node.
+
+Workflow:
+
+1. Откройте `Backhaul`.
+2. Создайте link: ingress node -> egress node.
+3. Выберите transport profile: WireGuard как основной вариант, OpenVPN как
+   fallback.
+4. Нажмите `Apply`.
+5. Дождитесь успешного apply на обеих сторонах.
+6. Нажмите `Test`.
+7. Проверьте:
+   - обе стороны `healthy`;
+   - packet loss `0`;
+   - latency видна;
+   - route lookup идет через managed interface.
+
+Backhaul apply и service instance apply - разные операции. Backhaul создает
+transport между nodes. Instance route policy использует этот transport для
+выхода клиентского трафика.
+
+## 13. Создание service instances
+
+Есть два способа.
+
+### 13.1 Create from pack
+
+Используйте для типовых production-baselines.
+
+1. Откройте `Instances`.
+2. Нажмите `Create from pack`.
+3. Выберите service pack.
+4. Выберите node.
+5. Укажите base name и endpoint host.
+6. Выберите TLS edge certificate, если pack содержит Nginx/Xray TLS component.
+7. Выберите OpenVPN CA profile, если pack содержит OpenVPN.
+8. Создайте instances.
+9. Нажмите `Apply` или `Install + apply`, если runtime отсутствует.
+
+Service pack не должен хранить runtime secrets. Пароли, private keys, UUID,
+Reality keys и похожие secrets должны генерироваться на этапе revision/apply и
+сохраняться как secret refs.
+
+### 13.2 Manual instance
+
+Используйте для точной настройки:
+
+- дополнительный OpenVPN на той же node;
+- отдельный VLESS endpoint;
+- Nginx edge profile;
+- кастомный Shadowsocks port;
+- ручной route/network policy.
+
+После изменения spec проверьте revision status. Draft revision нельзя применять,
+пока validation не сделает ее apply-ready.
+
+## 14. Apply и диагностика instance
+
+Lifecycle:
+
+1. `draft` - конфиг редактируется или не прошел validation.
+2. `apply-ready` - revision можно применить.
+3. `applying/provisioning` - job в очереди или выполняется.
+4. `active` - desired и runtime state совпали.
+5. `degraded` - сервис частично работает или есть runtime warning.
+6. `failed` - apply/runtime validation завершились ошибкой.
+
+Если сразу после создания instance виден `provisioning`, это не ошибка. Ошибка
+должна показываться только после завершения job или явного failed runtime report.
+
+В `Manage` должны быть видны:
+
+- latest job;
+- job timeline;
+- service logs;
+- runtime capability status;
+- unit status;
+- rendered config diagnostics без раскрытия secrets.
+
+## 15. VLESS и egress
+
+VLESS instance - это точка входа. Куда пойдет трафик дальше, должно решаться на
+уровне instance/backhaul/route policy.
+
+Правильная модель:
+
+1. Клиент подключается к VLESS на ingress node.
+2. Xray inbound принимает трафик.
+3. Instance config выбирает default outbound:
+   - local breakout, если выход с ingress допустим;
+   - managed egress через backhaul, если трафик должен выйти с egress node.
+4. Route policy и managed backhaul обеспечивают предсказуемый путь.
+
+Per-client VLESS groups и outbound rules можно добавить позже как access-group
+feature, но базовый production path должен работать на уровне instance.
+
+## 16. Клиенты и provisioning
+
+1. Откройте `Clients`.
+2. Создайте client account.
+3. Нажмите `Provision`.
+4. Выберите конкретные service instances, которые доступны клиенту.
+5. Запустите provisioning job.
+6. После постановки в очередь UI должен показать результат: job id, selected
+   services, status и next action.
+7. После успешного provisioning откройте client access.
+8. Соберите artifacts: `.ovpn`, VLESS URL, WireGuard config, Shadowsocks URI или
+   bundle.
+9. Preview/download проверьте до отправки клиенту.
+10. При необходимости создайте share link или отправьте email.
+
+Provisioning не должен автоматически выдавать клиенту все совместимые services.
+Оператор явно выбирает входные точки.
+
+## 17. Share links и email
+
+Share link - bearer URL. Его безопасность зависит от:
+
+- высокой entropy token;
+- expiry;
+- revocation;
+- `token_hash` в базе вместо plaintext token;
+- audit events.
+
+Plaintext token показывается только при создании ссылки. Если он потерян,
+создайте новую ссылку.
+
+## 18. Jobs, Audit и troubleshooting
+
+`Jobs` показывает queue, status, result и failure reason.
+
+Типовые сценарии:
+
+| Симптом | Где смотреть | Что проверять |
+| --- | --- | --- |
+| Node offline | Nodes -> Manage | agent service, heartbeat, public URL, token |
+| Runtime отсутствует | Services | результат capability verify/install |
+| Apply завершился ошибкой | Instances -> Manage, Jobs | latest apply job, unit status, config validation |
+| OpenVPN завис в activating | Instance logs, systemd state | config path, port, CA profile, unit status |
+| Shadowsocks config не создан | Instance logs | generated config path, package install, password/spec |
+| VLESS не использует egress | Instance config, Backhaul, route policy | default outbound, active backhaul, policy projection |
+| Backhaul завершился ошибкой | Backhaul modal, Jobs | ingress/egress side, interface, route lookup, packet loss |
+| Client config некорректен | Clients -> Access/Artifacts | selected services, revision applied, artifact build result |
+
+Audit должен отвечать на вопросы:
+
+- кто создал или изменил node;
+- кто запустил bootstrap/update/cleanup;
+- кто применил instance;
+- кто установил runtime capability;
+- кто создал/revoked share link;
+- кто изменил settings/certificates.
+
+## 19. Безопасное удаление
+
+Удаление instance не должно быть только удалением строки из базы.
+
+Правильный порядок:
+
+1. Revoke client access, который использует instance.
+2. Stop/disable instance, если требуется.
+3. Delete instance через UI/API.
+4. Дождаться `instance.delete` cleanup job на node.
+5. Проверить, что systemd unit, config files и managed policy удалены.
+
+Аварийная очистка node:
+
+- требует явного подтверждения именем node;
+- может удалить только managed state;
+- опционально может удалить agent;
+- не должен ломать unrelated backhaul/routes за пределами managed scopes.
+
+## 20. Production checklist
+
+Перед production rollout:
+
+1. `scripts/release-gate.sh` без unexplained skips.
+2. Disposable PostgreSQL migration test.
+3. Backup/restore drill.
+4. `nginx -t` на edge host.
+5. `systemd-analyze verify` для systemd units.
+6. Agent enrollment на тестовой node.
+7. Service smoke matrix.
+8. Backhaul apply/probe.
+9. Client provisioning и artifact preview/download.
+10. Audit review.
+11. Rollback plan.
+
+## 21. Роли
+
+Кратко:
+
+- `readonly`: чтение состояния и audit.
+- `engineer`: clients/artifacts/share links без node/bootstrap/apply authority.
+- `admin`: эксплуатация nodes/instances/jobs/settings без unrestricted secret reveal.
+- `superadmin`: полный набор permissions.
+
+Подробно: [RBAC matrix](RBAC_MATRIX.md).

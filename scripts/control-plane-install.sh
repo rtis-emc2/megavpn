@@ -25,6 +25,9 @@ LOG_LEVEL="${MEGAVPN_CP_LOG_LEVEL:-info}"
 RUN_TESTS="${MEGAVPN_CP_RUN_TESTS:-0}"
 ASSUME_YES="${MEGAVPN_CP_ASSUME_YES:-0}"
 INSTALL_PACKAGES="${MEGAVPN_CP_INSTALL_PACKAGES:-}"
+VALIDATE_ONLY="${MEGAVPN_CP_VALIDATE_ONLY:-0}"
+GO_TARBALL_URL="${MEGAVPN_CP_GO_TARBALL_URL:-}"
+GO_TARBALL_SHA256="${MEGAVPN_CP_GO_TARBALL_SHA256:-}"
 ADMIN_USERNAME="${MEGAVPN_CP_ADMIN_USERNAME:-${MEGAVPN_BOOTSTRAP_ADMIN_USERNAME:-superadmin}}"
 ADMIN_EMAIL="${MEGAVPN_CP_ADMIN_EMAIL:-${MEGAVPN_BOOTSTRAP_ADMIN_EMAIL:-}}"
 ADMIN_DISPLAY_NAME="${MEGAVPN_CP_ADMIN_DISPLAY_NAME:-${MEGAVPN_BOOTSTRAP_ADMIN_DISPLAY_NAME:-Superadmin}}"
@@ -55,8 +58,12 @@ die() {
   exit 1
 }
 
+lowercase() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 is_true() {
-  case "${1,,}" in
+  case "$(lowercase "$1")" in
     1|true|yes|y|on)
       return 0
       ;;
@@ -72,6 +79,35 @@ has_tty() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+required_go_version() {
+  sed -nE 's/^go ([0-9]+(\.[0-9]+)?).*/\1/p' "$SRC_DIR/go.mod" | head -n 1
+}
+
+installed_go_version() {
+  command -v go >/dev/null 2>&1 || return 1
+  go version | awk '{print $3}' | sed -E 's/^go//; s/^([0-9]+\.[0-9]+).*/\1/'
+}
+
+version_ge() {
+  local have="$1"
+  local want="$2"
+  [[ -n "$have" && -n "$want" ]] || return 1
+  [[ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -n 1)" == "$want" ]]
+}
+
+file_sha256() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+    return 0
+  fi
+  die "sha256sum or shasum is required to verify downloaded Go toolchain"
 }
 
 default_hostname() {
@@ -157,6 +193,16 @@ is_ipv4() {
 is_safe_server_name() {
   local value="$1"
   is_ipv4 "$value" || [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}[A-Za-z0-9]$ ]]
+}
+
+is_safe_abs_path() {
+  [[ "$1" =~ ^/[A-Za-z0-9._/@:+-]+$ ]]
+}
+
+require_safe_abs_path() {
+  local label="$1"
+  local value="$2"
+  is_safe_abs_path "$value" || die "$label must be an absolute path without whitespace or shell metacharacters: $value"
 }
 
 env_quote() {
@@ -281,7 +327,7 @@ prompt_yes_no() {
     suffix='[y/N]'
   fi
   read -r -p "$label $suffix: " answer
-  answer="${answer,,}"
+  answer="$(lowercase "$answer")"
   if [[ -z "$answer" ]]; then
     [[ "$default_value" == "yes" ]]
     return $?
@@ -300,7 +346,7 @@ prompt_yes_no() {
 }
 
 normalize_tls_mode() {
-  case "${1,,}" in
+  case "$(lowercase "$1")" in
     self|self-signed|self_signed|self-signed-nginx|self_signed_nginx|nginx)
       printf 'self-signed-nginx'
       ;;
@@ -436,6 +482,9 @@ prompt_admin() {
     generated_password="no"
   fi
   if [[ "$generated_password" == "yes" ]]; then
+    if is_true "$VALIDATE_ONLY"; then
+      return 0
+    fi
     install -d -m 0700 "$(dirname "$ADMIN_PASSWORD_FILE")"
     old_umask="$(umask)"
     umask 0077
@@ -498,10 +547,20 @@ prompt_configuration() {
 }
 
 validate_configuration() {
-  [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "run as root"
+  if ! is_true "$VALIDATE_ONLY"; then
+    [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "run as root"
+  fi
   [[ -n "$DATABASE_DSN" ]] || die "database DSN is required"
-  [[ "$APP_DIR" != *[[:space:]]* ]] || die "install directory must not contain whitespace"
-  [[ "$WEB_ROOT" != *[[:space:]]* ]] || die "web root must not contain whitespace"
+  require_safe_abs_path "install directory" "$APP_DIR"
+  require_safe_abs_path "web root" "$WEB_ROOT"
+  require_safe_abs_path "runtime env file" "$ENV_FILE"
+  require_safe_abs_path "master key path" "$MASTER_KEY_PATH"
+  require_safe_abs_path "artifact root" "$ARTIFACT_ROOT"
+  require_safe_abs_path "nginx config path" "$NGINX_CONF_PATH"
+  require_safe_abs_path "TLS certificate path" "$TLS_CERT_PATH"
+  require_safe_abs_path "TLS key path" "$TLS_KEY_PATH"
+  require_safe_abs_path "managed TLS certificate path" "$MANAGED_TLS_CERT_PATH"
+  require_safe_abs_path "managed TLS key path" "$MANAGED_TLS_KEY_PATH"
   [[ "$API_LISTEN_ADDR" == *:* ]] || die "API listen address must include host:port"
   if [[ "$TLS_MODE" == "self-signed-nginx" ]] && ! is_safe_server_name "$CONTROL_DOMAIN"; then
     die "Control Plane domain/IP contains unsupported characters for nginx server_name: $CONTROL_DOMAIN"
@@ -534,8 +593,8 @@ EOF
 }
 
 maybe_install_packages() {
-  local package_commands=(curl rsync openssl)
-  local packages=(curl rsync openssl ca-certificates)
+  local package_commands=(curl rsync openssl tar)
+  local packages=(curl rsync openssl tar ca-certificates)
   local missing=()
   local command_name package
   if [[ "$TLS_MODE" == "self-signed-nginx" ]]; then
@@ -563,6 +622,77 @@ maybe_install_packages() {
     apt-get update
     apt-get install -y "${packages[@]}"
   fi
+}
+
+install_go_from_tarball() {
+  local tmp actual backup
+  [[ -n "$GO_TARBALL_URL" ]] || return 1
+  [[ -n "$GO_TARBALL_SHA256" ]] || die "MEGAVPN_CP_GO_TARBALL_SHA256 is required with MEGAVPN_CP_GO_TARBALL_URL"
+  require_command curl
+  require_command tar
+  tmp="$(mktemp)"
+  log "download pinned Go toolchain: $GO_TARBALL_URL"
+  curl -fsSL "$GO_TARBALL_URL" -o "$tmp"
+  actual="$(file_sha256 "$tmp")"
+  if [[ "$(lowercase "$actual")" != "$(lowercase "$GO_TARBALL_SHA256")" ]]; then
+    rm -f "$tmp"
+    die "Go toolchain SHA-256 mismatch: got $actual, want $GO_TARBALL_SHA256"
+  fi
+  if [[ -d /usr/local/go ]]; then
+    backup="/usr/local/go.backup.$(date -u +%Y%m%d%H%M%S)"
+    log "backup existing /usr/local/go to $backup"
+    mv /usr/local/go "$backup"
+  fi
+  tar -C /usr/local -xzf "$tmp"
+  rm -f "$tmp"
+  export PATH="/usr/local/go/bin:$PATH"
+}
+
+ensure_go_toolchain() {
+  local required installed
+  required="$(required_go_version)"
+  [[ -n "$required" ]] || die "cannot determine required Go version from go.mod"
+  installed="$(installed_go_version || true)"
+  if version_ge "$installed" "$required"; then
+    log "Go toolchain OK: $installed >= $required"
+    return 0
+  fi
+  if [[ -n "$installed" ]]; then
+    warn "installed Go $installed is older than required $required"
+  else
+    warn "Go toolchain is not installed"
+  fi
+
+  if [[ -n "$GO_TARBALL_URL" ]]; then
+    install_go_from_tarball
+    installed="$(installed_go_version || true)"
+    version_ge "$installed" "$required" || die "installed Go $installed does not satisfy required $required"
+    log "Go toolchain installed: $installed"
+    return 0
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    if [[ -z "$INSTALL_PACKAGES" ]]; then
+      if prompt_yes_no "Install Go from apt and verify version >= $required?" "yes"; then
+        INSTALL_PACKAGES="1"
+      else
+        INSTALL_PACKAGES="0"
+      fi
+    fi
+    if is_true "$INSTALL_PACKAGES"; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y golang-go
+      installed="$(installed_go_version || true)"
+      if version_ge "$installed" "$required"; then
+        log "Go toolchain installed from apt: $installed"
+        return 0
+      fi
+      warn "apt installed Go $installed, but the project requires $required"
+    fi
+  fi
+
+  die "Go >= $required is required. Install Go manually or set MEGAVPN_CP_GO_TARBALL_URL and MEGAVPN_CP_GO_TARBALL_SHA256 for a pinned toolchain install"
 }
 
 sync_source_tree() {
@@ -726,6 +856,11 @@ install_self_signed_nginx() {
   fi
   log "write nginx TLS edge: $NGINX_CONF_PATH"
   cat >"$NGINX_CONF_PATH" <<EOF
+map \$http_upgrade \$megavpn_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
 server {
     listen 80;
     server_name $CONTROL_DOMAIN;
@@ -747,12 +882,14 @@ server {
 
     location / {
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        proxy_set_header Host \$http_host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Host \$http_host;
         proxy_set_header X-Forwarded-Port $public_port;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$megavpn_connection_upgrade;
         proxy_read_timeout 120s;
         proxy_send_timeout 120s;
         proxy_pass http://$upstream_hostport;
@@ -809,8 +946,12 @@ main() {
   prompt_configuration
   validate_configuration
   review_configuration
+  if is_true "$VALIDATE_ONLY"; then
+    log "validation completed; MEGAVPN_CP_VALIDATE_ONLY=1, installation skipped"
+    return 0
+  fi
   maybe_install_packages
-  require_command go
+  ensure_go_toolchain
   if [[ "$TLS_MODE" == "self-signed-nginx" ]]; then
     require_command openssl
   fi

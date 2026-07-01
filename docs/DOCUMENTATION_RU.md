@@ -1,0 +1,76 @@
+# Индекс документации
+
+**Релиз:** `0.7.0.1-beta`
+
+Этот документ - русская входная точка в документацию RTIS MegaVPN. Он фиксирует,
+где находится источник правды по каждому направлению: эксплуатация,
+безопасность, релизы, маршрутизация, клиенты и troubleshooting.
+
+English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
+
+## Рекомендуемый порядок чтения
+
+| Порядок | Документ | Назначение |
+| --- | --- | --- |
+| 1 | [README_RU](../README_RU.md) | Обзор продукта и модель компонентов |
+| 2 | [Руководство пользователя](USER_GUIDE_RU.md) | Полный операторский guide |
+| 3 | [Operations runbook](OPERATIONS_RUNBOOK.md) | Эксплуатация, backup, restore, upgrade, rollback |
+| 4 | [Release gates](RELEASE_GATES.md) | Release evidence и критерии приемки |
+| 5 | [Self-testing](SELF_TESTING.md) | Локальные и live diagnostic gates |
+| 6 | [Threat model](THREAT_MODEL.md) | Security model и остаточные риски |
+| 7 | [RBAC matrix](RBAC_MATRIX.md) | Роли, permissions и privileged job rules |
+| 8 | [Managed backhaul](BACKHAUL.md) | Модель связи ingress -> egress |
+| 9 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
+| 10 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
+| 11 | [Security review](SECURITY_REVIEW_0.7.0.1-beta.md) | Security и release review artifact |
+| 12 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
+
+## Владение документацией
+
+| Направление | Источник правды | Примечания |
+| --- | --- | --- |
+| Product overview | `README.md`, `README_RU.md` | README должен оставаться краткой входной точкой. |
+| Operator usage | `docs/USER_GUIDE_EN.md`, `docs/USER_GUIDE_RU.md` | Английская и русская версии должны быть синхронизированы. |
+| Operations | `docs/OPERATIONS_RUNBOOK.md` | Production procedures и controlled maintenance. |
+| Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md` | Release evidence, self-test и smoke gates. |
+| Security | `docs/THREAT_MODEL.md`, `docs/RBAC_MATRIX.md` | Threat model, roles, permissions и privileged jobs. |
+| Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection и troubleshooting. |
+| Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic и tactical product planning. |
+
+## Языковая политика
+
+- `README.md` пишется только на английском.
+- `README_RU.md` пишется только на русском.
+- Английские документы используют базовое имя файла.
+- Русские парные документы используют суффикс `_RU.md`.
+- Исторические приложения могут сохранять доменную терминологию, но
+  поддерживаемые входные точки должны оставаться языково разделенными.
+- Каждый пользовательский workflow должен иметь русское и английское описание до
+  того, как он считается production-ready.
+
+## Корпоративные правила
+
+- README остается краткой входной точкой, а не changelog.
+- Операционные документы должны содержать prerequisites, команды, expected result
+  и rollback/failure behavior.
+- Security-sensitive процедуры должны явно описывать trust boundary и audit
+  evidence.
+- Release-документы должны разделять `PASS`, `FAIL`, `SKIP` и waiver.
+- В примерах используются нейтральные placeholder domains:
+  `control.example.com`, `edge.example.com`, `vpn.example.com`.
+- Если в Control Plane есть managed workflow, документация не должна предлагать
+  ручное изменение node как основной путь.
+- Каждый поддерживаемый документационный файл должен содержать release banner:
+  `0.7.0.1-beta`.
+
+## Текущие gaps документации
+
+Что нужно закрыть до stable release:
+
+- OpenAPI/public API contract.
+- Internal agent API contract.
+- Environment-specific install appendices для external TLS/LB, managed
+  PostgreSQL и offline install.
+- Двуязычная troubleshooting matrix по всем сервисам.
+- Service-specific примеры клиентских конфигов.
+- Документация по topology map и VLESS subscription после реализации функций.

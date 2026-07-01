@@ -1,8 +1,10 @@
 # Release Gates
 
+**Release:** `0.7.0.1-beta`
+
 This file defines the minimum evidence required before tagging a production release.
 
-For `0.7.x-beta`, the same gates are used as beta promotion evidence. A beta can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
+For `0.7.0.1-beta`, the same gates are used as beta promotion evidence. A beta can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
 
 ## 1. Release Gate
 
@@ -29,8 +31,10 @@ The baseline gate must pass:
 - `gofmt -l cmd internal` returns no files.
 - `go test ./...` passes.
 - `go test -race ./...` passes. Disabling it with `MEGAVPN_RELEASE_RUN_RACE=0` is a local diagnostic shortcut and counts as a skipped release gate.
-- `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate` passes.
+- `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` passes.
+- Operational binaries print the same release through `--version`.
 - Shell scripts under `scripts/` pass `bash -n`.
+- The Control Plane installer accepts non-interactive clean-install inputs in validate-only mode.
 - Smoke scripts that call `/api/v1` support `MEGAVPN_AUTH_TOKEN`.
 - Static production scan finds no `/bin/sh -c`, `StrictHostKeyChecking=accept-new`, or curl-to-shell pattern outside tests.
 
@@ -76,6 +80,7 @@ Minimum runtime evidence:
 Required checks:
 
 - A fresh Ubuntu host can install the Control Plane from documented scripts or manual steps without relying on previous local state.
+- `scripts/control-plane-install.sh` validates non-interactive clean-install inputs through `MEGAVPN_CP_VALIDATE_ONLY=1`.
 - `systemd-analyze verify deploy/systemd/*.service` passes on a Linux host with systemd.
 - `nginx -t` passes on the target host after managed control-plane TLS apply.
 - `scripts/backup.sh` produces an archive from the disposable DB.
@@ -143,9 +148,24 @@ Required UI/API visibility before release:
 
 Required documents:
 
+- `README.md`
+- `README_RU.md`
+- `docs/DOCUMENTATION.md`
+- `docs/DOCUMENTATION_RU.md`
+- `docs/USER_GUIDE_RU.md`
+- `docs/USER_GUIDE_EN.md`
+- `ROADMAP_V1_AND_TZ.md`
+- `ROADMAP_V1_AND_TZ_RU.md`
+- `docs/NEXT_STEPS.md`
+- `docs/NEXT_STEPS_RU.md`
 - `docs/THREAT_MODEL.md`
 - `docs/RBAC_MATRIX.md`
 - `docs/OPERATIONS_RUNBOOK.md`
 - `docs/RELEASE_GATES.md`
 - `docs/SELF_TESTING.md`
+- `docs/DOCUMENTATION_REVIEW.md`
+- `docs/DOCUMENTATION_REVIEW_RU.md`
 - Production env templates under `deploy/env/`
+
+User-facing workflows must have Russian and English documentation before they
+can be treated as production-ready.

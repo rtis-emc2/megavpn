@@ -1,29 +1,63 @@
-# Next steps
+# Next Steps
 
-Актуальный baseline: `ROADMAP_V1_AND_TZ.md`.
-Текущая точка фиксации: `0.7.0.1-beta`.
-Следующая итерация: `0.7.0.2-beta`.
-Канонический репозиторий: `github.com/rtis-emc2/megavpn`.
+**Release:** `0.7.0.1-beta`
 
-1. На реальных ingress/egress nodes повторить Backhaul Apply profiles после обновления API/UI/agent: re-apply должен остановить obsolete managed unit из предыдущего/sibling manifest, удалить предыдущий/целевой `mgbh*` interface, удалить stale managed WireGuard listener с конфликтующим endpoint port, корректно создать nft NAT rule с quoted comment, поднять новый runtime-state и показать одинаковый `/30` profile на ingress/egress. После Delete Backhaul убедиться, что link ушел из активного списка и отображается в `Recently Deleted Backhaul` с cleanup summary. Если OpenVPN profile снова упадет, Jobs/Backhaul summary должен показать unit name, active state и первую полезную строку `systemctl status`/OpenVPN error; эту строку использовать как root cause для следующего исправления.
-2. Запустить PostgreSQL integration suite с `MEGAVPN_TEST_DATABASE_DSN`; тест создает временную schema, применяет все migrations и проверяет jobs, locks, provisioning и baseline access routes.
-3. Проверить `/api/v1/service-drivers`, `/api/v1/instances/runtime-states`, `/api/v1/instances/{id}/runtime-state`, `/api/v1/instances/{id}/runtime-observations` и `/agent/runtime/instances` на тестовом control plane после реального `instance.apply`.
-4. Проверить node bootstrap console на удаленном control plane: top tabs, onboarding mode explanation, Agent channel next-step CTA, видимость `MEGAVPN_PUBLIC_BASE_URL` с кастомным HTTPS-портом, Settings -> Control Plane TLS profile + Apply edge, создание SSH access method, rotate enrollment token, queue bootstrap, кнопки Nodes -> Update / Update all agents с preflight по `node.bootstrap` и enabled SSH access method, автоматический переход setup method из SSH bootstrap в agent-managed после успешной установки агента, чтение bootstrap run details в одно-колоночном layout без горизонтальной прокрутки, а также переход `awaiting heartbeat -> online` после первого heartbeat агента.
-5. Довести удаленный deployment baseline на тестовом сервере: прогнать `scripts/control-plane-install.sh` на свежей машине, проверить generated env/master key/admin credentials/nginx self-signed edge, затем проверить `MEGAVPN_DEPLOY_SYNC_MODE=auto`, backup branch flow и повторный deploy после rewritten history.
-6. Проверить service-pack и runtime paths на тестовом сервере: IPsec+XL2TPD, Xray Reality, Xray+Nginx gRPC, Xray VLESS WebSocket Camouflage с fallback website, OpenVPN TCP/UDP, WireGuard, HTTP Proxy, MTProto, Shadowsocks. Для repeatable smoke использовать `scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain> [certificate-id]`; для полного operational-truth включать provisioning и artifact/share-link checks.
-7. Спроектировать topology workspace: node map, node location metadata, role/health/workload badges, backhaul edges, failed-hop diagnostics, route-policy projection and per-node workload drill-down.
-8. Спроектировать VLESS subscription endpoint: per-client subscription token, selected inbound services, subscription rotation, cache-control, QR/text export and provisioning result state.
-9. Формализовать traffic camouflage profiles: Xray WebSocket/gRPC public edge, hidden path, fallback upstream, public SNI/TLS binding, nginx preview, `nginx -t` validation and rollback.
-10. Выделить Nginx edge profile catalog: reusable profile definitions, certificate binding, generated config diff, atomic apply and operator-visible failure reason.
-11. `Paused`: ACME / Let's Encrypt automation пока сознательно не внедряем. Перед возобновлением нужно выбрать canonical challenge strategy: `HTTP-01`, `DNS-01` или delegated external ACME.
-12. Запускать API только с явно заданными bootstrap credentials:
-   - `MEGAVPN_BOOTSTRAP_ADMIN_USERNAME`
-   - `MEGAVPN_BOOTSTRAP_ADMIN_PASSWORD`
-13. Создать OpenAPI/public API contract и internal agent API contract.
-14. Формализовать typed job payload schemas поверх текущего `internal/jobschema`.
-15. Продолжить agent transport security: принять v1.0 решение по обязательному mTLS поверх уже реализованных HMAC-signed HTTP messages.
-16. Продолжить UI split: следующим отдельным шагом вынести node management workspace/bootstrap diagnostics из `app.js`.
-17. Довести revision flow от текущего `draft/validated/applied/failed` baseline с rollback/diff UX до полного `candidate -> validated -> applied -> rollback` с apply history и безопасным rollback engine.
-18. Продолжить routing hardening: добавить rollback/remove stage для retired/disabled route policies, conntrack visibility, MTU/MSS clamp и health telemetry для route-policy unit.
-19. Довести managed backhaul до полного multi-driver enforcement: controlled Xray TUN activation, strongSwan/IKEv2 activation, OpenVPN certificate-mode P2P и traffic/latency health probes.
-20. После согласования окна обслуживания переписать Git history для удаления sensitive historical commits/tags, force-push текущей ветки и обновить серверные checkout через `MEGAVPN_DEPLOY_ALLOW_HISTORY_REWRITE=1`.
+Current roadmap: [`ROADMAP_V1_AND_TZ.md`](../ROADMAP_V1_AND_TZ.md).
+Russian companion: [`NEXT_STEPS_RU.md`](NEXT_STEPS_RU.md).
+Canonical repository: `github.com/rtis-emc2/megavpn`.
+
+## Immediate Engineering Queue
+
+1. Re-run managed backhaul apply on real ingress/egress nodes after updating API,
+   UI and agents. Re-apply must stop obsolete managed units, remove stale
+   managed interfaces, remove conflicting managed WireGuard listeners, create
+   the nft NAT rule, converge runtime state and show the same `/30` profile on
+   both sides.
+2. Run the PostgreSQL integration suite with `MEGAVPN_TEST_DATABASE_DSN`. The
+   suite must create a temporary schema, apply all migrations and verify jobs,
+   locks, provisioning and baseline access routes.
+3. Verify runtime-state APIs after a real `instance.apply`:
+   `/api/v1/service-drivers`, `/api/v1/instances/runtime-states`,
+   `/api/v1/instances/{id}/runtime-state`,
+   `/api/v1/instances/{id}/runtime-observations` and
+   `/agent/runtime/instances`.
+4. Verify the node bootstrap console on a remote control plane: setup tabs,
+   onboarding explanation, agent-channel next step, public base URL display,
+   Control Plane TLS apply, SSH access method creation, enrollment-token
+   rotation, bootstrap queueing, update buttons and heartbeat transition.
+5. Validate clean deployment on a fresh server with
+   `scripts/control-plane-install.sh`, generated environment, master key,
+   admin credentials, Nginx edge and systemd units.
+6. Validate service-pack and runtime paths on a test server: IPsec/L2TP, Xray
+   Reality, Xray+Nginx gRPC, Xray WebSocket camouflage, OpenVPN TCP/UDP,
+   WireGuard, HTTP Proxy, MTProto and Shadowsocks.
+7. Design the topology workspace: node map, location metadata, role/health
+   badges, workload density, backhaul edges, failed-hop diagnostics and
+   per-node workload drill-down.
+8. Design the VLESS subscription endpoint: per-client token, selected inbound
+   services, rotation, cache headers, QR/text export and provisioning status.
+9. Formalize traffic-camouflage profiles: Xray WebSocket/gRPC edge, hidden
+   path, fallback upstream, SNI/TLS binding, Nginx preview, validation and
+   rollback.
+10. Extract the Nginx edge profile catalog: reusable definitions, certificate
+    binding, generated config diff, atomic apply and operator-visible failure.
+11. Keep ACME automation paused until a canonical challenge strategy is chosen:
+    `HTTP-01`, `DNS-01` or delegated external ACME.
+12. Run API only with explicit bootstrap credentials:
+    `MEGAVPN_BOOTSTRAP_ADMIN_USERNAME` and
+    `MEGAVPN_BOOTSTRAP_ADMIN_PASSWORD`.
+13. Create OpenAPI/public API and internal agent API contracts.
+14. Formalize typed job payload schemas on top of `internal/jobschema`.
+15. Decide the v1.0 agent-transport security target for mandatory mTLS versus
+    signed HTTP messages over HTTPS.
+16. Continue UI split by moving node management, bootstrap diagnostics and
+    workload views out of `app.js`.
+17. Complete revision workflow: candidate, validated, applied, rollback, apply
+    history and safe rollback engine.
+18. Continue routing hardening: rollback/remove stage for retired policies,
+    conntrack visibility, MTU/MSS clamp and route-policy telemetry.
+19. Complete managed backhaul multi-driver enforcement: controlled Xray TUN,
+    strongSwan/IKEv2, OpenVPN certificate-mode P2P and health probes.
+20. When the maintenance window is approved, rewrite Git history for sensitive
+    historical commits/tags and update deployed checkouts with the documented
+    history-rewrite procedure.

@@ -6,7 +6,8 @@ cd "$ROOT_DIR"
 
 export GOCACHE="${GOCACHE:-/tmp/megavpn-go-cache}"
 export GOTMPDIR="${GOTMPDIR:-/tmp/megavpn-go-tmp}"
-mkdir -p "$GOCACHE" "$GOTMPDIR"
+export GOMODCACHE="${GOMODCACHE:-/tmp/megavpn-go-modcache}"
+mkdir -p "$GOCACHE" "$GOTMPDIR" "$GOMODCACHE"
 
 RELEASE_DATABASE_DSN="${MEGAVPN_RELEASE_DATABASE_DSN:-${MEGAVPN_TEST_DATABASE_DSN:-}}"
 RELEASE_RESTORE_DATABASE_DSN="${MEGAVPN_RELEASE_RESTORE_DATABASE_DSN:-}"
@@ -86,6 +87,40 @@ require_shell_syntax() {
   done < <(find scripts -type f -name '*.sh' -print | sort)
 }
 
+require_binary_version_commands() {
+	local code_version tmp bin out
+	code_version="$(sed -nE 's/^const Version = "([^"]+)"/\1/p' internal/platform/version/version.go)"
+	if [[ -z "$code_version" ]]; then
+		log "unable to read internal/platform/version.Version"
+		return 1
+	fi
+	tmp="$(mktemp -d)"
+	go build -o "$tmp/megavpn-api" ./cmd/api
+	go build -o "$tmp/megavpn-worker" ./cmd/worker
+	go build -o "$tmp/megavpn-agent" ./cmd/agent
+	go build -o "$tmp/megavpn-migrate" ./cmd/migrate
+	go build -o "$tmp/megavpn-admin" ./cmd/admin
+	for bin in megavpn-api megavpn-worker megavpn-agent megavpn-migrate megavpn-admin; do
+		out="$("$tmp/$bin" --version 2>&1)"
+		if [[ "$out" != "$code_version" ]]; then
+			printf '%s --version = %q, want %q\n' "$bin" "$out" "$code_version" >&2
+			return 1
+		fi
+	done
+}
+
+require_control_plane_install_validation() {
+  MEGAVPN_CP_VALIDATE_ONLY=1 \
+    MEGAVPN_CP_ASSUME_YES=1 \
+    MEGAVPN_CP_TLS_MODE=self-signed-nginx \
+    MEGAVPN_CP_DOMAIN=control.example.com \
+    MEGAVPN_CP_PUBLIC_BASE_URL=https://control.example.com \
+    MEGAVPN_CP_DATABASE_DSN='postgres://megavpn:password@127.0.0.1:5432/megavpn?sslmode=disable' \
+    MEGAVPN_CP_ADMIN_PASSWORD='release-gate-bootstrap-password' \
+    MEGAVPN_CP_INSTALL_PACKAGES=0 \
+    scripts/control-plane-install.sh
+}
+
 require_smoke_auth_coverage() {
   local file missing=0
   while IFS= read -r file; do
@@ -146,8 +181,10 @@ if [[ "$RUN_RACE" == "1" || "$RUN_RACE" == "true" ]]; then
 else
   skip_gate "go-test-race" "MEGAVPN_RELEASE_RUN_RACE=$RUN_RACE"
 fi
-run_gate "go-build" go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate
+run_gate "go-build" go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin
+run_gate "binary-version-commands" require_binary_version_commands
 run_gate "shell-syntax" require_shell_syntax
+run_gate "control-plane-install-validation" require_control_plane_install_validation
 run_gate "smoke-auth-coverage" require_smoke_auth_coverage
 run_gate "static-security-patterns" require_clean_static_scan
 

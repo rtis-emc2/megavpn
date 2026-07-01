@@ -6,7 +6,8 @@ cd "$ROOT_DIR"
 
 export GOCACHE="${GOCACHE:-/tmp/megavpn-go-cache}"
 export GOTMPDIR="${GOTMPDIR:-/tmp/megavpn-go-tmp}"
-mkdir -p "$GOCACHE" "$GOTMPDIR"
+export GOMODCACHE="${GOMODCACHE:-/tmp/megavpn-go-modcache}"
+mkdir -p "$GOCACHE" "$GOTMPDIR" "$GOMODCACHE"
 
 REPORT_DIR="${MEGAVPN_SELF_TEST_REPORT_DIR:-tmp/self-test}"
 REPORT_TS="$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -134,7 +135,7 @@ require_go_vet() {
 }
 
 require_go_build() {
-	go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate
+	go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin
 }
 
 require_binary_version_commands() {
@@ -164,6 +165,18 @@ require_shell_syntax() {
 	while IFS= read -r file; do
 		bash -n "$file"
 	done < <(find scripts -type f -name '*.sh' -print | sort)
+}
+
+require_control_plane_install_validation() {
+  MEGAVPN_CP_VALIDATE_ONLY=1 \
+    MEGAVPN_CP_ASSUME_YES=1 \
+    MEGAVPN_CP_TLS_MODE=self-signed-nginx \
+    MEGAVPN_CP_DOMAIN=control.example.com \
+    MEGAVPN_CP_PUBLIC_BASE_URL=https://control.example.com \
+    MEGAVPN_CP_DATABASE_DSN='postgres://megavpn:password@127.0.0.1:5432/megavpn?sslmode=disable' \
+    MEGAVPN_CP_ADMIN_PASSWORD='self-test-bootstrap-password' \
+    MEGAVPN_CP_INSTALL_PACKAGES=0 \
+    scripts/control-plane-install.sh
 }
 
 require_frontend_js_syntax() {
@@ -227,8 +240,25 @@ require_migration_sequence() {
 }
 
 require_release_docs() {
-  local file
+  local file code_version
+  code_version="$(sed -nE 's/^const Version = "([^"]+)"/\1/p' internal/platform/version/version.go)"
+  if [[ -z "$code_version" ]]; then
+    printf 'unable to read internal/platform/version.Version\n' >&2
+    return 1
+  fi
   for file in \
+    README.md \
+    README_RU.md \
+    docs/DOCUMENTATION.md \
+    docs/DOCUMENTATION_RU.md \
+    docs/DOCUMENTATION_REVIEW.md \
+    docs/DOCUMENTATION_REVIEW_RU.md \
+    docs/USER_GUIDE_RU.md \
+    docs/USER_GUIDE_EN.md \
+    ROADMAP_V1_AND_TZ.md \
+    ROADMAP_V1_AND_TZ_RU.md \
+    docs/NEXT_STEPS.md \
+    docs/NEXT_STEPS_RU.md \
     docs/RELEASE_GATES.md \
     docs/SELF_TESTING.md \
     docs/THREAT_MODEL.md \
@@ -238,6 +268,10 @@ require_release_docs() {
     deploy/env/megavpn-agent.production.env.example; do
     if [[ ! -s "$file" ]]; then
       printf 'missing or empty required release artifact: %s\n' "$file" >&2
+      return 1
+    fi
+    if ! head -n 8 "$file" | grep -Fq "$code_version"; then
+      printf 'required release artifact does not declare release %s near top: %s\n' "$code_version" "$file" >&2
       return 1
     fi
   done
@@ -324,6 +358,7 @@ write_report() {
     printf -- '- Workspace: `%s`\n' "$ROOT_DIR"
     printf -- '- GOCACHE: `%s`\n' "$GOCACHE"
     printf -- '- GOTMPDIR: `%s`\n' "$GOTMPDIR"
+    printf -- '- GOMODCACHE: `%s`\n' "$GOMODCACHE"
     printf '\n'
     printf '## Summary\n\n'
     printf '| Status | Count |\n'
@@ -357,6 +392,7 @@ run_check "go-vet" "Go vet reports no issues" require_go_vet
 run_check "go-build" "API, worker, agent and migrate binaries build" require_go_build
 run_check "binary-version-commands" "All operational binaries print version and exit without runtime startup" require_binary_version_commands
 run_check "shell-syntax" "Shell scripts parse under bash -n" require_shell_syntax
+run_check "control-plane-install-validation" "Control Plane installer validates non-interactive clean-install inputs" require_control_plane_install_validation
 run_check "frontend-js-syntax" "Static Web UI JavaScript parses under node --check" require_frontend_js_syntax
 run_check "static-security-patterns" "No banned production command patterns are present" require_static_security_patterns
 run_check "smoke-auth-coverage" "Smoke scripts that call protected API endpoints support bearer auth" require_smoke_auth_coverage

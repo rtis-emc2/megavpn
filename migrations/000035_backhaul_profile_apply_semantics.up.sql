@@ -1,3 +1,0 @@
--- Code-only migration marker for 0.6.10.7-alpha.
--- Backhaul apply now queues all selected transport profiles and treats
--- materialize-only drivers as materialized, not active.

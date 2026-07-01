@@ -1,5 +1,7 @@
 # Self-Testing
 
+**Release:** `0.7.0.1-beta`
+
 `scripts/self-test.sh` is the broad diagnostic entrypoint for release readiness. It differs from `scripts/release-gate.sh`: the release gate is fail-fast, while self-test keeps running independent gates and writes a report that separates working, failing and not-tested areas.
 
 ## Local Command
@@ -17,16 +19,32 @@ MEGAVPN_SELF_TEST_REPORT_DIR=/tmp/megavpn-self-test scripts/self-test.sh
 Local gates:
 
 - `gofmt-clean`
+- `version-tag-consistency`
 - `go-test`
 - `go-test-race`
 - `go-vet`
 - `go-build`
+- `binary-version-commands`
 - `shell-syntax`
+- `control-plane-install-validation`
 - `frontend-js-syntax`, when `node` is installed
 - `static-security-patterns`
 - `smoke-auth-coverage`
 - `migration-sequence`
 - `release-docs`
+
+The `release-docs` gate verifies that the corporate documentation baseline is
+present: English and Russian README files, documentation indexes, documentation
+reviews, user guides, threat model, RBAC matrix, operations runbook, release
+gates, self-testing guide, roadmap/next-step pairs and production environment
+templates.
+Each required artifact must declare the current code release near the top of the
+file, using `internal/platform/version.Version` as the source of truth.
+
+The `control-plane-install-validation` gate runs the Control Plane installer in
+validate-only mode with non-interactive clean-install inputs. It verifies that
+the installer accepts a production-shaped configuration without requiring root
+writes, systemd changes, package installation or network access.
 
 `FAIL` means a gate ran and found a product or repository problem. `SKIP` means the host or environment did not provide enough release evidence; skipped gates are not acceptable for a production tag.
 

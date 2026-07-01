@@ -1,5 +1,7 @@
 # RBAC Matrix
 
+**Release:** `0.7.0.1-beta`
+
 ## Seeded Roles
 
 | Role | Intent |
