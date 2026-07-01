@@ -448,10 +448,12 @@
         return `
           <label class="client-provision-choice">
             <input type="checkbox" name="instance_ids" value="${escapeHTML(instance.id)}" />
-            <span>
+            <span class="client-choice-check" aria-hidden="true"></span>
+            <span class="client-choice-body">
               <strong>${escapeHTML(instance.name || instance.slug || instance.id)}</strong>
               <small>${escapeHTML(compactServiceLabel(instance.service_code))} · ${escapeHTML(node?.name || instance.node_id || 'node')} · ${escapeHTML(node?.role || 'role n/a')}</small>
               <em>${escapeHTML(endpointLabel(instance))}</em>
+              <span class="client-choice-selected">Selected for client</span>
             </span>
             <span class="client-choice-tags">${statusTag(runtimeStatus)}${statusTag(healthStatus)}</span>
           </label>`;
@@ -657,9 +659,12 @@
             const inbound = serviceAccessInboundInfo(access);
             return `
               <article class="client-inbound-card">
-                <div>
-                  <strong>${escapeHTML(inbound.serviceLabel)}</strong>
-                  <small>${escapeHTML(inbound.instanceName)}</small>
+                <div class="client-inbound-card-head">
+                  <div>
+                    <strong>${escapeHTML(inbound.serviceLabel)}</strong>
+                    <small>${escapeHTML(inbound.instanceName)}</small>
+                  </div>
+                  <span class="client-inbound-included"><i aria-hidden="true"></i>Included</span>
                 </div>
                 <div class="client-inbound-meta">
                   <span>${escapeHTML(inbound.nodeName)} · ${escapeHTML(inbound.nodeRole)}</span>
