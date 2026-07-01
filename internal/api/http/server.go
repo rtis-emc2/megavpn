@@ -87,6 +87,7 @@ type Store interface {
 	CreateNodeInventoryJob(context.Context, string) (domain.Job, error)
 	CreateNode(context.Context, domain.Node) (domain.Node, error)
 	UpdateNode(context.Context, string, domain.Node) (domain.Node, error)
+	UpdateNodeGeoIP(context.Context, string, domain.NodeGeoIP) (domain.Node, error)
 	RetireNode(context.Context, string) (domain.Node, error)
 	SetNodeMaintenance(context.Context, string, bool) (domain.Node, error)
 	ListServiceDefinitions(context.Context) ([]domain.ServiceDefinition, error)
@@ -217,6 +218,8 @@ type Server struct {
 	maxRequestBytes        int64
 	secretStorageReady     bool
 	artifactRoot           string
+	geoIPResolver          *nodeGeoIPResolver
+	geoIPAutoEnrichLimit   int
 }
 
 type Options struct {
@@ -237,6 +240,9 @@ type Options struct {
 	MaxRequestBytes        int64
 	SecretStorageReady     bool
 	ArtifactRoot           string
+	GeoIPLookupURLTemplate string
+	GeoIPTimeout           time.Duration
+	GeoIPAutoEnrichLimit   int
 }
 
 func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
@@ -263,6 +269,8 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 		maxRequestBytes:        opts.MaxRequestBytes,
 		secretStorageReady:     opts.SecretStorageReady,
 		artifactRoot:           strings.TrimSpace(opts.ArtifactRoot),
+		geoIPResolver:          newNodeGeoIPResolver(opts.GeoIPLookupURLTemplate, opts.GeoIPTimeout),
+		geoIPAutoEnrichLimit:   opts.GeoIPAutoEnrichLimit,
 	}
 	mux := nethttp.NewServeMux()
 	protected := func(pattern, permission string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
@@ -755,6 +763,7 @@ func (s *Server) listNodes(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 500, "list nodes failed")
 		return
 	}
+	x = s.enrichNodeGeoIP(r.Context(), x)
 	writeJSON(w, 200, x)
 }
 func (s *Server) getNode(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -1031,6 +1040,7 @@ func (s *Server) createNode(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	s.resolveNodeGeoIPForProfile(r.Context(), &n)
 	x, err := s.store.CreateNode(r.Context(), n)
 	if err != nil {
 		writeErr(w, 409, err.Error())
@@ -1049,6 +1059,7 @@ func (s *Server) updateNode(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	s.resolveNodeGeoIPForProfile(r.Context(), &n)
 	x, err := s.store.UpdateNode(r.Context(), idParam(r), n)
 	if err != nil {
 		writeErr(w, 409, err.Error())
@@ -1898,7 +1909,7 @@ func securityHeaders(enableHSTS bool, next nethttp.Handler) nethttp.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		if enableHSTS {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

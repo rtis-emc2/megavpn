@@ -95,28 +95,10 @@
     }
 
     function normalizeNodeProfilePayload(payload) {
-      const latitude = String(payload.latitude || '').trim();
-      const longitude = String(payload.longitude || '').trim();
-      const accuracyRadiusKM = String(payload.accuracy_radius_km || '').trim();
-      payload.location_label = String(payload.location_label || '').trim();
-      if (latitude || longitude) {
-        delete payload.latitude;
-        delete payload.longitude;
-      }
-      if (latitude) {
-        payload.latitude = Number(latitude);
-      }
-      if (longitude) {
-        payload.longitude = Number(longitude);
-      }
-      if (!latitude && !longitude) {
-        delete payload.latitude;
-        delete payload.longitude;
-      }
+      delete payload.location_label;
+      delete payload.latitude;
+      delete payload.longitude;
       delete payload.accuracy_radius_km;
-      if (accuracyRadiusKM) {
-        payload.accuracy_radius_km = Number(accuracyRadiusKM);
-      }
       return payload;
     }
 
@@ -413,11 +395,7 @@
           <div class="field"><label>Role</label><select name="role"><option value="egress">egress</option><option value="ingress">ingress</option></select></div>
           <div class="field"><label>Kind</label><select name="kind"><option value="remote">remote</option><option value="local">local</option></select></div>
           <div class="field full"><label>Address</label><input name="address" required placeholder="203.0.113.10" /></div>
-          <div class="field full"><label>Location label</label><input name="location_label" placeholder="Amsterdam, NL or Datacenter A" /></div>
-          <div class="field"><label>Latitude</label><input name="latitude" type="number" min="-90" max="90" step="0.000001" placeholder="52.3676" /></div>
-          <div class="field"><label>Longitude</label><input name="longitude" type="number" min="-180" max="180" step="0.000001" placeholder="4.9041" /></div>
-          <div class="field"><label>Accuracy radius, km</label><input name="accuracy_radius_km" type="number" min="0" max="20000" step="0.1" placeholder="25" /></div>
-          <div class="field full"><div class="field-hint">Use accuracy radius for approximate city, region or datacenter coordinates. Leave empty when the coordinate is an exact site point.</div></div>
+          <div class="field full"><div class="field-hint">Map location is resolved automatically from the public node address. Private or internal addresses are skipped and are not sent to the GeoIP provider.</div></div>
           <div class="field"><label>OS family</label><input name="os_family" value="ubuntu" /></div>
           <div class="field"><label>OS version</label><input name="os_version" value="24.04" /></div>
           <div class="field"><label>Architecture</label><select name="architecture"><option value="amd64">amd64</option><option value="arm64">arm64</option></select></div>
@@ -461,11 +439,7 @@
           <div class="field"><label>Role</label><select name="role"><option value="egress"${node.role === 'egress' ? ' selected' : ''}>egress</option><option value="ingress"${node.role === 'ingress' ? ' selected' : ''}>ingress</option></select></div>
           <div class="field"><label>Kind</label><select name="kind"><option value="remote"${node.kind !== 'local' ? ' selected' : ''}>remote</option><option value="local"${node.kind === 'local' ? ' selected' : ''}>local</option></select></div>
           <div class="field full"><label>Address</label><input name="address" required value="${escapeHTML(node.address || '')}" /></div>
-          <div class="field full"><label>Location label</label><input name="location_label" value="${escapeHTML(node.location_label || '')}" placeholder="City, region, site or rack group" /></div>
-          <div class="field"><label>Latitude</label><input name="latitude" type="number" min="-90" max="90" step="0.000001" value="${node.latitude == null ? '' : escapeHTML(String(node.latitude))}" placeholder="52.3676" /></div>
-          <div class="field"><label>Longitude</label><input name="longitude" type="number" min="-180" max="180" step="0.000001" value="${node.longitude == null ? '' : escapeHTML(String(node.longitude))}" placeholder="4.9041" /></div>
-          <div class="field"><label>Accuracy radius, km</label><input name="accuracy_radius_km" type="number" min="0" max="20000" step="0.1" value="${node.accuracy_radius_km == null ? '' : escapeHTML(String(node.accuracy_radius_km))}" placeholder="25" /></div>
-          <div class="field full"><div class="field-hint">Use accuracy radius for approximate city, region or datacenter coordinates. Leave empty when the coordinate is an exact site point.</div></div>
+          <div class="field full"><div class="field-hint">Changing the public address recalculates the map location automatically through GeoIP.</div></div>
           <div class="field"><label>OS family</label><input name="os_family" value="${escapeHTML(node.os_family || 'linux')}" /></div>
           <div class="field"><label>OS version</label><input name="os_version" value="${escapeHTML(node.os_version || 'unknown')}" /></div>
           <div class="field"><label>Architecture</label><select name="architecture"><option value="amd64"${node.architecture !== 'arm64' ? ' selected' : ''}>amd64</option><option value="arm64"${node.architecture === 'arm64' ? ' selected' : ''}>arm64</option></select></div>

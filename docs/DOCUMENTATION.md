@@ -72,5 +72,5 @@ These items must be closed before a stable release claim:
   PostgreSQL and offline installs.
 - Bilingual troubleshooting matrix for every supported service.
 - Service-specific client configuration examples.
-- Topology map and VLESS subscription documentation after the features are
-  implemented.
+- Dedicated deep-dive documentation for topology map operations and VLESS
+  subscriptions.

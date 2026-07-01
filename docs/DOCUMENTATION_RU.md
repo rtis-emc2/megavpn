@@ -73,4 +73,5 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
   PostgreSQL и offline install.
 - Двуязычная troubleshooting matrix по всем сервисам.
 - Service-specific примеры клиентских конфигов.
-- Документация по topology map и VLESS subscription после реализации функций.
+- Отдельная deep-dive документация по эксплуатации topology map и VLESS
+  subscriptions.

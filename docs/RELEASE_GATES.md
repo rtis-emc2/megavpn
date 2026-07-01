@@ -127,7 +127,7 @@ Drivers that are intentionally materialize-only must be recorded as such, not co
 
 Required evidence before promoting topology/access features beyond the hardening baseline:
 
-- Node map API projection lists node role, health, address, optional location metadata and workload counts without exposing unnecessary secrets.
+- Node map API projection resolves approximate country/city/provider metadata from public node IPs, skips private addresses, and does not expose unnecessary secrets.
 - Managed backhaul graph shows active/degraded/failed links and the last probe reason.
 - Client provisioning clearly shows which inbound services were selected for a client.
 - VLESS subscription endpoint, when enabled, uses per-client bearer token rotation, audit events, `Cache-Control: no-store` and authenticated preview/download.

@@ -66,5 +66,5 @@ MegaVPN consists of:
 - Package-manager capability installs write broadly to the node OS. Use manual-present strategy or pre-baked images where policy forbids runtime package installation.
 - IPsec/L2TP and some Xray/backhaul profiles can be materialize-only until their full runtime validation is completed.
 - Public share links are bearer URLs. Hashing protects database disclosure, not recipients forwarding a live URL.
-- The topology map will expose operational metadata. Production deployments should avoid storing unnecessary precise physical coordinates unless that data is required for routing or support.
+- The topology map exposes operational metadata derived from public node IPs. External GeoIP providers will see those public IPs; regulated deployments should use an internal GeoIP endpoint or disable lookup with `MEGAVPN_GEOIP_LOOKUP_URL_TEMPLATE=disabled`.
 - A full repository-wide security scan requires delegated worker coverage. Parent-agent-only scans are useful but must not be treated as exhaustive release evidence.

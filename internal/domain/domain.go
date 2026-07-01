@@ -18,6 +18,17 @@ type Node struct {
 	Latitude             *float64   `json:"latitude,omitempty"`
 	Longitude            *float64   `json:"longitude,omitempty"`
 	AccuracyRadiusKM     *float64   `json:"accuracy_radius_km,omitempty"`
+	GeoIPProvider        string     `json:"geoip_provider,omitempty"`
+	GeoIPStatus          string     `json:"geoip_status,omitempty"`
+	GeoIPIP              string     `json:"geoip_ip,omitempty"`
+	GeoIPCountryCode     string     `json:"geoip_country_code,omitempty"`
+	GeoIPCountryName     string     `json:"geoip_country_name,omitempty"`
+	GeoIPRegion          string     `json:"geoip_region,omitempty"`
+	GeoIPCity            string     `json:"geoip_city,omitempty"`
+	GeoIPOrg             string     `json:"geoip_org,omitempty"`
+	GeoIPASN             string     `json:"geoip_asn,omitempty"`
+	GeoIPResolvedAt      *time.Time `json:"geoip_resolved_at,omitempty"`
+	GeoIPError           string     `json:"geoip_error,omitempty"`
 	OSFamily             string     `json:"os_family"`
 	OSVersion            string     `json:"os_version"`
 	Architecture         string     `json:"architecture"`
@@ -30,6 +41,24 @@ type Node struct {
 	LastHeartbeatAt      *time.Time `json:"last_heartbeat_at"`
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+type NodeGeoIP struct {
+	Provider         string
+	Status           string
+	IP               string
+	CountryCode      string
+	CountryName      string
+	Region           string
+	City             string
+	Org              string
+	ASN              string
+	LocationLabel    string
+	Latitude         *float64
+	Longitude        *float64
+	AccuracyRadiusKM *float64
+	ResolvedAt       *time.Time
+	Error            string
 }
 
 type NodeAccessMethod struct {

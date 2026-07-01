@@ -116,6 +116,14 @@ Key install variables:
 | `MEGAVPN_CP_GO_TARBALL_URL` | Optional pinned Go toolchain tarball URL when the host Go version is too old. |
 | `MEGAVPN_CP_GO_TARBALL_SHA256` | Required SHA-256 pin when `MEGAVPN_CP_GO_TARBALL_URL` is used. |
 
+Runtime GeoIP variables in `/etc/megavpn/megavpn.env`:
+
+| Variable | Purpose |
+| --- | --- |
+| `MEGAVPN_GEOIP_LOOKUP_URL_TEMPLATE` | HTTPS GeoIP URL template with `{ip}` placeholder; set to `disabled` to turn off automatic node map lookup. |
+| `MEGAVPN_GEOIP_TIMEOUT` | Per-request timeout for GeoIP lookup. |
+| `MEGAVPN_GEOIP_AUTO_ENRICH_LIMIT` | Maximum nodes enriched during one API list request. |
+
 The installer verifies that the Go toolchain satisfies `go.mod`. If the host Go
 version is too old, either allow the installer to use the OS package manager or
 provide a pinned tarball URL plus SHA-256. Unpinned toolchain downloads are

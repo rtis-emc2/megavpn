@@ -12,6 +12,7 @@ type Config struct {
 	Agent     AgentConfig
 	Artifacts ArtifactConfig
 	Auth      AuthConfig
+	GeoIP     GeoIPConfig
 	Secrets   SecretsConfig
 	Worker    WorkerConfig
 	Database  DatabaseConfig
@@ -48,6 +49,12 @@ type AgentConfig struct {
 
 type ArtifactConfig struct {
 	Root string
+}
+
+type GeoIPConfig struct {
+	LookupURLTemplate string
+	Timeout           time.Duration
+	AutoEnrichLimit   int
 }
 
 type AuthConfig struct {
@@ -105,6 +112,11 @@ func Load() Config {
 		},
 		Artifacts: ArtifactConfig{
 			Root: strings.TrimSpace(getEnv("MEGAVPN_ARTIFACT_ROOT", "/var/lib/megavpn/artifacts")),
+		},
+		GeoIP: GeoIPConfig{
+			LookupURLTemplate: strings.TrimSpace(getEnv("MEGAVPN_GEOIP_LOOKUP_URL_TEMPLATE", "https://ipapi.co/{ip}/json/")),
+			Timeout:           getEnvDuration("MEGAVPN_GEOIP_TIMEOUT", 3*time.Second),
+			AutoEnrichLimit:   getEnvInt("MEGAVPN_GEOIP_AUTO_ENRICH_LIMIT", 5),
 		},
 		Auth: AuthConfig{
 			SessionTTL:                getEnvDuration("MEGAVPN_AUTH_SESSION_TTL", 24*time.Hour),
@@ -178,6 +190,18 @@ func getEnvInt64(k string, d int64) int64 {
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil || n <= 0 {
+		return d
+	}
+	return n
+}
+
+func getEnvInt(k string, d int) int {
+	v := strings.TrimSpace(os.Getenv(k))
+	if v == "" {
+		return d
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
 		return d
 	}
 	return n

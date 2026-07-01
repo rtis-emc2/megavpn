@@ -92,7 +92,9 @@ func (s *Store) Dashboard(ctx context.Context, version string) (domain.Dashboard
 
 func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	rows, err := s.db.Query(ctx, `select
-		n.id,n.name,n.kind,n.role,n.status,n.address,coalesce(n.location_label,''),n.latitude,n.longitude,n.accuracy_radius_km,n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
+		n.id,n.name,n.kind,n.role,n.status,n.address,coalesce(n.location_label,''),n.latitude,n.longitude,n.accuracy_radius_km,
+		coalesce(n.geoip_provider,''),coalesce(n.geoip_status,''),coalesce(n.geoip_ip,''),coalesce(n.geoip_country_code,''),coalesce(n.geoip_country_name,''),coalesce(n.geoip_region,''),coalesce(n.geoip_city,''),coalesce(n.geoip_org,''),coalesce(n.geoip_asn,''),n.geoip_resolved_at,coalesce(n.geoip_error,''),
+		n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
 		coalesce(na.agent_version,''),coalesce(na.protocol_version,''),na.registered_at,na.last_seen_at
 	from nodes n
 	left join node_agents na on na.node_id=n.id
@@ -115,7 +117,9 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 
 func (s *Store) GetNode(ctx context.Context, nodeID string) (domain.Node, error) {
 	row := s.db.QueryRow(ctx, `select
-		n.id,n.name,n.kind,n.role,n.status,n.address,coalesce(n.location_label,''),n.latitude,n.longitude,n.accuracy_radius_km,n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
+		n.id,n.name,n.kind,n.role,n.status,n.address,coalesce(n.location_label,''),n.latitude,n.longitude,n.accuracy_radius_km,
+		coalesce(n.geoip_provider,''),coalesce(n.geoip_status,''),coalesce(n.geoip_ip,''),coalesce(n.geoip_country_code,''),coalesce(n.geoip_country_name,''),coalesce(n.geoip_region,''),coalesce(n.geoip_city,''),coalesce(n.geoip_org,''),coalesce(n.geoip_asn,''),n.geoip_resolved_at,coalesce(n.geoip_error,''),
+		n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
 		coalesce(na.agent_version,''),coalesce(na.protocol_version,''),na.registered_at,na.last_seen_at
 	from nodes n
 	left join node_agents na on na.node_id=n.id
@@ -136,6 +140,17 @@ func scanNode(row jobScanner) (domain.Node, error) {
 		&n.Latitude,
 		&n.Longitude,
 		&n.AccuracyRadiusKM,
+		&n.GeoIPProvider,
+		&n.GeoIPStatus,
+		&n.GeoIPIP,
+		&n.GeoIPCountryCode,
+		&n.GeoIPCountryName,
+		&n.GeoIPRegion,
+		&n.GeoIPCity,
+		&n.GeoIPOrg,
+		&n.GeoIPASN,
+		&n.GeoIPResolvedAt,
+		&n.GeoIPError,
 		&n.OSFamily,
 		&n.OSVersion,
 		&n.Architecture,
@@ -190,10 +205,20 @@ func (s *Store) CreateNode(ctx context.Context, n domain.Node) (domain.Node, err
 	if n.AgentStatus == "" {
 		n.AgentStatus = "unknown"
 	}
+	if n.GeoIPStatus == "" {
+		n.GeoIPStatus = "pending"
+	}
 	if err := normalizeNodeLocation(&n); err != nil {
 		return n, err
 	}
-	_, err := s.db.Exec(ctx, `insert into nodes(id,name,kind,role,status,address,location_label,latitude,longitude,accuracy_radius_km,os_family,os_version,architecture,execution_mode,agent_status,created_at,updated_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, n.ID, n.Name, n.Kind, n.Role, n.Status, n.Address, n.LocationLabel, n.Latitude, n.Longitude, n.AccuracyRadiusKM, n.OSFamily, n.OSVersion, n.Architecture, n.ExecutionMode, n.AgentStatus, n.CreatedAt, n.UpdatedAt)
+	_, err := s.db.Exec(ctx, `insert into nodes(
+		id,name,kind,role,status,address,location_label,latitude,longitude,accuracy_radius_km,
+		geoip_provider,geoip_status,geoip_ip,geoip_country_code,geoip_country_name,geoip_region,geoip_city,geoip_org,geoip_asn,geoip_resolved_at,geoip_error,
+		os_family,os_version,architecture,execution_mode,agent_status,created_at,updated_at
+	) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+		n.ID, n.Name, n.Kind, n.Role, n.Status, n.Address, n.LocationLabel, n.Latitude, n.Longitude, n.AccuracyRadiusKM,
+		n.GeoIPProvider, n.GeoIPStatus, n.GeoIPIP, n.GeoIPCountryCode, n.GeoIPCountryName, n.GeoIPRegion, n.GeoIPCity, n.GeoIPOrg, n.GeoIPASN, n.GeoIPResolvedAt, n.GeoIPError,
+		n.OSFamily, n.OSVersion, n.Architecture, n.ExecutionMode, n.AgentStatus, n.CreatedAt, n.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err, "nodes_name_key", "nodes_name_active_key") {
 			return n, fmt.Errorf("node name %q is already used by an active node", n.Name)
@@ -245,10 +270,20 @@ func (s *Store) UpdateNode(ctx context.Context, nodeID string, n domain.Node) (d
 	if n.ExecutionMode == "" {
 		n.ExecutionMode = current.ExecutionMode
 	}
+	if n.GeoIPStatus == "" {
+		copyNodeGeoIP(&n, current)
+	}
 	if err := normalizeNodeLocation(&n); err != nil {
 		return domain.Node{}, err
 	}
-	cmd, err := s.db.Exec(ctx, `update nodes set name=$2,kind=$3,role=$4,address=$5,location_label=$6,latitude=$7,longitude=$8,accuracy_radius_km=$9,os_family=$10,os_version=$11,architecture=$12,execution_mode=$13,updated_at=now() where id=$1 and status <> 'retired'`, nodeID, n.Name, n.Kind, n.Role, n.Address, n.LocationLabel, n.Latitude, n.Longitude, n.AccuracyRadiusKM, n.OSFamily, n.OSVersion, n.Architecture, n.ExecutionMode)
+	cmd, err := s.db.Exec(ctx, `update nodes set
+		name=$2,kind=$3,role=$4,address=$5,location_label=$6,latitude=$7,longitude=$8,accuracy_radius_km=$9,
+		geoip_provider=$10,geoip_status=$11,geoip_ip=$12,geoip_country_code=$13,geoip_country_name=$14,geoip_region=$15,geoip_city=$16,geoip_org=$17,geoip_asn=$18,geoip_resolved_at=$19,geoip_error=$20,
+		os_family=$21,os_version=$22,architecture=$23,execution_mode=$24,updated_at=now()
+		where id=$1 and status <> 'retired'`,
+		nodeID, n.Name, n.Kind, n.Role, n.Address, n.LocationLabel, n.Latitude, n.Longitude, n.AccuracyRadiusKM,
+		n.GeoIPProvider, n.GeoIPStatus, n.GeoIPIP, n.GeoIPCountryCode, n.GeoIPCountryName, n.GeoIPRegion, n.GeoIPCity, n.GeoIPOrg, n.GeoIPASN, n.GeoIPResolvedAt, n.GeoIPError,
+		n.OSFamily, n.OSVersion, n.Architecture, n.ExecutionMode)
 	if err != nil {
 		if isUniqueViolation(err, "nodes_name_key", "nodes_name_active_key") {
 			return domain.Node{}, fmt.Errorf("node name %q is already used by an active node", n.Name)
@@ -260,6 +295,48 @@ func (s *Store) UpdateNode(ctx context.Context, nodeID string, n domain.Node) (d
 	}
 	_, _ = s.CreateAudit(ctx, "system", "node.update", "node", &nodeID, "node profile updated")
 	return s.GetNode(ctx, nodeID)
+}
+
+func (s *Store) UpdateNodeGeoIP(ctx context.Context, nodeID string, geo domain.NodeGeoIP) (domain.Node, error) {
+	if strings.TrimSpace(nodeID) == "" {
+		return domain.Node{}, errors.New("node id is required")
+	}
+	status := strings.TrimSpace(geo.Status)
+	if status == "" {
+		status = "pending"
+	}
+	cmd, err := s.db.Exec(ctx, `update nodes set
+		location_label=$2,latitude=$3,longitude=$4,accuracy_radius_km=$5,
+		geoip_provider=$6,geoip_status=$7,geoip_ip=$8,geoip_country_code=$9,geoip_country_name=$10,geoip_region=$11,geoip_city=$12,geoip_org=$13,geoip_asn=$14,geoip_resolved_at=$15,geoip_error=$16,
+		updated_at=now()
+		where id=$1 and status <> 'retired'`,
+		nodeID, strings.TrimSpace(geo.LocationLabel), geo.Latitude, geo.Longitude, geo.AccuracyRadiusKM,
+		strings.TrimSpace(geo.Provider), status, strings.TrimSpace(geo.IP), strings.TrimSpace(geo.CountryCode), strings.TrimSpace(geo.CountryName), strings.TrimSpace(geo.Region), strings.TrimSpace(geo.City), strings.TrimSpace(geo.Org), strings.TrimSpace(geo.ASN), geo.ResolvedAt, strings.TrimSpace(geo.Error))
+	if err != nil {
+		return domain.Node{}, err
+	}
+	if cmd.RowsAffected() == 0 {
+		return domain.Node{}, pgx.ErrNoRows
+	}
+	return s.GetNode(ctx, nodeID)
+}
+
+func copyNodeGeoIP(dst *domain.Node, src domain.Node) {
+	dst.LocationLabel = src.LocationLabel
+	dst.Latitude = src.Latitude
+	dst.Longitude = src.Longitude
+	dst.AccuracyRadiusKM = src.AccuracyRadiusKM
+	dst.GeoIPProvider = src.GeoIPProvider
+	dst.GeoIPStatus = src.GeoIPStatus
+	dst.GeoIPIP = src.GeoIPIP
+	dst.GeoIPCountryCode = src.GeoIPCountryCode
+	dst.GeoIPCountryName = src.GeoIPCountryName
+	dst.GeoIPRegion = src.GeoIPRegion
+	dst.GeoIPCity = src.GeoIPCity
+	dst.GeoIPOrg = src.GeoIPOrg
+	dst.GeoIPASN = src.GeoIPASN
+	dst.GeoIPResolvedAt = src.GeoIPResolvedAt
+	dst.GeoIPError = src.GeoIPError
 }
 
 func normalizeNodeLocation(n *domain.Node) error {

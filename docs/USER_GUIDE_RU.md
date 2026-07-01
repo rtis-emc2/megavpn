@@ -115,6 +115,14 @@ sudo MEGAVPN_CP_VALIDATE_ONLY=1 \
 | `MEGAVPN_CP_GO_TARBALL_URL` | Optional pinned Go toolchain tarball URL, если версия Go на host слишком старая. |
 | `MEGAVPN_CP_GO_TARBALL_SHA256` | Обязательный SHA-256 pin, если задан `MEGAVPN_CP_GO_TARBALL_URL`. |
 
+Runtime GeoIP variables в `/etc/megavpn/megavpn.env`:
+
+| Variable | Назначение |
+| --- | --- |
+| `MEGAVPN_GEOIP_LOOKUP_URL_TEMPLATE` | HTTPS GeoIP URL template с `{ip}` placeholder; значение `disabled` отключает автоматическое определение нод на карте. |
+| `MEGAVPN_GEOIP_TIMEOUT` | Timeout одного GeoIP lookup. |
+| `MEGAVPN_GEOIP_AUTO_ENRICH_LIMIT` | Максимум нод, которые API дообогащает за один list request. |
+
 Installer проверяет, что Go toolchain соответствует `go.mod`. Если версия Go на
 host слишком старая, разрешите установку через OS package manager или задайте
 pinned tarball URL вместе с SHA-256. Непривязанные downloads toolchain
