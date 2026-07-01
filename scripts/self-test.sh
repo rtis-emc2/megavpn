@@ -205,6 +205,26 @@ require_frontend_asset_manifest() {
   [[ "$missing" -eq 0 ]]
 }
 
+require_frontend_page_module_exports() {
+  local module file export missing=0
+  while IFS= read -r module; do
+    [[ -n "$module" ]] || continue
+    file="$(printf '%s\n' "$module" | sed -E 's/^MegaVPN//' | sed -E 's/Page$//' | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]')-page.js"
+    case "$module" in
+      MegaVPNOpsPages) file="ops-pages.js" ;;
+    esac
+    if [[ ! -f "web/assets/$file" ]]; then
+      continue
+    fi
+    export="window.${module} = \\{ create:"
+    if ! rg -q "$export" "web/assets/$file"; then
+      printf 'web/assets/%s does not export window.%s.create\n' "$file" "$module" >&2
+      missing=1
+    fi
+  done < <(sed -nE 's/.*window\.([A-Za-z0-9]+Page[s]?)\?\.create.*/\1/p' web/assets/app.js | sort -u)
+  [[ "$missing" -eq 0 ]]
+}
+
 require_static_security_patterns() {
   local found=0
   require_command rg || return 1
@@ -410,6 +430,7 @@ run_check "shell-syntax" "Shell scripts parse under bash -n" require_shell_synta
 run_check "control-plane-install-validation" "Control Plane installer validates non-interactive clean-install inputs" require_control_plane_install_validation
 run_check "frontend-js-syntax" "Static Web UI JavaScript parses under node --check" require_frontend_js_syntax
 run_check "frontend-asset-manifest" "Static Web UI index references only existing assets" require_frontend_asset_manifest
+run_check "frontend-page-module-exports" "Static Web UI page modules export the create contract expected by app.js" require_frontend_page_module_exports
 run_check "static-security-patterns" "No banned production command patterns are present" require_static_security_patterns
 run_check "smoke-auth-coverage" "Smoke scripts that call protected API endpoints support bearer auth" require_smoke_auth_coverage
 run_check "migration-sequence" "SQL migration numbers are unique and gap-free" require_migration_sequence

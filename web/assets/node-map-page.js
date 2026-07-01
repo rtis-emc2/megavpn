@@ -426,5 +426,5 @@
     return { render };
   }
 
-  window.MegaVPNNodeMapPage = { createNodeMapPage };
+  window.MegaVPNNodeMapPage = { create: createNodeMapPage };
 })(window);

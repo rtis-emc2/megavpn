@@ -85,7 +85,7 @@
             </div>
             <div class="section-body">
               <div class="notice compact-notice">
-                Refresh the page after deployment finishes. If the page stays unavailable, redeploy web assets and verify <code>${escapeHTML(moduleName)}</code> exists under the configured web root.
+                Refresh the page after deployment finishes. If the page stays unavailable, redeploy web assets and verify <code>${escapeHTML(moduleName)}</code> exists under the configured web root and exports a compatible page module.
               </div>
             </div>
           </section>`;
