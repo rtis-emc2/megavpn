@@ -307,6 +307,80 @@ func (s *Store) CreateBackhaulDeleteJobs(ctx context.Context, linkID string) (do
 	return link, jobs, nil
 }
 
+func (s *Store) SetBackhaulRouteEnabled(ctx context.Context, linkID string, enabled bool) (domain.BackhaulLink, []domain.Job, error) {
+	if _, err := s.RecoverStaleJobLeases(ctx); err != nil {
+		return domain.BackhaulLink{}, nil, err
+	}
+	link, err := s.GetBackhaulLink(ctx, linkID)
+	if err != nil {
+		return domain.BackhaulLink{}, nil, err
+	}
+	if enabled {
+		if link.Status == "active" || link.Status == "pending_apply" {
+			return link, nil, nil
+		}
+		jobs, err := s.CreateBackhaulApplyJobs(ctx, link.ID)
+		if err != nil {
+			return domain.BackhaulLink{}, jobs, err
+		}
+		link, err = s.GetBackhaulLink(ctx, link.ID)
+		if err != nil {
+			return domain.BackhaulLink{}, jobs, err
+		}
+		_, _ = s.CreateAudit(ctx, "system", "backhaul.route.enable", "backhaul", &link.ID, "managed backhaul route enable queued")
+		return link, jobs, nil
+	}
+	if link.Status == "disabled" {
+		return link, nil, nil
+	}
+	if len(link.Transports) == 0 {
+		_, _ = s.db.Exec(ctx, `update backhaul_links set status='disabled', updated_at=now() where id=$1`, link.ID)
+		link.Status = "disabled"
+		_, _ = s.CreateAudit(ctx, "system", "backhaul.route.disable", "backhaul", &link.ID, "managed backhaul route disabled")
+		if routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID); err == nil {
+			return link, []domain.Job{routeJob}, nil
+		}
+		return link, nil, nil
+	}
+
+	batchID := id.New()
+	if link.Metadata == nil {
+		link.Metadata = map[string]any{}
+	}
+	link.Metadata["route_disable_batch_id"] = batchID
+	link.Metadata["route_disable_requested_at"] = time.Now().UTC().Format(time.RFC3339)
+	jobs := make([]domain.Job, 0, len(link.Transports)*2)
+	for _, transport := range link.Transports {
+		for _, role := range []string{"ingress", "egress"} {
+			nodeID := nodeIDForBackhaulRole(link, role)
+			job, err := s.CreateJob(ctx, domain.Job{
+				Type:      "node.backhaul.cleanup",
+				ScopeType: "backhaul",
+				ScopeID:   &link.ID,
+				NodeID:    &nodeID,
+				Priority:  90,
+				Payload:   buildBackhaulRouteDisablePayload(link, transport, role, batchID),
+			})
+			if err != nil {
+				return domain.BackhaulLink{}, jobs, err
+			}
+			jobs = append(jobs, job)
+		}
+	}
+	_, _ = s.db.Exec(ctx, `update backhaul_links
+		set status='disabled', metadata_json=$2, updated_at=now()
+		where id=$1`, link.ID, mustJSON(link.Metadata))
+	_, _ = s.db.Exec(ctx, `update backhaul_transports
+		set status='disabled', last_error='', updated_at=now()
+		where link_id=$1`, link.ID)
+	_, _ = s.CreateAudit(ctx, "system", "backhaul.route.disable", "backhaul", &link.ID, "managed backhaul route disable queued")
+	link.Status = "disabled"
+	if routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID); err == nil {
+		jobs = append(jobs, routeJob)
+	}
+	return link, jobs, nil
+}
+
 func (s *Store) CreateBackhaulApplyJobs(ctx context.Context, linkID string) ([]domain.Job, error) {
 	link, err := s.GetBackhaulLink(ctx, linkID)
 	if err != nil {
@@ -404,6 +478,17 @@ func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, stat
 			where id=$1`, transportID, backhaulApplyCompleteStatus(activationMode, driver))
 	}
 	s.refreshBackhaulLinkApplyStatus(ctx, linkID)
+	s.queueBackhaulRoutePolicyRefresh(ctx, linkID)
+}
+
+func (s *Store) queueBackhaulRoutePolicyRefresh(ctx context.Context, linkID string) {
+	var ingressNodeID, status string
+	if err := s.db.QueryRow(ctx, `select ingress_node_id::text, status from backhaul_links where id=$1`, strings.TrimSpace(linkID)).Scan(&ingressNodeID, &status); err != nil {
+		return
+	}
+	if strings.EqualFold(status, "active") {
+		_, _ = s.CreateNodeRoutePolicyApplyJob(ctx, ingressNodeID)
+	}
 }
 
 func normalizeBackhaulApplyHealth(jobStatus string, result map[string]any, checkedAt time.Time) (map[string]any, string) {
@@ -449,10 +534,10 @@ func (s *Store) refreshBackhaulLinkApplyStatus(ctx context.Context, linkID strin
 				else bl.status
 			end,
 			updated_at=now()
-		from backhaul_transports st
-		where bl.id=$1
-		  and bl.selected_transport_id=st.id
-		  and bl.status <> 'deleted'`, linkID)
+	from backhaul_transports st
+	where bl.id=$1
+	  and bl.selected_transport_id=st.id
+	  and bl.status not in ('deleted','disabled')`, linkID)
 }
 
 func (s *Store) ApplyBackhaulProbeResult(ctx context.Context, job domain.Job, status string, result map[string]any) {
@@ -548,20 +633,33 @@ func (s *Store) ApplyBackhaulCleanupResult(ctx context.Context, job domain.Job, 
 		set health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $2::text[], $3::jsonb, true), updated_at=now()
 		where id=$1`, transportID, []string{"cleanup", role}, mustJSON(cleanup))
 
-	batchID := firstNonEmptyRouteValue(stringify(result["delete_batch_id"]), stringify(job.Payload["delete_batch_id"]))
-	if batchID == "" {
-		return
-	}
-	var pending, failed int
-	_ = s.db.QueryRow(ctx, `select
-		count(*) filter (where status in ('queued','running','retrying'))::int,
-		count(*) filter (where status in ('failed','cancelled'))::int
-	from jobs
-	where type='node.backhaul.cleanup'
-	  and scope_id=$1
-	  and payload_json->>'delete_batch_id'=$2`, linkID, batchID).Scan(&pending, &failed)
-	if pending == 0 && failed == 0 {
-		_, _ = s.db.Exec(ctx, `update backhaul_links set status='deleted', updated_at=now() where id=$1`, linkID)
+	deleteBatchID := firstNonEmptyRouteValue(stringify(result["delete_batch_id"]), stringify(job.Payload["delete_batch_id"]))
+	disableBatchID := firstNonEmptyRouteValue(stringify(result["route_disable_batch_id"]), stringify(job.Payload["route_disable_batch_id"]))
+	switch {
+	case deleteBatchID != "":
+		var pending, failed int
+		_ = s.db.QueryRow(ctx, `select
+			count(*) filter (where status in ('queued','running','retrying'))::int,
+			count(*) filter (where status in ('failed','cancelled'))::int
+		from jobs
+		where type='node.backhaul.cleanup'
+		  and scope_id=$1
+		  and payload_json->>'delete_batch_id'=$2`, linkID, deleteBatchID).Scan(&pending, &failed)
+		if pending == 0 && failed == 0 {
+			_, _ = s.db.Exec(ctx, `update backhaul_links set status='deleted', updated_at=now() where id=$1`, linkID)
+		}
+	case disableBatchID != "":
+		var pending, failed int
+		_ = s.db.QueryRow(ctx, `select
+			count(*) filter (where status in ('queued','running','retrying'))::int,
+			count(*) filter (where status in ('failed','cancelled'))::int
+		from jobs
+		where type='node.backhaul.cleanup'
+		  and scope_id=$1
+		  and payload_json->>'route_disable_batch_id'=$2`, linkID, disableBatchID).Scan(&pending, &failed)
+		if pending == 0 && failed == 0 {
+			_, _ = s.db.Exec(ctx, `update backhaul_links set status='disabled', updated_at=now() where id=$1 and status <> 'deleted'`, linkID)
+		}
 	}
 }
 
@@ -658,6 +756,14 @@ func buildBackhaulCleanupPayload(link domain.BackhaulLink, transport domain.Back
 		"paths":           backhaulCleanupPaths(link, transport, role),
 		"directories":     []string{"/etc/megavpn/backhaul/" + safeBackhaulSlug(link, transport)},
 	}
+}
+
+func buildBackhaulRouteDisablePayload(link domain.BackhaulLink, transport domain.BackhaulTransport, role, batchID string) map[string]any {
+	payload := buildBackhaulCleanupPayload(link, transport, role, batchID)
+	delete(payload, "delete_batch_id")
+	payload["route_disable_batch_id"] = batchID
+	payload["route_action"] = "disable"
+	return payload
 }
 
 func (s *Store) backhaulSideMaterial(ctx context.Context, link domain.BackhaulLink, transport domain.BackhaulTransport, role string, def backhaul.DriverDefinition) (map[string]any, error) {

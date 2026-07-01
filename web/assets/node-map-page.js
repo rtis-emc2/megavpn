@@ -7,6 +7,8 @@
       setTitle,
       el,
       setPage,
+      sendJSON,
+      loadCore,
       statusTag,
       escapeHTML,
     } = ctx;
@@ -23,11 +25,8 @@
     }
 
     const config = window.MegaVPNAppConfig?.nodeMap || {};
-    const TILE_SIZE = 256;
-    const TILE_URL = String(config.tileURLTemplate || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png');
-    const TILE_ATTRIBUTION = String(config.tileAttribution || 'OpenStreetMap contributors');
-    const VIEW_WIDTH = 1280;
-    const VIEW_HEIGHT = 640;
+    const STATIC_MAP_URL = String(config.staticMapURL || './assets/world-map.svg');
+    const routeUpdates = new Set();
 
     function finiteNumber(value) {
       const num = Number(value);
@@ -99,6 +98,7 @@
     function linkTone(status) {
       const value = normalizeStatus(status);
       if (/(failed|deleted|error|unhealthy)/.test(value)) return 'danger';
+      if (/(disabled|inactive|off)/.test(value)) return 'disabled';
       if (/(degraded|provisioning|pending|unknown)/.test(value)) return 'warning';
       return 'healthy';
     }
@@ -158,7 +158,11 @@
 
     function backhaulStatus(link) {
       const transport = selectedTransport(link);
-      return normalizeStatus(transport?.status || link?.status, 'unknown');
+      const linkStatus = normalizeStatus(link?.status, '');
+      if (['disabled', 'deleted', 'pending_apply', 'failed', 'planned'].includes(linkStatus)) {
+        return linkStatus;
+      }
+      return normalizeStatus(transport?.status || linkStatus, 'unknown');
     }
 
     function backhaulDriver(link) {
@@ -198,82 +202,25 @@
         .filter(Boolean)).size;
     }
 
-    function tileURL(z, x, y) {
-      return TILE_URL
-        .replace('{z}', encodeURIComponent(String(z)))
-        .replace('{x}', encodeURIComponent(String(x)))
-        .replace('{y}', encodeURIComponent(String(y)));
-    }
-
     function clampLatitude(lat) {
       return Math.max(-85.05112878, Math.min(85.05112878, lat));
     }
 
-    function project(location, zoom) {
-      const scale = TILE_SIZE * Math.pow(2, zoom);
+    function project(location) {
       const lat = clampLatitude(location.latitude);
       const sin = Math.sin((lat * Math.PI) / 180);
       return {
-        x: ((location.longitude + 180) / 360) * scale,
-        y: (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * scale,
+        x: ((location.longitude + 180) / 360) * 100,
+        y: (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * 100,
       };
     }
 
-    function mapViewport(items) {
-      if (!items.length) {
-        return {
-          zoom: 2,
-          center: project({ latitude: 22, longitude: 18 }, 2),
-        };
-      }
-      const lats = items.map((item) => item.location.latitude);
-      const lons = items.map((item) => item.location.longitude);
-      const latSpan = Math.max(...lats) - Math.min(...lats);
-      const lonSpan = Math.max(...lons) - Math.min(...lons);
-      const zoom = latSpan <= 18 && lonSpan <= 32 ? 3 : 2;
-      const centerLocation = {
-        latitude: lats.reduce((sum, value) => sum + value, 0) / lats.length,
-        longitude: lons.reduce((sum, value) => sum + value, 0) / lons.length,
-      };
-      return { zoom, center: project(centerLocation, zoom) };
+    function mapViewport() {
+      return {};
     }
 
-    function renderTiles(viewport) {
-      const { zoom, center } = viewport;
-      const tilesPerAxis = Math.pow(2, zoom);
-      const left = center.x - VIEW_WIDTH / 2;
-      const top = center.y - VIEW_HEIGHT / 2;
-      const startX = Math.floor(left / TILE_SIZE) - 1;
-      const endX = Math.ceil((left + VIEW_WIDTH) / TILE_SIZE) + 1;
-      const startY = Math.max(0, Math.floor(top / TILE_SIZE) - 1);
-      const endY = Math.min(tilesPerAxis - 1, Math.ceil((top + VIEW_HEIGHT) / TILE_SIZE) + 1);
-      const tiles = [];
-      for (let y = startY; y <= endY; y += 1) {
-        for (let x = startX; x <= endX; x += 1) {
-          const wrappedX = ((x % tilesPerAxis) + tilesPerAxis) % tilesPerAxis;
-          const tileLeft = ((x * TILE_SIZE - left) / VIEW_WIDTH) * 100;
-          const tileTop = ((y * TILE_SIZE - top) / VIEW_HEIGHT) * 100;
-          const tileWidth = (TILE_SIZE / VIEW_WIDTH) * 100;
-          const tileHeight = (TILE_SIZE / VIEW_HEIGHT) * 100;
-          tiles.push(`
-            <img class="node-map-tile"
-                 src="${escapeHTML(tileURL(zoom, wrappedX, y))}"
-                 loading="lazy"
-                 alt=""
-                 style="left:${tileLeft.toFixed(3)}%;top:${tileTop.toFixed(3)}%;width:${tileWidth.toFixed(3)}%;height:${tileHeight.toFixed(3)}%" />`);
-        }
-      }
-      return tiles.join('');
-    }
-
-    function markerPosition(location, viewport) {
-      const point = project(location, viewport.zoom);
-      const left = viewport.center.x - VIEW_WIDTH / 2;
-      const top = viewport.center.y - VIEW_HEIGHT / 2;
-      return {
-        x: ((point.x - left) / VIEW_WIDTH) * 100,
-        y: ((point.y - top) / VIEW_HEIGHT) * 100,
-      };
+    function markerPosition(location) {
+      return project(location);
     }
 
     function markerPoints(items, viewport) {
@@ -339,6 +286,7 @@
         const b = markerPosition(egress.location, viewport);
         const status = backhaulStatus(link);
         const tone = linkTone(status);
+        const markerID = `node-map-arrow-${tone}`;
         const metric = linkMetric(link);
         const title = [
           String(link?.name || 'backhaul').trim(),
@@ -351,7 +299,7 @@
         const midY = (a.y + b.y) / 2;
         return `
           <g class="node-map-backhaul-link ${tone}">
-            <path d="${curvedPath(a, b)}" marker-end="url(#node-map-arrow)">
+            <path d="${curvedPath(a, b)}" marker-end="url(#${escapeHTML(markerID)})">
               <title>${escapeHTML(title)}</title>
             </path>
             ${metric ? `<text x="${midX.toFixed(3)}" y="${midY.toFixed(3)}">${escapeHTML(String(metric))}</text>` : ''}
@@ -361,9 +309,10 @@
       return `
         <svg class="node-map-backhaul-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Managed backhaul links">
           <defs>
-            <marker id="node-map-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-              <path d="M 0 0 L 8 4 L 0 8 z"></path>
-            </marker>
+            <marker id="node-map-arrow-healthy" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 8 4 L 0 8 z" fill="rgba(5,150,105,0.86)"></path></marker>
+            <marker id="node-map-arrow-warning" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 8 4 L 0 8 z" fill="rgba(217,119,6,0.86)"></path></marker>
+            <marker id="node-map-arrow-danger" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 8 4 L 0 8 z" fill="rgba(220,38,38,0.86)"></path></marker>
+            <marker id="node-map-arrow-disabled" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 8 4 L 0 8 z" fill="rgba(100,116,139,0.72)"></path></marker>
           </defs>
           ${paths}
         </svg>`;
@@ -492,8 +441,15 @@
         const status = backhaulStatus(link);
         const endpoint = backhaulEndpoint(link);
         const metric = linkMetric(link);
+        const linkID = String(link.id || '');
+        const disabled = normalizeStatus(link.status, '') === 'disabled';
+        const busy = routeUpdates.has(linkID);
+        const routeEnabled = !disabled;
+        const routeText = routeEnabled
+          ? 'Participates in managed routing and route-policy selection.'
+          : 'Removed from managed routing until it is enabled again.';
         return `
-          <article class="node-map-backhaul-card ${linkTone(status)}">
+          <article class="node-map-backhaul-card ${linkTone(status)}${busy ? ' updating' : ''}">
             <div>
               <span class="mini-label">Backhaul</span>
               <h3>${escapeHTML(link.name || 'managed link')}</h3>
@@ -506,16 +462,28 @@
               ${statusTag(drawable ? 'mapped' : 'waiting GeoIP')}
             </div>
             ${endpoint ? `<div class="muted-mono">${escapeHTML(endpoint)}</div>` : ''}
+            <div class="node-map-route-control">
+              <label class="node-map-route-switch ${routeEnabled ? 'enabled' : 'disabled'}${busy ? ' busy' : ''}">
+                <input class="node-map-route-input" type="checkbox" data-link-id="${escapeHTML(linkID)}" ${routeEnabled ? 'checked' : ''} ${busy || typeof sendJSON !== 'function' ? 'disabled' : ''}>
+                <span></span>
+                <strong>${escapeHTML(routeEnabled ? 'Route enabled' : 'Route disabled')}</strong>
+              </label>
+              <small>${escapeHTML(busy ? 'Route state update is queued...' : routeText)}</small>
+            </div>
           </article>`;
       }).join('');
+      const notice = state.nodeMapRouteNotice
+        ? `<div class="node-map-route-notice ${escapeHTML(safeClassToken(state.nodeMapRouteNotice.tone || ''))}">${escapeHTML(state.nodeMapRouteNotice.text || '')}</div>`
+        : '';
       return `
         <section class="section-card node-map-topology-card">
           <div class="section-head compact">
             <div>
               <h2>Backhaul topology</h2>
-              <p>Managed ingress-to-egress routes are drawn as directed lines when both endpoint nodes are mapped.</p>
+              <p>Managed ingress-to-egress routes are drawn as directed lines when both endpoint nodes are mapped. Disabled routes stay visible and are excluded from managed routing.</p>
             </div>
           </div>
+          ${notice}
           <div class="node-map-backhaul-grid">${rows}</div>
         </section>`;
     }
@@ -557,6 +525,47 @@
       render();
     }
 
+    function mergeBackhaulLink(link) {
+      if (!link || !link.id || !Array.isArray(state.backhaulLinks)) return;
+      const id = String(link.id);
+      const next = state.backhaulLinks.slice();
+      const index = next.findIndex((item) => String(item.id || '') === id);
+      if (index >= 0) next[index] = link;
+      else next.push(link);
+      state.backhaulLinks = next;
+    }
+
+    async function setRouteEnabled(linkID, enabled) {
+      if (!linkID || typeof sendJSON !== 'function') return;
+      routeUpdates.add(linkID);
+      state.nodeMapRouteNotice = {
+        tone: 'warning',
+        text: enabled ? 'Route enable has been requested.' : 'Route disable has been requested.',
+      };
+      render();
+      try {
+        const result = await sendJSON(`/api/v1/backhaul-links/${encodeURIComponent(linkID)}/route`, 'PATCH', { enabled });
+        mergeBackhaulLink(result?.link);
+        state.nodeMapRouteNotice = {
+          tone: 'healthy',
+          text: enabled
+            ? `Route enable queued${result?.job_count ? `: ${result.job_count} job(s)` : '.'}`
+            : `Route disable queued${result?.job_count ? `: ${result.job_count} job(s)` : '.'}`,
+        };
+        if (typeof loadCore === 'function') {
+          await loadCore();
+        }
+      } catch (err) {
+        state.nodeMapRouteNotice = {
+          tone: 'danger',
+          text: err?.message || 'Route state update failed.',
+        };
+      } finally {
+        routeUpdates.delete(linkID);
+        render();
+      }
+    }
+
     function render() {
       setTitle('Node Map');
       const nodes = nodesList();
@@ -588,13 +597,13 @@
 
           <section class="section-card node-map-card">
             <div class="node-real-map" role="img" aria-label="World map with node locations and managed backhaul">
-              <div class="node-map-tile-layer">${renderTiles(viewport)}</div>
+              <div class="node-map-static-map" style="background-image:url('${escapeHTML(STATIC_MAP_URL)}')"></div>
               <div class="node-map-shade"></div>
               ${renderBackhaulOverlay(located, viewport)}
               <div class="node-map-pin-layer">${renderMarkers(located, viewport, selectedID)}</div>
               ${renderTopologyLegend(located, unresolved, drawableLinks, links)}
               ${renderSelectedNodePanel(selected, nodeLookup)}
-              <div class="node-map-attribution">© ${escapeHTML(TILE_ATTRIBUTION)}</div>
+              <div class="node-map-attribution">local static map</div>
               ${located.length ? '' : '<div class="node-map-empty">No public node coordinates are cached yet. Add a node with a public address or check the GeoIP settings.</div>'}
             </div>
           </section>
@@ -611,6 +620,9 @@
       });
       document.querySelectorAll('.node-map-open-btn').forEach((button) => {
         button.addEventListener('click', () => openNode(button.dataset.nodeId));
+      });
+      document.querySelectorAll('.node-map-route-input').forEach((input) => {
+        input.addEventListener('change', () => setRouteEnabled(input.dataset.linkId, input.checked));
       });
     }
 

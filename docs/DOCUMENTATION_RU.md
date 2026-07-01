@@ -36,7 +36,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md` | Release evidence, self-test и smoke gates. |
 | Security | `docs/THREAT_MODEL.md`, `docs/RBAC_MATRIX.md` | Threat model, roles, permissions и privileged jobs. |
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection и troubleshooting. |
-| Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP-размещение нод, map tiles, node owner metadata и backhaul overlay. |
+| Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP-размещение нод, локальная статичная карта, node owner metadata и backhaul overlay. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic и tactical product planning. |
 
 ## Языковая политика

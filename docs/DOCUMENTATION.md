@@ -36,7 +36,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md` | Release evidence, self-test and smoke gates. |
 | Security | `docs/THREAT_MODEL.md`, `docs/RBAC_MATRIX.md` | Threat model, roles, permissions and privileged jobs. |
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection and troubleshooting. |
-| Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP node placement, map tiles, node owner metadata and backhaul overlay. |
+| Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP node placement, local static map, node owner metadata and backhaul overlay. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic and tactical product planning. |
 
 ## Language Policy

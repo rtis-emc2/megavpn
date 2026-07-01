@@ -31,8 +31,8 @@ The node map uses the following data:
 4. If the address is public, the API queries the configured GeoIP endpoint.
 5. Country, city, coordinates, ASN and network owner fields are cached in the
    `nodes` table.
-6. The Node Map page renders the world map, node pins, selected-node details
-   and drawable backhaul edges.
+6. The Node Map page renders the local static world map, node pins,
+   selected-node details and drawable backhaul edges.
 
 List requests also refresh stale or missing GeoIP cache entries in small batches
 controlled by `MEGAVPN_GEOIP_AUTO_ENRICH_LIMIT`.
@@ -54,8 +54,8 @@ providers will see the public node IPs that are looked up.
 
 The page is intentionally map-first:
 
-- the map uses tile imagery and does not require operators to enter
-  coordinates;
+- the map uses a bundled static world-map asset and does not require operators
+  to enter coordinates or load external map imagery;
 - clicking a node pin selects the node and opens an inspector on the same page;
 - the inspector shows address, role, status, city/country, coordinates, network
   owner, ASN/source metadata and related backhaul;
@@ -71,12 +71,16 @@ node pins:
 - active/applied transports are rendered as healthy links;
 - provisioning/degraded links are rendered as warning links;
 - failed links are rendered as failed links;
+- disabled links remain visible as disabled topology and are excluded from
+  managed route-policy selection until enabled again;
 - deleted links are not shown;
 - links with unresolved node coordinates are counted in the summary but not
   drawn;
 - metric labels are shown on mapped links when the route metric is configured;
 - the topology cards below the map show direction, driver, metric, endpoint and
-  selected transport status for every non-deleted managed link.
+  selected transport status for every non-deleted managed link;
+- the route switch in each topology card queues managed enable/disable jobs for
+  the selected link.
 
 The Backhaul page remains the source of truth for apply, probe, cleanup and
 detailed transport diagnostics. Node Map is a topology view, not a replacement
@@ -89,7 +93,8 @@ for operational troubleshooting.
   addresses before any provider call.
 - Lookup response bodies are size-limited and parsed as JSON.
 - GeoIP is best-effort: lookup failures never block node creation or update.
-- Map tiles are allowed by CSP only for the configured public tile source.
+- The map background is served from local web assets; CSP does not require any
+  external image source for the topology view.
 
 ## Operational Notes
 

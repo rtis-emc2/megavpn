@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="Static world map">
+  <defs>
+    <linearGradient id="water" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#c7e3ee"/>
+      <stop offset="0.58" stop-color="#b5d9e6"/>
+      <stop offset="1" stop-color="#a9cfdd"/>
+    </linearGradient>
+    <linearGradient id="land" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#f4f3ed"/>
+      <stop offset="1" stop-color="#dedbd2"/>
+    </linearGradient>
+    <filter id="soft-shadow" x="-8%" y="-8%" width="116%" height="116%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1.4" flood-color="#6b7280" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+  <rect width="1280" height="640" fill="url(#water)"/>
+  <g opacity="0.34" stroke="#ffffff" stroke-width="1">
+    <path d="M0 320H1280M0 244H1280M0 186H1280M0 454H1280M0 534H1280"/>
+    <path d="M160 0V640M320 0V640M480 0V640M640 0V640M800 0V640M960 0V640M1120 0V640"/>
+  </g>
+  <g fill="url(#land)" stroke="#cfcac0" stroke-width="1.4" filter="url(#soft-shadow)">
+    <path d="M95 242l38-39 58-19 63-7 58 20 47 35 12 45 34 20 10 52-20 41-45 9-50-28-38-6-32 27-52-9-40-35-57-16-35-37 6-36z"/>
+    <path d="M205 150l38-38 65-31 79-10 55 20 12 48-42 33-78 14-71 21-58-16z"/>
+    <path d="M372 372l44 38 40 76 24 81-25 62-47-22-28-82-39-66 1-54z"/>
+    <path d="M491 236l46-24 55 7 35 28 11 42-37 23-46-7-47 17-31-39z"/>
+    <path d="M576 254l45-26 58-14 62 12 52-29 80-7 74 22 82-8 86 26 68 55-35 34-73-9-41 25-72-3-58 27-82-23-56 16-65-18-57 12-58-32-48 15z"/>
+    <path d="M679 316l51 7 48 48 18 80-25 69-47 20-50-52-25-87 7-61z"/>
+    <path d="M1035 441l63 18 44 36 40 8 38 32-20 26-75-4-65 17-58-30 2-54z"/>
+    <path d="M38 592l151-21 164 15 154-22 198 24 158-18 181 17 162-11 74 20v44H0v-38z"/>
+    <path d="M1117 193l50-20 51 24 22 35-34 25-62-7-42-26z"/>
+    <path d="M541 184l40-28 57 4 26 31-35 21-58-3z"/>
+    <path d="M782 234l37-28 60 10 24 34-48 19-51-6z"/>
+    <path d="M121 360l49 5 37 28-9 31-55-2-46-26z"/>
+    <path d="M458 309l36-18 43 18-2 34-43 12-39-19z"/>
+    <path d="M884 357l45-8 53 24 2 41-55 8-51-24z"/>
+  </g>
+  <g fill="#ece9df" stroke="#d6d1c6" stroke-width="1" opacity="0.95">
+    <path d="M1029 244l34 1 20 16-28 11-29-9z"/>
+    <path d="M958 250l25-9 23 14-17 18-31-6z"/>
+    <path d="M734 221l31-13 29 11-23 19-33-3z"/>
+    <path d="M614 209l30-12 29 12-13 20-34 2z"/>
+    <path d="M522 255l22-16 27 8-6 22-31 6z"/>
+    <path d="M241 231l27-13 25 13-10 22-30 3z"/>
+    <path d="M320 276l25-9 25 15-15 19-29-3z"/>
+    <path d="M438 408l22 20 16 38-18 18-25-41z"/>
+    <path d="M1127 506l32 10 22 21-29 12-33-16z"/>
+  </g>
+</svg>

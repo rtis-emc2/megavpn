@@ -346,6 +346,8 @@
     setTitle,
     el,
     setPage,
+    sendJSON,
+    loadCore,
     statusTag,
     escapeHTML,
   }) || createUnavailablePage('Node Map', 'assets/node-map-page.js');

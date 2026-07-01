@@ -3,8 +3,7 @@
 
   window.MegaVPNAppConfig = {
     nodeMap: {
-      tileURLTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      tileAttribution: 'OpenStreetMap contributors',
+      staticMapURL: './assets/world-map.svg',
     },
     navGroups: [
       ['Operations', [
