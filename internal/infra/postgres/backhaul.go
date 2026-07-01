@@ -705,8 +705,8 @@ func (s *Store) wireGuardBackhaulMaterial(ctx context.Context, link domain.Backh
 		)
 	} else {
 		files = append(files,
-			map[string]any{"path": startPath, "mode": "0700", "content": renderBackhaulIngressStartScript(slug, transport.InterfaceName, unitStart)},
-			map[string]any{"path": stopPath, "mode": "0700", "content": renderBackhaulIngressStopScript(slug, transport.InterfaceName, unitStop)},
+			map[string]any{"path": startPath, "mode": "0700", "content": renderBackhaulIngressStartScript(slug, transport.InterfaceName, unitStart, transport.IngressAddress, link.RoutingTable, link.RouteMetric)},
+			map[string]any{"path": stopPath, "mode": "0700", "content": renderBackhaulIngressStopScript(slug, transport.InterfaceName, unitStop, transport.IngressAddress, link.RoutingTable)},
 		)
 	}
 	unitStart = startPath
@@ -849,8 +849,8 @@ func (s *Store) openVPNBackhaulMaterial(ctx context.Context, link domain.Backhau
 		)
 	} else {
 		files = append(files,
-			map[string]any{"path": startPath, "mode": "0700", "content": renderBackhaulIngressStartScript(slug, transport.InterfaceName, unitStart)},
-			map[string]any{"path": stopPath, "mode": "0700", "content": renderBackhaulIngressStopScript(slug, transport.InterfaceName, unitStop)},
+			map[string]any{"path": startPath, "mode": "0700", "content": renderBackhaulIngressStartScript(slug, transport.InterfaceName, unitStart, transport.IngressAddress, link.RoutingTable, link.RouteMetric)},
+			map[string]any{"path": stopPath, "mode": "0700", "content": renderBackhaulIngressStopScript(slug, transport.InterfaceName, unitStop, transport.IngressAddress, link.RoutingTable)},
 		)
 	}
 	unitStart = startPath
@@ -1497,13 +1497,14 @@ func renderBackhaulEgressStartScript(slug, iface, transportStartCmd string) stri
 	return renderBackhaulNATStartScript(slug, iface, transportStartCmd, "iifname", "egress-masquerade")
 }
 
-func renderBackhaulIngressStartScript(slug, iface, transportStartCmd string) string {
-	return renderBackhaulNATStartScript(slug, iface, transportStartCmd, "oifname", "ingress-snat")
+func renderBackhaulIngressStartScript(slug, iface, transportStartCmd, sourceAddress, routingTable string, routeMetric int) string {
+	extra := renderBackhaulIngressSourcePolicyStartLines(iface, sourceAddress, routingTable, routeMetric)
+	return renderBackhaulNATStartScript(slug, iface, transportStartCmd, "oifname", "ingress-snat", extra...)
 }
 
-func renderBackhaulNATStartScript(slug, iface, transportStartCmd, direction, label string) string {
+func renderBackhaulNATStartScript(slug, iface, transportStartCmd, direction, label string, extraLines ...string) string {
 	comment := "megavpn:backhaul:" + slug + ":" + label
-	return strings.Join([]string{
+	lines := []string{
 		"#!/usr/bin/env sh",
 		"set -eu",
 		"",
@@ -1518,18 +1519,27 @@ func renderBackhaulNATStartScript(slug, iface, transportStartCmd, direction, lab
 		"  fi",
 		"fi",
 		"",
-	}, "\n")
+	}
+	if len(extraLines) > 0 {
+		lines = append(lines, extraLines...)
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderBackhaulEgressStopScript(slug, iface, transportStopCmd string) string {
 	return renderBackhaulStopScript(slug, iface, transportStopCmd, "egress-masquerade")
 }
 
-func renderBackhaulIngressStopScript(slug, iface, transportStopCmd string) string {
-	return renderBackhaulStopScript(slug, iface, transportStopCmd, "ingress-snat")
+func renderBackhaulIngressStopScript(slug, iface, transportStopCmd, sourceAddress, routingTable string) string {
+	return renderBackhaulStopScriptWithExtra(slug, iface, transportStopCmd, renderBackhaulIngressSourcePolicyStopLines(sourceAddress, routingTable), "ingress-snat")
 }
 
 func renderBackhaulStopScript(slug, iface, transportStopCmd string, labels ...string) string {
+	return renderBackhaulStopScriptWithExtra(slug, iface, transportStopCmd, nil, labels...)
+}
+
+func renderBackhaulStopScriptWithExtra(slug, iface, transportStopCmd string, extraLines []string, labels ...string) string {
 	if len(labels) == 0 {
 		labels = []string{"egress-masquerade"}
 	}
@@ -1550,12 +1560,45 @@ func renderBackhaulStopScript(slug, iface, transportStopCmd string, labels ...st
 		)
 	}
 	lines = append(lines, "fi")
+	if len(extraLines) > 0 {
+		lines = append(lines, extraLines...)
+	}
 	if strings.TrimSpace(transportStopCmd) != "" {
 		lines = append(lines, transportStopCmd+" >/dev/null 2>&1 || true")
 	}
 	_ = iface
 	lines = append(lines, "")
 	return strings.Join(lines, "\n")
+}
+
+func renderBackhaulIngressSourcePolicyStartLines(iface, sourceAddress, routingTable string, routeMetric int) []string {
+	source := hostAddress(sourceAddress)
+	if source == "" || strings.TrimSpace(routingTable) == "" || strings.EqualFold(strings.TrimSpace(routingTable), "main") {
+		return nil
+	}
+	if routeMetric <= 0 {
+		routeMetric = 50
+	}
+	return []string{
+		"if command -v ip >/dev/null 2>&1; then",
+		"  while ip rule delete from " + shellQuotePG(source+"/32") + " table " + shellQuotePG(routingTable) + " >/dev/null 2>&1; do :; done",
+		"  ip route replace default dev " + shellQuotePG(iface) + " table " + shellQuotePG(routingTable) + " metric " + strconv.Itoa(routeMetric),
+		"  ip rule add from " + shellQuotePG(source+"/32") + " table " + shellQuotePG(routingTable) + " priority 21950",
+		"fi",
+	}
+}
+
+func renderBackhaulIngressSourcePolicyStopLines(sourceAddress, routingTable string) []string {
+	source := hostAddress(sourceAddress)
+	if source == "" || strings.TrimSpace(routingTable) == "" || strings.EqualFold(strings.TrimSpace(routingTable), "main") {
+		return nil
+	}
+	return []string{
+		"if command -v ip >/dev/null 2>&1; then",
+		"  while ip rule delete from " + shellQuotePG(source+"/32") + " table " + shellQuotePG(routingTable) + " >/dev/null 2>&1; do :; done",
+		"  ip route flush table " + shellQuotePG(routingTable) + " >/dev/null 2>&1 || true",
+		"fi",
+	}
 }
 
 func buildBackhaulIPSecConfig(link domain.BackhaulLink, transport domain.BackhaulTransport, role string, def backhaul.DriverDefinition, psk string) (string, string) {

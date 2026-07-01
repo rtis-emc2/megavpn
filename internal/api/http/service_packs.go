@@ -47,7 +47,8 @@ func defaultVLESSOutboundGroups() []any {
 	return []any{
 		map[string]any{
 			"key":          "default",
-			"label":        "Default direct",
+			"label":        "Default egress",
+			"egress_mode":  "auto",
 			"outbound_tag": "direct",
 		},
 	}

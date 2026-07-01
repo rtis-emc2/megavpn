@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/netip"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,155 @@ type routePolicyNode struct {
 	Name    string
 	Role    string
 	Address string
+}
+
+type XrayVLESSEgressResolution struct {
+	Mode           string
+	CurrentNodeID  string
+	CurrentName    string
+	CurrentRole    string
+	EgressNodeID   string
+	EgressNodeName string
+	EgressAddress  string
+	LinkID         string
+	TransportID    string
+	Driver         string
+	InterfaceName  string
+	IngressAddress string
+	SendThrough    string
+	RoutingTable   string
+	RouteMetric    int
+	ResolutionNote string
+}
+
+func (r XrayVLESSEgressResolution) Map() map[string]any {
+	out := map[string]any{
+		"mode":              r.Mode,
+		"current_node_id":   r.CurrentNodeID,
+		"current_node_name": r.CurrentName,
+		"current_node_role": r.CurrentRole,
+	}
+	if r.EgressNodeID != "" {
+		out["egress_node_id"] = r.EgressNodeID
+	}
+	if r.EgressNodeName != "" {
+		out["egress_node_name"] = r.EgressNodeName
+	}
+	if r.EgressAddress != "" {
+		out["egress_address"] = r.EgressAddress
+	}
+	if r.LinkID != "" {
+		out["link_id"] = r.LinkID
+	}
+	if r.TransportID != "" {
+		out["transport_id"] = r.TransportID
+	}
+	if r.Driver != "" {
+		out["driver"] = r.Driver
+	}
+	if r.InterfaceName != "" {
+		out["interface"] = r.InterfaceName
+	}
+	if r.IngressAddress != "" {
+		out["ingress_address"] = r.IngressAddress
+	}
+	if r.SendThrough != "" {
+		out["send_through"] = r.SendThrough
+	}
+	if r.RoutingTable != "" {
+		out["routing_table"] = r.RoutingTable
+	}
+	if r.RouteMetric > 0 {
+		out["route_metric"] = r.RouteMetric
+	}
+	if r.ResolutionNote != "" {
+		out["resolution_note"] = r.ResolutionNote
+	}
+	return out
+}
+
+func (s *Store) ResolveXrayVLESSEgress(ctx context.Context, instanceID, requestedEgressNodeID string) (XrayVLESSEgressResolution, error) {
+	instance, err := s.GetInstance(ctx, strings.TrimSpace(instanceID))
+	if err != nil {
+		return XrayVLESSEgressResolution{}, err
+	}
+	node, err := s.GetNode(ctx, strings.TrimSpace(instance.NodeID))
+	if err != nil {
+		return XrayVLESSEgressResolution{}, err
+	}
+	current := XrayVLESSEgressResolution{
+		Mode:           "local_breakout",
+		CurrentNodeID:  node.ID,
+		CurrentName:    node.Name,
+		CurrentRole:    node.Role,
+		EgressNodeID:   node.ID,
+		EgressNodeName: node.Name,
+		EgressAddress:  node.Address,
+	}
+	if strings.EqualFold(node.Role, "egress") {
+		current.ResolutionNote = "instance is already on an egress node"
+		return current, nil
+	}
+	if !strings.EqualFold(node.Role, "ingress") {
+		return XrayVLESSEgressResolution{}, fmt.Errorf("xray remote egress requires node role ingress or egress; node %s has role=%s", firstNonEmptyRouteValue(node.Name, node.ID), node.Role)
+	}
+	managed, err := s.listRoutePolicyBackhauls(ctx, node.ID)
+	if err != nil {
+		return XrayVLESSEgressResolution{}, err
+	}
+	egressNodes, err := s.listRoutePolicyEgressNodes(ctx)
+	if err != nil {
+		return XrayVLESSEgressResolution{}, err
+	}
+	requestedEgressNodeID = strings.TrimSpace(requestedEgressNodeID)
+	selectedID := requestedEgressNodeID
+	if selectedID == "" {
+		switch len(managed) {
+		case 0:
+			return XrayVLESSEgressResolution{}, fmt.Errorf("xray remote egress requires an active managed backhaul from ingress node %s", firstNonEmptyRouteValue(node.Name, node.ID))
+		case 1:
+			for id := range managed {
+				selectedID = id
+			}
+		default:
+			ids := make([]string, 0, len(managed))
+			for id := range managed {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			return XrayVLESSEgressResolution{}, fmt.Errorf("xray remote egress is ambiguous for ingress node %s; set egress_node_id, candidates=%s", firstNonEmptyRouteValue(node.Name, node.ID), strings.Join(ids, ","))
+		}
+	}
+	selected, ok := egressNodes[selectedID]
+	if !ok {
+		return XrayVLESSEgressResolution{}, fmt.Errorf("selected xray egress node %s is not an active egress node", selectedID)
+	}
+	backhaul, ok := managed[selectedID]
+	if !ok {
+		return XrayVLESSEgressResolution{}, fmt.Errorf("selected xray egress node %s has no active managed backhaul from ingress node %s", firstNonEmptyRouteValue(selected.Name, selected.ID), firstNonEmptyRouteValue(node.Name, node.ID))
+	}
+	sendThrough := hostAddress(backhaul.IngressAddress)
+	if addr, err := netip.ParseAddr(sendThrough); err != nil || !addr.Is4() {
+		return XrayVLESSEgressResolution{}, fmt.Errorf("managed backhaul ingress address %q is not a valid IPv4 source address", backhaul.IngressAddress)
+	}
+	return XrayVLESSEgressResolution{
+		Mode:           "remote_egress",
+		CurrentNodeID:  node.ID,
+		CurrentName:    node.Name,
+		CurrentRole:    node.Role,
+		EgressNodeID:   selected.ID,
+		EgressNodeName: selected.Name,
+		EgressAddress:  selected.Address,
+		LinkID:         backhaul.LinkID,
+		TransportID:    backhaul.TransportID,
+		Driver:         backhaul.Driver,
+		InterfaceName:  backhaul.InterfaceName,
+		IngressAddress: backhaul.IngressAddress,
+		SendThrough:    sendThrough,
+		RoutingTable:   backhaul.RoutingTable,
+		RouteMetric:    backhaul.RouteMetric,
+		ResolutionNote: "remote egress resolved through active managed backhaul",
+	}, nil
 }
 
 func (s *Store) ListClientAccessRoutes(ctx context.Context, clientID string) ([]domain.ClientAccessRoute, error) {

@@ -13,6 +13,7 @@
       requestJSON,
       sendJSON,
       refresh,
+      setPage,
       openModal,
       closeModal,
       renderActionResponse,
@@ -224,11 +225,12 @@
           key,
           label: String(source.label || source.title || key).trim() || key,
           outboundTag: String(source.outbound_tag || source.outboundTag || source.tag || 'direct').trim() || 'direct',
+          egressMode: String(source.egress_mode || source.egress?.mode || '').trim(),
         };
       }).filter(Boolean);
       if (!groups.length) {
         const key = normalizeVLESSGroupKey(spec.default_vless_group || spec.default_xray_group || spec.default_outbound_group || 'default') || 'default';
-        groups.push({ key, label: key === 'default' ? 'Default direct' : key, outboundTag: 'direct' });
+        groups.push({ key, label: key === 'default' ? 'Default egress' : key, outboundTag: 'direct', egressMode: 'auto' });
       }
       return groups;
     }
@@ -245,7 +247,8 @@
       const groups = vlessGroupsForInstance(instance);
       const selected = defaultVLESSGroupForInstance(instance, groups);
       const options = groups.map((group) => {
-        return `<option value="${escapeHTML(group.key)}"${group.key === selected ? ' selected' : ''}>${escapeHTML(group.label)} -> ${escapeHTML(group.outboundTag)}</option>`;
+        const routeLabel = group.egressMode ? `${group.egressMode} egress` : group.outboundTag;
+        return `<option value="${escapeHTML(group.key)}"${group.key === selected ? ' selected' : ''}>${escapeHTML(group.label)} -> ${escapeHTML(routeLabel)}</option>`;
       }).join('');
       return `
         <span class="client-choice-option-row">
@@ -520,21 +523,31 @@
       event.preventDefault();
       const target = document.getElementById('clientProvisionResult');
       if (target) target.innerHTML = '<span class="tag warn">queueing</span>';
+      const formEl = event.currentTarget;
+      const submitButton = formEl.querySelector('button[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = 'Queueing provisioning';
+      }
       const instanceIDs = Array.from(event.currentTarget.querySelector('#clientProvisionInstances')?.selectedOptions || [])
         .map((option) => option.value)
         .filter(Boolean);
-      const checkboxIDs = Array.from(event.currentTarget.querySelectorAll('input[name="instance_ids"]:checked') || [])
+      const checkboxIDs = Array.from(formEl.querySelectorAll('input[name="instance_ids"]:checked') || [])
         .map((input) => input.value)
         .filter(Boolean);
       const selectedIDs = checkboxIDs.length ? checkboxIDs : instanceIDs;
       if (selectedIDs.length === 0) {
         if (target) target.innerHTML = '<span class="tag danger">Select at least one service instance</span>';
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = 'Queue provisioning';
+        }
         return;
       }
       try {
         const selectedSet = new Set(selectedIDs);
         const serviceOptions = {};
-        event.currentTarget.querySelectorAll('.client-vless-group-select').forEach((select) => {
+        formEl.querySelectorAll('.client-vless-group-select').forEach((select) => {
           const instanceID = String(select.dataset.instanceId || '').trim();
           const group = normalizeVLESSGroupKey(select.value);
           if (instanceID && group && selectedSet.has(instanceID)) {
@@ -544,11 +557,74 @@
         const payload = { instance_ids: selectedIDs };
         if (Object.keys(serviceOptions).length) payload.service_options = serviceOptions;
         const data = await sendJSON(`/api/v1/clients/${clientID}/provision`, 'POST', payload);
-        if (target) target.innerHTML = renderActionResponse(data, 'Client provision');
+        if (target) target.innerHTML = '';
+        const client = findClient(clientID);
+        formEl.innerHTML = renderProvisionQueuedState(client, selectedIDs, payload, data);
+        document.getElementById('clientProvisionCloseBtn')?.addEventListener('click', closeModal);
+        document.getElementById('clientProvisionRefreshBtn')?.addEventListener('click', () => {
+          void refresh();
+        });
+        document.getElementById('clientProvisionJobsBtn')?.addEventListener('click', async () => {
+          closeModal();
+          if (typeof setPage === 'function') {
+            setPage('jobs');
+          } else {
+            state.page = 'jobs';
+          }
+          await refresh();
+        });
         await refresh();
       } catch (err) {
         if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = 'Queue provisioning';
+        }
       }
+    }
+
+    function renderProvisionQueuedState(client, selectedIDs, payload, job) {
+      const selected = selectedIDs.map((id) => findInstance(id)).filter(Boolean);
+      const serviceRows = selected.map((instance) => {
+        const node = findNode(instance.node_id);
+        const group = payload?.service_options?.[instance.id]?.vless_group || '';
+        return `
+          <div class="client-provision-result-service">
+            <strong>${escapeHTML(instance.name || instance.slug || instance.id)}</strong>
+            <span>${escapeHTML(compactServiceLabel(instance.service_code))} · ${escapeHTML(node?.name || instance.node_id || 'node')} · ${escapeHTML(node?.role || 'role n/a')}</span>
+            <code>${escapeHTML(endpointLabel(instance))}</code>
+            ${group ? `<em>VLESS group: ${escapeHTML(group)}</em>` : ''}
+          </div>`;
+      }).join('');
+      const jobID = job?.id || job?.job_id || '';
+      return `
+        <section class="client-provision-queued">
+          <div class="client-provision-queued-head">
+            <div>
+              <span class="mini-label">Provisioning queued</span>
+              <h3>${escapeHTML(clientDisplayName(client || {}))}</h3>
+              <p>Service access is stored. A worker job will generate secrets, refresh instance state and build client artifacts.</p>
+            </div>
+            ${statusTag(job?.status || 'queued')}
+          </div>
+          <div class="client-provision-result-grid">
+            <div><span>Job</span><strong>${escapeHTML(jobID || 'queued')}</strong></div>
+            <div><span>Type</span><strong>${escapeHTML(job?.type || 'client.provision')}</strong></div>
+            <div><span>Services</span><strong>${escapeHTML(String(selected.length))}</strong></div>
+          </div>
+          <div class="client-provision-service-list">${serviceRows || '<div class="empty compact-empty">Selected instances will appear after refresh.</div>'}</div>
+          <div class="client-provision-next">
+            <div><span>1</span><strong>Worker claim</strong><small>The provisioning job moves from queued to running.</small></div>
+            <div><span>2</span><strong>Driver state</strong><small>Keys, certificates and protocol metadata are generated.</small></div>
+            <div><span>3</span><strong>Instance apply</strong><small>Affected service instances are queued for agent apply when needed.</small></div>
+            <div><span>4</span><strong>Artifacts</strong><small>Client configs become visible in Build/Email workflows.</small></div>
+          </div>
+          <div class="field full inline-actions">
+            <button class="primary-btn" type="button" id="clientProvisionJobsBtn">Open jobs</button>
+            <button class="secondary-btn" type="button" id="clientProvisionRefreshBtn">Refresh status</button>
+            <button class="secondary-btn" type="button" id="clientProvisionCloseBtn">Close</button>
+          </div>
+        </section>`;
     }
 
     function renderServiceAccessRows(accessList, clientID) {

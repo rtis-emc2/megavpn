@@ -392,6 +392,7 @@
     requestJSON,
     sendJSON,
     refresh,
+    setPage,
     openModal,
     closeModal,
     renderActionResponse,
