@@ -26,6 +26,7 @@ type routePolicyBackhaul struct {
 	LinkID         string
 	TransportID    string
 	Driver         string
+	Priority       int
 	InterfaceName  string
 	IngressAddress string
 	EgressAddress  string
@@ -1198,12 +1199,13 @@ func scanBackhaulTransport(row pgx.Row) (domain.BackhaulTransport, error) {
 	return transport, nil
 }
 
-func (s *Store) listRoutePolicyBackhauls(ctx context.Context, ingressNodeID string) (map[string]routePolicyBackhaul, error) {
+func (s *Store) listRoutePolicyBackhauls(ctx context.Context, ingressNodeID string) (map[string][]routePolicyBackhaul, error) {
 	rows, err := s.db.Query(ctx, `select
 		bl.egress_node_id::text,
 		bl.id::text,
 		bt.id::text,
 		bt.driver,
+		bt.priority,
 		bt.interface_name,
 		bt.ingress_address,
 		bt.egress_address,
@@ -1214,22 +1216,39 @@ func (s *Store) listRoutePolicyBackhauls(ctx context.Context, ingressNodeID stri
 	join backhaul_transports bt on bt.id=bl.selected_transport_id
 	where bl.ingress_node_id=$1
 	  and bl.status='active'
-	  and bt.status='active'`, strings.TrimSpace(ingressNodeID))
+	  and bt.status='active'
+	order by bl.egress_node_id::text asc, bl.route_metric asc, bt.priority asc, bl.created_at asc, bt.created_at asc`, strings.TrimSpace(ingressNodeID))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]routePolicyBackhaul{}
+	out := map[string][]routePolicyBackhaul{}
 	for rows.Next() {
 		var egressNodeID string
 		var b routePolicyBackhaul
-		if err := rows.Scan(&egressNodeID, &b.LinkID, &b.TransportID, &b.Driver, &b.InterfaceName, &b.IngressAddress, &b.EgressAddress, &b.RoutingTable, &b.RouteMetric, &b.Status); err != nil {
+		if err := rows.Scan(&egressNodeID, &b.LinkID, &b.TransportID, &b.Driver, &b.Priority, &b.InterfaceName, &b.IngressAddress, &b.EgressAddress, &b.RoutingTable, &b.RouteMetric, &b.Status); err != nil {
 			return nil, err
 		}
 		if b.RoutingTable == "" || strings.EqualFold(b.RoutingTable, "main") || strings.EqualFold(b.RoutingTable, "auto") {
 			b.RoutingTable = defaultBackhaulRoutingTable(b.LinkID)
 		}
-		out[egressNodeID] = b
+		if b.RouteMetric <= 0 {
+			b.RouteMetric = 50
+		}
+		out[egressNodeID] = append(out[egressNodeID], b)
+	}
+	for egressNodeID := range out {
+		sort.SliceStable(out[egressNodeID], func(i, j int) bool {
+			left := out[egressNodeID][i]
+			right := out[egressNodeID][j]
+			if left.RouteMetric != right.RouteMetric {
+				return left.RouteMetric < right.RouteMetric
+			}
+			if left.Priority != right.Priority {
+				return left.Priority < right.Priority
+			}
+			return left.TransportID < right.TransportID
+		})
 	}
 	return out, rows.Err()
 }

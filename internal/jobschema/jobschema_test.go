@@ -428,3 +428,45 @@ func TestNormalizeArtifactBuildRejectsUnsupportedType(t *testing.T) {
 		t.Fatalf("expected validation error, got %T", err)
 	}
 }
+
+func TestNormalizeNodeFirewallApply(t *testing.T) {
+	payload, err := Normalize("node.firewall.apply", map[string]any{
+		"node_id":                " node-1 ",
+		"policy_id":              " policy-1 ",
+		"revision_id":            " rev-1 ",
+		"default_input_policy":   " ACCEPT ",
+		"default_forward_policy": "drop",
+		"enforce_default_policy": true,
+		"rules": []any{
+			map[string]any{"chain": "input", "action": "accept"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := payload["node_id"]; got != "node-1" {
+		t.Fatalf("node_id = %v, want node-1", got)
+	}
+	if got := payload["default_input_policy"]; got != "accept" {
+		t.Fatalf("default_input_policy = %v, want accept", got)
+	}
+	if got := payload["default_output_policy"]; got != "accept" {
+		t.Fatalf("default_output_policy = %v, want default accept", got)
+	}
+	if got := payload["enforce_default_policy"]; got != true {
+		t.Fatalf("enforce_default_policy = %v, want true", got)
+	}
+}
+
+func TestNormalizeNodeFirewallApplyRejectsInvalidRules(t *testing.T) {
+	_, err := Normalize("node.firewall.apply", map[string]any{
+		"node_id": "node-1",
+		"rules":   map[string]any{},
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !IsValidationError(err) {
+		t.Fatalf("expected validation error, got %T", err)
+	}
+}

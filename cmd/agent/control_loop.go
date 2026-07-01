@@ -185,6 +185,8 @@ func (c *client) execute(ctx context.Context, j job, st *agentState) (string, ma
 		return c.cleanupBackhaul(ctx, j, *st)
 	case "node.route_policy.apply":
 		return c.applyRoutePolicy(ctx, j, *st)
+	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe":
+		return c.handleNodeFirewallJob(ctx, j, *st)
 	case "instance.diagnose":
 		return c.handleInstanceDiagnoseJob(ctx, j)
 	case "instance.restart", "instance.apply", "instance.start", "instance.stop", "instance.enable", "instance.disable", "instance.delete":

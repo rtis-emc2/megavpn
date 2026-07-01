@@ -237,8 +237,8 @@ func TestRouteEgressProjectionUsesManagedBackhaul(t *testing.T) {
 	egressNodes := map[string]routePolicyNode{
 		"egress-1": {ID: "egress-1", Name: "egress-1", Role: "egress", Address: "10.0.0.2"},
 	}
-	managed := map[string]routePolicyBackhaul{
-		"egress-1": {
+	managed := map[string][]routePolicyBackhaul{
+		"egress-1": {{
 			LinkID:         "backhaul-1",
 			TransportID:    "transport-1",
 			Driver:         "wireguard",
@@ -248,7 +248,7 @@ func TestRouteEgressProjectionUsesManagedBackhaul(t *testing.T) {
 			RoutingTable:   "main",
 			RouteMetric:    50,
 			Status:         "active",
-		},
+		}},
 	}
 	egress := routeEgressProjection(
 		routePolicyNode{ID: "ingress-1", Name: "ingress-1", Role: "ingress", Address: "10.0.0.1"},
@@ -265,5 +265,9 @@ func TestRouteEgressProjectionUsesManagedBackhaul(t *testing.T) {
 	backhaul, ok := egress["managed_backhaul"].(map[string]any)
 	if !ok || stringify(backhaul["link_id"]) != "backhaul-1" {
 		t.Fatalf("managed_backhaul = %#v, want link projection", egress["managed_backhaul"])
+	}
+	candidates, ok := egress["managed_backhauls"].([]any)
+	if !ok || len(candidates) != 1 {
+		t.Fatalf("managed_backhauls = %#v, want one candidate", egress["managed_backhauls"])
 	}
 }

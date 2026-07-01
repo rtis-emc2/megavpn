@@ -98,7 +98,9 @@ Minimum production path for the first ingress/egress pair:
 8. Check health summary: both sides should report `healthy`, packet loss should be `0`, latency should be visible as average RTT. If a service is active but the test is `failed/degraded`, use the shown reason, route lookup, peer address and packet loss to distinguish missing connected route, firewall/UDP reachability, tunnel handshake and route table problems.
 9. Create client access route with remote egress node.
 10. Queue route policy sync for the ingress node.
-11. Verify route projection uses `managed_backhaul` and route policy job reports `enforced=true`.
+11. Verify route projection uses `managed_backhaul` for the primary candidate,
+    `managed_backhauls` for the failover set, and route policy job reports
+    `enforced=true`.
 
 ## Failure Scenarios
 

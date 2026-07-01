@@ -50,6 +50,8 @@ func defaultVLESSOutboundGroups() []any {
 		map[string]any{
 			"key":          "default",
 			"label":        "Default access",
+			"access_mode":  "instance_default",
+			"egress_mode":  "default",
 			"outbound_tag": "direct",
 		},
 	}

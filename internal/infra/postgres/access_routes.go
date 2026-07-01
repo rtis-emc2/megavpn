@@ -150,10 +150,11 @@ func (s *Store) ResolveXrayVLESSEgress(ctx context.Context, instanceID, requeste
 	if !ok {
 		return XrayVLESSEgressResolution{}, fmt.Errorf("selected xray egress node %s is not an active egress node", selectedID)
 	}
-	backhaul, ok := managed[selectedID]
-	if !ok {
+	candidates := managed[selectedID]
+	if len(candidates) == 0 {
 		return XrayVLESSEgressResolution{}, fmt.Errorf("selected xray egress node %s has no active managed backhaul from ingress node %s", firstNonEmptyRouteValue(selected.Name, selected.ID), firstNonEmptyRouteValue(node.Name, node.ID))
 	}
+	backhaul := candidates[0]
 	sendThrough := hostAddress(backhaul.IngressAddress)
 	if addr, err := netip.ParseAddr(sendThrough); err != nil || !addr.Is4() {
 		return XrayVLESSEgressResolution{}, fmt.Errorf("managed backhaul ingress address %q is not a valid IPv4 source address", backhaul.IngressAddress)
@@ -174,7 +175,7 @@ func (s *Store) ResolveXrayVLESSEgress(ctx context.Context, instanceID, requeste
 		SendThrough:    sendThrough,
 		RoutingTable:   backhaul.RoutingTable,
 		RouteMetric:    backhaul.RouteMetric,
-		ResolutionNote: "remote egress resolved through active managed backhaul",
+		ResolutionNote: "remote egress resolved through the lowest-metric active managed backhaul",
 	}, nil
 }
 
@@ -773,7 +774,7 @@ func routePolicyEnforcementSummary(routes []map[string]any) map[string]any {
 	return out
 }
 
-func routeEgressProjection(routeNode routePolicyNode, policy map[string]any, egressNodes map[string]routePolicyNode, managedBackhauls map[string]routePolicyBackhaul) map[string]any {
+func routeEgressProjection(routeNode routePolicyNode, policy map[string]any, egressNodes map[string]routePolicyNode, managedBackhauls map[string][]routePolicyBackhaul) map[string]any {
 	if policy == nil {
 		policy = map[string]any{}
 	}
@@ -843,22 +844,16 @@ func routeEgressProjection(routeNode routePolicyNode, policy map[string]any, egr
 		}
 		base["mode"] = "remote_egress"
 		if nextHop == "" && iface == "" {
-			if backhaul, ok := managedBackhauls[selected.ID]; ok {
+			if candidates := managedBackhauls[selected.ID]; len(candidates) > 0 {
+				backhaul := candidates[0]
+				effectiveTable := firstNonEmptyRouteValue(table, backhaul.RoutingTable)
 				base["status"] = "candidate"
 				base["interface"] = backhaul.InterfaceName
-				base["table"] = firstNonEmptyRouteValue(table, backhaul.RoutingTable)
+				base["table"] = effectiveTable
 				base["next_hop"] = ""
-				base["managed_backhaul"] = map[string]any{
-					"link_id":         backhaul.LinkID,
-					"transport_id":    backhaul.TransportID,
-					"driver":          backhaul.Driver,
-					"interface":       backhaul.InterfaceName,
-					"ingress_address": backhaul.IngressAddress,
-					"egress_address":  backhaul.EgressAddress,
-					"route_metric":    backhaul.RouteMetric,
-					"status":          backhaul.Status,
-				}
-				base["reasons"] = []string{"remote egress uses an active managed backhaul transport"}
+				base["managed_backhaul"] = routePolicyBackhaulProjection(backhaul, effectiveTable)
+				base["managed_backhauls"] = routePolicyBackhaulProjections(candidates, effectiveTable)
+				base["reasons"] = []string{"remote egress uses active managed backhaul transports ordered by route_metric"}
 				return base
 			}
 			base["status"] = "blocked"
@@ -874,6 +869,31 @@ func routeEgressProjection(routeNode routePolicyNode, policy map[string]any, egr
 		base["reasons"] = []string{"unsupported egress_mode"}
 		return base
 	}
+}
+
+func routePolicyBackhaulProjection(backhaul routePolicyBackhaul, effectiveTable string) map[string]any {
+	table := firstNonEmptyRouteValue(effectiveTable, backhaul.RoutingTable)
+	return map[string]any{
+		"link_id":         backhaul.LinkID,
+		"transport_id":    backhaul.TransportID,
+		"driver":          backhaul.Driver,
+		"priority":        backhaul.Priority,
+		"interface":       backhaul.InterfaceName,
+		"ingress_address": backhaul.IngressAddress,
+		"egress_address":  backhaul.EgressAddress,
+		"routing_table":   backhaul.RoutingTable,
+		"table":           table,
+		"route_metric":    backhaul.RouteMetric,
+		"status":          backhaul.Status,
+	}
+}
+
+func routePolicyBackhaulProjections(backhauls []routePolicyBackhaul, effectiveTable string) []any {
+	out := make([]any, 0, len(backhauls))
+	for _, backhaul := range backhauls {
+		out = append(out, routePolicyBackhaulProjection(backhaul, effectiveTable))
+	}
+	return out
 }
 
 func routePolicyString(policy map[string]any, keys ...string) string {

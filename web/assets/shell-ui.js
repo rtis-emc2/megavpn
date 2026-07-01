@@ -60,7 +60,7 @@
     function renderNav() {
       const nav = el('nav');
       if (!nav) return;
-      const activePage = state.page === 'nodeManage' ? 'nodes' : state.page;
+      const activePage = state.page === 'nodeManage' ? 'nodes' : (state.page === 'instanceManage' ? 'instances' : state.page);
       nav.innerHTML = navGroups.map(([group, items]) => `
         <div class="nav-section">${group}</div>
         ${items.map(([key, label, icon]) => `
@@ -133,17 +133,29 @@
 
     function openModal(title, eyebrow, body, options = {}) {
       const modal = document.querySelector('.modal');
+      const backdrop = el('modalBackdrop');
+      const modalBody = el('modalBody');
       el('modalTitle').textContent = title;
       el('modalEyebrow').textContent = eyebrow;
-      el('modalBody').innerHTML = body;
+      modalBody.innerHTML = body;
+      modalBody.className = `modal-body${options.bodyClass ? ` ${options.bodyClass}` : ''}`;
       if (modal) {
+        modal.classList.remove('modal-wide', 'modal-compact', 'modal-full');
         modal.classList.toggle('modal-wide', Boolean(options.wide));
+        modal.classList.toggle('modal-compact', options.size === 'compact');
+        modal.classList.toggle('modal-full', options.size === 'full');
+        modal.dataset.variant = String(options.variant || '').trim();
+        modal.scrollTop = 0;
       }
-      el('modalBackdrop').hidden = false;
+      modalBody.scrollTop = 0;
+      document.body.classList.add('modal-open');
+      backdrop.hidden = false;
+      window.requestAnimationFrame(() => modal?.focus?.({ preventScroll: true }));
     }
 
     function closeModal() {
       el('modalBackdrop').hidden = true;
+      document.body.classList.remove('modal-open');
     }
 
     function setSubmitBusy(form, busy, pendingLabel = 'Working...') {
@@ -177,13 +189,13 @@
                 </div>`).join('')}
             </div>` : ''}
           <div class="modal-actions"><button class="primary-btn" id="actionOutcomeCloseBtn" type="button">Close</button></div>
-        </div>`, { wide: true });
+        </div>`, { wide: items.length > 2, variant: status });
       const btn = document.getElementById('actionOutcomeCloseBtn');
       if (btn) btn.addEventListener('click', closeModal);
     }
 
     function openUnavailableAction(title, text) {
-      openModal(title, 'Action unavailable', `<p>${escapeHTML(text)}</p>`);
+      openModal(title, 'Action unavailable', `<p>${escapeHTML(text)}</p>`, { variant: 'warning' });
     }
 
     return {

@@ -94,6 +94,32 @@
       return Array.isArray(value) ? value : [];
     }
 
+    function normalizeNodeProfilePayload(payload) {
+      const latitude = String(payload.latitude || '').trim();
+      const longitude = String(payload.longitude || '').trim();
+      const accuracyRadiusKM = String(payload.accuracy_radius_km || '').trim();
+      payload.location_label = String(payload.location_label || '').trim();
+      if (latitude || longitude) {
+        delete payload.latitude;
+        delete payload.longitude;
+      }
+      if (latitude) {
+        payload.latitude = Number(latitude);
+      }
+      if (longitude) {
+        payload.longitude = Number(longitude);
+      }
+      if (!latitude && !longitude) {
+        delete payload.latitude;
+        delete payload.longitude;
+      }
+      delete payload.accuracy_radius_km;
+      if (accuracyRadiusKM) {
+        payload.accuracy_radius_km = Number(accuracyRadiusKM);
+      }
+      return payload;
+    }
+
     const nodeManageTabIDs = new Set(['overview', 'instances', 'bootstrap', 'terminal', 'agent', 'inventory', 'services']);
 
     function managedInstancesForNode(nodeID) {
@@ -387,6 +413,11 @@
           <div class="field"><label>Role</label><select name="role"><option value="egress">egress</option><option value="ingress">ingress</option></select></div>
           <div class="field"><label>Kind</label><select name="kind"><option value="remote">remote</option><option value="local">local</option></select></div>
           <div class="field full"><label>Address</label><input name="address" required placeholder="203.0.113.10" /></div>
+          <div class="field full"><label>Location label</label><input name="location_label" placeholder="Amsterdam, NL or Datacenter A" /></div>
+          <div class="field"><label>Latitude</label><input name="latitude" type="number" min="-90" max="90" step="0.000001" placeholder="52.3676" /></div>
+          <div class="field"><label>Longitude</label><input name="longitude" type="number" min="-180" max="180" step="0.000001" placeholder="4.9041" /></div>
+          <div class="field"><label>Accuracy radius, km</label><input name="accuracy_radius_km" type="number" min="0" max="20000" step="0.1" placeholder="25" /></div>
+          <div class="field full"><div class="field-hint">Use accuracy radius for approximate city, region or datacenter coordinates. Leave empty when the coordinate is an exact site point.</div></div>
           <div class="field"><label>OS family</label><input name="os_family" value="ubuntu" /></div>
           <div class="field"><label>OS version</label><input name="os_version" value="24.04" /></div>
           <div class="field"><label>Architecture</label><select name="architecture"><option value="amd64">amd64</option><option value="arm64">arm64</option></select></div>
@@ -401,7 +432,7 @@
     async function createNode(event) {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
-      const payload = Object.fromEntries(form.entries());
+      const payload = normalizeNodeProfilePayload(Object.fromEntries(form.entries()));
       delete payload.node_setup_choice;
       const target = document.getElementById('createNodeResult');
       target.innerHTML = '<span class="tag warn">sending</span>';
@@ -430,6 +461,11 @@
           <div class="field"><label>Role</label><select name="role"><option value="egress"${node.role === 'egress' ? ' selected' : ''}>egress</option><option value="ingress"${node.role === 'ingress' ? ' selected' : ''}>ingress</option></select></div>
           <div class="field"><label>Kind</label><select name="kind"><option value="remote"${node.kind !== 'local' ? ' selected' : ''}>remote</option><option value="local"${node.kind === 'local' ? ' selected' : ''}>local</option></select></div>
           <div class="field full"><label>Address</label><input name="address" required value="${escapeHTML(node.address || '')}" /></div>
+          <div class="field full"><label>Location label</label><input name="location_label" value="${escapeHTML(node.location_label || '')}" placeholder="City, region, site or rack group" /></div>
+          <div class="field"><label>Latitude</label><input name="latitude" type="number" min="-90" max="90" step="0.000001" value="${node.latitude == null ? '' : escapeHTML(String(node.latitude))}" placeholder="52.3676" /></div>
+          <div class="field"><label>Longitude</label><input name="longitude" type="number" min="-180" max="180" step="0.000001" value="${node.longitude == null ? '' : escapeHTML(String(node.longitude))}" placeholder="4.9041" /></div>
+          <div class="field"><label>Accuracy radius, km</label><input name="accuracy_radius_km" type="number" min="0" max="20000" step="0.1" value="${node.accuracy_radius_km == null ? '' : escapeHTML(String(node.accuracy_radius_km))}" placeholder="25" /></div>
+          <div class="field full"><div class="field-hint">Use accuracy radius for approximate city, region or datacenter coordinates. Leave empty when the coordinate is an exact site point.</div></div>
           <div class="field"><label>OS family</label><input name="os_family" value="${escapeHTML(node.os_family || 'linux')}" /></div>
           <div class="field"><label>OS version</label><input name="os_version" value="${escapeHTML(node.os_version || 'unknown')}" /></div>
           <div class="field"><label>Architecture</label><select name="architecture"><option value="amd64"${node.architecture !== 'arm64' ? ' selected' : ''}>amd64</option><option value="arm64"${node.architecture === 'arm64' ? ' selected' : ''}>arm64</option></select></div>
@@ -448,7 +484,7 @@
     async function updateNode(event, node) {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
-      const payload = Object.fromEntries(form.entries());
+      const payload = normalizeNodeProfilePayload(Object.fromEntries(form.entries()));
       delete payload.node_setup_choice;
       const target = document.getElementById('editNodeResult');
       target.innerHTML = '<span class="tag warn">saving</span>';
@@ -686,10 +722,10 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
       setTitle(node ? `Node: ${node.name || 'node'}` : 'Node Management');
       if (!nodeID) {
         el('content').innerHTML = `
-          <section class="card">
+          <section class="control-page-shell">
             <h2>Node not selected</h2>
             <p>Return to Nodes and choose a managed node.</p>
-            <div class="modal-actions"><button class="primary-btn" id="nodeManageBackBtn" type="button">Back to Nodes</button></div>
+            <div class="section-actions compact-section-actions"><button class="primary-btn" id="nodeManageBackBtn" type="button">Back to Nodes</button></div>
           </section>`;
         document.getElementById('nodeManageBackBtn')?.addEventListener('click', () => {
           state.nodeManageID = '';
@@ -759,16 +795,43 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
         }
       } catch (err) {
         state.nodeManageData = null;
-        if (state.page === 'nodeManage') {
-          const body = el('nodeManageBody');
-          if (body) body.innerHTML = `<section class="card"><div class="empty">Failed to load node details: ${escapeHTML(err.message)}</div></section>`;
-        } else {
-          el('modalBody').innerHTML = `<div class="empty">Failed to load node details: ${escapeHTML(err.message)}</div>`;
-        }
+        renderNodeManageLoadError(nodeID, err);
       }
     }
 
-    function renderNodeControlModal(node, diag, methods, runs, tokens, flash, targetID = 'modalBody') {
+    function renderNodeManageLoadError(nodeID, err) {
+      if (state.page !== 'nodeManage' || state.nodeManageID !== nodeID) return;
+      const message = escapeHTML(err?.message || 'Unknown error');
+      const body = document.getElementById('nodeManageBody');
+      if (body) {
+        body.innerHTML = `
+          <section class="section-card node-error-panel">
+            <div class="empty">Failed to load node details: ${message}</div>
+            <div class="section-actions compact-section-actions">
+              <button class="secondary-btn" id="retryNodeManageLoadBtn" type="button">Retry</button>
+            </div>
+          </section>`;
+      } else {
+        el('content').innerHTML = `
+          <section class="control-page-shell">
+            <div class="empty">Failed to load node details: ${message}</div>
+            <div class="section-actions compact-section-actions">
+              <button class="secondary-btn" id="retryNodeManageLoadBtn" type="button">Retry</button>
+              <button class="primary-btn" id="nodeManageBackBtn" type="button">Back to Nodes</button>
+            </div>
+          </section>`;
+        document.getElementById('nodeManageBackBtn')?.addEventListener('click', () => {
+          state.nodeManageID = '';
+          state.nodeManageData = null;
+          setPage('nodes');
+        });
+      }
+      document.getElementById('retryNodeManageLoadBtn')?.addEventListener('click', () => {
+        void loadNodeManagePageData(nodeID, 'Retrying node state load.');
+      });
+    }
+
+    function renderNodeControlModal(node, diag, methods, runs, tokens, flash, targetID = 'nodeManageBody') {
       methods = arrayOrEmpty(methods);
       runs = arrayOrEmpty(runs);
       tokens = arrayOrEmpty(tokens);
@@ -1178,7 +1241,8 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
         renderNodeManagePage();
         return;
       }
-      renderNodeControlModal(diag?.node || node, diag || {}, arrayOrEmpty(methods), arrayOrEmpty(runs), arrayOrEmpty(tokens), flash);
+      state.nodeManageID = nodeID;
+      setPage('nodeManage');
     }
 
     async function saveSSHAccess(event, node, methods) {

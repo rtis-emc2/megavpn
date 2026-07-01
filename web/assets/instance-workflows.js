@@ -4,6 +4,9 @@
   function createInstanceWorkflows(ctx = {}) {
     const {
       state,
+      setTitle,
+      el,
+      setPage,
       domainUI,
       requestJSON,
       fetchJSON,
@@ -22,6 +25,9 @@
     } = ctx;
     if (
       !state ||
+      typeof setTitle !== 'function' ||
+      typeof el !== 'function' ||
+      typeof setPage !== 'function' ||
       !domainUI ||
       typeof requestJSON !== 'function' ||
       typeof fetchJSON !== 'function' ||
@@ -408,8 +414,9 @@
       }
     }
 
-    function openCreateInstanceModal() {
-      openModal('Create instance', 'POST /api/v1/instances', `
+    function createInstanceFormHTML(options = {}) {
+      const submitLabel = String(options.submitLabel || 'Create instance');
+      return `
         <form id="createInstanceForm" class="form-grid">
           <div class="field"><label>Node</label><select name="node_id" required>${nodeOptions()}</select></div>
           <div class="field"><label>Service</label><select name="service_code" required>${instanceServiceOptions()}</select></div>
@@ -419,17 +426,34 @@
           <div class="field"><label>Endpoint port</label><input name="endpoint_port" type="number" min="0" max="65535" value="0" /></div>
           <div class="field"><label>Systemd unit</label><input name="systemd_unit" placeholder="optional override" /></div>
           <div id="instanceServiceFields" class="form-grid service-fields full"></div>
-          <div class="field full inline-actions"><button class="primary-btn" type="submit">Create instance</button></div>
+          <div class="field full inline-actions"><button class="primary-btn" type="submit">${escapeHTML(submitLabel)}</button></div>
         </form>
-        <div id="createInstanceResult" class="form-result"></div>`);
-      const form = document.getElementById('createInstanceForm');
-      const serviceSelect = form.querySelector('select[name="service_code"]');
-      syncInstanceServiceFields('createInstanceForm', serviceSelect.value, null, { forceDefaults: true });
-      serviceSelect.addEventListener('change', () => syncInstanceServiceFields('createInstanceForm', serviceSelect.value, null, { forceDefaults: true }));
-      form.addEventListener('submit', createInstance);
+        <div id="createInstanceResult" class="form-result"></div>`;
     }
 
-    async function createInstance(event) {
+    function bindCreateInstanceForm(options = {}) {
+      const form = document.getElementById('createInstanceForm');
+      if (!form) return;
+      const serviceSelect = form.querySelector('select[name="service_code"]');
+      if (!serviceSelect) return;
+      syncInstanceServiceFields('createInstanceForm', serviceSelect.value, null, { forceDefaults: true });
+      serviceSelect.addEventListener('change', () => syncInstanceServiceFields('createInstanceForm', serviceSelect.value, null, { forceDefaults: true }));
+      form.addEventListener('submit', (event) => createInstance(event, options));
+    }
+
+    function renderCreateInstanceForm(targetID, options = {}) {
+      const target = document.getElementById(targetID);
+      if (!target) return;
+      target.innerHTML = createInstanceFormHTML(options);
+      bindCreateInstanceForm(options);
+    }
+
+    function openCreateInstanceModal() {
+      openModal('Create instance', 'POST /api/v1/instances', createInstanceFormHTML(), { wide: true });
+      bindCreateInstanceForm({ closeAfterCreate: true });
+    }
+
+    async function createInstance(event, options = {}) {
       event.preventDefault();
       const target = document.getElementById('createInstanceResult');
       target.innerHTML = '<span class="tag warn">creating</span>';
@@ -447,9 +471,38 @@
           spec: buildInstanceSpecPayload(serviceCode, form, {}, Number(form.get('endpoint_port') || 0)),
         };
         const data = await sendJSON('/api/v1/instances', 'POST', payload);
-        target.innerHTML = renderActionResponse(data, 'Instance creation');
+        if (options.closeAfterCreate) {
+          target.innerHTML = renderActionResponse(data, 'Instance creation');
+          await refresh();
+          window.setTimeout(closeModal, 400);
+          return;
+        }
         await refresh();
-        window.setTimeout(closeModal, 400);
+        const resultTarget = document.getElementById('createInstanceResult');
+        if (resultTarget) {
+          resultTarget.innerHTML = `
+            <div class="form-result pack-create-result">
+              ${renderActionResponse(data, 'Instance creation')}
+              <div class="inline-actions">
+                <button class="secondary-btn" id="openInstancesAfterManualCreateBtn" type="button">Open instances</button>
+                <button class="secondary-btn" id="createAnotherManualInstanceBtn" type="button">Create another</button>
+                ${data?.id ? `<button class="primary-btn" id="openCreatedManualInstanceBtn" type="button">Manage instance</button>` : ''}
+              </div>
+            </div>`;
+        }
+        document.getElementById('openInstancesAfterManualCreateBtn')?.addEventListener('click', () => {
+          state.instancesView = 'list';
+          setPage('instances');
+        });
+        document.getElementById('createAnotherManualInstanceBtn')?.addEventListener('click', () => {
+          renderCreateInstanceForm('manualInstanceCreateMount', options);
+        });
+        document.getElementById('openCreatedManualInstanceBtn')?.addEventListener('click', () => {
+          state.instancesView = 'list';
+          state.instanceManageID = data.id;
+          state.instanceManageData = null;
+          setPage('instanceManage');
+        });
       } catch (err) {
         target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
       }
@@ -581,8 +634,344 @@
       }
     }
 
-    async function openInstanceManageModal(instanceID) {
-      openModal('Instance manage', 'Loading current desired state', '<div class="empty">Loading instance spec...</div>');
+    function instanceManageStatusTags(instance, runtimeState, latestJob) {
+      const tags = [
+        statusTag(instance?.status || 'unknown'),
+      ];
+      if (runtimeState?.runtime_status) tags.push(statusTag(runtimeState.runtime_status));
+      if (runtimeState?.active_state) tags.push(statusTag(runtimeState.active_state));
+      if (runtimeState?.health_status) tags.push(statusTag(runtimeState.health_status));
+      if (runtimeState?.drift_status) tags.push(statusTag(runtimeState.drift_status));
+      if (latestJob?.status) tags.push(statusTag(latestJob.status));
+      if (instance?.current_revision_id && instance.current_revision_id === instance.last_applied_revision_id) {
+        tags.push('<span class="tag ok">revision applied</span>');
+      } else if (instance?.current_revision_id) {
+        tags.push('<span class="tag warn">revision pending</span>');
+      }
+      return tags.filter(Boolean).join('');
+    }
+
+    function instanceManageIssue(runtimeState, observations, latestJob) {
+      const result = diagnosticResult(runtimeState, observations, latestJob);
+      const text = firstDiagnosticText(
+        result.error,
+        result.message,
+        runtimeState?.error_text,
+        runtimeState?.health_reasons,
+        runtimeState?.drift_reasons,
+        latestJob?.result?.error,
+        latestJob?.result?.message
+      );
+      const statusText = [
+        result.status,
+        latestJob?.status,
+        runtimeState?.runtime_status,
+        runtimeState?.active_state,
+        runtimeState?.health_status,
+        runtimeState?.drift_status,
+      ].map((item) => String(item || '').toLowerCase()).join(' ');
+      if (/failed|failure|error|unhealthy|missing|degraded/.test(`${statusText} ${text.toLowerCase()}`)) {
+        return { tag: statusTag('failed'), title: 'Active issue', text: text || 'The latest runtime evidence reports a failed or degraded state.' };
+      }
+      if (/queued|running|transitioning|pending|provisioning/.test(statusText)) {
+        return { tag: statusTag('pending'), title: 'In progress', text: text || 'The instance is still converging; wait for the agent job and runtime checks to finish.' };
+      }
+      return { tag: statusTag('ok'), title: 'No active issue', text: text || 'Control plane and runtime evidence do not report an active issue.' };
+    }
+
+    function renderInstanceManageLoading(instanceID) {
+      setTitle('Manage Instance');
+      el('content').innerHTML = `
+        <section class="section-card">
+          <div class="section-head">
+            <div>
+              <div class="mini-label">INSTANCE WORKLOAD</div>
+              <h2>Loading instance</h2>
+              <p>Fetching desired state, runtime state and recent job logs for ${escapeHTML(shortID(instanceID))}.</p>
+            </div>
+            <button class="secondary-btn" id="instanceManageBackBtn" type="button">Back to instances</button>
+          </div>
+          <div class="section-body">
+            <div class="empty compact-empty">Loading instance manage data...</div>
+          </div>
+        </section>`;
+      document.getElementById('instanceManageBackBtn')?.addEventListener('click', () => setPage('instances'));
+    }
+
+    function renderInstanceManageMissing() {
+      setTitle('Manage Instance');
+      el('content').innerHTML = `
+        <section class="section-card">
+          <div class="section-head">
+            <div>
+              <div class="mini-label">INSTANCE WORKLOAD</div>
+              <h2>No instance selected</h2>
+              <p>Select an instance from the list to open its operational workspace.</p>
+            </div>
+            <button class="primary-btn" id="instanceManageBackBtn" type="button">Back to instances</button>
+          </div>
+        </section>`;
+      document.getElementById('instanceManageBackBtn')?.addEventListener('click', () => setPage('instances'));
+    }
+
+    function renderInstanceManageError(data) {
+      setTitle('Manage Instance');
+      el('content').innerHTML = `
+        <section class="section-card">
+          <div class="section-head">
+            <div>
+              <div class="mini-label">INSTANCE WORKLOAD</div>
+              <h2>Instance manage failed</h2>
+              <p>${escapeHTML(data?.error || 'Failed to load instance manage data.')}</p>
+            </div>
+            <div class="inline-actions">
+              <button class="secondary-btn" id="instanceManageBackBtn" type="button">Back to instances</button>
+              <button class="primary-btn" id="instanceManageRetryBtn" type="button">Retry</button>
+            </div>
+          </div>
+        </section>`;
+      document.getElementById('instanceManageBackBtn')?.addEventListener('click', () => setPage('instances'));
+      document.getElementById('instanceManageRetryBtn')?.addEventListener('click', () => {
+        if (data?.instanceID) void loadInstanceManagePageData(data.instanceID, '', { force: true });
+      });
+    }
+
+    function renderInstanceManagePageContent(data) {
+      const { instance, runtimeState, observations, latestJob, latestJobLogs, draft, flash } = data;
+      const node = nodeForInstance(instance);
+      const issue = instanceManageIssue(runtimeState, observations, latestJob);
+      const endpoint = instanceEndpoint(instance);
+      const serviceLabel = serviceDisplayName(instance.service_code);
+      const latestJobID = runtimeState?.last_job_id || (Array.isArray(observations) && observations[0]?.last_job_id) || latestJob?.id || '';
+      setTitle(`Manage ${instance.name || 'Instance'}`);
+      el('content').innerHTML = `
+        <div class="instance-manage-page">
+          <section class="section-card instance-manage-hero">
+            <div class="section-head">
+              <div>
+                <div class="mini-label">INSTANCE WORKLOAD</div>
+                <h2>${escapeHTML(instance.name || instance.slug || instance.id)}</h2>
+                <p>${escapeHTML(serviceLabel)} · ${escapeHTML(node?.name || instance.node_id || 'unknown node')} · ${escapeHTML(endpoint)}</p>
+              </div>
+              <div class="inline-actions instance-manage-top-actions">
+                <span class="tag warn" id="instanceManageDirtyTag"${state.instanceManageDirty ? '' : ' hidden'}>unsaved changes</span>
+                ${instanceManageStatusTags(instance, runtimeState, latestJob)}
+                <button class="secondary-btn" id="instanceManageBackBtn" type="button">Back</button>
+                <button class="secondary-btn" id="instanceManageRefreshBtn" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="section-body instance-manage-summary">
+              <div class="response-fact">
+                <span>Lifecycle</span>
+                <strong>${escapeHTML(instance.status || 'unknown')}</strong>
+              </div>
+              <div class="response-fact">
+                <span>Runtime</span>
+                <strong>${escapeHTML(firstDiagnosticText(runtimeState?.runtime_status, runtimeState?.active_state, 'not reported'))}</strong>
+              </div>
+              <div class="response-fact">
+                <span>Health</span>
+                <strong>${escapeHTML(firstDiagnosticText(runtimeState?.health_status, 'not reported'))}</strong>
+              </div>
+              <div class="response-fact">
+                <span>Revision</span>
+                <strong>${escapeHTML(instance.current_revision_id && instance.current_revision_id === instance.last_applied_revision_id ? 'applied' : (instance.current_revision_id ? 'pending' : 'n/a'))}</strong>
+              </div>
+            </div>
+          </section>
+
+          <div class="instance-manage-layout">
+            <main class="instance-manage-main">
+              ${flash ? `<div class="notice subtle-notice">${escapeHTML(flash)}</div>` : ''}
+              <section class="section-card">
+                <div class="section-head">
+                  <div>
+                    <div class="mini-label">DESIRED STATE</div>
+                    <h2>Configuration revision</h2>
+                    <p>Edit the service spec, save a new revision, then apply it to the node when validation passes.</p>
+                  </div>
+                  <div class="inline-actions">
+                    <button class="secondary-btn" type="button" id="restartInstanceBtn">Restart</button>
+                    <button class="primary-btn" type="button" id="saveApplyInstanceBtn">Save and apply</button>
+                  </div>
+                </div>
+                <div class="section-body">
+                  <form id="editInstanceForm" class="form-grid instance-manage-form">
+                    <input type="hidden" name="slug" value="${escapeHTML(instance.slug || '')}" />
+                    <div class="field"><label>Endpoint port</label><input name="endpoint_port" type="number" min="0" max="65535" value="${escapeHTML(draft.endpoint_port || instance.endpoint_port || 0)}" /></div>
+                    <div class="field"><label>Service</label><input value="${escapeHTML(serviceLabel)}" disabled /></div>
+                    <div class="form-grid service-fields full"></div>
+                    <div class="field full inline-actions">
+                      <button class="secondary-btn" type="submit">Save revision</button>
+                      <button class="secondary-btn" type="button" id="applyInstanceManageBtn">Apply current revision</button>
+                    </div>
+                  </form>
+                  <div id="instanceManageRevisionResult" class="form-result"></div>
+                  <div id="instanceManageJobResult" class="form-result"></div>
+                </div>
+              </section>
+              ${renderInstanceEvidence(runtimeState, observations, latestJob, latestJobLogs)}
+            </main>
+
+            <aside class="instance-manage-side">
+              <section class="section-card">
+                <div class="section-head compact-head">
+                  <div>
+                    <div class="mini-label">OPERATE</div>
+                    <h3>Primary actions</h3>
+                  </div>
+                </div>
+                <div class="section-body operator-action-grid">
+                  <button class="operator-action" id="operateApplyInstanceBtn" type="button">
+                    <strong>Apply current revision</strong>
+                    <span>Queue an apply job without changing the form.</span>
+                  </button>
+                  <button class="operator-action" id="operateRuntimeInstallBtn" type="button">
+                    <strong>Runtime options</strong>
+                    <span>Install or register the required service runtime.</span>
+                  </button>
+                  <button class="operator-action" id="operateDiagnosticsBtn" type="button">
+                    <strong>Collect diagnostics</strong>
+                    <span>Ask the agent for node-side evidence and logs.</span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="section-card">
+                <div class="section-head compact-head">
+                  <div>
+                    <div class="mini-label">CURRENT ISSUE</div>
+                    <h3>${escapeHTML(issue.title)}</h3>
+                  </div>
+                  ${issue.tag}
+                </div>
+                <div class="section-body">
+                  <p>${escapeHTML(issue.text)}</p>
+                </div>
+              </section>
+
+              <section class="section-card">
+                <div class="section-head compact-head">
+                  <div>
+                    <div class="mini-label">IDENTITY</div>
+                    <h3>Technical details</h3>
+                  </div>
+                </div>
+                <div class="section-body node-detail-list">
+                  <div><span>Instance ID</span><strong>${escapeHTML(instance.id || 'n/a')}</strong></div>
+                  <div><span>Slug</span><strong>${escapeHTML(instance.slug || 'n/a')}</strong></div>
+                  <div><span>Systemd</span><strong>${escapeHTML(instance.systemd_unit || 'n/a')}</strong></div>
+                  <div><span>Current revision</span><strong>${escapeHTML(shortID(instance.current_revision_id))}</strong></div>
+                  <div><span>Applied revision</span><strong>${escapeHTML(shortID(instance.last_applied_revision_id))}</strong></div>
+                  <div><span>Latest job</span><strong>${escapeHTML(shortID(latestJobID))}</strong></div>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </div>`;
+    }
+
+    function markInstanceManageDirty() {
+      state.instanceManageDirty = true;
+      const tag = document.getElementById('instanceManageDirtyTag');
+      if (tag) tag.hidden = false;
+    }
+
+    function bindInstanceManagePage(data) {
+      const { instance, runtimeState, observations, latestJob, draft } = data;
+      syncInstanceServiceFields('editInstanceForm', instance.service_code, draft);
+      const form = document.getElementById('editInstanceForm');
+      form?.addEventListener('submit', (event) => saveManagedInstanceSpec(event, instance, false));
+      form?.querySelectorAll('input, select, textarea').forEach((field) => {
+        field.addEventListener('input', markInstanceManageDirty);
+        field.addEventListener('change', markInstanceManageDirty);
+      });
+      document.getElementById('instanceManageBackBtn')?.addEventListener('click', () => setPage('instances'));
+      document.getElementById('instanceManageRefreshBtn')?.addEventListener('click', () => loadInstanceManagePageData(instance.id, 'Instance state refreshed.', { force: true }));
+      document.getElementById('saveApplyInstanceBtn')?.addEventListener('click', (event) => saveManagedInstanceSpec(event, instance, true));
+      const applyCurrent = async () => {
+        const jobTarget = document.getElementById('instanceManageJobResult');
+        try {
+          await runInstanceAction(instance.id, 'apply', jobTarget);
+          if (state.page === 'instanceManage' && state.instanceManageID === instance.id) {
+            await loadInstanceManagePageData(instance.id, 'Apply job finished.', { force: true });
+          }
+        } catch (err) {
+          if (jobTarget) jobTarget.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        }
+      };
+      document.getElementById('applyInstanceManageBtn')?.addEventListener('click', applyCurrent);
+      document.getElementById('operateApplyInstanceBtn')?.addEventListener('click', applyCurrent);
+      document.getElementById('operateRuntimeInstallBtn')?.addEventListener('click', () => {
+        const issue = instanceManageIssue(runtimeState, observations, latestJob);
+        openInstanceRuntimeInstallModal(instance.id, issue.text);
+      });
+      const collectDiagnostics = async () => {
+        const jobTarget = document.getElementById('instanceManageJobResult');
+        if (jobTarget) jobTarget.innerHTML = '<span class="tag warn">queueing diagnostics</span>';
+        try {
+          const job = await sendJSON(`/api/v1/instances/${instance.id}/diagnose`, 'POST', {});
+          await watchJob(job.id, jobTarget, 'Instance diagnostics', {
+            attempts: 30,
+            intervalMs: 1500,
+            context: {
+              node: nodeForInstance(instance)?.name || instance.node_id,
+              service: instance.service_code,
+              strategy: 'read-only',
+              channel: 'node-side evidence',
+            },
+          });
+          await loadInstanceManagePageData(instance.id, 'Diagnostics collected.', { force: true });
+        } catch (err) {
+          if (jobTarget) jobTarget.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        }
+      };
+      document.getElementById('collectInstanceDiagnosticsBtn')?.addEventListener('click', collectDiagnostics);
+      document.getElementById('operateDiagnosticsBtn')?.addEventListener('click', collectDiagnostics);
+      document.getElementById('restartInstanceBtn')?.addEventListener('click', async () => {
+        const jobTarget = document.getElementById('instanceManageJobResult');
+        try {
+          await runInstanceAction(instance.id, 'restart', jobTarget);
+          await loadInstanceManagePageData(instance.id, 'Restart job finished.', { force: true });
+        } catch (err) {
+          if (jobTarget) jobTarget.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        }
+      });
+    }
+
+    function renderInstanceManagePage() {
+      const instanceID = state.instanceManageID;
+      if (!instanceID) {
+        renderInstanceManageMissing();
+        return;
+      }
+      const data = state.instanceManageData;
+      if (!data || data.instanceID !== instanceID) {
+        renderInstanceManageLoading(instanceID);
+        void loadInstanceManagePageData(instanceID);
+        return;
+      }
+      if (data.error) {
+        renderInstanceManageError(data);
+        return;
+      }
+      if (data.loading && !data.instance) {
+        renderInstanceManageLoading(instanceID);
+        return;
+      }
+      if (!state.instanceManageDirty && !data.loading && data.refreshSeq !== state.refreshSeq) {
+        state.instanceManageData = { ...data, loading: true };
+        void loadInstanceManagePageData(instanceID);
+      }
+      renderInstanceManagePageContent(data);
+      bindInstanceManagePage(data);
+    }
+
+    async function loadInstanceManagePageData(instanceID, flash = '', options = {}) {
+      const force = Boolean(options.force);
+      if (!force && state.instanceManageDirty) return;
+      const previous = state.instanceManageData?.instanceID === instanceID ? state.instanceManageData : null;
+      state.instanceManageData = { ...(previous || {}), instanceID, loading: true, error: '' };
       try {
         const [instance, runtimeState, observations] = await Promise.all([
           requestJSON(`/api/v1/instances/${instanceID}`),
@@ -595,79 +984,41 @@
           fetchJSON(`/api/v1/jobs/${encodeURIComponent(latestJobID)}/logs?limit=30`, []),
         ]) : [null, []];
         const draft = buildInstanceSpecDraft(instance.service_code, instance);
-        openModal(`Manage instance: ${instance.name}`, 'Desired state, revisions and apply feedback', `
-          <div class="grid cols-2">
-            <div class="card">
-              <div class="mini-label">Runtime summary</div>
-              <div class="timeline">
-                <div class="timeline-item"><strong>Service</strong><div class="timeline-meta">${escapeHTML(instance.service_code || 'unknown')}</div></div>
-                <div class="timeline-item"><strong>Node</strong><div class="timeline-meta">${escapeHTML(instance.node_id || 'n/a')}</div></div>
-                <div class="timeline-item"><strong>Endpoint</strong><div class="timeline-meta">${escapeHTML(instance.endpoint_host || 'n/a')}:${escapeHTML(instance.endpoint_port || 0)}</div></div>
-                <div class="timeline-item"><strong>Systemd</strong><div class="timeline-meta">${escapeHTML(instance.systemd_unit || 'n/a')}</div></div>
-              </div>
-            </div>
-            <div class="card">
-              <div class="mini-label">Current state</div>
-              <div class="inline-actions">
-                ${statusTag(instance.status || 'unknown')}
-                ${runtimeState?.runtime_status ? statusTag(runtimeState.runtime_status) : ''}
-                ${runtimeState?.health_status ? statusTag(runtimeState.health_status) : ''}
-                ${runtimeState?.drift_status ? statusTag(runtimeState.drift_status) : ''}
-                <span class="tag">${escapeHTML(instance.slug || 'no-slug')}</span>
-                ${instance.current_revision_id ? `<span class="tag">rev ${escapeHTML(instance.current_revision_id.slice(0, 8))}</span>` : ''}
-                ${instance.last_applied_revision_id ? `<span class="tag ok">applied ${escapeHTML(instance.last_applied_revision_id.slice(0, 8))}</span>` : ''}
-              </div>
-              <p>Сохранение ниже создает новую revision. Apply остается отдельным действием и будет показан с live job feedback и logs.</p>
-            </div>
-          </div>
-          ${renderInstanceEvidence(runtimeState, observations, latestJob, latestJobLogs)}
-          <form id="editInstanceForm" class="form-grid">
-            <input type="hidden" name="slug" value="${escapeHTML(instance.slug || '')}" />
-            <div class="field"><label>Endpoint port</label><input name="endpoint_port" type="number" min="0" max="65535" value="${escapeHTML(draft.endpoint_port || instance.endpoint_port || 0)}" /></div>
-            <div class="field"><label>Service code</label><input value="${escapeHTML(instance.service_code || '')}" disabled /></div>
-            <div class="form-grid service-fields full"></div>
-            <div class="field full inline-actions">
-              <button class="secondary-btn" type="submit">Save revision</button>
-              <button class="primary-btn" type="button" id="saveApplyInstanceBtn">Save and apply</button>
-              <button class="secondary-btn" type="button" id="restartInstanceBtn">Restart only</button>
-            </div>
-          </form>
-          <div id="instanceManageRevisionResult" class="form-result"></div>
-          <div id="instanceManageJobResult" class="form-result"></div>`);
-        syncInstanceServiceFields('editInstanceForm', instance.service_code, draft);
-        const form = document.getElementById('editInstanceForm');
-        form.addEventListener('submit', (event) => saveManagedInstanceSpec(event, instance, false));
-        document.getElementById('saveApplyInstanceBtn').addEventListener('click', (event) => saveManagedInstanceSpec(event, instance, true));
-        document.getElementById('collectInstanceDiagnosticsBtn')?.addEventListener('click', async () => {
-          const jobTarget = document.getElementById('instanceManageJobResult');
-          if (jobTarget) jobTarget.innerHTML = '<span class="tag warn">queueing diagnostics</span>';
-          try {
-            const job = await sendJSON(`/api/v1/instances/${instance.id}/diagnose`, 'POST', {});
-            await watchJob(job.id, jobTarget, 'Instance diagnostics', {
-              attempts: 30,
-              intervalMs: 1500,
-              context: {
-                node: nodeForInstance(instance)?.name || instance.node_id,
-                service: instance.service_code,
-                strategy: 'read-only',
-                channel: 'node-side evidence',
-              },
-            });
-          } catch (err) {
-            if (jobTarget) jobTarget.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-          }
-        });
-        document.getElementById('restartInstanceBtn').addEventListener('click', async () => {
-          const jobTarget = document.getElementById('instanceManageJobResult');
-          try {
-            await runInstanceAction(instance.id, 'restart', jobTarget);
-          } catch (err) {
-            jobTarget.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
-          }
-        });
+        if (state.instanceManageID !== instanceID) return;
+        state.instanceManageData = {
+          instanceID,
+          instance,
+          runtimeState,
+          observations: Array.isArray(observations) ? observations : [],
+          latestJob,
+          latestJobLogs: Array.isArray(latestJobLogs) ? latestJobLogs : [],
+          draft,
+          flash,
+          loading: false,
+          refreshSeq: state.refreshSeq,
+        };
+        if (state.page === 'instanceManage' && state.instanceManageID === instanceID) renderInstanceManagePage();
       } catch (err) {
-        document.getElementById('modalBody').innerHTML = `<div class="empty">Failed to load instance: ${escapeHTML(err.message)}</div>`;
+        if (state.instanceManageID !== instanceID) return;
+        state.instanceManageData = {
+          instanceID,
+          error: err.message || 'Failed to load instance.',
+          loading: false,
+          refreshSeq: state.refreshSeq,
+        };
+        if (state.page === 'instanceManage' && state.instanceManageID === instanceID) renderInstanceManagePage();
       }
+    }
+
+    function openInstanceManagePage(instanceID) {
+      state.instanceManageID = instanceID;
+      state.instanceManageData = null;
+      state.instanceManageDirty = false;
+      setPage('instanceManage');
+    }
+
+    function openInstanceManageModal(instanceID) {
+      openInstanceManagePage(instanceID);
     }
 
     async function saveManagedInstanceSpec(event, instance, applyAfterSave) {
@@ -685,7 +1036,7 @@
         instance.spec = spec;
         const revision = data?.revision || {};
         const issueCount = Array.isArray(revision.validation_errors) ? revision.validation_errors.length : Number(data?.issue_count || 0);
-        if (revisionTarget) revisionTarget.innerHTML = `
+        const revisionHTML = `
           <div class="card">
             <div class="inline-actions" style="justify-content:space-between;align-items:flex-start">
               <div>
@@ -702,11 +1053,23 @@
             </div>
             ${issueCount ? `<div class="code-block" style="margin-top:14px">${escapeHTML(JSON.stringify(revision.validation_errors || [], null, 2))}</div>` : ''}
           </div>`;
-        await refresh();
-        if (applyAfterSave && data?.can_apply && jobTarget) {
-          await runInstanceAction(instance.id, 'apply', jobTarget);
-        } else if (applyAfterSave && jobTarget) {
-          jobTarget.innerHTML = '<span class="tag danger">apply blocked: revision is not validated</span>';
+        if (revisionTarget) revisionTarget.innerHTML = revisionHTML;
+        state.instanceManageDirty = false;
+        if (state.instanceManageData?.instance?.id === instance.id) {
+          state.instanceManageData.instance.spec = spec;
+          state.instanceManageData.draft = buildInstanceSpecDraft(instance.service_code, state.instanceManageData.instance);
+        }
+        await loadInstanceManagePageData(instance.id, String(data?.message || 'Revision saved.'), { force: true });
+        const currentRevisionTarget = document.getElementById('instanceManageRevisionResult');
+        const currentJobTarget = document.getElementById('instanceManageJobResult');
+        if (currentRevisionTarget) currentRevisionTarget.innerHTML = revisionHTML;
+        if (applyAfterSave && data?.can_apply && (currentJobTarget || jobTarget)) {
+          await runInstanceAction(instance.id, 'apply', currentJobTarget || jobTarget);
+          if (state.page === 'instanceManage' && state.instanceManageID === instance.id) {
+            await loadInstanceManagePageData(instance.id, 'Apply job finished.', { force: true });
+          }
+        } else if (applyAfterSave && (currentJobTarget || jobTarget)) {
+          (currentJobTarget || jobTarget).innerHTML = '<span class="tag danger">apply blocked: revision is not validated</span>';
         }
       } catch (err) {
         if (revisionTarget) revisionTarget.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
@@ -717,9 +1080,12 @@
 
     return {
       openCreateInstanceModal,
+      renderCreateInstanceForm,
       openCreateInstanceChoiceModal,
       openCreateServicePackModal,
       openInstanceManageModal,
+      openInstanceManagePage,
+      renderInstanceManagePage,
       openInstanceRuntimeInstallModal,
       queueInstanceAction,
       runInstanceAction,

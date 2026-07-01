@@ -148,8 +148,69 @@
       return `<span class="status-light ${cls}" title="${escapeHTML(value)}" aria-label="${escapeHTML(value)}"><span class="status-light-dot"></span><span class="status-light-text">${escapeHTML(value)}</span></span>`;
     }
 
+    const jobTabs = [
+      ['active', 'In work', 'queued, running, retrying'],
+      ['failed', 'Errors', 'failed jobs'],
+      ['completed', 'Completed', 'successful jobs'],
+      ['all', 'All', 'full loaded queue'],
+    ];
+
+    function jobBucket(status) {
+      const value = String(status || '').toLowerCase();
+      if (['queued', 'running', 'retrying'].includes(value)) return 'active';
+      if (value === 'failed') return 'failed';
+      if (['succeeded', 'cancelled'].includes(value)) return 'completed';
+      return 'active';
+    }
+
+    function selectedJobsTab() {
+      const tab = jobTabs.some(([key]) => key === state.jobsTab) ? state.jobsTab : 'active';
+      state.jobsTab = tab;
+      return tab;
+    }
+
+    function jobCounts(rows) {
+      const counts = { all: rows.length, active: 0, failed: 0, completed: 0 };
+      rows.forEach((row) => {
+        const bucket = jobBucket(row.status);
+        counts[bucket] = (counts[bucket] || 0) + 1;
+      });
+      return counts;
+    }
+
+    function filterJobRows(rows) {
+      const active = selectedJobsTab();
+      const query = String(state.jobsSearch || '').trim().toLowerCase();
+      const sort = state.jobsSort === 'oldest' ? 'oldest' : state.jobsSort === 'type' ? 'type' : 'newest';
+      state.jobsSort = sort;
+      const filtered = rows.filter((row) => {
+        if (active !== 'all' && jobBucket(row.status) !== active) return false;
+        if (!query) return true;
+        return [row.id, row.type, row.scope, row.createdFull, row.status, row.result]
+          .some((value) => String(value || '').toLowerCase().includes(query));
+      });
+      filtered.sort((a, b) => {
+        if (sort === 'type') return String(a.type || '').localeCompare(String(b.type || ''));
+        const left = new Date(a.createdAt || 0).getTime();
+        const right = new Date(b.createdAt || 0).getTime();
+        return sort === 'oldest' ? left - right : right - left;
+      });
+      return filtered;
+    }
+
+    function renderJobTabs(active, counts) {
+      return `
+        <div class="page-tabs control-tabs jobs-tabs" role="tablist" aria-label="Job queue filters">
+          ${jobTabs.map(([key, label, caption]) => `
+            <button class="page-tab ${active === key ? 'is-active' : ''}" type="button" data-jobs-tab="${escapeHTML(key)}" role="tab" aria-selected="${active === key ? 'true' : 'false'}">
+              <span>${escapeHTML(label)} <em>${escapeHTML(String(counts[key] || 0))}</em></span>
+              <small>${escapeHTML(caption)}</small>
+            </button>`).join('')}
+        </div>`;
+    }
+
     function renderJobQueue(rows) {
-      if (!rows.length) return '<div class="empty">Нет данных для отображения</div>';
+      if (!rows.length) return '<div class="empty">No jobs match current filters.</div>';
       return `
         <div class="table-wrap jobs-table-wrap">
           <table class="jobs-table">
@@ -179,11 +240,33 @@
                   <td><span class="mono-clip" title="${escapeHTML(row.scope)}">${escapeHTML(compactScope(row.scope))}</span></td>
                   <td><span class="job-date" title="${escapeHTML(row.createdFull)}">${escapeHTML(row.created)}</span></td>
                   <td class="job-status-cell">${renderJobStatusLight(row.status)}</td>
-                  <td><span class="job-result-line" title="${escapeHTML(row.result || 'n/a')}">${escapeHTML(row.result || 'n/a')}</span></td>
+                  <td>
+                    <details class="job-result-details">
+                      <summary><span class="job-result-line" title="${escapeHTML(row.result || 'n/a')}">${escapeHTML(row.result || 'n/a')}</span></summary>
+                      <div class="job-result-body">
+                        <div><span>ID</span><strong>${escapeHTML(row.id || 'n/a')}</strong></div>
+                        <div><span>Scope</span><strong>${escapeHTML(row.scope || 'n/a')}</strong></div>
+                        <div><span>Created</span><strong>${escapeHTML(row.createdFull || 'n/a')}</strong></div>
+                        <div><span>Status</span><strong>${escapeHTML(row.status || 'unknown')}</strong></div>
+                        <p>${escapeHTML(row.result || 'No result payload yet.')}</p>
+                      </div>
+                    </details>
+                  </td>
                 </tr>`).join('')}
             </tbody>
           </table>
         </div>`;
+    }
+
+    function updateJobQueue(rows) {
+      const active = selectedJobsTab();
+      document.querySelectorAll('[data-jobs-tab]').forEach((button) => {
+        const selected = button.dataset.jobsTab === active;
+        button.classList.toggle('is-active', selected);
+        button.setAttribute('aria-selected', selected ? 'true' : 'false');
+      });
+      const target = document.getElementById('jobsQueueMount');
+      if (target) target.innerHTML = renderJobQueue(filterJobRows(rows));
     }
 
     function renderJobs() {
@@ -194,20 +277,62 @@
         scope: job.scope_type && job.scope_id ? `${job.scope_type}:${job.scope_id}` : job.scope_type || 'n/a',
         created: compactJobDate(job.created_at),
         createdFull: formatDate(job.created_at),
+        createdAt: job.created_at,
         status: job.status || 'queued',
         result: jobResultText(job),
       }));
+      const activeTab = selectedJobsTab();
+      const counts = jobCounts(rows);
+      const filteredRows = filterJobRows(rows);
       el('content').innerHTML = `
-        <section class="table-card jobs-table-card">
-          <div class="table-head">
-            <h2>Job Queue</h2>
-            <div class="table-tools">
-              <span class="tag">${escapeHTML(String(rows.length))} loaded</span>
+        <div class="control-page-shell jobs-page-shell">
+          <section class="section-card control-page-intro">
+            <div>
+              <h2>Job queue</h2>
+              <p>Operational queue with explicit filters. The page refreshes on navigation or the Refresh button, not every few seconds while you inspect rows.</p>
             </div>
-          </div>
-          ${renderJobQueue(rows)}
-        </section>
-        <section class="card"><h2>Concurrency rules</h2><p>Один mutating job на instance, один bootstrap/install job на node, destructive actions через lock и audit.</p></section>`;
+            <div class="control-page-actions">
+              <span class="tag">${escapeHTML(String(rows.length))} loaded</span>
+              <span class="tag warn">${escapeHTML(String(counts.active || 0))} active</span>
+              <span class="tag danger">${escapeHTML(String(counts.failed || 0))} failed</span>
+            </div>
+          </section>
+          ${renderJobTabs(activeTab, counts)}
+          <section class="table-card jobs-table-card">
+            <div class="table-head">
+              <div>
+                <h2>Jobs</h2>
+                <p class="table-subtitle">Filter by state, search by type/scope/result, and expand a result cell for full context.</p>
+              </div>
+              <div class="table-tools ops-filter-bar">
+                <input class="search-input compact-search" id="jobsSearchInput" type="search" placeholder="Search jobs..." value="${escapeHTML(state.jobsSearch || '')}" />
+                <select id="jobsSortSelect" aria-label="Job sort">
+                  <option value="newest"${state.jobsSort === 'newest' ? ' selected' : ''}>Newest first</option>
+                  <option value="oldest"${state.jobsSort === 'oldest' ? ' selected' : ''}>Oldest first</option>
+                  <option value="type"${state.jobsSort === 'type' ? ' selected' : ''}>Type A-Z</option>
+                </select>
+              </div>
+            </div>
+            <div id="jobsQueueMount">${renderJobQueue(filteredRows)}</div>
+          </section>
+          <section class="card control-note-card"><h2>Concurrency rules</h2><p>One mutating job per instance, one bootstrap/install job per node, destructive actions through explicit locks and audit events.</p></section>
+        </div>`;
+      document.querySelectorAll('[data-jobs-tab]').forEach((button) => {
+        button.addEventListener('click', () => {
+          state.jobsTab = button.dataset.jobsTab || 'active';
+          localStorage.setItem('megavpn.jobsTab', state.jobsTab);
+          updateJobQueue(rows);
+        });
+      });
+      document.getElementById('jobsSearchInput')?.addEventListener('input', (event) => {
+        state.jobsSearch = event.target.value || '';
+        updateJobQueue(rows);
+      });
+      document.getElementById('jobsSortSelect')?.addEventListener('change', (event) => {
+        state.jobsSort = event.target.value || 'newest';
+        localStorage.setItem('megavpn.jobsSort', state.jobsSort);
+        updateJobQueue(rows);
+      });
     }
 
     function sleep(ms) {

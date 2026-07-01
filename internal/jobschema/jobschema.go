@@ -338,6 +338,57 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else if ok {
 			normalized["active_route_count"] = v
 		}
+	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe":
+		nodeID, err := requireString(payload, "node_id")
+		if err != nil {
+			return nil, err
+		}
+		normalized["node_id"] = nodeID
+		trimOptionalStrings(normalized, payload, "policy_id", "policy_key", "revision_id")
+		if v, ok, err := optionalInt(payload, "revision_no"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["revision_no"] = v
+		}
+		for _, key := range []string{"default_input_policy", "default_forward_policy", "default_output_policy"} {
+			value, err := optionalString(payload, key)
+			if err != nil {
+				return nil, err
+			}
+			value = strings.ToLower(value)
+			if value == "" {
+				value = "accept"
+			}
+			if value != "accept" && value != "drop" && value != "reject" {
+				return nil, validationf("payload.%s must be accept, drop or reject", key)
+			}
+			normalized[key] = value
+		}
+		if v, ok, err := optionalBool(payload, "enforce_default_policy"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["enforce_default_policy"] = v
+		} else {
+			normalized["enforce_default_policy"] = false
+		}
+		if rawRules, ok := payload["rules"]; ok {
+			rules, ok := rawRules.([]any)
+			if !ok {
+				return nil, validationf("payload.rules must be an array")
+			}
+			normalized["rules"] = rules
+		} else {
+			normalized["rules"] = []any{}
+		}
+		if rawLists, ok := payload["address_lists"]; ok {
+			lists, ok := rawLists.([]any)
+			if !ok {
+				return nil, validationf("payload.address_lists must be an array")
+			}
+			normalized["address_lists"] = lists
+		} else {
+			normalized["address_lists"] = []any{}
+		}
 	case "node.agent.rotate_token":
 		nodeID, err := requireString(payload, "node_id")
 		if err != nil {

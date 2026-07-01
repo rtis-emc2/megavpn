@@ -212,6 +212,39 @@
       return normalized;
     }
 
+    function serviceInstanceLabel(instance) {
+      if (!instance) return 'service instance';
+      const service = String(instance.service_label || instance.service_display_name || instance.service_code || 'service').trim();
+      const name = String(instance.name || instance.slug || instance.id || 'instance').trim();
+      const node = String(instance.node_name || instance.node || '').trim();
+      const endpointHost = String(instance.endpoint_host || '').trim();
+      const endpointPort = Number(instance.endpoint_port || 0);
+      const endpoint = endpointHost ? `${endpointHost}${endpointPort ? `:${endpointPort}` : ''}` : '';
+      return [name, service, node, endpoint].filter(Boolean).join(' · ');
+    }
+
+    function selectableTargetInstances() {
+      return (state.instances || [])
+        .filter((instance) => String(instance.status || '').toLowerCase() !== 'deleted')
+        .sort((left, right) => serviceInstanceLabel(left).localeCompare(serviceInstanceLabel(right), 'en'));
+    }
+
+    function targetInstanceOptions(selectedID = '') {
+      const selected = String(selectedID || '').trim();
+      const instances = selectableTargetInstances();
+      const parts = ['<option value="">Select target instance</option>'];
+      for (const instance of instances) {
+        parts.push(`<option value="${escapeHTML(instance.id)}"${instance.id === selected ? ' selected' : ''}>${escapeHTML(serviceInstanceLabel(instance))}</option>`);
+      }
+      return parts.join('');
+    }
+
+    function findInstanceByID(instanceID) {
+      const id = String(instanceID || '').trim();
+      if (!id) return null;
+      return (state.instances || []).find((instance) => String(instance.id || '') === id) || null;
+    }
+
     function cloneJSON(value) {
       if (value == null) return {};
       return JSON.parse(JSON.stringify(value));
@@ -394,21 +427,67 @@
       }
     }
 
+    function isManagedVLESSAdBlockRule(rule) {
+      if (!rule || typeof rule !== 'object') return false;
+      const outboundTag = String(rule.outboundTag || rule.outbound_tag || '').trim().toLowerCase();
+      if (outboundTag !== 'block') return false;
+      const domains = Array.isArray(rule.domain) ? rule.domain : [];
+      return domains.some((domain) => String(domain || '').trim().toLowerCase() === 'geosite:category-ads-all');
+    }
+
+    function vlessGroupAdBlockEnabled(source) {
+      if (!source || typeof source !== 'object') return false;
+      if (source.ad_block === true || source.adBlock === true || source.block_ads === true || source.blockAds === true) return true;
+      return Array.isArray(source.rules) && source.rules.some(isManagedVLESSAdBlockRule);
+    }
+
+    function managedVLESSAdBlockRule() {
+      return {
+        type: 'field',
+        domain: ['geosite:category-ads-all'],
+        outbound_tag: 'block',
+      };
+    }
+
     function normalizeVLESSGroupForEditor(group, index) {
       const source = group && typeof group === 'object' ? group : {};
       const key = String(source.key || source.name || source.id || (index === 0 ? 'default' : `group-${index + 1}`)).trim();
+      const outboundTag = String(source.outbound_tag || source.outboundTag || source.tag || 'direct').trim() || 'direct';
+      const modeSource = String(source.access_mode || source.egress_mode || source.mode || '').trim().toLowerCase();
+      let accessMode = modeSource || 'instance_default';
+      if (['auto', 'default', 'inherit'].includes(accessMode)) accessMode = 'instance_default';
+      if (['direct', 'local', 'current_node'].includes(accessMode)) accessMode = 'local_breakout';
+      if (['remote_node', 'remote_egress', 'node'].includes(accessMode)) accessMode = 'egress_node';
+      if (['deny', 'blocked'].includes(accessMode)) accessMode = 'block';
+      if (outboundTag === 'block' && !modeSource && !Array.isArray(source.rules)) accessMode = 'block';
+      if (source.target_instance_id && !modeSource) accessMode = 'instance_only';
+      const rawRules = Array.isArray(source.extra_rules)
+        ? source.extra_rules
+        : (accessMode === 'instance_only' ? [] : (Array.isArray(source.rules) ? source.rules : []));
+      const sourceRules = rawRules.filter((rule) => !isManagedVLESSAdBlockRule(rule));
       return {
         key,
         label: String(source.label || source.title || key || `Group ${index + 1}`).trim(),
-        outbound_tag: String(source.outbound_tag || source.outboundTag || source.tag || 'direct').trim() || 'direct',
-        rules: Array.isArray(source.rules) ? source.rules : [],
+        access_mode: accessMode,
+        outbound_tag: outboundTag,
+        egress_node_id: String(source.egress_node_id || source.node_id || source.egress?.egress_node_id || source.egress?.node_id || '').trim(),
+        target_instance_id: String(source.target_instance_id || source.instance_id || '').trim(),
+        target_instance_label: String(source.target_instance_label || '').trim(),
+        ad_block: vlessGroupAdBlockEnabled(source),
+        rules: sourceRules,
       };
     }
 
     function renderVLESSGroupRow(group, index) {
       const normalized = normalizeVLESSGroupForEditor(group, index);
       const rulesBody = normalized.rules.length ? JSON.stringify(normalized.rules, null, 2) : '';
-      const outboundOptions = ['direct', 'block', 'egress-default'];
+      const modeOptions = [
+        ['instance_default', 'Use instance default route'],
+        ['local_breakout', 'Exit from current node'],
+        ['egress_node', 'Exit from selected egress node'],
+        ['instance_only', 'Allow only selected instance'],
+        ['block', 'Block all traffic'],
+      ];
       return `
         <div class="vless-group-row" data-vless-group-row>
           <div class="field compact">
@@ -420,19 +499,34 @@
             <input data-vless-group-label value="${escapeHTML(normalized.label)}" placeholder="Default access" />
           </div>
           <div class="field compact">
-            <label>Outbound</label>
-            <select data-vless-group-outbound>
-              ${outboundOptions.map((item) => `<option value="${escapeHTML(item)}"${item === normalized.outbound_tag ? ' selected' : ''}>${escapeHTML(item)}</option>`).join('')}
+            <label>Mode</label>
+            <select data-vless-group-mode>
+              ${modeOptions.map(([value, label]) => `<option value="${escapeHTML(value)}"${value === normalized.access_mode ? ' selected' : ''}>${escapeHTML(label)}</option>`).join('')}
             </select>
+          </div>
+          <div class="field compact" data-vless-group-egress-field>
+            <label>Egress node</label>
+            <select data-vless-group-egress-node>${nodeOptions(normalized.egress_node_id, { roles: ['egress'], includeEmpty: true, emptyLabel: 'Select egress node' })}</select>
+          </div>
+          <div class="field compact" data-vless-group-target-field>
+            <label>Target instance</label>
+            <select data-vless-group-target-instance>${targetInstanceOptions(normalized.target_instance_id)}</select>
+          </div>
+          <div class="field compact vless-group-adblock-field" data-vless-group-adblock-field>
+            <label>Filtering</label>
+            <label class="checkbox-line vless-group-checkbox">
+              <input type="checkbox" data-vless-group-adblock${normalized.ad_block ? ' checked' : ''}>
+              <span>Block ads</span>
+            </label>
           </div>
           <div class="field compact vless-group-remove-field">
             <label>Action</label>
             <button class="secondary-btn vless-group-remove-btn" type="button">Remove</button>
           </div>
-          <div class="field full compact">
-            <label>Rules JSON</label>
+          <details class="field full compact vless-group-advanced">
+            <summary>Advanced route rules JSON</summary>
             <textarea data-vless-group-rules rows="3" placeholder='[{"domain":["geosite:category-ads-all"],"outbound_tag":"block"}]'>${escapeHTML(rulesBody)}</textarea>
-          </div>
+          </details>
         </div>`;
     }
 
@@ -453,8 +547,31 @@
             <summary>Generated JSON preview</summary>
             <textarea data-vless-groups-preview rows="7" readonly>${escapeHTML(json)}</textarea>
           </details>
-          <div class="field-hint">Groups are provision-time access profiles for VLESS users. Instance egress above decides whether direct traffic exits locally or through managed backhaul.</div>
+          <div class="field-hint">Groups are provision-time access profiles for VLESS users. Use the instance default route for normal access, local breakout for current-node exit, selected egress node for dedicated remote exit, instance-only for a constrained target, or block for deny groups.</div>
         </div>`;
+    }
+
+    function endpointRuleForInstance(instance) {
+      if (!instance) return null;
+      const spec = instance.spec && typeof instance.spec === 'object' ? instance.spec : {};
+      const host = String(instance.endpoint_host || spec.endpoint_host || spec.server_name || spec.sni || '').trim();
+      const port = Number(instance.endpoint_port || spec.server_port || spec.listen_port || spec.port || 0);
+      if (!host || port <= 0) return null;
+      const rule = {
+        type: 'field',
+        outbound_tag: 'direct',
+      };
+      if (host) {
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) {
+          rule.ip = [host];
+        } else {
+          rule.domain = [host];
+        }
+      }
+      if (port > 0) {
+        rule.port = String(port);
+      }
+      return rule;
     }
 
     function renderInstanceServiceProfilePanel(serviceCode, draft = {}) {
@@ -959,44 +1076,124 @@
       const addButton = editor.querySelector('.vless-group-add-btn');
       if (!rowsContainer || !hidden) return;
 
+      const syncRowVisibility = (row) => {
+        const mode = String(row.querySelector('[data-vless-group-mode]')?.value || 'instance_default');
+        const egressField = row.querySelector('[data-vless-group-egress-field]');
+        const targetField = row.querySelector('[data-vless-group-target-field]');
+        const adBlockField = row.querySelector('[data-vless-group-adblock-field]');
+        const egressSelect = row.querySelector('[data-vless-group-egress-node]');
+        const targetSelect = row.querySelector('[data-vless-group-target-instance]');
+        if (egressField) egressField.hidden = mode !== 'egress_node';
+        if (targetField) targetField.hidden = mode !== 'instance_only';
+        if (adBlockField) adBlockField.hidden = mode === 'block' || mode === 'instance_only';
+        if (egressSelect) {
+          egressSelect.required = mode === 'egress_node';
+          egressSelect.disabled = mode !== 'egress_node';
+          if (mode !== 'egress_node') egressSelect.setCustomValidity('');
+        }
+        if (targetSelect) {
+          targetSelect.required = mode === 'instance_only';
+          targetSelect.disabled = mode !== 'instance_only';
+          if (mode !== 'instance_only') targetSelect.setCustomValidity('');
+        }
+      };
+
+      const syncAllRows = () => {
+        rowsContainer.querySelectorAll('[data-vless-group-row]').forEach(syncRowVisibility);
+      };
+
       const serialize = () => {
         const groups = [];
         let valid = true;
         rowsContainer.querySelectorAll('[data-vless-group-row]').forEach((row, index) => {
           const keyInput = row.querySelector('[data-vless-group-key]');
           const labelInput = row.querySelector('[data-vless-group-label]');
-          const outboundSelect = row.querySelector('[data-vless-group-outbound]');
+          const modeSelect = row.querySelector('[data-vless-group-mode]');
+          const egressNodeSelect = row.querySelector('[data-vless-group-egress-node]');
+          const targetInstanceSelect = row.querySelector('[data-vless-group-target-instance]');
+          const adBlockInput = row.querySelector('[data-vless-group-adblock]');
           const rulesInput = row.querySelector('[data-vless-group-rules]');
           const key = String(keyInput?.value || '').trim();
           if (keyInput) {
             keyInput.setCustomValidity(key ? '' : 'Group key is required');
             if (!key) valid = false;
           }
+          const mode = String(modeSelect?.value || 'instance_default').trim() || 'instance_default';
           const group = {
             key,
             label: String(labelInput?.value || key || `Group ${index + 1}`).trim(),
-            outbound_tag: String(outboundSelect?.value || 'direct').trim() || 'direct',
           };
+          if (mode === 'instance_default') {
+            group.access_mode = 'instance_default';
+            group.egress_mode = 'default';
+            group.outbound_tag = 'direct';
+          } else if (mode === 'local_breakout') {
+            group.access_mode = 'local_breakout';
+            group.egress_mode = 'local_breakout';
+            group.outbound_tag = 'direct';
+          } else if (mode === 'egress_node') {
+            const egressNodeID = String(egressNodeSelect?.value || '').trim();
+            if (egressNodeSelect) {
+              egressNodeSelect.setCustomValidity(egressNodeID ? '' : 'Select egress node for this group');
+              if (!egressNodeID) valid = false;
+            }
+            group.access_mode = 'egress_node';
+            group.egress_mode = 'egress_node';
+            group.egress_node_id = egressNodeID;
+            group.outbound_tag = 'direct';
+          } else if (mode === 'instance_only') {
+            const targetInstanceID = String(targetInstanceSelect?.value || '').trim();
+            const targetInstance = findInstanceByID(targetInstanceID);
+            if (targetInstanceSelect) {
+              targetInstanceSelect.setCustomValidity(targetInstanceID ? '' : 'Select target instance for this group');
+              if (!targetInstanceID) valid = false;
+            }
+            group.access_mode = 'instance_only';
+            group.target_instance_id = targetInstanceID;
+            group.target_instance_label = targetInstance ? serviceInstanceLabel(targetInstance) : '';
+            group.outbound_tag = 'block';
+            const targetRule = endpointRuleForInstance(targetInstance);
+            if (targetInstanceSelect && targetInstanceID && !targetRule) {
+              targetInstanceSelect.setCustomValidity('Selected instance must have endpoint host and port');
+              valid = false;
+            }
+            if (targetRule) {
+              group.rules = [targetRule];
+            }
+          } else if (mode === 'block') {
+            group.access_mode = 'block';
+            group.egress_mode = 'block';
+            group.outbound_tag = 'block';
+          }
           const rulesBody = String(rulesInput?.value || '').trim();
           if (rulesInput) rulesInput.setCustomValidity('');
           if (rulesBody) {
             try {
               const parsedRules = JSON.parse(rulesBody);
               if (!Array.isArray(parsedRules)) throw new Error('Rules JSON must be an array');
-              group.rules = parsedRules;
+              if (mode === 'instance_only') {
+                group.extra_rules = parsedRules;
+              }
+              group.rules = Array.isArray(group.rules) && group.rules.length ? group.rules.concat(parsedRules) : parsedRules;
             } catch (err) {
               if (rulesInput) rulesInput.setCustomValidity(err?.message || 'Invalid rules JSON');
               valid = false;
             }
           }
+          const adBlock = adBlockInput?.checked === true && mode !== 'block' && mode !== 'instance_only';
+          if (adBlock) {
+            group.ad_block = true;
+            group.rules = Array.isArray(group.rules) && group.rules.length ? [managedVLESSAdBlockRule()].concat(group.rules) : [managedVLESSAdBlockRule()];
+          }
           if (key) groups.push(group);
         });
         if (!groups.length) {
-          groups.push({ key: 'default', label: 'Default access', outbound_tag: 'direct' });
+          groups.push({ key: 'default', label: 'Default access', access_mode: 'instance_default', egress_mode: 'default', outbound_tag: 'direct' });
         }
         const json = JSON.stringify(groups, null, 2);
         hidden.value = json;
         if (preview) preview.value = json;
+        syncAllRows();
         return valid;
       };
 
@@ -1010,7 +1207,13 @@
         if (rowsContainer.querySelectorAll('[data-vless-group-row]').length <= 1) {
           row.querySelector('[data-vless-group-key]').value = 'default';
           row.querySelector('[data-vless-group-label]').value = 'Default access';
-          row.querySelector('[data-vless-group-outbound]').value = 'direct';
+          row.querySelector('[data-vless-group-mode]').value = 'instance_default';
+          const egressSelect = row.querySelector('[data-vless-group-egress-node]');
+          const targetSelect = row.querySelector('[data-vless-group-target-instance]');
+          const adBlockInput = row.querySelector('[data-vless-group-adblock]');
+          if (egressSelect) egressSelect.value = '';
+          if (targetSelect) targetSelect.value = '';
+          if (adBlockInput) adBlockInput.checked = false;
           row.querySelector('[data-vless-group-rules]').value = '';
         } else {
           row.remove();
@@ -1022,7 +1225,7 @@
         rowsContainer.insertAdjacentHTML('beforeend', renderVLESSGroupRow({
           key: `group-${nextIndex + 1}`,
           label: `Group ${nextIndex + 1}`,
-          outbound_tag: 'direct',
+          access_mode: 'instance_default',
           rules: [],
         }, nextIndex));
         serialize();
@@ -1034,6 +1237,7 @@
         const invalid = editor.querySelector(':invalid');
         if (invalid?.reportValidity) invalid.reportValidity();
       }, true);
+      syncAllRows();
       serialize();
     }
 

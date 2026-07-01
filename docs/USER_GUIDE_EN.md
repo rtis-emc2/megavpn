@@ -372,6 +372,14 @@ Backhaul apply and service instance apply are separate operations. Backhaul
 creates node-to-node transport. Instance route policy uses that transport for
 client traffic exit.
 
+When several active backhaul links exist from the same ingress node to the same
+egress node, they form a failover set. The control plane orders candidates by
+`route_metric`: lower metric is preferred, higher metric remains as backup. The
+agent installs all candidates in the selected policy table and refreshes the
+kernel routes on a systemd timer. If a candidate interface disappears or its
+peer probe fails, only that candidate route is removed; the next metric remains
+available for traffic.
+
 ## 13. Create Service Instances
 
 There are two supported paths.
@@ -462,8 +470,19 @@ Where to configure it:
   Use `egress node` when the whole VLESS instance must exit through a remote
   egress node. Select the exact `Egress node` when more than one link exists or
   deterministic output is required.
-- The same `Manage` view contains `VLESS outbound groups`: a JSON array of Xray
-  routing groups. `Default outbound group` selects the default group.
+- The same `Manage` view contains `VLESS outbound groups`. These groups are
+  provisioning-time access policies, not just labels:
+  - `Use instance default route`: follow the instance-level egress policy.
+  - `Exit from current node`: force local breakout on the VLESS node.
+  - `Exit from selected egress node`: resolve the selected egress node through
+    active managed backhaul during apply and generate a dedicated Xray outbound.
+  - `Allow only selected instance`: allow traffic only to the selected service
+    instance endpoint and block everything else for users in that group.
+  - `Block all traffic`: deny traffic for quarantine or suspended access.
+  - `Block ads`: add a managed Xray `geosite:category-ads-all` rule for users
+    in that group. The Xray runtime must include the required geosite data.
+  `Default outbound group` selects the group used when a client binding does
+  not specify one.
 - `Clients -> Provision`: when selecting a VLESS inbound, choose the access
   group. The group is saved in the client access binding and used for
   provisioning.

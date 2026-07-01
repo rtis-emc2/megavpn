@@ -174,6 +174,9 @@
 
   const instanceWorkflows = window.MegaVPNInstanceWorkflows?.create?.({
     state,
+    setTitle,
+    el,
+    setPage,
     domainUI,
     requestJSON,
     fetchJSON,
@@ -293,9 +296,10 @@
     openModal,
     closeModal,
     openActionOutcomeModal,
-    openCreateInstanceModal: instanceWorkflows.openCreateInstanceModal,
+    renderCreateInstanceForm: instanceWorkflows.renderCreateInstanceForm,
     openCreateInstanceChoiceModal: instanceWorkflows.openCreateInstanceChoiceModal,
     openInstanceManageModal: instanceWorkflows.openInstanceManageModal,
+    openInstanceManagePage: instanceWorkflows.openInstanceManagePage,
     openInstanceRuntimeInstallModal: instanceWorkflows.openInstanceRuntimeInstallModal,
     queueInstanceAction: instanceWorkflows.queueInstanceAction,
   });
@@ -313,6 +317,16 @@
     setPage,
   });
   if (!dashboardPage) throw new Error('MegaVPNDashboardPage is not loaded');
+
+  const nodeMapPage = window.MegaVPNNodeMapPage?.create?.({
+    state,
+    setTitle,
+    el,
+    setPage,
+    statusTag,
+    escapeHTML,
+  });
+  if (!nodeMapPage) throw new Error('MegaVPNNodeMapPage is not loaded');
 
   const servicesPage = window.MegaVPNServicesPage?.create?.({
     state,
@@ -362,6 +376,23 @@
     openActionOutcomeModal,
   });
   if (!addressPoolsPage) throw new Error('MegaVPNAddressPoolsPage is not loaded');
+
+  const firewallPage = window.MegaVPNFirewallPage?.create?.({
+    state,
+    setTitle,
+    el,
+    statusTag,
+    escapeHTML,
+    formatDate,
+    hasPermission,
+    sendJSON,
+    refresh,
+    openModal,
+    closeModal,
+    openActionOutcomeModal,
+    watchJob: jobWorkflows.watchJob,
+  });
+  if (!firewallPage) throw new Error('MegaVPNFirewallPage is not loaded');
 
   const revisionsPage = window.MegaVPNRevisionsPage?.create?.({
     state,
@@ -508,12 +539,14 @@
     authWorkflows,
     settingsWorkflows,
     nodeWorkflows,
+    nodeMapPage,
     instanceWorkflows,
     certificateWorkflows,
     dashboardPage,
     nodesPage,
     instancesPage,
     addressPoolsPage,
+    firewallPage,
     servicesPage,
     clientsPage,
     jobWorkflows,

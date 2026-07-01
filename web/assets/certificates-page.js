@@ -37,8 +37,51 @@
       throw new Error('MegaVPNCertificatesPage requires page dependencies');
     }
 
+    const tabs = [
+      ['overview', 'Overview', 'issued inventory'],
+      ['leaf', 'TLS certificates', 'leaf and default'],
+      ['authorities', 'TLS authorities', 'managed issuers'],
+      ['service', 'Service PKI', 'service roots'],
+    ];
+
+    function selectedTab() {
+      const key = tabs.some(([tab]) => tab === state.certificatesTab) ? state.certificatesTab : 'overview';
+      state.certificatesTab = key;
+      return key;
+    }
+
+    function renderTabs(active, counts) {
+      return `
+        <div class="page-tabs control-tabs" role="tablist" aria-label="Certificate sections">
+          ${tabs.map(([key, label, caption]) => `
+            <button class="page-tab ${active === key ? 'is-active' : ''}" type="button" data-certificate-tab="${escapeHTML(key)}" role="tab" aria-selected="${active === key ? 'true' : 'false'}">
+              <span>${escapeHTML(label)} <em>${escapeHTML(String(counts[key] || 0))}</em></span>
+              <small>${escapeHTML(caption)}</small>
+            </button>`).join('')}
+        </div>`;
+    }
+
+    function bindTabs() {
+      document.querySelectorAll('[data-certificate-tab]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const tab = button.dataset.certificateTab || 'overview';
+          state.certificatesTab = tab;
+          localStorage.setItem('megavpn.certificatesTab', tab);
+          document.querySelectorAll('[data-certificate-tab]').forEach((item) => {
+            const active = item.dataset.certificateTab === tab;
+            item.classList.toggle('is-active', active);
+            item.setAttribute('aria-selected', active ? 'true' : 'false');
+          });
+          document.querySelectorAll('[data-certificate-panel]').forEach((panel) => {
+            panel.hidden = panel.dataset.certificatePanel !== tab;
+          });
+        });
+      });
+    }
+
     function render() {
       setTitle('Certificates');
+      const activeTab = selectedTab();
       const allCertificates = Array.isArray(state.platformCertificates)
         ? state.platformCertificates.filter((item) => String(item.status || '').toLowerCase() !== 'deleted')
         : [];
@@ -49,32 +92,99 @@
         : [];
       const defaultLeaf = leafRows.find((item) => item.is_default);
       const activeRoots = rootRows.filter((item) => certificateDisplayStatus(item) === 'active').length;
+      const summaryRows = [
+        ...leafRows.map((item) => ({
+          type: 'TLS leaf',
+          name: certificatePrimaryLabel(item),
+          scope: item.is_default ? 'default TLS endpoint' : certificateUsageCaption(item.id),
+          common: item.common_name || 'n/a',
+          expires: certificateExpiryCaption(item),
+          status: certificateDisplayStatus(item),
+          created: item.created_at,
+        })),
+        ...authorityRows.map((item) => ({
+          type: 'TLS CA',
+          name: certificatePrimaryLabel(item),
+          scope: 'issues TLS leaf certificates',
+          common: item.common_name || 'n/a',
+          expires: certificateExpiryCaption(item),
+          status: certificateDisplayStatus(item),
+          created: item.created_at,
+        })),
+        ...rootRows.map((item) => ({
+          type: 'Service CA',
+          name: `${item.service_code || 'service'} / ${item.pki_profile || 'default'}`,
+          scope: 'service client/server certificates',
+          common: item.common_name || 'n/a',
+          expires: certificateExpiryCaption(item),
+          status: certificateDisplayStatus(item),
+          created: item.created_at,
+        })),
+      ].sort((a, b) => new Date(b.created || 0).getTime() - new Date(a.created || 0).getTime());
+      const counts = {
+        overview: summaryRows.length,
+        leaf: leafRows.length,
+        authorities: authorityRows.length,
+        service: rootRows.length,
+      };
       el('content').innerHTML = `
-        <div class="certificate-overview-grid">
-          <div class="certificate-overview-card">
-            <span>TLS certificates</span>
-            <strong>${escapeHTML(String(leafRows.length))}</strong>
-            <small>${escapeHTML(defaultLeaf ? `default: ${certificatePrimaryLabel(defaultLeaf)}` : 'no default leaf certificate')}</small>
+        <div class="control-page-shell certificates-page-shell">
+          <section class="section-card control-page-intro">
+            <div>
+              <h2>Certificate center</h2>
+              <p>Single place for issued TLS certificates, managed TLS authorities and service PKI trust roots.</p>
+            </div>
+            <div class="control-page-actions">
+              <button class="primary-btn" id="createCertificateBtn" type="button">Add TLS certificate</button>
+              <button class="secondary-btn" id="createManagedCABtn" type="button">Create TLS CA</button>
+              <button class="secondary-btn" id="createServiceCABtn" type="button">Create service CA root</button>
+            </div>
+          </section>
+          ${renderTabs(activeTab, counts)}
+          <div class="certificates-tab-panel" data-certificate-panel="overview" ${activeTab === 'overview' ? '' : 'hidden'}>
+            <div class="certificate-overview-grid">
+              <div class="certificate-overview-card">
+                <span>TLS certificates</span>
+                <strong>${escapeHTML(String(leafRows.length))}</strong>
+                <small>${escapeHTML(defaultLeaf ? `default: ${certificatePrimaryLabel(defaultLeaf)}` : 'no default leaf certificate')}</small>
+              </div>
+              <div class="certificate-overview-card">
+                <span>TLS authorities</span>
+                <strong>${escapeHTML(String(authorityRows.length))}</strong>
+                <small>issue leaf certificates for edge TLS endpoints</small>
+              </div>
+              <div class="certificate-overview-card">
+                <span>Service PKI roots</span>
+                <strong>${escapeHTML(String(rootRows.length))}</strong>
+                <small>${escapeHTML(String(activeRoots))} active service trust roots</small>
+              </div>
+            </div>
+            <section class="table-card certificate-summary-card">
+              <div class="table-head"><h2>Issued certificates</h2><div class="table-tools"><span class="tag">${escapeHTML(String(summaryRows.length))} items</span></div></div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Type</th><th>Name</th><th>Common Name</th><th>Scope</th><th>Expires</th><th>Status</th></tr></thead>
+                  <tbody>
+                    ${summaryRows.length ? summaryRows.map((item) => `
+                      <tr>
+                        <td><span class="tag">${escapeHTML(item.type)}</span></td>
+                        <td><strong>${escapeHTML(item.name)}</strong></td>
+                        <td>${escapeHTML(item.common)}</td>
+                        <td>${escapeHTML(item.scope)}</td>
+                        <td>${escapeHTML(item.expires)}</td>
+                        <td>${statusTag(item.status)}</td>
+                      </tr>`).join('') : '<tr><td colspan="6"><div class="empty">No certificates or service trust roots have been issued yet.</div></td></tr>'}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </div>
-          <div class="certificate-overview-card">
-            <span>TLS authorities</span>
-            <strong>${escapeHTML(String(authorityRows.length))}</strong>
-            <small>issue leaf certificates for edge TLS endpoints</small>
-          </div>
-          <div class="certificate-overview-card">
-            <span>Service PKI roots</span>
-            <strong>${escapeHTML(String(rootRows.length))}</strong>
-            <small>${escapeHTML(String(activeRoots))} active service trust roots</small>
-          </div>
-        </div>
+          <div class="certificates-tab-panel" data-certificate-panel="leaf" ${activeTab === 'leaf' ? '' : 'hidden'}>
         <section class="table-card certificate-manager-card">
           <div class="table-head">
             <div>
               <h2>TLS certificates</h2>
               <div class="metric-caption">Leaf certificates with private keys for Nginx, Xray TLS and control-plane TLS bindings.</div>
-            </div>
-            <div class="table-tools">
-              <button class="primary-btn" id="createCertificateBtn" type="button">Add TLS certificate</button>
             </div>
           </div>
           <div class="table-wrap">
@@ -106,14 +216,13 @@
             </table>
           </div>
         </section>
+          </div>
+          <div class="certificates-tab-panel" data-certificate-panel="authorities" ${activeTab === 'authorities' ? '' : 'hidden'}>
         <section class="table-card">
           <div class="table-head">
             <div>
               <h2>TLS certificate authorities</h2>
               <div class="metric-caption">Managed CA roots for issuing internal TLS leaf certificates. Not used as OpenVPN service CA roots.</div>
-            </div>
-            <div class="table-tools">
-              <button class="secondary-btn" id="createManagedCABtn" type="button">Create TLS CA</button>
             </div>
           </div>
           <div class="table-wrap">
@@ -133,6 +242,8 @@
             </table>
           </div>
         </section>
+          </div>
+          <div class="certificates-tab-panel" data-certificate-panel="service" ${activeTab === 'service' ? '' : 'hidden'}>
         <section class="table-card">
           <div class="table-head">
             <div>
@@ -140,7 +251,6 @@
               <div class="metric-caption">Service trust roots for generated service certificates. OpenVPN instances share trust by selecting the same service/profile pair.</div>
             </div>
             <div class="table-tools">
-              <button class="secondary-btn" id="createServiceCABtn" type="button">Create service CA root</button>
               <span class="tag">${escapeHTML(String(rootRows.length))} roots</span>
             </div>
           </div>
@@ -160,7 +270,10 @@
               </tbody>
             </table>
           </div>
-        </section>`;
+        </section>
+          </div>
+        </div>`;
+      bindTabs();
       document.getElementById('createCertificateBtn')?.addEventListener('click', openCreateCertificateWizard);
       document.getElementById('createManagedCABtn')?.addEventListener('click', () => openCertificateActionForm('managed_ca'));
       document.getElementById('createServiceCABtn')?.addEventListener('click', () => openCertificateActionForm('service_ca_root'));

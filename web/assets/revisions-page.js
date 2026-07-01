@@ -37,6 +37,31 @@
       throw new Error('MegaVPNRevisionsPage requires page dependencies');
     }
 
+    const revisionTabs = [
+      ['timeline', 'Timeline', 'revision history'],
+      ['validation', 'Validation', 'apply readiness'],
+      ['diff', 'Diff summary', 'changed spec paths'],
+    ];
+    let currentInstance = null;
+    let currentRevisions = null;
+
+    function selectedTab() {
+      const tab = revisionTabs.some(([key]) => key === state.revisionsTab) ? state.revisionsTab : 'timeline';
+      state.revisionsTab = tab;
+      return tab;
+    }
+
+    function renderRevisionTabs(active) {
+      return `
+        <div class="page-tabs control-tabs revision-tabs" role="tablist" aria-label="Revision views">
+          ${revisionTabs.map(([key, label, caption]) => `
+            <button class="page-tab ${active === key ? 'is-active' : ''}" type="button" data-revision-tab="${escapeHTML(key)}" role="tab" aria-selected="${active === key ? 'true' : 'false'}">
+              <span>${escapeHTML(label)}</span>
+              <small>${escapeHTML(caption)}</small>
+            </button>`).join('')}
+        </div>`;
+    }
+
     function stableSpecValue(value) {
       if (value === null || typeof value !== 'object') return JSON.stringify(value);
       if (Array.isArray(value)) return `[${value.map((item) => stableSpecValue(item)).join(',')}]`;
@@ -120,7 +145,9 @@
     function renderShell(instances, instance) {
       const content = el('content');
       if (!content) return;
+      const activeTab = selectedTab();
       content.innerHTML = `
+        <div class="control-page-shell revisions-page-shell">
         <section class="card revision-page-card">
           <div class="table-head revision-page-head">
             <div>
@@ -132,10 +159,12 @@
             </div>
           </div>
           ${renderInstanceSummary(instance)}
+          ${renderRevisionTabs(activeTab)}
           <div class="form-result revision-result" id="revisionsResult">
             <div class="empty compact-empty">Loading revision history...</div>
           </div>
-        </section>`;
+        </section>
+        </div>`;
     }
 
     function bindShell() {
@@ -146,6 +175,24 @@
         localStorage.setItem('megavpn.revisionsInstanceID', state.revisionsInstanceID);
         render();
       });
+      document.querySelectorAll('[data-revision-tab]').forEach((button) => {
+        button.addEventListener('click', () => {
+          activateRevisionTab(button.dataset.revisionTab || 'timeline');
+        });
+      });
+    }
+
+    function activateRevisionTab(tab) {
+      state.revisionsTab = revisionTabs.some(([key]) => key === tab) ? tab : 'timeline';
+      localStorage.setItem('megavpn.revisionsTab', state.revisionsTab);
+      document.querySelectorAll('[data-revision-tab]').forEach((button) => {
+        const active = button.dataset.revisionTab === state.revisionsTab;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      if (currentInstance && Array.isArray(currentRevisions)) {
+        renderRevisionTable(currentInstance, currentRevisions);
+      }
     }
 
     function revisionRows(revisions) {
@@ -195,6 +242,35 @@
       const target = document.getElementById('revisionsResult');
       if (!target) return;
       const rows = revisionRows(revisions);
+      if (selectedTab() === 'validation') {
+        target.innerHTML = tableCard('Revision Validation', rows.map((row) => ({
+          revision_no: row.revision_no,
+          status: row.status,
+          created: row.created,
+          issues: Array.isArray(row.raw?.validation_errors) ? row.raw.validation_errors : [],
+          is_current: row.is_current,
+          revision_id: row.revision_id,
+        })), [
+          { title: 'Revision', key: 'revision_no', render: (row) => `<strong>#${escapeHTML(row.revision_no)}</strong>${row.is_current ? ' <span class="tag">current</span>' : ''}` },
+          { title: 'Status', key: 'status', render: (row) => statusTag(row.status) },
+          { title: 'Created', key: 'created', render: (row) => formatDate(row.created) },
+          { title: 'Issues', key: 'issues', render: (row) => row.issues.length ? `<span class="tag danger">${escapeHTML(String(row.issues.length))} issues</span><div class="timeline-meta">${escapeHTML(row.issues.slice(0, 2).map((item) => item.message || item.field || JSON.stringify(item)).join(' · '))}</div>` : '<span class="tag ok">apply-ready</span>' },
+          { title: 'Actions', key: 'actions', render: (row) => `<button class="secondary-btn revision-preview-btn" type="button" data-revision-id="${escapeHTML(row.revision_id)}">Preview</button>` },
+        ]);
+        bindRevisionActions(instance, rows);
+        return;
+      }
+      if (selectedTab() === 'diff') {
+        target.innerHTML = tableCard('Revision Diff Summary', rows, [
+          { title: 'Revision', key: 'revision_no', render: (row) => `<strong>#${escapeHTML(row.revision_no)}</strong>${row.is_current ? ' <span class="tag">current</span>' : ''}` },
+          { title: 'Compared To', key: 'compare_revision_no', render: (row) => row.compare_revision_no ? `#${escapeHTML(row.compare_revision_no)}` : 'n/a' },
+          { title: 'Changed Paths', key: 'diff_count', render: (row) => `<span class="tag">${escapeHTML(String(row.diff_count))}</span>` },
+          { title: 'Top Changes', key: 'diff_keys', render: (row) => row.diff_keys.length ? `<code>${escapeHTML(row.diff_keys.join(', '))}</code>` : 'no changes' },
+          { title: 'Actions', key: 'actions', render: (row) => `<button class="secondary-btn revision-preview-btn" type="button" data-revision-id="${escapeHTML(row.revision_id)}">Preview</button>` },
+        ]);
+        bindRevisionActions(instance, rows);
+        return;
+      }
       target.innerHTML = tableCard('Revision Timeline', rows, [
         { title: 'Revision', key: 'revision_no', render: (row) => `<strong>#${escapeHTML(row.revision_no)}</strong>${row.is_current ? ' <span class="tag">current</span>' : ''}${row.is_last_applied ? ' <span class="tag ok">applied</span>' : ''}` },
         { title: 'Status', key: 'status', render: (row) => statusTag(row.status) },
@@ -235,14 +311,20 @@
       const instance = selectedInstance(instances);
       renderShell(instances, instance);
       bindShell();
+      currentInstance = null;
+      currentRevisions = null;
 
       const selectedInstanceID = instance.id;
       try {
         const revisions = await requestJSON(`/api/v1/instances/${selectedInstanceID}/revisions?limit=20`);
         if (state.page !== 'revisions' || state.revisionsInstanceID !== selectedInstanceID) return;
-        renderRevisionTable(instance, revisions || []);
+        currentInstance = instance;
+        currentRevisions = revisions || [];
+        renderRevisionTable(currentInstance, currentRevisions);
       } catch (err) {
         if (state.page !== 'revisions' || state.revisionsInstanceID !== selectedInstanceID) return;
+        currentInstance = instance;
+        currentRevisions = null;
         renderRevisionError(err);
       }
     }

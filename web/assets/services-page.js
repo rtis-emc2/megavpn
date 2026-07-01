@@ -121,6 +121,51 @@
       },
     ];
 
+    const serviceTabs = [
+      ['repository', 'Artifacts', 'global runtime repository'],
+      ['runtime', 'Node runtime', 'install and verify'],
+      ['matrix', 'Fleet matrix', 'capabilities by node'],
+      ['catalog', 'Catalog', 'service definitions'],
+      ['events', 'Events', 'install diagnostics'],
+    ];
+
+    function selectedTab() {
+      const tab = serviceTabs.some(([key]) => key === state.servicesTab) ? state.servicesTab : 'runtime';
+      state.servicesTab = tab;
+      return tab;
+    }
+
+    function renderTabs(active, counts = {}) {
+      return `
+        <div class="page-tabs control-tabs services-tabs" role="tablist" aria-label="Service sections">
+          ${serviceTabs.map(([key, label, caption]) => `
+            <button class="page-tab ${active === key ? 'is-active' : ''}" type="button" data-services-tab="${escapeHTML(key)}" role="tab" aria-selected="${active === key ? 'true' : 'false'}">
+              <span>${escapeHTML(label)}${counts[key] == null ? '' : ` <em>${escapeHTML(String(counts[key]))}</em>`}</span>
+              <small>${escapeHTML(caption)}</small>
+            </button>`).join('')}
+        </div>`;
+    }
+
+    function bindTabs() {
+      document.querySelectorAll('[data-services-tab]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const tab = button.dataset.servicesTab || 'runtime';
+          state.servicesTab = tab;
+          localStorage.setItem('megavpn.servicesTab', tab);
+          document.querySelectorAll('[data-services-tab]').forEach((item) => {
+            const active = item.dataset.servicesTab === tab;
+            item.classList.toggle('is-active', active);
+            item.setAttribute('aria-selected', active ? 'true' : 'false');
+          });
+          document.querySelectorAll('[data-services-panel]').forEach((panel) => {
+            panel.hidden = panel.dataset.servicesPanel !== tab;
+          });
+          const nodeTarget = document.querySelector('[data-services-node-target]');
+          if (nodeTarget) nodeTarget.hidden = !['runtime', 'events'].includes(tab);
+        });
+      });
+    }
+
     function selectedNode() {
       return state.nodes.find((node) => node.id === state.servicesNodeID) || state.nodes[0] || null;
     }
@@ -388,6 +433,7 @@
 
     function render() {
       setTitle('Services');
+      const activeTab = selectedTab();
       const node = selectedNode();
       const runtimeServices = groupInstallersByService(state.serviceInstallers || []);
       const capabilities = node ? (state.serviceCapabilitiesByNode[node.id] || []) : [];
@@ -395,7 +441,31 @@
       const definitions = Array.isArray(state.servicesCatalog) ? state.servicesCatalog : [];
       const binaryArtifacts = Array.isArray(state.binaryArtifacts) ? state.binaryArtifacts : [];
       const canManageBinaryRepository = hasPermission('binary_repository.manage');
+      const counts = {
+        repository: binaryArtifacts.length,
+        runtime: runtimeServices.length,
+        matrix: state.nodes.length,
+        catalog: definitions.length,
+        events: events.length,
+      };
       el('content').innerHTML = `
+        <div class="control-page-shell services-page-shell">
+          <section class="section-card control-page-intro">
+            <div>
+              <h2>Service operations</h2>
+              <p>Runtime artifacts are global. Node selection is used only for capability verification, installation jobs and install diagnostics.</p>
+            </div>
+            <div class="control-page-actions">
+              <span class="tag">${escapeHTML(String(runtimeServices.length))} runtimes</span>
+              <span class="tag">${escapeHTML(String(binaryArtifacts.length))} artifacts</span>
+              ${node ? `<span class="tag">${escapeHTML(node.name)}</span>` : '<span class="tag warn">no node</span>'}
+            </div>
+          </section>
+          ${renderTabs(activeTab, counts)}
+          <div data-services-node-target ${['runtime', 'events'].includes(activeTab) ? '' : 'hidden'}>
+            ${renderNodeRuntimeTarget(node)}
+          </div>
+          <div class="services-tab-panel" data-services-panel="repository" ${activeTab === 'repository' ? '' : 'hidden'}>
         <section class="table-card services-repository-card">
           <div class="table-head">
             <div>
@@ -411,7 +481,8 @@
           ${renderRepositoryWorkflow()}
           <div class="table-wrap">${renderBinaryArtifactsTable(binaryArtifacts)}</div>
         </section>
-        ${renderNodeRuntimeTarget(node)}
+          </div>
+          <div class="services-tab-panel" data-services-panel="runtime" ${activeTab === 'runtime' ? '' : 'hidden'}>
         <section class="table-card">
           <div class="table-head">
             <div>
@@ -422,20 +493,33 @@
           </div>
           <div class="table-wrap">${renderRuntimeServicesTable(runtimeServices, node, capabilities)}</div>
         </section>
+          </div>
+          <div class="services-tab-panel" data-services-panel="matrix" ${activeTab === 'matrix' ? '' : 'hidden'}>
         <section class="table-card">
           <div class="table-head"><h2>Capability Matrix</h2><div class="table-tools"><span class="tag">${escapeHTML(String(state.nodes.length))} nodes</span></div></div>
           <div class="table-wrap">${renderCapabilityMatrix(state.nodes, state.serviceCapabilitiesByNode)}</div>
         </section>
-        <section class="split">
-          <section class="table-card">
-            <div class="table-head"><h2>Service Catalog</h2><div class="table-tools"><span class="tag">${escapeHTML(String(definitions.length))} definitions</span></div></div>
-            <div class="table-wrap">${renderServiceDefinitionsTable(definitions)}</div>
-          </section>
-          <section class="table-card">
-            <div class="table-head"><h2>Recent Capability Events</h2><div class="table-tools"><span class="tag">${escapeHTML(node?.name || 'node')}</span></div></div>
-            <div class="table-wrap">${renderCapabilityEventsTable(events)}</div>
-          </section>
-        </section>`;
+          </div>
+          <div class="services-tab-panel" data-services-panel="catalog" ${activeTab === 'catalog' ? '' : 'hidden'}>
+        <section class="table-card">
+          <div class="table-head"><h2>Service Catalog</h2><div class="table-tools"><span class="tag">${escapeHTML(String(definitions.length))} definitions</span></div></div>
+          <div class="table-wrap">${renderServiceDefinitionsTable(definitions)}</div>
+        </section>
+          </div>
+          <div class="services-tab-panel" data-services-panel="events" ${activeTab === 'events' ? '' : 'hidden'}>
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Capability Events</h2>
+              <p class="table-subtitle">Diagnostics for install/verify jobs on the selected node. These events are intentionally separated from the main runtime screen.</p>
+            </div>
+            <div class="table-tools"><span class="tag">${escapeHTML(node?.name || 'node')}</span></div>
+          </div>
+          <div class="table-wrap">${renderCapabilityEventsTable(events)}</div>
+        </section>
+          </div>
+        </div>`;
+      bindTabs();
       bindActions();
       if (!state.serviceCapabilitiesByNode[node?.id || '']) {
         void loadData();

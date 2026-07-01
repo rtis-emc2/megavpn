@@ -1,0 +1,715 @@
+(function (window) {
+  'use strict';
+
+  function createFirewallPage(ctx = {}) {
+    const {
+      state,
+      setTitle,
+      el,
+      statusTag,
+      escapeHTML,
+      formatDate,
+      hasPermission,
+      sendJSON,
+      refresh,
+      openModal,
+      closeModal,
+      openActionOutcomeModal,
+      watchJob,
+    } = ctx;
+    if (
+      !state ||
+      typeof setTitle !== 'function' ||
+      typeof el !== 'function' ||
+      typeof statusTag !== 'function' ||
+      typeof escapeHTML !== 'function' ||
+      typeof formatDate !== 'function' ||
+      typeof hasPermission !== 'function' ||
+      typeof sendJSON !== 'function' ||
+      typeof refresh !== 'function' ||
+      typeof openModal !== 'function' ||
+      typeof closeModal !== 'function' ||
+      typeof openActionOutcomeModal !== 'function'
+    ) {
+      throw new Error('MegaVPNFirewallPage requires page dependencies');
+    }
+
+    function inventory() {
+      const inv = state.firewallInventory || {};
+      return {
+        lists: Array.isArray(inv.address_lists) ? inv.address_lists : [],
+        entries: Array.isArray(inv.entries) ? inv.entries : [],
+        policies: Array.isArray(inv.policies) ? inv.policies : [],
+        rules: Array.isArray(inv.rules) ? inv.rules : [],
+        nodeStates: Array.isArray(inv.node_states) ? inv.node_states : [],
+      };
+    }
+
+    function policyByID(policyID) {
+      return inventory().policies.find((policy) => policy.id === policyID || policy.key === policyID) || null;
+    }
+
+    function addressListByID(listID) {
+      return inventory().lists.find((list) => list.id === listID || list.key === listID) || null;
+    }
+
+    function entryByID(entryID) {
+      return inventory().entries.find((entry) => entry.id === entryID) || null;
+    }
+
+    function ruleByID(ruleID) {
+      return inventory().rules.find((rule) => rule.id === ruleID) || null;
+    }
+
+    function rulesForPolicy(policyID) {
+      return inventory().rules.filter((rule) => rule.policy_id === policyID);
+    }
+
+    function renderSummary() {
+      const inv = inventory();
+      const activePolicies = inv.policies.filter((policy) => policy.status === 'active').length;
+      const applied = inv.nodeStates.filter((item) => item.status === 'applied').length;
+      const failed = inv.nodeStates.filter((item) => item.status === 'failed').length;
+      return `
+        <div class="firewall-summary-grid">
+          <div class="pool-summary-card"><span>Policies</span><strong>${escapeHTML(String(inv.policies.length))}</strong><small>${escapeHTML(String(activePolicies))} active</small></div>
+          <div class="pool-summary-card"><span>Rules</span><strong>${escapeHTML(String(inv.rules.length))}</strong><small>ordered by priority</small></div>
+          <div class="pool-summary-card"><span>Address lists</span><strong>${escapeHTML(String(inv.lists.length))}</strong><small>${escapeHTML(String(inv.entries.length))} entries</small></div>
+          <div class="pool-summary-card"><span>Node state</span><strong>${escapeHTML(String(applied))}</strong><small>${escapeHTML(String(failed))} failed</small></div>
+        </div>`;
+    }
+
+    function renderPolicyCard(policy) {
+      const rules = rulesForPolicy(policy.id);
+      const canManage = hasPermission('firewall.manage');
+      const canApply = hasPermission('firewall.apply');
+      return `
+        <article class="firewall-policy-card">
+          <div class="firewall-policy-head">
+            <div>
+              <h3>${escapeHTML(policy.label || policy.key)}</h3>
+              <div class="metric-caption"><code>${escapeHTML(policy.key || policy.id)}</code> · ${escapeHTML(policy.scope || 'node')}</div>
+            </div>
+            ${statusTag(policy.status || 'unknown')}
+          </div>
+          ${policy.description ? `<p class="pool-description">${escapeHTML(policy.description)}</p>` : ''}
+          <div class="firewall-policy-facts">
+            <div><span>Input</span><strong>${escapeHTML(policy.default_input_policy || 'accept')}</strong></div>
+            <div><span>Forward</span><strong>${escapeHTML(policy.default_forward_policy || 'accept')}</strong></div>
+            <div><span>Output</span><strong>${escapeHTML(policy.default_output_policy || 'accept')}</strong></div>
+            <div><span>Rules</span><strong>${escapeHTML(String(rules.length))}</strong></div>
+          </div>
+          <div class="firewall-rule-preview">
+            ${rules.length ? rules.slice(0, 4).map((rule) => `
+              <div>
+                <code>${escapeHTML(String(rule.priority || 1000))}</code>
+                ${statusTag(rule.action || 'unknown')}
+                <span>${escapeHTML(rule.chain || 'input')} · ${escapeHTML(rule.protocol || 'any')} · ${escapeHTML(firstText(rule.src_cidr, 'any'))} -> ${escapeHTML(firstText(rule.dst_cidr, 'any'))}</span>
+              </div>`).join('') : '<div class="empty compact">No rules configured. Default accept remains active.</div>'}
+          </div>
+          <div class="pool-actions">
+            <button class="secondary-btn firewall-add-rule-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canManage ? '' : ' disabled'}>Add rule</button>
+            <button class="primary-btn firewall-apply-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canApply ? '' : ' disabled'}>Apply to node</button>
+          </div>
+        </article>`;
+    }
+
+    function renderAddressLists() {
+      const inv = inventory();
+      if (!inv.lists.length) {
+        return '<tr><td colspan="5"><div class="empty">No address lists configured.</div></td></tr>';
+      }
+      return inv.lists.map((list) => `
+        <tr>
+          <td><strong>${escapeHTML(list.label || list.key)}</strong><br><code>${escapeHTML(list.key || list.id)}</code></td>
+          <td>${escapeHTML(list.scope || 'global')}</td>
+          <td>${escapeHTML(String(list.entry_count || 0))}</td>
+          <td>${statusTag(list.status || 'unknown')}</td>
+          <td>
+            <div class="compact-action-grid">
+              <button class="secondary-btn firewall-add-entry-btn" type="button" data-list-id="${escapeHTML(list.id)}"${hasPermission('firewall.manage') ? '' : ' disabled'}>Add entry</button>
+              <button class="secondary-btn firewall-edit-list-btn" type="button" data-list-id="${escapeHTML(list.id)}"${hasPermission('firewall.manage') ? '' : ' disabled'}>Edit</button>
+              <button class="danger-btn firewall-delete-list-btn" type="button" data-list-id="${escapeHTML(list.id)}" data-list-name="${escapeHTML(list.label || list.key)}"${hasPermission('firewall.manage') ? '' : ' disabled'}>Delete</button>
+            </div>
+          </td>
+        </tr>`).join('');
+    }
+
+    function renderEntryRows() {
+      const inv = inventory();
+      if (!inv.entries.length) {
+        return '<tr><td colspan="6"><div class="empty">No address entries configured.</div></td></tr>';
+      }
+      return inv.entries.map((entry) => {
+        const list = addressListByID(entry.list_id);
+        return `
+          <tr>
+            <td><strong>${escapeHTML(list?.label || entry.list_key || 'list')}</strong><br><code>${escapeHTML(entry.list_key || entry.list_id || '')}</code></td>
+            <td><code>${escapeHTML(entry.value || '')}</code></td>
+            <td>${escapeHTML(entry.value_type || 'auto')}</td>
+            <td>${escapeHTML(entry.label || '')}</td>
+            <td>${statusTag(entry.status || 'unknown')}</td>
+            <td>
+              <div class="compact-action-grid">
+                <button class="secondary-btn firewall-edit-entry-btn" type="button" data-list-id="${escapeHTML(entry.list_id)}" data-entry-id="${escapeHTML(entry.id)}"${hasPermission('firewall.manage') ? '' : ' disabled'}>Edit</button>
+                <button class="danger-btn firewall-delete-entry-btn" type="button" data-list-id="${escapeHTML(entry.list_id)}" data-entry-id="${escapeHTML(entry.id)}" data-entry-value="${escapeHTML(entry.value || '')}"${hasPermission('firewall.manage') ? '' : ' disabled'}>Delete</button>
+              </div>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+
+    function renderRuleRows() {
+      const inv = inventory();
+      if (!inv.rules.length) {
+        return '<tr><td colspan="9"><div class="empty">No firewall rules configured.</div></td></tr>';
+      }
+      return inv.rules.map((rule) => {
+        const policy = policyByID(rule.policy_id);
+        const src = firstText(rule.src_list_key ? '@' + rule.src_list_key : '', rule.src_cidr, 'any');
+        const dst = firstText(rule.dst_list_key ? '@' + rule.dst_list_key : '', rule.dst_cidr, 'any');
+        const ports = firstText(rule.dst_ports, rule.src_ports, 'any');
+        return `
+          <tr>
+            <td><code>${escapeHTML(String(rule.priority || 1000))}</code></td>
+            <td>${escapeHTML(policy?.label || policy?.key || rule.policy_id || 'policy')}</td>
+            <td>${escapeHTML(rule.chain || 'input')}</td>
+            <td>${statusTag(rule.action || 'unknown')}</td>
+            <td>${escapeHTML(rule.protocol || 'any')}</td>
+            <td><code>${escapeHTML(src)}</code></td>
+            <td><code>${escapeHTML(dst)}</code><br><span class="metric-caption">ports ${escapeHTML(ports)}</span></td>
+            <td>${escapeHTML(rule.comment || '')}</td>
+            <td>
+              <div class="compact-action-grid">
+                <button class="secondary-btn firewall-edit-rule-btn" type="button" data-policy-id="${escapeHTML(rule.policy_id)}" data-rule-id="${escapeHTML(rule.id)}"${hasPermission('firewall.manage') ? '' : ' disabled'}>Edit</button>
+                <button class="danger-btn firewall-delete-rule-btn" type="button" data-policy-id="${escapeHTML(rule.policy_id)}" data-rule-id="${escapeHTML(rule.id)}"${hasPermission('firewall.manage') ? '' : ' disabled'}>Delete</button>
+              </div>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+
+    function renderNodeStates() {
+      const inv = inventory();
+      const rows = (state.nodes || []).map((node) => {
+        const item = inv.nodeStates.find((row) => row.node_id === node.id);
+        return `
+          <tr>
+            <td><strong>${escapeHTML(node.name || node.id)}</strong><br><span class="metric-caption">${escapeHTML(node.role || 'node')} · ${escapeHTML(node.address || 'n/a')}</span></td>
+            <td>${escapeHTML(item?.policy_key || 'node_base')}</td>
+            <td>${statusTag(item?.status || 'unknown')}</td>
+            <td>${escapeHTML(item?.updated_at ? formatDate(item.updated_at) : 'n/a')}</td>
+            <td><button class="secondary-btn firewall-node-apply-btn" type="button" data-node-id="${escapeHTML(node.id)}"${hasPermission('firewall.apply') ? '' : ' disabled'}>Apply</button></td>
+          </tr>`;
+      });
+      return rows.length ? rows.join('') : '<tr><td colspan="5"><div class="empty">No active nodes registered.</div></td></tr>';
+    }
+
+    function selectedTab() {
+      const allowed = new Set(['overview', 'policies', 'rules', 'addressLists', 'nodeState']);
+      return allowed.has(state.firewallTab) ? state.firewallTab : 'overview';
+    }
+
+    function renderTabs(inv) {
+      const failed = inv.nodeStates.filter((item) => item.status === 'failed').length;
+      const tabs = [
+        { key: 'overview', label: 'Overview', count: String(inv.policies.length), hint: 'Posture and counters' },
+        { key: 'policies', label: 'Policies', count: String(inv.policies.length), hint: 'Node policy sets' },
+        { key: 'rules', label: 'Rules', count: String(inv.rules.length), hint: 'Ordered firewall rules' },
+        { key: 'addressLists', label: 'Address lists', count: String(inv.entries.length), hint: 'Reusable sources and targets' },
+        { key: 'nodeState', label: 'Node state', count: failed ? `${failed} failed` : String(inv.nodeStates.length), hint: 'Apply status by node' },
+      ];
+      const active = selectedTab();
+      return `
+        <nav class="page-tabs" role="tablist" aria-label="Firewall sections">
+          ${tabs.map((tab) => `
+            <button class="page-tab${tab.key === active ? ' is-active' : ''}" type="button" role="tab" aria-selected="${tab.key === active ? 'true' : 'false'}" data-firewall-tab="${escapeHTML(tab.key)}">
+              <span>${escapeHTML(tab.label)} <em>${escapeHTML(tab.count)}</em></span>
+              <small>${escapeHTML(tab.hint)}</small>
+            </button>`).join('')}
+        </nav>`;
+    }
+
+    function renderPolicySection(inv) {
+      return `
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Firewall policies</h2>
+              <div class="metric-caption">Node policies rendered into managed nftables chains.</div>
+            </div>
+            <div class="table-tools">
+              <span class="tag">${escapeHTML(String(inv.policies.length))} policies</span>
+              ${hasPermission('firewall.manage') ? '<button class="secondary-btn" id="addFirewallListBtn" type="button">Add address list</button><button class="secondary-btn" id="addFirewallRuleBtn" type="button">Add rule</button>' : ''}
+            </div>
+          </div>
+          <div class="firewall-policy-grid">
+            ${inv.policies.length ? inv.policies.map(renderPolicyCard).join('') : '<div class="empty">No firewall policies configured.</div>'}
+          </div>
+        </section>`;
+    }
+
+    function renderNodeStateSection(inv) {
+      return `
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Node firewall state</h2>
+              <div class="metric-caption">Last observed policy apply state per managed node.</div>
+            </div>
+            <div class="table-tools"><span class="tag">${escapeHTML(String(inv.nodeStates.length))} observed</span></div>
+          </div>
+          <div class="table-wrap">
+            <table><thead><tr><th>Node</th><th>Policy</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead><tbody>${renderNodeStates()}</tbody></table>
+          </div>
+        </section>`;
+    }
+
+    function renderRulesSection(inv) {
+      return `
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Rules</h2>
+              <div class="metric-caption">Rules are evaluated by priority inside their selected policy.</div>
+            </div>
+            <div class="table-tools">
+              <span class="tag">${escapeHTML(String(inv.rules.length))} rules</span>
+              ${hasPermission('firewall.manage') ? '<button class="secondary-btn" id="addFirewallRuleBtnRules" type="button">Add rule</button>' : ''}
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table><thead><tr><th>Priority</th><th>Policy</th><th>Chain</th><th>Action</th><th>Proto</th><th>Source</th><th>Destination</th><th>Comment</th><th>Actions</th></tr></thead><tbody>${renderRuleRows()}</tbody></table>
+          </div>
+        </section>`;
+    }
+
+    function renderAddressListsSection(inv) {
+      return `
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Address lists</h2>
+              <div class="metric-caption">Named groups for source and destination matching.</div>
+            </div>
+            <div class="table-tools">
+              <span class="tag">${escapeHTML(String(inv.entries.length))} entries</span>
+              ${hasPermission('firewall.manage') ? '<button class="secondary-btn" id="addFirewallListBtnAddress" type="button">Add address list</button>' : ''}
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table><thead><tr><th>List</th><th>Scope</th><th>Entries</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderAddressLists()}</tbody></table>
+          </div>
+          <div class="table-wrap firewall-entry-wrap">
+            <table><thead><tr><th>List</th><th>Value</th><th>Type</th><th>Label</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderEntryRows()}</tbody></table>
+          </div>
+        </section>`;
+    }
+
+    function renderOverview(inv) {
+      const activePolicies = inv.policies.filter((policy) => policy.status === 'active').length;
+      const activeRules = inv.rules.filter((rule) => (rule.status || 'active') === 'active' && rule.enabled !== false).length;
+      const failed = inv.nodeStates.filter((item) => item.status === 'failed').length;
+      const stale = inv.nodeStates.filter((item) => item.status === 'pending' || item.status === 'stale').length;
+      return `
+        ${renderSummary()}
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Policy posture</h2>
+              <div class="metric-caption">Firewall catalog status without forcing live refresh loops.</div>
+            </div>
+            <div class="table-tools">${statusTag(failed ? 'failed' : stale ? 'pending' : 'ready')}</div>
+          </div>
+          <div class="firewall-overview-grid">
+            <div class="pool-summary-card"><span>Active policies</span><strong>${escapeHTML(String(activePolicies))}</strong><small>available for node apply</small></div>
+            <div class="pool-summary-card"><span>Enabled rules</span><strong>${escapeHTML(String(activeRules))}</strong><small>${escapeHTML(String(inv.rules.length - activeRules))} disabled or inactive</small></div>
+            <div class="pool-summary-card"><span>Apply drift</span><strong>${escapeHTML(String(stale))}</strong><small>pending or stale node states</small></div>
+            <div class="pool-summary-card"><span>Failures</span><strong>${escapeHTML(String(failed))}</strong><small>requires operator action</small></div>
+          </div>
+        </section>`;
+    }
+
+    function render() {
+      setTitle('Firewall');
+      const inv = inventory();
+      const active = selectedTab();
+      el('content').innerHTML = `
+        <div class="control-page-shell">
+          <section class="section-card control-page-intro">
+            <div>
+              <h2>Firewall</h2>
+              <p>Managed firewall catalog for control-plane and node boundaries. Policies, ordered rules, address lists and node apply state are separated so changes are easier to review before rollout.</p>
+            </div>
+            <div class="control-page-actions">
+              ${statusTag(inv.nodeStates.some((item) => item.status === 'failed') ? 'degraded' : 'ready')}
+              <span class="tag">${escapeHTML(String(inv.rules.length))} rules</span>
+              <span class="tag">${escapeHTML(String(inv.entries.length))} address entries</span>
+            </div>
+          </section>
+          ${renderTabs(inv)}
+          <div class="firewall-tab-panel bounded-stack" data-firewall-panel="overview"${active === 'overview' ? '' : ' hidden'}>${renderOverview(inv)}</div>
+          <div class="firewall-tab-panel bounded-stack" data-firewall-panel="policies"${active === 'policies' ? '' : ' hidden'}>${renderPolicySection(inv)}</div>
+          <div class="firewall-tab-panel bounded-stack" data-firewall-panel="rules"${active === 'rules' ? '' : ' hidden'}>${renderRulesSection(inv)}</div>
+          <div class="firewall-tab-panel bounded-stack" data-firewall-panel="addressLists"${active === 'addressLists' ? '' : ' hidden'}>${renderAddressListsSection(inv)}</div>
+          <div class="firewall-tab-panel bounded-stack" data-firewall-panel="nodeState"${active === 'nodeState' ? '' : ' hidden'}>${renderNodeStateSection(inv)}</div>
+        </div>`;
+      bindTabs();
+      bindActions();
+    }
+
+    function bindTabs() {
+      document.querySelectorAll('[data-firewall-tab]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const tab = button.dataset.firewallTab || 'overview';
+          state.firewallTab = tab;
+          localStorage.setItem('megavpn.firewallTab', tab);
+          document.querySelectorAll('[data-firewall-tab]').forEach((item) => {
+            const active = item.dataset.firewallTab === tab;
+            item.classList.toggle('is-active', active);
+            item.setAttribute('aria-selected', active ? 'true' : 'false');
+          });
+          document.querySelectorAll('[data-firewall-panel]').forEach((panel) => {
+            panel.hidden = panel.dataset.firewallPanel !== tab;
+          });
+        });
+      });
+    }
+
+    function bindActions() {
+      document.getElementById('addFirewallListBtn')?.addEventListener('click', openAddressListModal);
+      document.getElementById('addFirewallRuleBtn')?.addEventListener('click', () => openRuleModal(''));
+      document.getElementById('addFirewallListBtnAddress')?.addEventListener('click', openAddressListModal);
+      document.getElementById('addFirewallRuleBtnRules')?.addEventListener('click', () => openRuleModal(''));
+      document.querySelectorAll('.firewall-add-rule-btn').forEach((button) => {
+        button.addEventListener('click', () => openRuleModal(button.dataset.policyId || ''));
+      });
+      document.querySelectorAll('.firewall-add-entry-btn').forEach((button) => {
+        button.addEventListener('click', () => openAddressEntryModal(button.dataset.listId || ''));
+      });
+      document.querySelectorAll('.firewall-edit-list-btn').forEach((button) => {
+        button.addEventListener('click', () => openAddressListModal(button.dataset.listId || ''));
+      });
+      document.querySelectorAll('.firewall-delete-list-btn').forEach((button) => {
+        button.addEventListener('click', () => openDeleteAddressListModal(button.dataset.listId || '', button.dataset.listName || 'address list'));
+      });
+      document.querySelectorAll('.firewall-edit-entry-btn').forEach((button) => {
+        button.addEventListener('click', () => openAddressEntryModal(button.dataset.listId || '', button.dataset.entryId || ''));
+      });
+      document.querySelectorAll('.firewall-delete-entry-btn').forEach((button) => {
+        button.addEventListener('click', () => openDeleteAddressEntryModal(button.dataset.listId || '', button.dataset.entryId || '', button.dataset.entryValue || 'entry'));
+      });
+      document.querySelectorAll('.firewall-edit-rule-btn').forEach((button) => {
+        button.addEventListener('click', () => openRuleModal(button.dataset.policyId || '', button.dataset.ruleId || ''));
+      });
+      document.querySelectorAll('.firewall-delete-rule-btn').forEach((button) => {
+        button.addEventListener('click', () => openDeleteRuleModal(button.dataset.policyId || '', button.dataset.ruleId || ''));
+      });
+      document.querySelectorAll('.firewall-apply-btn').forEach((button) => {
+        button.addEventListener('click', () => openApplyModal(button.dataset.policyId || '', ''));
+      });
+      document.querySelectorAll('.firewall-node-apply-btn').forEach((button) => {
+        button.addEventListener('click', () => openApplyModal('', button.dataset.nodeId || ''));
+      });
+    }
+
+    function openAddressListModal(listID = '') {
+      const list = addressListByID(listID) || {};
+      const editing = Boolean(list.id);
+      openModal(editing ? `Edit address list: ${list.label || list.key}` : 'Add address list', 'Firewall', `
+        <form id="firewallAddressListForm" class="form-grid" data-list-id="${escapeHTML(list.id || '')}">
+          <div class="field"><label>Name</label><input name="label" required placeholder="Trusted operators" value="${escapeHTML(list.label || '')}" /></div>
+          <div class="field"><label>Key</label><input name="key" placeholder="trusted_operators" value="${escapeHTML(list.key || '')}" /></div>
+          <div class="field"><label>Scope</label><select name="scope">
+            ${selectOption('global', list.scope || 'global')}
+            ${selectOption('control_plane', list.scope || 'global')}
+            ${selectOption('node', list.scope || 'global')}
+            ${selectOption('service', list.scope || 'global')}
+            ${selectOption('client', list.scope || 'global')}
+          </select></div>
+          <div class="field"><label>Status</label><select name="status">${selectOption('active', list.status || 'active')}${selectOption('disabled', list.status || 'active')}</select></div>
+          <div class="field full"><label>Description</label><textarea name="description" rows="3">${escapeHTML(list.description || '')}</textarea></div>
+          <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save list' : 'Create list'}</button><button class="secondary-btn" type="button" id="cancelFirewallListBtn">Cancel</button></div>
+        </form>
+        <div id="firewallListResult" class="form-result"></div>`, { wide: true });
+      document.getElementById('cancelFirewallListBtn')?.addEventListener('click', closeModal);
+      document.getElementById('firewallAddressListForm')?.addEventListener('submit', submitAddressList);
+    }
+
+    function openAddressEntryModal(listID, entryID = '') {
+      const lists = inventory().lists;
+      const entry = entryByID(entryID) || {};
+      const editing = Boolean(entry.id);
+      const selected = addressListByID(listID) || lists[0] || {};
+      openModal(editing ? `Edit address entry: ${entry.value || entry.id}` : 'Add address entry', 'Firewall address list', `
+        <form id="firewallAddressEntryForm" class="form-grid" data-entry-id="${escapeHTML(entry.id || '')}">
+          <div class="field"><label>Address list</label><select name="list_id"${editing ? ' disabled' : ''} required>${lists.map((list) => `<option value="${escapeHTML(list.id)}"${list.id === selected.id ? ' selected' : ''}>${escapeHTML(list.label || list.key)}</option>`).join('')}</select>${editing ? `<input type="hidden" name="list_id" value="${escapeHTML(selected.id || '')}" />` : ''}</div>
+          <div class="field"><label>Type</label><select name="value_type">${selectOption('', entry.value_type || '')}${selectOption('cidr', entry.value_type || '')}${selectOption('address', entry.value_type || '')}${selectOption('range', entry.value_type || '')}${selectOption('dns', entry.value_type || '')}</select></div>
+          <div class="field"><label>Value</label><input name="value" required placeholder="203.0.113.0/24" value="${escapeHTML(entry.value || '')}" /></div>
+          <div class="field"><label>Label</label><input name="label" placeholder="office range" value="${escapeHTML(entry.label || '')}" /></div>
+          <div class="field"><label>Status</label><select name="status">${selectOption('active', entry.status || 'active')}${selectOption('disabled', entry.status || 'active')}</select></div>
+          <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save entry' : 'Add entry'}</button><button class="secondary-btn" type="button" id="cancelFirewallEntryBtn">Cancel</button></div>
+        </form>
+        <div id="firewallEntryResult" class="form-result"></div>`, { wide: true });
+      document.getElementById('cancelFirewallEntryBtn')?.addEventListener('click', closeModal);
+      document.getElementById('firewallAddressEntryForm')?.addEventListener('submit', submitAddressEntry);
+    }
+
+    function openRuleModal(policyID, ruleID = '') {
+      const inv = inventory();
+      const rule = ruleByID(ruleID) || {};
+      const editing = Boolean(rule.id);
+      const selected = policyByID(policyID || rule.policy_id) || inv.policies[0] || {};
+      openModal(editing ? `Edit firewall rule: ${rule.comment || rule.id}` : 'Add firewall rule', 'Firewall policy', `
+        <form id="firewallRuleForm" class="form-grid" data-rule-id="${escapeHTML(rule.id || '')}" data-policy-id="${escapeHTML(selected.id || '')}">
+          <div class="field"><label>Policy</label><select name="policy_id"${editing ? ' disabled' : ''} required>${inv.policies.map((policy) => `<option value="${escapeHTML(policy.id)}"${policy.id === selected.id ? ' selected' : ''}>${escapeHTML(policy.label || policy.key)}</option>`).join('')}</select>${editing ? `<input type="hidden" name="policy_id" value="${escapeHTML(selected.id || '')}" />` : ''}</div>
+          <div class="field"><label>Priority</label><input name="priority" type="number" min="1" max="65000" value="${escapeHTML(String(rule.priority || 1000))}" required /></div>
+          <div class="field"><label>Chain</label><select name="chain">${selectOption('input', rule.chain || 'input')}${selectOption('forward', rule.chain || 'input')}${selectOption('output', rule.chain || 'input')}</select></div>
+          <div class="field"><label>Action</label><select name="action">${selectOption('accept', rule.action || 'accept')}${selectOption('drop', rule.action || 'accept')}${selectOption('reject', rule.action || 'accept')}</select></div>
+          <div class="field"><label>Protocol</label><select name="protocol">${selectOption('any', rule.protocol || 'any')}${selectOption('tcp', rule.protocol || 'any')}${selectOption('udp', rule.protocol || 'any')}${selectOption('icmp', rule.protocol || 'any')}</select></div>
+          <div class="field"><label>Source list</label><select name="src_list_id">${addressListOptions(rule.src_list_id || '')}</select></div>
+          <div class="field"><label>Destination list</label><select name="dst_list_id">${addressListOptions(rule.dst_list_id || '')}</select></div>
+          <div class="field"><label>Source CIDR</label><input name="src_cidr" placeholder="any or 10.0.0.0/8" value="${escapeHTML(rule.src_cidr || '')}" /></div>
+          <div class="field"><label>Destination CIDR</label><input name="dst_cidr" placeholder="any or 0.0.0.0/0" value="${escapeHTML(rule.dst_cidr || '')}" /></div>
+          <div class="field"><label>Source ports</label><input name="src_ports" placeholder="any or 1024-65535" value="${escapeHTML(rule.src_ports || '')}" /></div>
+          <div class="field"><label>Destination ports</label><input name="dst_ports" placeholder="443,8443" value="${escapeHTML(rule.dst_ports || '')}" /></div>
+          <div class="field"><label>State</label><input name="state_match" placeholder="established,related,new" value="${escapeHTML(Array.isArray(rule.state_match) ? rule.state_match.join(',') : '')}" /></div>
+          <div class="field"><label>Status</label><select name="status">${selectOption('active', rule.status || 'active')}${selectOption('disabled', rule.status || 'active')}</select></div>
+          <div class="field full"><label>Comment</label><input name="comment" placeholder="allow agent control channel" value="${escapeHTML(rule.comment || '')}" /></div>
+          <label class="field checkbox-line"><input name="enabled" type="checkbox"${rule.id ? (rule.enabled ? ' checked' : '') : ' checked'} /> Enabled</label>
+          <label class="field checkbox-line"><input name="log" type="checkbox"${rule.log ? ' checked' : ''} /> Log</label>
+          <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save rule' : 'Create rule'}</button><button class="secondary-btn" type="button" id="cancelFirewallRuleBtn">Cancel</button></div>
+        </form>
+        <div id="firewallRuleResult" class="form-result"></div>`, { wide: true });
+      document.getElementById('cancelFirewallRuleBtn')?.addEventListener('click', closeModal);
+      document.getElementById('firewallRuleForm')?.addEventListener('submit', submitRule);
+    }
+
+    function openApplyModal(policyID, nodeID) {
+      const inv = inventory();
+      const selectedPolicy = policyByID(policyID) || inv.policies.find((policy) => policy.key === 'node_base') || inv.policies[0] || {};
+      const selectedNode = (state.nodes || []).find((node) => node.id === nodeID) || (state.nodes || [])[0] || {};
+      openModal('Apply firewall policy', 'Node firewall', `
+        <form id="firewallApplyForm" class="form-grid">
+          <div class="field"><label>Node</label><select name="node_id" required>${(state.nodes || []).map((node) => `<option value="${escapeHTML(node.id)}"${node.id === selectedNode.id ? ' selected' : ''}>${escapeHTML(node.name || node.id)} · ${escapeHTML(node.role || 'node')} · ${escapeHTML(node.address || 'n/a')}</option>`).join('')}</select></div>
+          <div class="field"><label>Policy</label><select name="policy_id" required>${inv.policies.map((policy) => `<option value="${escapeHTML(policy.id)}"${policy.id === selectedPolicy.id ? ' selected' : ''}>${escapeHTML(policy.label || policy.key)}</option>`).join('')}</select></div>
+          <div class="notice field full">This release applies explicit allow/drop/reject rules into managed nftables chains. Default chain policy remains accept until strict enforcement is enabled in a later rollout.</div>
+          <div class="field full inline-actions"><button class="primary-btn" type="submit">Queue apply</button><button class="secondary-btn" type="button" id="cancelFirewallApplyBtn">Cancel</button></div>
+        </form>
+        <div id="firewallApplyResult" class="form-result"></div>`, { wide: true });
+      document.getElementById('cancelFirewallApplyBtn')?.addEventListener('click', closeModal);
+      document.getElementById('firewallApplyForm')?.addEventListener('submit', submitApply);
+    }
+
+    function openDeleteAddressListModal(listID, label) {
+      openModal(`Delete address list: ${label || listID}`, 'Firewall', `
+        <p class="danger-text">Address list deletion is blocked while active rules reference it.</p>
+        <div class="inline-actions">
+          <button class="danger-btn" id="confirmFirewallListDeleteBtn" type="button">Delete list</button>
+          <button class="secondary-btn" id="cancelFirewallListDeleteBtn" type="button">Cancel</button>
+        </div>
+        <div id="firewallDeleteResult" class="form-result"></div>`);
+      document.getElementById('cancelFirewallListDeleteBtn')?.addEventListener('click', closeModal);
+      document.getElementById('confirmFirewallListDeleteBtn')?.addEventListener('click', () => deleteAddressList(listID));
+    }
+
+    function openDeleteAddressEntryModal(listID, entryID, value) {
+      openModal(`Delete address entry: ${value || entryID}`, 'Firewall', `
+        <p class="danger-text">Rules that use this address list will no longer match this value after the next apply.</p>
+        <div class="inline-actions">
+          <button class="danger-btn" id="confirmFirewallEntryDeleteBtn" type="button">Delete entry</button>
+          <button class="secondary-btn" id="cancelFirewallEntryDeleteBtn" type="button">Cancel</button>
+        </div>
+        <div id="firewallDeleteResult" class="form-result"></div>`);
+      document.getElementById('cancelFirewallEntryDeleteBtn')?.addEventListener('click', closeModal);
+      document.getElementById('confirmFirewallEntryDeleteBtn')?.addEventListener('click', () => deleteAddressEntry(listID, entryID));
+    }
+
+    function openDeleteRuleModal(policyID, ruleID) {
+      const rule = ruleByID(ruleID) || {};
+      openModal(`Delete firewall rule: ${rule.comment || ruleID}`, 'Firewall', `
+        <p class="danger-text">The rule is removed from the catalog. Existing node nftables rules change only after applying the policy to the node.</p>
+        <div class="inline-actions">
+          <button class="danger-btn" id="confirmFirewallRuleDeleteBtn" type="button">Delete rule</button>
+          <button class="secondary-btn" id="cancelFirewallRuleDeleteBtn" type="button">Cancel</button>
+        </div>
+        <div id="firewallDeleteResult" class="form-result"></div>`);
+      document.getElementById('cancelFirewallRuleDeleteBtn')?.addEventListener('click', closeModal);
+      document.getElementById('confirmFirewallRuleDeleteBtn')?.addEventListener('click', () => deleteRule(policyID, ruleID));
+    }
+
+    async function deleteAddressList(listID) {
+      const result = document.getElementById('firewallDeleteResult');
+      if (result) result.innerHTML = '<span class="tag warn">deleting</span>';
+      try {
+        await sendJSON(`/api/v1/firewall/address-lists/${encodeURIComponent(listID)}`, 'DELETE', null);
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function deleteAddressEntry(listID, entryID) {
+      const result = document.getElementById('firewallDeleteResult');
+      if (result) result.innerHTML = '<span class="tag warn">deleting</span>';
+      try {
+        await sendJSON(`/api/v1/firewall/address-lists/${encodeURIComponent(listID)}/entries/${encodeURIComponent(entryID)}`, 'DELETE', null);
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function deleteRule(policyID, ruleID) {
+      const result = document.getElementById('firewallDeleteResult');
+      if (result) result.innerHTML = '<span class="tag warn">deleting</span>';
+      try {
+        await sendJSON(`/api/v1/firewall/policies/${encodeURIComponent(policyID)}/rules/${encodeURIComponent(ruleID)}`, 'DELETE', null);
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function submitAddressList(event) {
+      event.preventDefault();
+      const listID = String(event.currentTarget?.dataset?.listId || '').trim();
+      const form = new FormData(event.currentTarget);
+      const result = document.getElementById('firewallListResult');
+      if (result) result.innerHTML = `<span class="tag warn">${listID ? 'saving' : 'creating'}</span>`;
+      try {
+        const payload = {
+          key: String(form.get('key') || '').trim(),
+          label: String(form.get('label') || '').trim(),
+          description: String(form.get('description') || '').trim(),
+          scope: String(form.get('scope') || 'global').trim(),
+          status: String(form.get('status') || 'active').trim(),
+        };
+        if (listID) {
+          await sendJSON(`/api/v1/firewall/address-lists/${encodeURIComponent(listID)}`, 'PUT', payload);
+        } else {
+          await sendJSON('/api/v1/firewall/address-lists', 'POST', payload);
+        }
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function submitAddressEntry(event) {
+      event.preventDefault();
+      const entryID = String(event.currentTarget?.dataset?.entryId || '').trim();
+      const form = new FormData(event.currentTarget);
+      const listID = String(form.get('list_id') || '').trim();
+      const result = document.getElementById('firewallEntryResult');
+      if (result) result.innerHTML = `<span class="tag warn">${entryID ? 'saving' : 'adding'}</span>`;
+      try {
+        const payload = {
+          value: String(form.get('value') || '').trim(),
+          value_type: String(form.get('value_type') || '').trim(),
+          label: String(form.get('label') || '').trim(),
+          status: String(form.get('status') || 'active').trim(),
+        };
+        if (entryID) {
+          await sendJSON(`/api/v1/firewall/address-lists/${encodeURIComponent(listID)}/entries/${encodeURIComponent(entryID)}`, 'PUT', payload);
+        } else {
+          await sendJSON(`/api/v1/firewall/address-lists/${encodeURIComponent(listID)}/entries`, 'POST', payload);
+        }
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function submitRule(event) {
+      event.preventDefault();
+      const ruleID = String(event.currentTarget?.dataset?.ruleId || '').trim();
+      const form = new FormData(event.currentTarget);
+      const policyID = String(form.get('policy_id') || '').trim();
+      const result = document.getElementById('firewallRuleResult');
+      if (result) result.innerHTML = `<span class="tag warn">${ruleID ? 'saving' : 'creating'}</span>`;
+      try {
+        const status = String(form.get('status') || 'active').trim();
+        const payload = {
+          priority: Number(form.get('priority') || 1000),
+          chain: String(form.get('chain') || 'input').trim(),
+          action: String(form.get('action') || 'accept').trim(),
+          protocol: String(form.get('protocol') || 'any').trim(),
+          src_list_id: String(form.get('src_list_id') || '').trim() || null,
+          dst_list_id: String(form.get('dst_list_id') || '').trim() || null,
+          src_cidr: String(form.get('src_cidr') || '').trim(),
+          dst_cidr: String(form.get('dst_cidr') || '').trim(),
+          src_ports: String(form.get('src_ports') || '').trim(),
+          dst_ports: String(form.get('dst_ports') || '').trim(),
+          state_match: String(form.get('state_match') || '').split(',').map((item) => item.trim()).filter(Boolean),
+          comment: String(form.get('comment') || '').trim(),
+          enabled: Boolean(form.get('enabled')),
+          log: Boolean(form.get('log')),
+          status: Boolean(form.get('enabled')) ? status : 'disabled',
+        };
+        if (ruleID) {
+          await sendJSON(`/api/v1/firewall/policies/${encodeURIComponent(policyID)}/rules/${encodeURIComponent(ruleID)}`, 'PUT', payload);
+        } else {
+          await sendJSON(`/api/v1/firewall/policies/${encodeURIComponent(policyID)}/rules`, 'POST', payload);
+        }
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function submitApply(event) {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const nodeID = String(form.get('node_id') || '').trim();
+      const policyID = String(form.get('policy_id') || '').trim();
+      const result = document.getElementById('firewallApplyResult');
+      if (result) result.innerHTML = '<span class="tag warn">queueing</span>';
+      try {
+        const job = await sendJSON(`/api/v1/nodes/${encodeURIComponent(nodeID)}/firewall/apply`, 'POST', { policy_id: policyID });
+        if (result) result.innerHTML = `<span class="tag ok">queued</span> <code>${escapeHTML(job.id || '')}</code>`;
+        if (typeof watchJob === 'function' && job?.id) {
+          await watchJob(job.id, result);
+        }
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        openActionOutcomeModal('Firewall apply', 'Apply queue failed', 'failed', err.message || 'Firewall apply failed.', [
+          { label: 'Node', value: nodeID || 'n/a' },
+          { label: 'Policy', value: policyID || 'n/a' },
+        ]);
+      }
+    }
+
+    function firstText(...values) {
+      for (const value of values) {
+        const text = String(value || '').trim();
+        if (text) return text;
+      }
+      return '';
+    }
+
+    function selectOption(value, selected, label = value) {
+      return `<option value="${escapeHTML(value)}"${String(value) === String(selected || '') ? ' selected' : ''}>${escapeHTML(label || value || 'auto')}</option>`;
+    }
+
+    function addressListOptions(selectedID) {
+      const options = ['<option value="">none</option>'];
+      for (const list of inventory().lists) {
+        options.push(`<option value="${escapeHTML(list.id)}"${list.id === selectedID ? ' selected' : ''}>${escapeHTML(list.label || list.key)} · ${escapeHTML(list.key || list.id)}</option>`);
+      }
+      return options.join('');
+    }
+
+    return { render };
+  }
+
+  window.MegaVPNFirewallPage = { create: createFirewallPage };
+})(window);

@@ -103,6 +103,17 @@ type Store interface {
 	UpdateAddressPoolSpace(context.Context, string, domain.AddressPoolSpace) (domain.AddressPoolSpace, error)
 	DeleteAddressPoolSpace(context.Context, string) (domain.AddressPoolSpace, error)
 	SetAddressPoolRouting(context.Context, string, bool) (domain.AddressPoolSpace, error)
+	FirewallInventory(context.Context) (domain.FirewallInventory, error)
+	CreateFirewallAddressList(context.Context, domain.FirewallAddressList) (domain.FirewallAddressList, error)
+	UpdateFirewallAddressList(context.Context, string, domain.FirewallAddressList) (domain.FirewallAddressList, error)
+	DeleteFirewallAddressList(context.Context, string) (domain.FirewallAddressList, error)
+	CreateFirewallAddressEntry(context.Context, string, domain.FirewallAddressEntry) (domain.FirewallAddressEntry, error)
+	UpdateFirewallAddressEntry(context.Context, string, string, domain.FirewallAddressEntry) (domain.FirewallAddressEntry, error)
+	DeleteFirewallAddressEntry(context.Context, string, string) (domain.FirewallAddressEntry, error)
+	CreateFirewallRule(context.Context, string, domain.FirewallRule) (domain.FirewallRule, error)
+	UpdateFirewallRule(context.Context, string, string, domain.FirewallRule) (domain.FirewallRule, error)
+	DeleteFirewallRule(context.Context, string, string) (domain.FirewallRule, error)
+	CreateFirewallApplyJob(context.Context, string, string) (domain.Job, error)
 	ListInstanceRuntimeStates(context.Context) ([]domain.InstanceRuntimeState, error)
 	GetInstanceRuntimeState(context.Context, string) (domain.InstanceRuntimeState, error)
 	ListInstanceRuntimeObservations(context.Context, string, int) ([]domain.InstanceRuntimeObservation, error)
@@ -366,6 +377,17 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("PUT /api/v1/address-pools/spaces/{id}", "settings.manage", s.updateAddressPoolSpace)
 	protected("DELETE /api/v1/address-pools/spaces/{id}", "settings.manage", s.deleteAddressPoolSpace)
 	protected("POST /api/v1/address-pools/spaces/{id}/routing", "settings.manage", s.setAddressPoolRouting)
+	protected("GET /api/v1/firewall", "firewall.read", s.listFirewallInventory)
+	protected("POST /api/v1/firewall/address-lists", "firewall.manage", s.createFirewallAddressList)
+	protected("PUT /api/v1/firewall/address-lists/{id}", "firewall.manage", s.updateFirewallAddressList)
+	protected("DELETE /api/v1/firewall/address-lists/{id}", "firewall.manage", s.deleteFirewallAddressList)
+	protected("POST /api/v1/firewall/address-lists/{id}/entries", "firewall.manage", s.createFirewallAddressEntry)
+	protected("PUT /api/v1/firewall/address-lists/{id}/entries/{entry_id}", "firewall.manage", s.updateFirewallAddressEntry)
+	protected("DELETE /api/v1/firewall/address-lists/{id}/entries/{entry_id}", "firewall.manage", s.deleteFirewallAddressEntry)
+	protected("POST /api/v1/firewall/policies/{id}/rules", "firewall.manage", s.createFirewallRule)
+	protected("PUT /api/v1/firewall/policies/{id}/rules/{rule_id}", "firewall.manage", s.updateFirewallRule)
+	protected("DELETE /api/v1/firewall/policies/{id}/rules/{rule_id}", "firewall.manage", s.deleteFirewallRule)
+	protected("POST /api/v1/nodes/{id}/firewall/apply", "firewall.apply", s.applyNodeFirewallPolicy)
 	protected("POST /api/v1/instances", "instance.write", s.createInstance)
 	protected("POST /api/v1/service-packs/{key}/instances", "instance.write", s.createServicePackInstances)
 	protected("GET /api/v1/instances/{id}", "instance.read", s.getInstance)
@@ -1821,6 +1843,9 @@ func jobTypeMustUseTypedEndpoint(jobType string) bool {
 		"node.backhaul.probe",
 		"node.backhaul.cleanup",
 		"node.route_policy.apply",
+		"node.firewall.preview",
+		"node.firewall.apply",
+		"node.firewall.observe",
 		"node.capability.install",
 		"node.capability.verify",
 		"instance.apply",
@@ -1845,6 +1870,8 @@ func requiredPermissionForJobType(jobType string) string {
 		return "node.bootstrap"
 	case "node.capability.install", "node.capability.verify", "node.inventory", "node.inventory.sync", "node.services.discover", "node.channel.probe", "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup", "node.route_policy.apply":
 		return "node.write"
+	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe":
+		return "firewall.apply"
 	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable", "instance.delete":
 		return "instance.apply"
 	case "instance.diagnose":

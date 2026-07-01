@@ -445,6 +445,115 @@ func TestBuildXrayServerConfigKeepsExplicitGroupBlockWithDefaultEgress(t *testin
 	}
 }
 
+func TestBuildXrayServerConfigAddsGroupSpecificRemoteEgressOutbound(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "default",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "66666666-6666-4666-8666-666666666666",
+				"email":       "remote-group-user",
+				"vless_group": "remote-egress",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{"key": "default", "label": "Default access", "outbound_tag": "direct"},
+			map[string]any{
+				"key":          "remote-egress",
+				"label":        "Remote egress",
+				"egress_mode":  "egress_node",
+				"outbound_tag": "egress-remote-egress",
+				"outbound": map[string]any{
+					"tag":         "egress-remote-egress",
+					"protocol":    "freedom",
+					"sendThrough": "10.240.35.245",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	outbounds := cfg["outbounds"].([]any)
+	found := false
+	for _, item := range outbounds {
+		outbound, _ := item.(map[string]any)
+		if stringify(outbound["tag"]) != "egress-remote-egress" {
+			continue
+		}
+		found = true
+		if got := stringify(outbound["sendThrough"]); got != "10.240.35.245" {
+			t.Fatalf("sendThrough = %q, want group-specific source address", got)
+		}
+	}
+	if !found {
+		t.Fatalf("group-specific egress outbound missing from %#v", outbounds)
+	}
+	routing := cfg["routing"].(map[string]any)
+	rules := routing["rules"].([]any)
+	if got := stringify(rules[0].(map[string]any)["outboundTag"]); got != "egress-remote-egress" {
+		t.Fatalf("group outboundTag = %q, want egress-remote-egress", got)
+	}
+}
+
+func TestBuildXrayServerConfigAddsInstanceOnlyVLESSGroup(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "openvpn-only",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "77777777-7777-4777-8777-777777777777",
+				"email":       "openvpn-only-user",
+				"vless_group": "openvpn-only",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{
+				"key":          "openvpn-only",
+				"label":        "OpenVPN only",
+				"access_mode":  "instance_only",
+				"outbound_tag": "block",
+				"rules": []any{
+					map[string]any{
+						"domain":       []any{"vpn.example.test"},
+						"port":         "1194",
+						"outbound_tag": "direct",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	routing := cfg["routing"].(map[string]any)
+	rules := routing["rules"].([]any)
+	if len(rules) != 2 {
+		t.Fatalf("routing rules = %#v, want allow rule plus fallback block", rules)
+	}
+	if got := stringify(rules[0].(map[string]any)["outboundTag"]); got != "direct" {
+		t.Fatalf("instance allow outboundTag = %q, want direct", got)
+	}
+	if got := stringify(rules[0].(map[string]any)["port"]); got != "1194" {
+		t.Fatalf("instance allow port = %q, want 1194", got)
+	}
+	if got := stringify(rules[1].(map[string]any)["outboundTag"]); got != "block" {
+		t.Fatalf("instance fallback outboundTag = %q, want block", got)
+	}
+}
+
 func TestBuildXrayUnitFileDoesNotUseShell(t *testing.T) {
 	t.Parallel()
 

@@ -12,9 +12,19 @@ const (
 	routePolicyScriptPath = "/usr/local/lib/megavpn/route-policy/client-access-routes.sh"
 	routePolicyUnitName   = "megavpn-route-policy.service"
 	routePolicyUnitPath   = "/etc/systemd/system/" + routePolicyUnitName
+	routePolicyTimerName  = "megavpn-route-policy.timer"
+	routePolicyTimerPath  = "/etc/systemd/system/" + routePolicyTimerName
 	routePolicyPriority   = 22000
 	routePolicyPriorityTo = 22999
 )
+
+type routePolicyKernelCandidate struct {
+	Dev    string
+	Via    string
+	Table  string
+	Metric int
+	Peer   string
+}
 
 type routePolicyKernelRule struct {
 	RouteID     string
@@ -22,10 +32,8 @@ type routePolicyKernelRule struct {
 	Destination string
 	Protocol    string
 	Ports       string
-	Dev         string
-	Via         string
 	Table       string
-	Metric      int
+	Candidates  []routePolicyKernelCandidate
 	Priority    int
 	Mark        string
 	Comment     string
@@ -92,9 +100,58 @@ func renderRoutePolicyKernelScript(routes []any, revision string) (routePolicyKe
 			"nft flush chain inet megavpn route_policy_prerouting",
 		)
 	}
-	lines = append(lines, "", "# Route tables and policy rules.")
+	lines = append(lines,
+		"",
+		"route_policy_delete_route() {",
+		"  dst=\"$1\"; table=\"$2\"; metric=\"$3\"; dev=\"$4\"; via=\"$5\"",
+		"  if [ -n \"$via\" ]; then",
+		"    ip route delete \"$dst\" via \"$via\" dev \"$dev\" table \"$table\" metric \"$metric\" >/dev/null 2>&1 || true",
+		"  else",
+		"    ip route delete \"$dst\" dev \"$dev\" table \"$table\" metric \"$metric\" >/dev/null 2>&1 || true",
+		"  fi",
+		"}",
+		"",
+		"route_policy_flush_destination() {",
+		"  dst=\"$1\"; table=\"$2\"",
+		"  while ip route delete \"$dst\" table \"$table\" >/dev/null 2>&1; do :; done",
+		"}",
+		"",
+		"route_policy_probe_cache='|'",
+		"route_policy_candidate_ready() {",
+		"  dev=\"$1\"; peer=\"$2\"",
+		"  if ! ip link show dev \"$dev\" >/dev/null 2>&1; then return 1; fi",
+		"  if [ -z \"$peer\" ] || ! command -v ping >/dev/null 2>&1; then return 0; fi",
+		"  key=\"$dev,$peer\"",
+		"  case \"$route_policy_probe_cache\" in",
+		"    *\"|$key=1|\"*) return 0 ;;",
+		"    *\"|$key=0|\"*) return 1 ;;",
+		"  esac",
+		"  if ping -I \"$dev\" -c 1 -W 1 \"$peer\" >/dev/null 2>&1; then",
+		"    route_policy_probe_cache=\"${route_policy_probe_cache}${key}=1|\"",
+		"    return 0",
+		"  fi",
+		"  route_policy_probe_cache=\"${route_policy_probe_cache}${key}=0|\"",
+		"  return 1",
+		"}",
+		"",
+		"route_policy_replace_route() {",
+		"  dst=\"$1\"; table=\"$2\"; metric=\"$3\"; dev=\"$4\"; via=\"$5\"; peer=\"$6\"",
+		"  if ! route_policy_candidate_ready \"$dev\" \"$peer\"; then",
+		"    route_policy_delete_route \"$dst\" \"$table\" \"$metric\" \"$dev\" \"$via\"",
+		"    return 0",
+		"  fi",
+		"  if [ -n \"$via\" ]; then",
+		"    ip route replace \"$dst\" via \"$via\" dev \"$dev\" table \"$table\" metric \"$metric\"",
+		"  else",
+		"    ip route replace \"$dst\" dev \"$dev\" table \"$table\" metric \"$metric\"",
+		"  fi",
+		"}",
+		"",
+		"# Route tables and policy rules.",
+	)
 	for _, rule := range rules {
-		lines = append(lines, ipRoutePolicyRouteCommand(rule))
+		lines = append(lines, "route_policy_flush_destination "+shellQuote(rule.Destination)+" "+shellQuote(rule.Table))
+		lines = append(lines, ipRoutePolicyRouteCommands(rule)...)
 		if rule.Ports == "" {
 			lines = append(lines, "ip rule add from "+shellQuote(rule.Source)+" to "+shellQuote(rule.Destination)+" table "+shellQuote(rule.Table)+" priority "+strconv.Itoa(rule.Priority))
 			continue
@@ -128,17 +185,19 @@ func routePolicyKernelRuleFromRoute(route map[string]any, idx int) (routePolicyK
 	if !strings.EqualFold(stringify(egress["status"]), "candidate") {
 		return routePolicyKernelRule{}, false, "route egress output is not candidate", nil
 	}
-	dev := strings.TrimSpace(stringify(egress["interface"]))
 	table := strings.TrimSpace(stringify(egress["table"]))
-	if dev == "" || table == "" || strings.EqualFold(table, "main") {
+	if table == "" || strings.EqualFold(table, "main") {
 		return routePolicyKernelRule{}, false, "route egress requires a non-main interface and table", nil
 	}
-	if !isSafeNetworkToken(dev) || !isSafeNetworkToken(table) {
-		return routePolicyKernelRule{}, false, "", fmt.Errorf("route policy egress contains unsafe dev/table token")
+	if !isSafeNetworkToken(table) {
+		return routePolicyKernelRule{}, false, "", fmt.Errorf("route policy egress contains unsafe table token")
 	}
-	via := strings.TrimSpace(stringify(egress["next_hop"]))
-	if via != "" && !isSafeNetworkToken(via) {
-		return routePolicyKernelRule{}, false, "", fmt.Errorf("route policy egress contains unsafe next-hop token")
+	candidates, err := routePolicyKernelCandidatesFromEgress(egress, table)
+	if err != nil {
+		return routePolicyKernelRule{}, false, "", err
+	}
+	if len(candidates) == 0 {
+		return routePolicyKernelRule{}, false, "route egress requires a managed backhaul candidate or explicit interface", nil
 	}
 	protocol := strings.ToLower(strings.TrimSpace(stringify(route["protocol"])))
 	if protocol == "" {
@@ -158,10 +217,6 @@ func routePolicyKernelRuleFromRoute(route map[string]any, idx int) (routePolicyK
 	if priority > routePolicyPriorityTo {
 		return routePolicyKernelRule{}, false, "", fmt.Errorf("too many route policy rules for reserved priority range")
 	}
-	metric := intFromAny(nestedMap(egress, "managed_backhaul")["route_metric"])
-	if metric <= 0 {
-		metric = 50
-	}
 	comment := "megavpn:route-policy:" + slugifyLocal(first(stringify(route["route_id"]), stringify(route["client_id"]), strconv.Itoa(idx)))
 	return routePolicyKernelRule{
 		RouteID:     stringify(route["route_id"]),
@@ -169,14 +224,94 @@ func routePolicyKernelRuleFromRoute(route map[string]any, idx int) (routePolicyK
 		Destination: destination,
 		Protocol:    protocol,
 		Ports:       ports,
-		Dev:         dev,
-		Via:         via,
 		Table:       table,
-		Metric:      metric,
+		Candidates:  candidates,
 		Priority:    priority,
 		Mark:        fmt.Sprintf("0x%08x", 0x4d560000+idx+1),
 		Comment:     comment,
 	}, true, "", nil
+}
+
+func routePolicyKernelCandidatesFromEgress(egress map[string]any, table string) ([]routePolicyKernelCandidate, error) {
+	candidates := []routePolicyKernelCandidate{}
+	if rawList, ok := egress["managed_backhauls"].([]any); ok && len(rawList) > 0 {
+		for _, item := range rawList {
+			raw, _ := item.(map[string]any)
+			candidate, ok, err := routePolicyKernelCandidateFromMap(raw, table)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				candidates = append(candidates, candidate)
+			}
+		}
+		if len(candidates) > 0 {
+			return candidates, nil
+		}
+	}
+	raw := map[string]any{
+		"interface":    egress["interface"],
+		"next_hop":     egress["next_hop"],
+		"route_metric": nestedMap(egress, "managed_backhaul")["route_metric"],
+		"peer":         first(stringify(nestedMap(egress, "managed_backhaul")["egress_address"]), stringify(egress["peer"]), stringify(egress["peer_address"])),
+	}
+	returned, ok, err := routePolicyKernelCandidateFromMap(raw, table)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		candidates = append(candidates, returned)
+	}
+	return candidates, nil
+}
+
+func routePolicyKernelCandidateFromMap(raw map[string]any, table string) (routePolicyKernelCandidate, bool, error) {
+	if raw == nil {
+		return routePolicyKernelCandidate{}, false, nil
+	}
+	dev := strings.TrimSpace(stringify(raw["interface"]))
+	if dev == "" {
+		dev = strings.TrimSpace(stringify(raw["dev"]))
+	}
+	if dev == "" {
+		return routePolicyKernelCandidate{}, false, nil
+	}
+	if !isSafeNetworkToken(dev) {
+		return routePolicyKernelCandidate{}, false, fmt.Errorf("route policy egress contains unsafe dev token")
+	}
+	via := strings.TrimSpace(first(stringify(raw["next_hop"]), stringify(raw["via"])))
+	if via != "" && !isSafeNetworkToken(via) {
+		return routePolicyKernelCandidate{}, false, fmt.Errorf("route policy egress contains unsafe next-hop token")
+	}
+	metric := intFromAny(raw["route_metric"], raw["metric"])
+	if metric <= 0 {
+		metric = 50
+	}
+	peer := routePolicyPeerAddress(first(stringify(raw["peer"]), stringify(raw["peer_address"]), stringify(raw["egress_address"])))
+	if peer != "" && !isSafeNetworkToken(peer) {
+		return routePolicyKernelCandidate{}, false, fmt.Errorf("route policy egress contains unsafe peer token")
+	}
+	return routePolicyKernelCandidate{
+		Dev:    dev,
+		Via:    via,
+		Table:  table,
+		Metric: metric,
+		Peer:   peer,
+	}, true, nil
+}
+
+func routePolicyPeerAddress(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
+		return prefix.Addr().String()
+	}
+	if addr, err := netip.ParseAddr(value); err == nil && addr.Is4() {
+		return addr.String()
+	}
+	return ""
 }
 
 func normalizeRoutePolicyDestination(destinationType, destination string) string {
@@ -287,13 +422,13 @@ func routePolicyRequiresNFT(rules []routePolicyKernelRule) bool {
 	return false
 }
 
-func ipRoutePolicyRouteCommand(rule routePolicyKernelRule) string {
-	parts := []string{"ip", "route", "replace", shellQuote(rule.Destination)}
-	if rule.Via != "" {
-		parts = append(parts, "via", shellQuote(rule.Via))
+func ipRoutePolicyRouteCommands(rule routePolicyKernelRule) []string {
+	out := make([]string, 0, len(rule.Candidates))
+	for _, candidate := range rule.Candidates {
+		table := first(candidate.Table, rule.Table)
+		out = append(out, "route_policy_replace_route "+shellQuote(rule.Destination)+" "+shellQuote(table)+" "+strconv.Itoa(candidate.Metric)+" "+shellQuote(candidate.Dev)+" "+shellQuote(candidate.Via)+" "+shellQuote(candidate.Peer))
 	}
-	parts = append(parts, "dev", shellQuote(rule.Dev), "table", shellQuote(rule.Table), "metric", strconv.Itoa(rule.Metric))
-	return strings.Join(parts, " ")
+	return out
 }
 
 func nftRoutePolicyMarkCommand(rule routePolicyKernelRule) string {
@@ -319,10 +454,26 @@ func renderRoutePolicyUnit() string {
 		"[Service]",
 		"Type=oneshot",
 		"ExecStart=" + routePolicyScriptPath,
-		"RemainAfterExit=yes",
 		"",
 		"[Install]",
 		"WantedBy=multi-user.target",
+		"",
+	}, "\n")
+}
+
+func renderRoutePolicyTimer() string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=MegaVPN route policy refresh",
+		"",
+		"[Timer]",
+		"OnBootSec=20s",
+		"OnUnitActiveSec=20s",
+		"AccuracySec=5s",
+		"Unit=" + routePolicyUnitName,
+		"",
+		"[Install]",
+		"WantedBy=timers.target",
 		"",
 	}, "\n")
 }

@@ -39,7 +39,58 @@ func TestRenderRoutePolicyKernelScriptWithManagedBackhaul(t *testing.T) {
 		t.Fatalf("unexpected plan counts: %#v", plan)
 	}
 	checks := []string{
-		"ip route replace '203.0.113.0/24' dev 'mgbh123' table '21001' metric 70",
+		"route_policy_replace_route '203.0.113.0/24' '21001' 70 'mgbh123' '' ''",
+		"ip rule add from '10.66.0.2/32' to '203.0.113.0/24' table '21001' priority 22000",
+	}
+	for _, check := range checks {
+		if !strings.Contains(plan.Script, check) {
+			t.Fatalf("expected script to contain %q, got:\n%s", check, plan.Script)
+		}
+	}
+}
+
+func TestRenderRoutePolicyKernelScriptWithManagedBackhaulCandidates(t *testing.T) {
+	t.Parallel()
+
+	plan, err := renderRoutePolicyKernelScript([]any{
+		map[string]any{
+			"route_id":         "route-candidates",
+			"status":           "active",
+			"action":           "allow",
+			"destination_type": "cidr",
+			"destination":      "203.0.113.0/24",
+			"protocol":         "any",
+			"source_identity":  map[string]any{"type": "wireguard_ip", "value": "10.66.0.2/32"},
+			"egress": map[string]any{
+				"status":    "candidate",
+				"mode":      "remote_egress",
+				"interface": "mgbh-primary",
+				"table":     "21001",
+				"managed_backhauls": []any{
+					map[string]any{
+						"interface":      "mgbh-primary",
+						"egress_address": "10.240.1.2/30",
+						"route_metric":   10,
+					},
+					map[string]any{
+						"interface":      "mgbh-backup",
+						"egress_address": "10.240.2.2/30",
+						"route_metric":   100,
+					},
+				},
+			},
+			"enforcement": map[string]any{"mode": "l3_l4_candidate"},
+		},
+	}, "rev-candidates")
+	if err != nil {
+		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
+	}
+	if plan.RuleCount != 1 || plan.MarkedCount != 0 {
+		t.Fatalf("unexpected plan counts: %#v", plan)
+	}
+	checks := []string{
+		"route_policy_replace_route '203.0.113.0/24' '21001' 10 'mgbh-primary' '' '10.240.1.2'",
+		"route_policy_replace_route '203.0.113.0/24' '21001' 100 'mgbh-backup' '' '10.240.2.2'",
 		"ip rule add from '10.66.0.2/32' to '203.0.113.0/24' table '21001' priority 22000",
 	}
 	for _, check := range checks {

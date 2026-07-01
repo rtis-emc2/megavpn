@@ -14,6 +14,10 @@ type Node struct {
 	Role                 string     `json:"role"`
 	Status               string     `json:"status"`
 	Address              string     `json:"address"`
+	LocationLabel        string     `json:"location_label,omitempty"`
+	Latitude             *float64   `json:"latitude,omitempty"`
+	Longitude            *float64   `json:"longitude,omitempty"`
+	AccuracyRadiusKM     *float64   `json:"accuracy_radius_km,omitempty"`
 	OSFamily             string     `json:"os_family"`
 	OSVersion            string     `json:"os_version"`
 	Architecture         string     `json:"architecture"`

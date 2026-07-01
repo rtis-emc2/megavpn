@@ -18,8 +18,9 @@
       openModal,
       closeModal,
       openActionOutcomeModal,
-      openCreateInstanceModal,
+      renderCreateInstanceForm,
       openInstanceManageModal,
+      openInstanceManagePage,
       openInstanceRuntimeInstallModal,
       queueInstanceAction,
     } = ctx;
@@ -45,8 +46,9 @@
       typeof openModal !== 'function' ||
       typeof closeModal !== 'function' ||
       typeof openActionOutcomeModal !== 'function' ||
-      typeof openCreateInstanceModal !== 'function' ||
+      typeof renderCreateInstanceForm !== 'function' ||
       typeof openInstanceManageModal !== 'function' ||
+      typeof openInstanceManagePage !== 'function' ||
       typeof openInstanceRuntimeInstallModal !== 'function' ||
       typeof queueInstanceAction !== 'function'
     ) {
@@ -901,6 +903,12 @@
       render();
     }
 
+    function openManualInstancePage() {
+      state.instancesView = 'manual';
+      state.instancesCreateResult = null;
+      render();
+    }
+
     function renderCreateFromPackPage() {
       setTitle('Create from pack');
       const packs = servicePackCatalogItems();
@@ -979,7 +987,7 @@
 
     function bindCreateFromPackPage() {
       document.getElementById('backToInstancesBtn')?.addEventListener('click', openInstancesListPage);
-      document.getElementById('createInstanceBtn')?.addEventListener('click', openCreateInstanceModal);
+      document.getElementById('createInstanceBtn')?.addEventListener('click', openManualInstancePage);
       document.getElementById('resetPackCreateFormBtn')?.addEventListener('click', () => {
         state.instancesCreateResult = null;
         renderCreateFromPackPage();
@@ -1056,8 +1064,50 @@
       }
     }
 
+    function renderManualInstancePage() {
+      setTitle('Manual instance');
+      el('content').innerHTML = `
+        <section class="table-card instance-create-page">
+          <div class="table-head instance-create-head">
+            <div>
+              <h2>Manual instance</h2>
+              <div class="metric-caption">Create a single service instance with explicit node, endpoint, and runtime settings.</div>
+            </div>
+            <div class="table-tools">
+              <button class="secondary-btn" id="backToInstancesBtn" type="button">Back to instances</button>
+              <button class="secondary-btn" id="createServicePackBtn" type="button">Create from pack</button>
+            </div>
+          </div>
+          <div class="manual-instance-page">
+            <section class="control-page-intro">
+              <div>
+                <div class="eyebrow">Manual workflow</div>
+                <h3>Use this path for one-off services</h3>
+                <p>For standard multi-service access use a service pack. Manual instance creation is intended for additional OpenVPN listeners, custom Xray/VLESS endpoints, service experiments, and controlled exceptions.</p>
+              </div>
+              <div class="control-page-intro-grid">
+                <div class="fact-card"><div class="mini-label">Scope</div><div class="metric-caption strong">single instance</div><div class="metric-caption">one runtime unit</div></div>
+                <div class="fact-card"><div class="mini-label">Apply</div><div class="metric-caption strong">after validation</div><div class="metric-caption">review before rollout</div></div>
+              </div>
+            </section>
+            <section class="section-card">
+              <div class="section-head">
+                <div>
+                  <div class="mini-label">Instance definition</div>
+                  <h3>Service and runtime settings</h3>
+                </div>
+              </div>
+              <div id="manualInstanceCreateMount"></div>
+            </section>
+          </div>
+        </section>`;
+      document.getElementById('backToInstancesBtn')?.addEventListener('click', openInstancesListPage);
+      document.getElementById('createServicePackBtn')?.addEventListener('click', openCreateFromPackPage);
+      renderCreateInstanceForm('manualInstanceCreateMount', { submitLabel: 'Create manual instance' });
+    }
+
     function bindActions() {
-      document.getElementById('createInstanceBtn')?.addEventListener('click', openCreateInstanceModal);
+      document.getElementById('createInstanceBtn')?.addEventListener('click', openManualInstancePage);
       document.getElementById('createServicePackBtn')?.addEventListener('click', openCreateFromPackPage);
       bindInstanceListControls();
       document.getElementById('addServicePackTemplateBtn')?.addEventListener('click', () => openServicePackEditor(''));
@@ -1068,7 +1118,7 @@
         button.addEventListener('click', () => deleteServicePackTemplate(button.dataset.packKey));
       });
       document.querySelectorAll('.instance-manage-btn').forEach((button) => {
-        button.addEventListener('click', () => openInstanceManageModal(button.dataset.instanceId));
+        button.addEventListener('click', () => openInstanceManagePage(button.dataset.instanceId));
       });
       document.querySelectorAll('.instance-action-btn').forEach((button) => {
         button.addEventListener('click', () => queueInstanceAction(button.dataset.instanceId, button.dataset.action));
@@ -1143,6 +1193,10 @@
     function render() {
       if (state.instancesView === 'create-pack') {
         renderCreateFromPackPage();
+        return;
+      }
+      if (state.instancesView === 'manual') {
+        renderManualInstancePage();
         return;
       }
       state.instancesView = 'list';

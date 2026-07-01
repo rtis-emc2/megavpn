@@ -13,10 +13,13 @@
       escapeHTML,
       authWorkflows,
       nodeWorkflows,
+      nodeMapPage,
+      instanceWorkflows,
       dashboardPage,
       nodesPage,
       instancesPage,
       addressPoolsPage,
+      firewallPage,
       servicesPage,
       clientsPage,
       jobWorkflows,
@@ -35,7 +38,13 @@
       typeof renderAuthSlot !== 'function' ||
       typeof renderNotice !== 'function' ||
       typeof setTitle !== 'function' ||
-      typeof escapeHTML !== 'function'
+      typeof escapeHTML !== 'function' ||
+      !nodeMapPage ||
+      typeof nodeMapPage.render !== 'function' ||
+      !instanceWorkflows ||
+      typeof instanceWorkflows.renderInstanceManagePage !== 'function' ||
+      !firewallPage ||
+      typeof firewallPage.render !== 'function'
     ) {
       throw new Error('MegaVPNAppRouter requires shell dependencies');
     }
@@ -44,15 +53,11 @@
       'dashboard',
       'nodes',
       'nodeManage',
+      'instanceManage',
       'instances',
       'addressPools',
       'clients',
-      'jobs',
       'backhaul',
-      'services',
-      'revisions',
-      'telemetry',
-      'audit',
     ]);
 
     function renderUnknownPage(key) {
@@ -67,10 +72,13 @@
     function renderRoute() {
       if (state.page === 'dashboard') return dashboardPage.render();
       if (state.page === 'nodes') return nodesPage.render();
+      if (state.page === 'nodeMap') return nodeMapPage.render();
       if (state.page === 'nodeManage') return nodeWorkflows.renderNodeManagePage();
       if (state.page === 'services') return servicesPage.render();
+      if (state.page === 'instanceManage') return instanceWorkflows.renderInstanceManagePage();
       if (state.page === 'instances') return instancesPage.render();
       if (state.page === 'addressPools') return addressPoolsPage.render();
+      if (state.page === 'firewall') return firewallPage.render();
       if (state.page === 'clients') return clientsPage.render();
       if (state.page === 'jobs') return jobWorkflows.renderJobs();
       if (state.page === 'artifacts') return artifactsPage.renderArtifacts();
@@ -110,6 +118,11 @@
         state.nodeManageID = '';
         state.nodeManageData = null;
       }
+      if (page !== 'instanceManage') {
+        state.instanceManageID = '';
+        state.instanceManageData = null;
+        state.instanceManageDirty = false;
+      }
       state.page = page;
       render();
       if (page === 'services' && state.authUser) {
@@ -119,6 +132,7 @@
 
     function autoRefreshEnabledForCurrentPage() {
       if (state.page === 'nodeManage' && state.nodeTerminalActive) return false;
+      if (state.page === 'instanceManage' && state.instanceManageDirty) return false;
       if (state.page === 'instances' && state.instancesView === 'create-pack') return false;
       return autoRefreshPages.has(state.page);
     }

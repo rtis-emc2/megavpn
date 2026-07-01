@@ -92,7 +92,7 @@ func (s *Store) Dashboard(ctx context.Context, version string) (domain.Dashboard
 
 func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	rows, err := s.db.Query(ctx, `select
-		n.id,n.name,n.kind,n.role,n.status,n.address,n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
+		n.id,n.name,n.kind,n.role,n.status,n.address,coalesce(n.location_label,''),n.latitude,n.longitude,n.accuracy_radius_km,n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
 		coalesce(na.agent_version,''),coalesce(na.protocol_version,''),na.registered_at,na.last_seen_at
 	from nodes n
 	left join node_agents na on na.node_id=n.id
@@ -115,7 +115,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 
 func (s *Store) GetNode(ctx context.Context, nodeID string) (domain.Node, error) {
 	row := s.db.QueryRow(ctx, `select
-		n.id,n.name,n.kind,n.role,n.status,n.address,n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
+		n.id,n.name,n.kind,n.role,n.status,n.address,coalesce(n.location_label,''),n.latitude,n.longitude,n.accuracy_radius_km,n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
 		coalesce(na.agent_version,''),coalesce(na.protocol_version,''),na.registered_at,na.last_seen_at
 	from nodes n
 	left join node_agents na on na.node_id=n.id
@@ -132,6 +132,10 @@ func scanNode(row jobScanner) (domain.Node, error) {
 		&n.Role,
 		&n.Status,
 		&n.Address,
+		&n.LocationLabel,
+		&n.Latitude,
+		&n.Longitude,
+		&n.AccuracyRadiusKM,
 		&n.OSFamily,
 		&n.OSVersion,
 		&n.Architecture,
@@ -186,7 +190,10 @@ func (s *Store) CreateNode(ctx context.Context, n domain.Node) (domain.Node, err
 	if n.AgentStatus == "" {
 		n.AgentStatus = "unknown"
 	}
-	_, err := s.db.Exec(ctx, `insert into nodes(id,name,kind,role,status,address,os_family,os_version,architecture,execution_mode,agent_status,created_at,updated_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, n.ID, n.Name, n.Kind, n.Role, n.Status, n.Address, n.OSFamily, n.OSVersion, n.Architecture, n.ExecutionMode, n.AgentStatus, n.CreatedAt, n.UpdatedAt)
+	if err := normalizeNodeLocation(&n); err != nil {
+		return n, err
+	}
+	_, err := s.db.Exec(ctx, `insert into nodes(id,name,kind,role,status,address,location_label,latitude,longitude,accuracy_radius_km,os_family,os_version,architecture,execution_mode,agent_status,created_at,updated_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, n.ID, n.Name, n.Kind, n.Role, n.Status, n.Address, n.LocationLabel, n.Latitude, n.Longitude, n.AccuracyRadiusKM, n.OSFamily, n.OSVersion, n.Architecture, n.ExecutionMode, n.AgentStatus, n.CreatedAt, n.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err, "nodes_name_key", "nodes_name_active_key") {
 			return n, fmt.Errorf("node name %q is already used by an active node", n.Name)
@@ -209,6 +216,7 @@ func (s *Store) UpdateNode(ctx context.Context, nodeID string, n domain.Node) (d
 	n.Kind = strings.TrimSpace(n.Kind)
 	n.Role = strings.TrimSpace(n.Role)
 	n.Address = strings.TrimSpace(n.Address)
+	n.LocationLabel = strings.TrimSpace(n.LocationLabel)
 	n.OSFamily = strings.TrimSpace(n.OSFamily)
 	n.OSVersion = strings.TrimSpace(n.OSVersion)
 	n.Architecture = strings.TrimSpace(n.Architecture)
@@ -237,7 +245,10 @@ func (s *Store) UpdateNode(ctx context.Context, nodeID string, n domain.Node) (d
 	if n.ExecutionMode == "" {
 		n.ExecutionMode = current.ExecutionMode
 	}
-	cmd, err := s.db.Exec(ctx, `update nodes set name=$2,kind=$3,role=$4,address=$5,os_family=$6,os_version=$7,architecture=$8,execution_mode=$9,updated_at=now() where id=$1 and status <> 'retired'`, nodeID, n.Name, n.Kind, n.Role, n.Address, n.OSFamily, n.OSVersion, n.Architecture, n.ExecutionMode)
+	if err := normalizeNodeLocation(&n); err != nil {
+		return domain.Node{}, err
+	}
+	cmd, err := s.db.Exec(ctx, `update nodes set name=$2,kind=$3,role=$4,address=$5,location_label=$6,latitude=$7,longitude=$8,accuracy_radius_km=$9,os_family=$10,os_version=$11,architecture=$12,execution_mode=$13,updated_at=now() where id=$1 and status <> 'retired'`, nodeID, n.Name, n.Kind, n.Role, n.Address, n.LocationLabel, n.Latitude, n.Longitude, n.AccuracyRadiusKM, n.OSFamily, n.OSVersion, n.Architecture, n.ExecutionMode)
 	if err != nil {
 		if isUniqueViolation(err, "nodes_name_key", "nodes_name_active_key") {
 			return domain.Node{}, fmt.Errorf("node name %q is already used by an active node", n.Name)
@@ -249,6 +260,31 @@ func (s *Store) UpdateNode(ctx context.Context, nodeID string, n domain.Node) (d
 	}
 	_, _ = s.CreateAudit(ctx, "system", "node.update", "node", &nodeID, "node profile updated")
 	return s.GetNode(ctx, nodeID)
+}
+
+func normalizeNodeLocation(n *domain.Node) error {
+	n.LocationLabel = strings.TrimSpace(n.LocationLabel)
+	if n.Latitude == nil && n.Longitude == nil {
+		if n.AccuracyRadiusKM != nil {
+			return errors.New("node accuracy radius requires latitude and longitude")
+		}
+		return nil
+	}
+	if n.Latitude == nil || n.Longitude == nil {
+		return errors.New("node latitude and longitude must be provided together")
+	}
+	if *n.Latitude < -90 || *n.Latitude > 90 {
+		return errors.New("node latitude must be between -90 and 90")
+	}
+	if *n.Longitude < -180 || *n.Longitude > 180 {
+		return errors.New("node longitude must be between -180 and 180")
+	}
+	if n.AccuracyRadiusKM != nil {
+		if *n.AccuracyRadiusKM < 0 || *n.AccuracyRadiusKM > 20000 {
+			return errors.New("node accuracy radius must be between 0 and 20000 km")
+		}
+	}
+	return nil
 }
 
 func isUniqueViolation(err error, constraints ...string) bool {
@@ -2021,7 +2057,7 @@ func (s *Store) CancelJob(ctx context.Context, jobID string) (domain.Job, error)
 }
 
 func (s *Store) ClaimJob(ctx context.Context, workerID string) (domain.Job, bool, error) {
-	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`, nil)
+	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','node.firewall.preview','node.firewall.apply','node.firewall.observe','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`, nil)
 }
 
 func (s *Store) RecoverStaleJobLeases(ctx context.Context) (int, error) {
@@ -2176,6 +2212,10 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 
 	if strings.HasPrefix(jobType, "instance.") && jobType != "instance.diagnose" && instanceID != nil {
 		return s.applyInstanceJobCompletionSideEffects(ctx, *instanceID, idv, jobType, status, result)
+	}
+
+	if strings.HasPrefix(jobType, "node.firewall.") {
+		return s.ApplyFirewallJobResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
 	}
 
 	if status == "succeeded" {
@@ -2549,7 +2589,7 @@ func (s *Store) AgentNextJob(ctx context.Context, nodeRef string) (domain.Job, b
 	if err := s.db.QueryRow(ctx, `select id from nodes where (id::text=$1 or name=$1) and status <> 'retired'`, nodeRef).Scan(&nodeID); err != nil {
 		return domain.Job{}, false, err
 	}
-	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`
+	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','node.firewall.preview','node.firewall.apply','node.firewall.observe','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`
 	job, ok, err := s.claimJob(ctx, "agent:"+nodeID, where, []any{nodeID})
 	if err != nil || !ok {
 		return job, ok, err

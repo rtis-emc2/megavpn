@@ -6,6 +6,7 @@
       ['Operations', [
         ['dashboard', 'Dashboard', '●'],
         ['nodes', 'Nodes', '◇'],
+        ['nodeMap', 'Node map', '⌖'],
         ['instances', 'Instances', '▣'],
         ['clients', 'Clients', '◎'],
         ['jobs', 'Jobs', '↻'],
@@ -16,12 +17,15 @@
         ['artifacts', 'Artifacts', '▤'],
         ['shareLinks', 'Share links', '↗'],
       ]],
+      ['Security', [
+        ['firewall', 'Firewall', '▧'],
+        ['certificates', 'Certificates', '◈'],
+        ['audit', 'Audit', '◇'],
+      ]],
       ['Control', [
         ['services', 'Services', '⚙'],
-        ['certificates', 'Certificates', '◈'],
-        ['revisions', 'Revisions', '≣'],
         ['telemetry', 'Telemetry', '≋'],
-        ['audit', 'Audit', '◇'],
+        ['revisions', 'Revisions', '≣'],
         ['settings', 'Settings', '☷'],
       ]],
     ],

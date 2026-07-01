@@ -1661,6 +1661,7 @@ type xrayVLESSGroup struct {
 	EgressMode  string
 	OutboundTag string
 	Outbound    map[string]any
+	AdBlock     bool
 	Rules       []map[string]any
 }
 
@@ -1750,9 +1751,10 @@ func xrayVLESSGroups(spec map[string]any) []xrayVLESSGroup {
 		group := xrayVLESSGroup{
 			Key:         key,
 			Label:       firstString(groupRaw["label"], groupRaw["title"], key),
-			EgressMode:  strings.ToLower(firstString(groupRaw["egress_mode"])),
+			EgressMode:  strings.ToLower(firstString(groupRaw["egress_mode"], groupRaw["access_mode"], groupRaw["mode"])),
 			OutboundTag: outboundTag,
 			Outbound:    outbound,
+			AdBlock:     xrayVLESSGroupAdBlock(groupRaw),
 			Rules:       xrayVLESSGroupRules(groupRaw["rules"]),
 		}
 		groups = append(groups, group)
@@ -1769,9 +1771,46 @@ func xrayVLESSGroupRules(raw any) []map[string]any {
 		if rule == nil {
 			continue
 		}
+		if xrayVLESSRuleIsManagedAdBlock(rule) {
+			continue
+		}
 		out = append(out, rule)
 	}
 	return out
+}
+
+func xrayVLESSGroupAdBlock(group map[string]any) bool {
+	if group == nil {
+		return false
+	}
+	if truthy(group["ad_block"]) || truthy(group["adBlock"]) || truthy(group["block_ads"]) || truthy(group["blockAds"]) {
+		return true
+	}
+	list, _ := group["rules"].([]any)
+	for _, item := range list {
+		rule, _ := cloneAny(item).(map[string]any)
+		if xrayVLESSRuleIsManagedAdBlock(rule) {
+			return true
+		}
+	}
+	return false
+}
+
+func xrayVLESSRuleIsManagedAdBlock(rule map[string]any) bool {
+	if rule == nil {
+		return false
+	}
+	tag := normalizeXrayOutboundTag(firstString(rule["outboundTag"], rule["outbound_tag"]))
+	if tag != "block" {
+		return false
+	}
+	domains, _ := rule["domain"].([]any)
+	for _, raw := range domains {
+		if strings.EqualFold(strings.TrimSpace(stringify(raw)), "geosite:category-ads-all") {
+			return true
+		}
+	}
+	return false
 }
 
 func xrayDefaultVLESSGroupKey(spec map[string]any, groups []xrayVLESSGroup) string {
@@ -2015,6 +2054,15 @@ func xrayVLESSGroupRoutingRules(spec map[string]any, groups []xrayVLESSGroup, cl
 		if len(users) == 0 {
 			continue
 		}
+		if group.AdBlock {
+			rules = append(rules, map[string]any{
+				"type":        "field",
+				"inboundTag":  []any{inboundTag},
+				"user":        anyStringList(users),
+				"domain":      []any{"geosite:category-ads-all"},
+				"outboundTag": "block",
+			})
+		}
 		for _, rawRule := range group.Rules {
 			rule, _ := cloneAny(rawRule).(map[string]any)
 			if rule == nil {
@@ -2056,6 +2104,8 @@ func xrayEffectiveVLESSGroupOutboundTag(spec map[string]any, group xrayVLESSGrou
 	switch strings.ToLower(group.EgressMode) {
 	case "local", "direct", "local_breakout":
 		return "direct"
+	case "block", "blocked", "deny":
+		return "block"
 	}
 	if tag == "direct" && group.Outbound == nil {
 		if defaultTag := xrayInstanceDefaultOutboundTag(spec); defaultTag != "" {

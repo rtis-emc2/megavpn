@@ -224,7 +224,15 @@
         return {
           key,
           label: String(source.label || source.title || key).trim() || key,
+          accessMode: String(source.access_mode || source.egress_mode || source.mode || '').trim(),
+          egressNodeID: String(source.egress_node_id || source.node_id || source.egress?.egress_node_id || source.egress?.node_id || '').trim(),
+          targetInstanceLabel: String(source.target_instance_label || '').trim(),
           outboundTag: String(source.outbound_tag || source.outboundTag || source.tag || 'direct').trim() || 'direct',
+          adBlock: source.ad_block === true || source.adBlock === true || source.block_ads === true || source.blockAds === true || (Array.isArray(source.rules) && source.rules.some((rule) => {
+            const tag = String(rule?.outboundTag || rule?.outbound_tag || '').trim().toLowerCase();
+            const domains = Array.isArray(rule?.domain) ? rule.domain : [];
+            return tag === 'block' && domains.some((domain) => String(domain || '').trim().toLowerCase() === 'geosite:category-ads-all');
+          })),
         };
       }).filter(Boolean);
       if (!groups.length) {
@@ -246,7 +254,14 @@
       const groups = vlessGroupsForInstance(instance);
       const selected = defaultVLESSGroupForInstance(instance, groups);
       const options = groups.map((group) => {
-        const routeLabel = group.outboundTag && group.outboundTag !== 'direct' ? ` -> ${group.outboundTag}` : '';
+        let routeLabel = '';
+        const mode = String(group.accessMode || '').toLowerCase();
+        if (mode === 'local_breakout' || mode === 'local' || mode === 'direct') routeLabel = ' · current node';
+        else if (mode === 'egress_node' || mode === 'remote_egress' || mode === 'remote_node') routeLabel = ' · selected egress';
+        else if (mode === 'instance_only') routeLabel = ` · only ${group.targetInstanceLabel || 'selected instance'}`;
+        else if (mode === 'block' || group.outboundTag === 'block') routeLabel = ' · blocked';
+        else if (group.outboundTag && group.outboundTag !== 'direct') routeLabel = ` · ${group.outboundTag}`;
+        if (group.adBlock) routeLabel += ' · ads blocked';
         return `<option value="${escapeHTML(group.key)}"${group.key === selected ? ' selected' : ''}>${escapeHTML(group.label)}${escapeHTML(routeLabel)}</option>`;
       }).join('');
       return `

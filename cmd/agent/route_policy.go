@@ -50,7 +50,7 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		"skipped_reasons": kernelPlan.Reasons,
 	}
 	if kernelPlan.RuleCount > 0 {
-		if !isSafeRoutePolicyManagedPath(routePolicyScriptPath) || !isSafeRoutePolicyManagedPath(routePolicyUnitPath) {
+		if !isSafeRoutePolicyManagedPath(routePolicyScriptPath) || !isSafeRoutePolicyManagedPath(routePolicyUnitPath) || !isSafeRoutePolicyManagedPath(routePolicyTimerPath) {
 			return "failed", map[string]any{"error": "route policy managed path is not allowed", "stage": "route_policy_enforcement_paths"}
 		}
 		if err := writeManagedFile(managedFileSpec{Path: routePolicyScriptPath, Content: kernelPlan.Script, Mode: "0700"}); err != nil {
@@ -59,12 +59,22 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		if err := writeManagedFile(managedFileSpec{Path: routePolicyUnitPath, Content: renderRoutePolicyUnit(), Mode: "0644"}); err != nil {
 			return "failed", map[string]any{"error": err.Error(), "stage": "write_route_policy_unit", "path": routePolicyUnitPath}
 		}
+		if err := writeManagedFile(managedFileSpec{Path: routePolicyTimerPath, Content: renderRoutePolicyTimer(), Mode: "0644"}); err != nil {
+			return "failed", map[string]any{"error": err.Error(), "stage": "write_route_policy_timer", "path": routePolicyTimerPath}
+		}
 		_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
-		code, out := runInstallCommand(ctx, "systemctl", "enable", "--now", routePolicyUnitName)
+		timerCode, timerOut := runInstallCommand(ctx, "systemctl", "enable", "--now", routePolicyTimerName)
+		code, out := runInstallCommand(ctx, "systemctl", "restart", routePolicyUnitName)
 		kernelResult["unit"] = routePolicyUnitName
+		kernelResult["timer"] = routePolicyTimerName
 		kernelResult["script_path"] = routePolicyScriptPath
 		kernelResult["output"] = truncate(out, 2000)
-		kernelResult["enforced"] = code == 0
+		kernelResult["timer_output"] = truncate(timerOut, 2000)
+		kernelResult["enforced"] = code == 0 && timerCode == 0
+		if timerCode != 0 {
+			kernelResult["error"] = "route policy refresh timer failed"
+			return "failed", map[string]any{"error": "route policy refresh timer failed", "kernel": kernelResult}
+		}
 		if code != 0 {
 			kernelResult["error"] = "route policy kernel enforcement failed"
 			return "failed", map[string]any{"error": "route policy kernel enforcement failed", "kernel": kernelResult}
@@ -143,7 +153,7 @@ func isSafeRoutePolicyManagedPath(path string) bool {
 	if strings.HasPrefix(path, "/usr/local/lib/megavpn/route-policy/") && strings.HasSuffix(path, ".sh") {
 		return true
 	}
-	return path == routePolicyUnitPath
+	return path == routePolicyUnitPath || path == routePolicyTimerPath
 }
 
 func validateRoutePolicyPayload(payload map[string]any) error {
