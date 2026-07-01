@@ -445,8 +445,31 @@ Correct model:
    - managed egress through backhaul when traffic must exit from an egress node.
 4. Route policy and managed backhaul provide the deterministic path.
 
-Per-client VLESS groups and outbound rules can be added later as an access-group
-feature, but the baseline production path should work at instance level.
+Where to configure it:
+
+- `Backhaul`: create the `ingress -> egress` link, click `Apply`, then `Test`.
+- `Instances -> Manage` for the Xray/VLESS instance: select `Egress mode`.
+  Use `egress node` when the whole VLESS instance must exit through a remote
+  egress node. Select the exact `Egress node` when more than one link exists or
+  deterministic output is required.
+- The same `Manage` view contains `VLESS outbound groups`: a JSON array of Xray
+  routing groups. `Default outbound group` selects the default group.
+- `Clients -> Provision`: when selecting a VLESS inbound, choose the access
+  group. The group is saved in the client access binding and used for
+  provisioning.
+- `Clients -> Access -> Add route`: for individual route-policy rules, select
+  `Egress mode = egress node` and choose the egress node. After route-policy
+  changes, run `Nodes -> Manage -> Sync route policy` on the ingress node.
+
+Minimal path for “enter through VLESS and exit through another node”:
+
+1. The ingress node and egress node must be online.
+2. Backhaul between them must be `active` and tested.
+3. The VLESS instance must run on the ingress node.
+4. In `Instances -> Manage`, set `Egress mode = egress node` for the VLESS
+   instance and select the target egress node.
+5. Click `Apply` on the instance.
+6. If client route rules are used, run `Sync route policy`.
 
 ## 16. Clients And Provisioning
 

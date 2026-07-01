@@ -182,13 +182,25 @@
       }).join('');
     }
 
-    function nodeOptions() {
-      return (state.nodes || [])
+    function nodeOptions(selectedID = '', options = {}) {
+      const selected = String(selectedID || '').trim();
+      const roles = Array.isArray(options.roles)
+        ? options.roles.map((role) => String(role || '').trim().toLowerCase()).filter(Boolean)
+        : [];
+      const includeEmpty = options.includeEmpty === true;
+      const emptyLabel = options.emptyLabel || 'Select node';
+      const parts = includeEmpty ? [`<option value="">${escapeHTML(emptyLabel)}</option>`] : [];
+      (state.nodes || [])
+        .filter((node) => {
+          if (!roles.length) return true;
+          return roles.includes(String(node.role || '').trim().toLowerCase());
+        })
         .map((node) => {
           const role = String(node.role || 'node').trim() || 'node';
-          return `<option value="${escapeHTML(node.id)}">${escapeHTML(node.name)} · ${escapeHTML(role)} · ${escapeHTML(node.address || 'n/a')} · ${escapeHTML(node.agent_status || 'unknown')}</option>`;
+          return `<option value="${escapeHTML(node.id)}"${node.id === selected ? ' selected' : ''}>${escapeHTML(node.name)} · ${escapeHTML(role)} · ${escapeHTML(node.address || 'n/a')} · ${escapeHTML(node.agent_status || 'unknown')}</option>`;
         })
-        .join('');
+        .forEach((option) => parts.push(option));
+      return parts.join('');
     }
 
     function normalizeInstanceServiceCode(serviceCode) {
@@ -475,6 +487,8 @@
             xray_path: stringValue(spec.path, '/ws'),
             xray_service_name: stringValue(spec.service_name, 'vless-grpc'),
             xray_flow: stringValue(spec.flow),
+            xray_egress_mode: stringValue(spec.egress_mode, spec.xray_egress_mode, spec.vless_egress_mode, spec.xray_egress?.mode, 'auto'),
+            xray_egress_node_id: stringValue(spec.egress_node_id, spec.xray_egress_node_id, spec.vless_egress_node_id, spec.xray_egress?.egress_node_id, spec.xray_egress?.node_id),
             xray_default_vless_group: stringValue(spec.default_vless_group, 'default'),
             xray_vless_groups: Array.isArray(spec.vless_groups) ? JSON.stringify(spec.vless_groups, null, 2) : '',
             config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
@@ -648,13 +662,19 @@
             <div class="field"><label>HTTP path</label><input name="xray_path" value="${escapeHTML(draft.xray_path || '/ws')}" placeholder="/ws" /></div>
             <div class="field"><label>gRPC service name</label><input name="xray_service_name" value="${escapeHTML(draft.xray_service_name || 'vless-grpc')}" placeholder="vless-grpc" /></div>
             <div class="field"><label>Flow</label><input name="xray_flow" value="${escapeHTML(draft.xray_flow || '')}" placeholder="optional" /></div>
+            <div class="field"><label>Egress mode</label><select name="xray_egress_mode">
+              <option value="auto"${!draft.xray_egress_mode || draft.xray_egress_mode === 'auto' ? ' selected' : ''}>auto</option>
+              <option value="egress_node"${draft.xray_egress_mode === 'egress_node' || draft.xray_egress_mode === 'remote_egress' || draft.xray_egress_mode === 'remote_node' ? ' selected' : ''}>egress node</option>
+              <option value="local_breakout"${draft.xray_egress_mode === 'local_breakout' || draft.xray_egress_mode === 'direct' || draft.xray_egress_mode === 'local' ? ' selected' : ''}>local breakout</option>
+            </select></div>
+            <div class="field"><label>Egress node</label><select name="xray_egress_node_id">${nodeOptions(draft.xray_egress_node_id || '', { roles: ['egress'], includeEmpty: true, emptyLabel: 'Auto or select egress node' })}</select></div>
             <div class="field"><label>Default outbound group</label><input name="xray_default_vless_group" value="${escapeHTML(draft.xray_default_vless_group || 'default')}" placeholder="default" /></div>
             <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/usr/local/etc/xray/xray.json')}" /></div>
             <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
             <div class="field full">
               <label>VLESS outbound groups</label>
               <textarea name="xray_vless_groups" rows="8" placeholder='[{"key":"default","label":"Default direct","outbound_tag":"direct"},{"key":"restricted","label":"Restricted","outbound_tag":"block","rules":[{"domain":["geosite:category-ads-all"],"outbound_tag":"block"}]}]'>${escapeHTML(draft.xray_vless_groups || '')}</textarea>
-              <div class="field-hint">Groups are applied by Xray routing rules. Client provisioning assigns each VLESS user to one group.</div>
+              <div class="field-hint">Groups are Xray routing profiles for provisioned VLESS users. Remote node exit is selected above at instance level.</div>
             </div>
             <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"inbounds":[...],"outbounds":[...]}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
         case 'openvpn':
@@ -881,6 +901,18 @@
         spec.path = String(form.get('xray_path') || '').trim();
         spec.service_name = String(form.get('xray_service_name') || '').trim();
         spec.flow = String(form.get('xray_flow') || '').trim();
+        const xrayEgressMode = String(form.get('xray_egress_mode') || 'auto').trim() || 'auto';
+        const xrayEgressNodeID = String(form.get('xray_egress_node_id') || '').trim();
+        spec.egress_mode = xrayEgressMode;
+        if (xrayEgressNodeID) {
+          spec.egress_node_id = xrayEgressNodeID;
+        } else {
+          delete spec.egress_node_id;
+        }
+        spec.xray_egress = {
+          mode: xrayEgressMode,
+          ...(xrayEgressNodeID ? { egress_node_id: xrayEgressNodeID } : {}),
+        };
         spec.default_vless_group = String(form.get('xray_default_vless_group') || 'default').trim() || 'default';
         const vlessGroupsBody = String(form.get('xray_vless_groups') || '').trim();
         if (vlessGroupsBody) {
