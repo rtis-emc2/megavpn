@@ -58,7 +58,7 @@ func ensureXrayInstanceDriverState(ctx context.Context, store *postgres.Store, i
 			changed = true
 		}
 	}
-	if groupChanged, err := ensureXrayVLESSGroupEgress(ctx, store, instance, spec); err != nil {
+	if groupChanged, err := ensureXrayInstanceDefaultEgress(ctx, store, instance, spec); err != nil {
 		return err
 	} else if groupChanged {
 		changed = true
@@ -97,19 +97,67 @@ func ensureXrayInstanceDriverState(ctx context.Context, store *postgres.Store, i
 	return nil
 }
 
-func ensureXrayVLESSGroupEgress(ctx context.Context, store *postgres.Store, instance domain.Instance, spec map[string]any) (bool, error) {
+func ensureXrayInstanceDefaultEgress(ctx context.Context, store *postgres.Store, instance domain.Instance, spec map[string]any) (bool, error) {
+	changed := normalizeLegacyXrayVLESSGroupEgress(spec)
+	mode := strings.ToLower(firstNonEmpty(
+		stringify(spec["egress_mode"]),
+		stringify(spec["xray_egress_mode"]),
+		stringify(spec["vless_egress_mode"]),
+		stringify(nestedMapLocal(spec, "xray_egress")["mode"]),
+		"auto",
+	))
+	if mode == "local" || mode == "direct" || mode == "local_breakout" {
+		spec["xray_egress"] = map[string]any{
+			"mode":            "local_breakout",
+			"current_node_id": instance.NodeID,
+		}
+		delete(spec, "xray_default_outbound")
+		return true, nil
+	}
+	switch mode {
+	case "auto", "node", "remote_node", "egress_node", "remote_egress":
+	default:
+		return changed, fmt.Errorf("unsupported xray egress_mode %q", mode)
+	}
+	egressNodeID := firstNonEmpty(
+		stringify(spec["egress_node_id"]),
+		stringify(spec["xray_egress_node_id"]),
+		stringify(spec["vless_egress_node_id"]),
+		stringify(nestedMapLocal(spec, "xray_egress")["egress_node_id"]),
+		stringify(nestedMapLocal(spec, "xray_egress")["node_id"]),
+	)
+	resolved, err := store.ResolveXrayVLESSEgress(ctx, instance.ID, egressNodeID)
+	if err != nil {
+		return changed, err
+	}
+	spec["xray_egress"] = resolved.Map()
+	if resolved.Mode == "local_breakout" {
+		delete(spec, "xray_default_outbound")
+		return true, nil
+	}
+	spec["xray_default_outbound"] = map[string]any{
+		"tag":         "egress-default",
+		"protocol":    "freedom",
+		"sendThrough": resolved.SendThrough,
+		"settings": map[string]any{
+			"domainStrategy": "UseIP",
+		},
+	}
+	return true, nil
+}
+
+func normalizeLegacyXrayVLESSGroupEgress(spec map[string]any) bool {
 	groups, key, changed := xrayMutableVLESSGroupsLocal(spec)
 	if len(groups) == 0 {
 		groups = []any{map[string]any{
 			"key":          "default",
-			"label":        "Default egress",
-			"egress_mode":  "auto",
+			"label":        "Default access",
 			"outbound_tag": "direct",
 		}}
 		key = "vless_groups"
 		spec[key] = groups
 		spec["default_vless_group"] = "default"
-		changed = true
+		return true
 	}
 	for idx, item := range groups {
 		group, _ := item.(map[string]any)
@@ -120,72 +168,25 @@ func ensureXrayVLESSGroupEgress(ctx context.Context, store *postgres.Store, inst
 		if groupKey == "" {
 			continue
 		}
-		outbound, _ := group["outbound"].(map[string]any)
-		managedOutbound := strings.EqualFold(firstNonEmpty(stringify(group["egress_resolved_by"])), "worker:xray-egress")
-		if outbound != nil && firstNonEmpty(stringify(outbound["protocol"])) != "" && !managedOutbound {
-			continue
+		if firstNonEmpty(stringify(group["label"])) == "Default egress" {
+			group["label"] = "Default access"
+			changed = true
 		}
-		mode := strings.ToLower(firstNonEmpty(
-			stringify(group["egress_mode"]),
-			stringify(nestedMapLocal(group, "egress")["mode"]),
-			stringify(spec["vless_egress_mode"]),
-			stringify(spec["xray_egress_mode"]),
-			"auto",
-		))
-		if mode == "local" || mode == "direct" || mode == "local_breakout" {
-			if firstNonEmpty(stringify(group["outbound_tag"]), stringify(group["outboundTag"]), stringify(group["tag"])) == "" {
-				group["outbound_tag"] = "direct"
-				groups[idx] = group
-				changed = true
-			}
-			delete(group, "egress_resolved_by")
-			continue
+		if strings.EqualFold(firstNonEmpty(stringify(group["egress_mode"])), "auto") {
+			delete(group, "egress_mode")
+			changed = true
 		}
-		switch mode {
-		case "auto", "node", "remote_node", "egress_node", "remote_egress":
-		default:
-			return changed, fmt.Errorf("unsupported xray vless egress_mode %q for group %s", mode, groupKey)
-		}
-		outboundTag := normalizeXrayGroupKeyLocal(firstNonEmpty(stringify(group["outbound_tag"]), stringify(group["outboundTag"]), stringify(group["tag"])))
-		if mode == "auto" && outboundTag != "" && outboundTag != "direct" {
-			continue
-		}
-		egressNodeID := firstNonEmpty(
-			stringify(group["egress_node_id"]),
-			stringify(nestedMapLocal(group, "egress")["egress_node_id"]),
-			stringify(nestedMapLocal(group, "egress")["node_id"]),
-			stringify(spec["vless_egress_node_id"]),
-			stringify(spec["xray_egress_node_id"]),
-		)
-		resolved, err := store.ResolveXrayVLESSEgress(ctx, instance.ID, egressNodeID)
-		if err != nil {
-			return changed, err
-		}
-		group["egress"] = resolved.Map()
-		if resolved.Mode == "local_breakout" {
+		if strings.EqualFold(firstNonEmpty(stringify(group["egress_resolved_by"])), "worker:xray-egress") {
 			group["outbound_tag"] = "direct"
 			delete(group, "outbound")
+			delete(group, "egress")
 			delete(group, "egress_resolved_by")
-			groups[idx] = group
 			changed = true
-			continue
-		}
-		tag := "egress-" + groupKey
-		group["outbound_tag"] = tag
-		group["egress_resolved_by"] = "worker:xray-egress"
-		group["outbound"] = map[string]any{
-			"tag":         tag,
-			"protocol":    "freedom",
-			"sendThrough": resolved.SendThrough,
-			"settings": map[string]any{
-				"domainStrategy": "UseIP",
-			},
 		}
 		groups[idx] = group
-		changed = true
 	}
 	spec[key] = groups
-	return changed, nil
+	return changed
 }
 
 func xrayMutableVLESSGroupsLocal(spec map[string]any) ([]any, string, bool) {

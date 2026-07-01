@@ -354,15 +354,15 @@ func TestBuildXrayServerConfigAddsVLESSRemoteEgressOutbound(t *testing.T) {
 		"vless_groups": []any{
 			map[string]any{
 				"key":          "default",
-				"label":        "Default egress",
-				"outbound_tag": "egress-default",
-				"outbound": map[string]any{
-					"tag":         "egress-default",
-					"protocol":    "freedom",
-					"sendThrough": "10.240.35.245",
-					"settings":    map[string]any{"domainStrategy": "UseIP"},
-				},
+				"label":        "Default access",
+				"outbound_tag": "direct",
 			},
+		},
+		"xray_default_outbound": map[string]any{
+			"tag":         "egress-default",
+			"protocol":    "freedom",
+			"sendThrough": "10.240.35.245",
+			"settings":    map[string]any{"domainStrategy": "UseIP"},
 		},
 	})
 	if err != nil {
@@ -391,6 +391,57 @@ func TestBuildXrayServerConfigAddsVLESSRemoteEgressOutbound(t *testing.T) {
 	rules := routing["rules"].([]any)
 	if got := stringify(rules[len(rules)-1].(map[string]any)["outboundTag"]); got != "egress-default" {
 		t.Fatalf("fallback outboundTag = %q, want egress-default", got)
+	}
+}
+
+func TestBuildXrayServerConfigKeepsExplicitGroupBlockWithDefaultEgress(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "default",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "44444444-4444-4444-8444-444444444444",
+				"email":       "default-user",
+				"vless_group": "default",
+			},
+			map[string]any{
+				"id":          "55555555-5555-4555-8555-555555555555",
+				"email":       "blocked-user",
+				"vless_group": "blocked",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{"key": "default", "label": "Default access", "outbound_tag": "direct"},
+			map[string]any{"key": "blocked", "label": "Blocked", "outbound_tag": "block"},
+		},
+		"xray_default_outbound": map[string]any{
+			"tag":         "egress-default",
+			"protocol":    "freedom",
+			"sendThrough": "10.240.35.245",
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	routing := cfg["routing"].(map[string]any)
+	rules := routing["rules"].([]any)
+	if len(rules) != 3 {
+		t.Fatalf("routing rules = %#v, want 3", rules)
+	}
+	if got := stringify(rules[0].(map[string]any)["outboundTag"]); got != "egress-default" {
+		t.Fatalf("default group outboundTag = %q, want egress-default", got)
+	}
+	if got := stringify(rules[1].(map[string]any)["outboundTag"]); got != "block" {
+		t.Fatalf("blocked group outboundTag = %q, want block", got)
+	}
+	if got := stringify(rules[2].(map[string]any)["outboundTag"]); got != "egress-default" {
+		t.Fatalf("catch-all outboundTag = %q, want egress-default", got)
 	}
 }
 

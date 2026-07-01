@@ -877,7 +877,7 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 				"streamSettings": streamSettings,
 			},
 		},
-		"outbounds": xrayOutboundsWithGroups(nil, xrayVLESSGroups(spec)),
+		"outbounds": xrayOutboundsForSpec(nil, spec),
 	}
 	applyXrayVLESSGroupRouting(cfg, spec, managedClients)
 	if sniffing := truthy(spec["sniffing_enabled"]); sniffing || spec["sniffing_enabled"] == nil {
@@ -1658,6 +1658,7 @@ func (s *Store) resolveSecretText(ctx context.Context, refRaw, inlineRaw any) (s
 type xrayVLESSGroup struct {
 	Key         string
 	Label       string
+	EgressMode  string
 	OutboundTag string
 	Outbound    map[string]any
 	Rules       []map[string]any
@@ -1749,6 +1750,7 @@ func xrayVLESSGroups(spec map[string]any) []xrayVLESSGroup {
 		group := xrayVLESSGroup{
 			Key:         key,
 			Label:       firstString(groupRaw["label"], groupRaw["title"], key),
+			EgressMode:  strings.ToLower(firstString(groupRaw["egress_mode"])),
 			OutboundTag: outboundTag,
 			Outbound:    outbound,
 			Rules:       xrayVLESSGroupRules(groupRaw["rules"]),
@@ -1855,6 +1857,67 @@ func isBuiltInXrayOutboundTag(tag string) bool {
 	return tag == "direct" || tag == "block"
 }
 
+func xrayInstanceDefaultOutbound(spec map[string]any) (map[string]any, string) {
+	if spec == nil {
+		return nil, ""
+	}
+	rawOutbound, _ := cloneAny(spec["xray_default_outbound"]).(map[string]any)
+	if rawOutbound == nil {
+		rawOutbound, _ = cloneAny(spec["default_xray_outbound"]).(map[string]any)
+	}
+	if rawOutbound == nil {
+		egress, _ := spec["xray_egress"].(map[string]any)
+		mode := strings.ToLower(firstString(egress["mode"]))
+		sendThrough := firstString(egress["send_through"], egress["sendThrough"])
+		if mode != "" && mode != "local_breakout" && sendThrough != "" {
+			rawOutbound = map[string]any{
+				"tag":         "egress-default",
+				"protocol":    "freedom",
+				"sendThrough": sendThrough,
+				"settings": map[string]any{
+					"domainStrategy": "UseIP",
+				},
+			}
+		}
+	}
+	if rawOutbound == nil {
+		return nil, ""
+	}
+	tag := normalizeXrayOutboundTag(firstString(rawOutbound["tag"], "egress-default"))
+	if tag == "" {
+		return nil, ""
+	}
+	rawOutbound["tag"] = tag
+	if firstString(rawOutbound["protocol"]) == "" {
+		rawOutbound["protocol"] = "freedom"
+	}
+	if sendThrough := firstString(rawOutbound["send_through"]); sendThrough != "" && firstString(rawOutbound["sendThrough"]) == "" {
+		rawOutbound["sendThrough"] = sendThrough
+		delete(rawOutbound, "send_through")
+	}
+	return rawOutbound, tag
+}
+
+func xrayInstanceDefaultOutboundTag(spec map[string]any) string {
+	_, tag := xrayInstanceDefaultOutbound(spec)
+	return tag
+}
+
+func xrayOutboundsForSpec(raw any, spec map[string]any) []any {
+	outbounds := xrayOutboundsWithGroups(raw, xrayVLESSGroups(spec))
+	outbound, tag := xrayInstanceDefaultOutbound(spec)
+	if outbound == nil || tag == "" {
+		return outbounds
+	}
+	for _, item := range outbounds {
+		existing, _ := item.(map[string]any)
+		if normalizeXrayOutboundTag(firstString(existing["tag"])) == tag {
+			return outbounds
+		}
+	}
+	return append(outbounds, outbound)
+}
+
 func xrayOutboundsWithGroups(raw any, groups []xrayVLESSGroup) []any {
 	outbounds, _ := cloneAny(raw).([]any)
 	if len(outbounds) == 0 {
@@ -1897,11 +1960,15 @@ func xrayOutboundsWithGroups(raw any, groups []xrayVLESSGroup) []any {
 
 func applyXrayVLESSGroupRouting(cfg map[string]any, spec map[string]any, clients []map[string]any) {
 	groups := xrayVLESSGroups(spec)
-	if len(groups) == 0 {
-		return
-	}
-	cfg["outbounds"] = xrayOutboundsWithGroups(cfg["outbounds"], groups)
+	cfg["outbounds"] = xrayOutboundsForSpec(cfg["outbounds"], spec)
 	rules := xrayVLESSGroupRoutingRules(spec, groups, clients)
+	if tag := xrayInstanceDefaultOutboundTag(spec); tag != "" {
+		rules = append(rules, map[string]any{
+			"type":        "field",
+			"inboundTag":  []any{firstString(spec["managed_inbound_tag"], "vless-in")},
+			"outboundTag": tag,
+		})
+	}
 	if len(rules) == 0 {
 		return
 	}
@@ -1963,9 +2030,10 @@ func xrayVLESSGroupRoutingRules(spec map[string]any, groups []xrayVLESSGroup, cl
 			if firstString(rule["inboundTag"]) == "" && inboundTag != "" {
 				rule["inboundTag"] = []any{inboundTag}
 			}
-			tag := normalizeXrayOutboundTag(firstString(rawRule["outboundTag"], rawRule["outbound_tag"], group.OutboundTag))
+			rawRuleTag := normalizeXrayOutboundTag(firstString(rawRule["outboundTag"], rawRule["outbound_tag"]))
+			tag := rawRuleTag
 			if tag == "" {
-				tag = group.OutboundTag
+				tag = xrayEffectiveVLESSGroupOutboundTag(spec, group)
 			}
 			rule["outboundTag"] = tag
 			rules = append(rules, rule)
@@ -1974,10 +2042,27 @@ func xrayVLESSGroupRoutingRules(spec map[string]any, groups []xrayVLESSGroup, cl
 			"type":        "field",
 			"inboundTag":  []any{inboundTag},
 			"user":        anyStringList(users),
-			"outboundTag": group.OutboundTag,
+			"outboundTag": xrayEffectiveVLESSGroupOutboundTag(spec, group),
 		})
 	}
 	return rules
+}
+
+func xrayEffectiveVLESSGroupOutboundTag(spec map[string]any, group xrayVLESSGroup) string {
+	tag := normalizeXrayOutboundTag(group.OutboundTag)
+	if tag == "" {
+		tag = "direct"
+	}
+	switch strings.ToLower(group.EgressMode) {
+	case "local", "direct", "local_breakout":
+		return "direct"
+	}
+	if tag == "direct" && group.Outbound == nil {
+		if defaultTag := xrayInstanceDefaultOutboundTag(spec); defaultTag != "" {
+			return defaultTag
+		}
+	}
+	return tag
 }
 
 func uniqueSortedStrings(values []string) []string {

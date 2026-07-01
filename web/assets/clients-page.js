@@ -225,12 +225,11 @@
           key,
           label: String(source.label || source.title || key).trim() || key,
           outboundTag: String(source.outbound_tag || source.outboundTag || source.tag || 'direct').trim() || 'direct',
-          egressMode: String(source.egress_mode || source.egress?.mode || '').trim(),
         };
       }).filter(Boolean);
       if (!groups.length) {
         const key = normalizeVLESSGroupKey(spec.default_vless_group || spec.default_xray_group || spec.default_outbound_group || 'default') || 'default';
-        groups.push({ key, label: key === 'default' ? 'Default egress' : key, outboundTag: 'direct', egressMode: 'auto' });
+        groups.push({ key, label: key === 'default' ? 'Default access' : key, outboundTag: 'direct' });
       }
       return groups;
     }
@@ -247,12 +246,12 @@
       const groups = vlessGroupsForInstance(instance);
       const selected = defaultVLESSGroupForInstance(instance, groups);
       const options = groups.map((group) => {
-        const routeLabel = group.egressMode ? `${group.egressMode} egress` : group.outboundTag;
-        return `<option value="${escapeHTML(group.key)}"${group.key === selected ? ' selected' : ''}>${escapeHTML(group.label)} -> ${escapeHTML(routeLabel)}</option>`;
+        const routeLabel = group.outboundTag && group.outboundTag !== 'direct' ? ` -> ${group.outboundTag}` : '';
+        return `<option value="${escapeHTML(group.key)}"${group.key === selected ? ' selected' : ''}>${escapeHTML(group.label)}${escapeHTML(routeLabel)}</option>`;
       }).join('');
       return `
         <span class="client-choice-option-row">
-          <span>Outbound group</span>
+          <span>Access group</span>
           <select class="client-vless-group-select" data-instance-id="${escapeHTML(instance.id)}">${options}</select>
         </span>`;
     }

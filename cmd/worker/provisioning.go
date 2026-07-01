@@ -721,7 +721,7 @@ func buildVLESSClientArtifactContent(record domain.ProvisioningAccess, vlessURL,
 		lines = append(lines, "Flow: "+query.Get("flow"))
 	}
 	if outboundGroup != "" {
-		lines = append(lines, "Outbound group: "+outboundGroup)
+		lines = append(lines, "Access group: "+outboundGroup)
 	}
 	lines = append(lines,
 		"",

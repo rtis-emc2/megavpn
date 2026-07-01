@@ -114,7 +114,7 @@ func TestBuildXrayArtifactsIncludesVLESSClientProfile(t *testing.T) {
 		"Client JSON:",
 		`"protocol": "vless"`,
 		`"inbound_service"`,
-		"Outbound group: restricted",
+		"Access group: restricted",
 		`"outbound_group": "restricted"`,
 	} {
 		if !strings.Contains(body, want) {
