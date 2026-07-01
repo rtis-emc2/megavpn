@@ -1,6 +1,6 @@
 # Индекс документации
 
-**Релиз:** `0.7.0.1-beta`
+**Релиз:** `7.0.1.1`
 
 Этот документ - русская входная точка в документацию RTIS MegaVPN. Он фиксирует,
 где находится источник правды по каждому направлению: эксплуатация,
@@ -22,7 +22,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | 8 | [Managed backhaul](BACKHAUL.md) | Модель связи ingress -> egress |
 | 9 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
 | 10 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
-| 11 | [Security review](SECURITY_REVIEW_0.7.0.1-beta.md) | Security и release review artifact |
+| 11 | [Security review](SECURITY_REVIEW_7.0.1.1.md) | Security и release review artifact |
 | 12 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
 
 ## Владение документацией
@@ -61,7 +61,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 - Если в Control Plane есть managed workflow, документация не должна предлагать
   ручное изменение node как основной путь.
 - Каждый поддерживаемый документационный файл должен содержать release banner:
-  `0.7.0.1-beta`.
+  `7.0.1.1`.
 
 ## Текущие gaps документации
 

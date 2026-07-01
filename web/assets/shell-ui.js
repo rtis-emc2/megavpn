@@ -139,6 +139,7 @@
       el('modalEyebrow').textContent = eyebrow;
       modalBody.innerHTML = body;
       modalBody.className = `modal-body${options.bodyClass ? ` ${options.bodyClass}` : ''}`;
+      window.MegaVPNFormEnhancer?.enhance?.(modalBody);
       if (modal) {
         modal.classList.remove('modal-wide', 'modal-compact', 'modal-full');
         modal.classList.toggle('modal-wide', Boolean(options.wide));

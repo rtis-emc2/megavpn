@@ -60,6 +60,38 @@
       'backhaul',
     ]);
 
+    const menuPageKeys = new Set(
+      (window.MegaVPNAppConfig?.navGroups || [])
+        .flatMap(([, items]) => Array.isArray(items) ? items : [])
+        .map(([key]) => key)
+        .filter(Boolean),
+    );
+    const registeredPageKeys = new Set([
+      'dashboard',
+      'nodes',
+      'nodeMap',
+      'nodeManage',
+      'services',
+      'instanceManage',
+      'instances',
+      'addressPools',
+      'firewall',
+      'clients',
+      'jobs',
+      'artifacts',
+      'shareLinks',
+      'backhaul',
+      'certificates',
+      'revisions',
+      'telemetry',
+      'audit',
+      'settings',
+    ]);
+    const missingMenuRoutes = [...menuPageKeys].filter((key) => !registeredPageKeys.has(key));
+    if (missingMenuRoutes.length) {
+      throw new Error(`Navigation routes are not registered: ${missingMenuRoutes.join(', ')}`);
+    }
+
     function renderUnknownPage(key) {
       setTitle('Unknown Page');
       el('content').innerHTML = `

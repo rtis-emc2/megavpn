@@ -1,13 +1,13 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `0.7.0.1-beta`
+**Release:** `7.0.1.1`
 
 **Analysis date:** 2026-07-01
-**Code baseline:** RTIS MegaVPN `0.7.0.1-beta`
+**Code baseline:** RTIS MegaVPN `7.0.1.1`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
-current beta baseline. The Russian companion is
+current release baseline. The Russian companion is
 [`ROADMAP_V1_AND_TZ_RU.md`](ROADMAP_V1_AND_TZ_RU.md).
 
 ## 1. Purpose
@@ -23,8 +23,8 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`0.7.0.1-beta` is the boundary between alpha feature expansion and production
-hardening. The codebase already has a working control-plane foundation:
+`7.0.1.1` is the boundary between feature expansion and production hardening.
+The codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -40,18 +40,18 @@ hardening. The codebase already has a working control-plane foundation:
 - Client provisioning, artifacts, share links and email delivery.
 - Backup/restore, deployment scripts, self-test and release gates.
 
-The beta is not a stable production release yet. It is a hardening baseline that
+This is not a stable production release yet. It is a hardening baseline that
 must produce repeatable evidence for install, migration, agent transport,
 runtime apply, route policy and recovery scenarios.
 
 ## 3. Release Blockers
 
-The following blockers must be closed before promotion beyond the beta line:
+The following blockers must be closed before promotion beyond the hardening line:
 
 | Area | Required outcome |
 | --- | --- |
 | Clean install | Fresh Ubuntu host can install API, worker, migrations, Web UI, Nginx edge and systemd units from documented steps. |
-| Database | Migrations apply on a disposable PostgreSQL database and a pre-beta upgrade database. |
+| Database | Migrations apply on a disposable PostgreSQL database and an existing upgrade database. |
 | Build and tests | `go test ./...`, `go vet ./...`, binary build and optional race gate are green. |
 | Agent channel | Unsigned job/runtime responses are rejected by default; signed empty responses are handled explicitly. |
 | Privileged jobs | Apply, cleanup, route policy and capability installation are typed and permission-scoped. |
@@ -146,7 +146,7 @@ the top of the file.
 
 ## 9. Release Evidence
 
-The beta release gate is documented in
+The release gate is documented in
 [`docs/RELEASE_GATES.md`](docs/RELEASE_GATES.md). The local self-test is
 documented in [`docs/SELF_TESTING.md`](docs/SELF_TESTING.md).
 
@@ -167,7 +167,8 @@ Required evidence:
 ## 10. Open Questions
 
 1. Should strict mTLS become mandatory for the agent channel before stable v1,
-   or is HMAC-signed HTTPS sufficient for beta with a documented migration path?
+   or is HMAC-signed HTTPS sufficient for this hardening line with a documented
+   migration path?
 2. Should the static Web UI remain the supported production UI for v1, or should
    the project switch to a typed frontend stack before stable?
 3. What exact IPsec scope is required for stable: L2TP/PSK only, IKEv2, or both?

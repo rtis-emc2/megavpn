@@ -444,7 +444,7 @@
       openModal(editing ? `Edit address entry: ${entry.value || entry.id}` : 'Add address entry', 'Firewall address list', `
         <form id="firewallAddressEntryForm" class="form-grid" data-entry-id="${escapeHTML(entry.id || '')}">
           <div class="field"><label>Address list</label><select name="list_id"${editing ? ' disabled' : ''} required>${lists.map((list) => `<option value="${escapeHTML(list.id)}"${list.id === selected.id ? ' selected' : ''}>${escapeHTML(list.label || list.key)}</option>`).join('')}</select>${editing ? `<input type="hidden" name="list_id" value="${escapeHTML(selected.id || '')}" />` : ''}</div>
-          <div class="field"><label>Type</label><select name="value_type">${selectOption('', entry.value_type || '')}${selectOption('cidr', entry.value_type || '')}${selectOption('address', entry.value_type || '')}${selectOption('range', entry.value_type || '')}${selectOption('dns', entry.value_type || '')}</select></div>
+          <div class="field"><label>Type</label><select name="value_type" required>${selectOption('', entry.value_type || '')}${selectOption('cidr', entry.value_type || '')}${selectOption('address', entry.value_type || '')}${selectOption('range', entry.value_type || '')}${selectOption('dns', entry.value_type || '')}</select></div>
           <div class="field"><label>Value</label><input name="value" required placeholder="203.0.113.0/24" value="${escapeHTML(entry.value || '')}" /></div>
           <div class="field"><label>Label</label><input name="label" placeholder="office range" value="${escapeHTML(entry.label || '')}" /></div>
           <div class="field"><label>Status</label><select name="status">${selectOption('active', entry.status || 'active')}${selectOption('disabled', entry.status || 'active')}</select></div>
@@ -471,8 +471,8 @@
           <div class="field"><label>Destination list</label><select name="dst_list_id">${addressListOptions(rule.dst_list_id || '')}</select></div>
           <div class="field"><label>Source CIDR</label><input name="src_cidr" placeholder="any or 10.0.0.0/8" value="${escapeHTML(rule.src_cidr || '')}" /></div>
           <div class="field"><label>Destination CIDR</label><input name="dst_cidr" placeholder="any or 0.0.0.0/0" value="${escapeHTML(rule.dst_cidr || '')}" /></div>
-          <div class="field"><label>Source ports</label><input name="src_ports" placeholder="any or 1024-65535" value="${escapeHTML(rule.src_ports || '')}" /></div>
-          <div class="field"><label>Destination ports</label><input name="dst_ports" placeholder="443,8443" value="${escapeHTML(rule.dst_ports || '')}" /></div>
+          <div class="field"><label>Source ports</label><input name="src_ports" pattern="^$|^\\*$|^[0-9,-]+$" placeholder="any or 1024-65535" value="${escapeHTML(rule.src_ports || '')}" /></div>
+          <div class="field"><label>Destination ports</label><input name="dst_ports" pattern="^$|^\\*$|^[0-9,-]+$" placeholder="443,8443" value="${escapeHTML(rule.dst_ports || '')}" /></div>
           <div class="field"><label>State</label><input name="state_match" placeholder="established,related,new" value="${escapeHTML(Array.isArray(rule.state_match) ? rule.state_match.join(',') : '')}" /></div>
           <div class="field"><label>Status</label><select name="status">${selectOption('active', rule.status || 'active')}${selectOption('disabled', rule.status || 'active')}</select></div>
           <div class="field full"><label>Comment</label><input name="comment" placeholder="allow agent control channel" value="${escapeHTML(rule.comment || '')}" /></div>

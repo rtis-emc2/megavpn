@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `0.7.0.1-beta`
+**Release:** `7.0.1.1`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,

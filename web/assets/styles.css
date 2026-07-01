@@ -15,6 +15,7 @@
   --ok: #047857;
   --shadow: 0 16px 42px rgba(15, 23, 42, 0.08);
   --radius: 14px;
+  --form-max: 1120px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --sans: Aptos, "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
@@ -460,6 +461,13 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 .timeline-item { border: 1px solid var(--line); border-radius: 14px; padding: 13px; background: rgba(7,16,24,0.32); }
 .timeline-meta { color: var(--muted-2); font-size: 12px; margin-top: 4px; font-family: var(--mono); }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.form-grid {
+  width: 100%;
+  max-width: var(--form-max);
+}
+.modal-body .form-grid {
+  max-width: none;
+}
 .service-fields { grid-column: 1 / -1; }
 .field { display: grid; gap: 7px; }
 .field label { color: var(--muted); font-size: 12px; }
@@ -1317,10 +1325,63 @@ p { color: var(--muted); }
   color: var(--text);
   border-color: var(--line-strong);
   border-radius: 9px;
+  min-height: 42px;
+  width: 100%;
 }
 .search-input:focus, .field input:focus, .field select:focus, .field textarea:focus {
   border-color: rgba(29, 78, 216, 0.50);
   box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.10);
+}
+.field textarea {
+  min-height: 120px;
+  line-height: 1.45;
+}
+.field input::placeholder,
+.field textarea::placeholder {
+  color: #8b96a8;
+}
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+.required-marker {
+  color: var(--danger);
+  font-weight: 900;
+}
+.field input.is-invalid,
+.field select.is-invalid,
+.field textarea.is-invalid {
+  border-color: rgba(220, 38, 38, 0.55);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.10);
+}
+.enhanced-form {
+  align-items: start;
+}
+.form-validation-summary {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid rgba(220, 38, 38, 0.28);
+  border-radius: 12px;
+  background: #fff1f2;
+  color: #7f1d1d;
+}
+.form-validation-summary[hidden] {
+  display: none;
+}
+.form-validation-summary strong {
+  font-size: 13px;
+}
+.form-validation-summary ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #991b1b;
+  font-size: 12px;
+  line-height: 1.45;
 }
 .primary-btn, .secondary-btn, .ghost-btn, .icon-btn, .danger-btn {
   border-radius: 9px;
@@ -1977,6 +2038,9 @@ tr:hover td { background: #f8fafc; }
 .client-provision-form {
   display: grid;
   gap: 14px;
+}
+.client-provision-form .client-workflow-strip {
+  grid-column: 1 / -1;
 }
 .client-workflow-strip {
   display: grid;

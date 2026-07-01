@@ -775,6 +775,7 @@
       }
       if (submitButton) submitButton.textContent = sourceMode === 'url' ? 'Fetch artifact' : 'Upload artifact';
       updateBinaryArtifactArchiveField();
+      window.MegaVPNFormEnhancer?.enhance?.(document.getElementById('binaryArtifactForm'));
     }
 
     function initialBinaryArtifactPreset(serviceCode) {
@@ -828,6 +829,7 @@
       field.hidden = !visible;
       const input = form.elements.archive_binary_path;
       if (input) input.required = visible && mode === 'zip_binary';
+      window.MegaVPNFormEnhancer?.enhance?.(form);
     }
 
     function inferBinaryArtifactFromFile(event) {

@@ -1,6 +1,6 @@
-# Security and Release Review: 0.7.0.1-beta
+# Security and Release Review: 7.0.1.1
 
-**Release:** `0.7.0.1-beta`
+**Release:** `7.0.1.1`
 
 Date: 2026-07-01
 
@@ -8,7 +8,7 @@ Scope:
 
 - Control Plane API, worker, agent and PostgreSQL persistence paths relevant to release blockers.
 - Agent transport signing, privileged job creation, job lease completion, managed file writes, systemd unit validation, SSH bootstrap and nginx server-name validation.
-- Documentation, release metadata and beta roadmap.
+- Documentation, release metadata and release roadmap.
 
 ## Result
 
@@ -23,7 +23,7 @@ the full release gates listed below.
 
 | Control | Result |
 | --- | --- |
-| Release version and tag consistency | Pass after `v0.7.0.1-beta` tag on reviewed commit |
+| Release version and tag consistency | Pass after `v7.0.1.1` tag on reviewed commit |
 | Agent unsigned 200/204 response rejection tests | Present and passing |
 | Signed empty 204 response path | Present and passing |
 | Generic privileged job API restriction | Privileged apply, cleanup, capability, route-policy and emergency-cleanup job types require typed endpoints |

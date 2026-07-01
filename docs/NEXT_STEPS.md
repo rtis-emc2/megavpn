@@ -1,6 +1,6 @@
 # Next Steps
 
-**Release:** `0.7.0.1-beta`
+**Release:** `7.0.1.1`
 
 Current roadmap: [`ROADMAP_V1_AND_TZ.md`](../ROADMAP_V1_AND_TZ.md).
 Russian companion: [`NEXT_STEPS_RU.md`](NEXT_STEPS_RU.md).

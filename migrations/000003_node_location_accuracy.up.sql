@@ -1,5 +1,5 @@
 -- Node map location accuracy metadata.
--- Release: 0.7.0.1-beta
+-- Release: 7.0.1.1
 
 alter table nodes
   add column if not exists accuracy_radius_km double precision null;

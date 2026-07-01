@@ -482,7 +482,7 @@
       if (!client) return;
       const instances = provisionableClientInstances();
       openModal(`Provision client: ${client.username}`, 'Create service access and queue config generation', `
-        <form id="clientProvisionForm" class="client-provision-form">
+        <form id="clientProvisionForm" class="client-provision-form form-grid">
           <div class="client-workflow-strip">
             <div><span>1</span><strong>Access</strong><small>Bind the client to selected instances.</small></div>
             <div><span>2</span><strong>Secrets</strong><small>Driver state generates certificates, keys or passwords.</small></div>

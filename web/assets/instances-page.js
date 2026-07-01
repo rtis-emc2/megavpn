@@ -953,7 +953,7 @@
                   </div>
                   <div class="field">
                     <label>Base name</label>
-                    <input name="base_name" value="${escapeHTML(baseName)}" placeholder="${escapeHTML(baseName)}">
+                    <input name="base_name" value="${escapeHTML(baseName)}" placeholder="${escapeHTML(baseName)}" required>
                   </div>
                   <div class="field full">
                     <label>Endpoint host</label>

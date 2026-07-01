@@ -1,10 +1,10 @@
 # Release Gates
 
-**Release:** `0.7.0.1-beta`
+**Release:** `7.0.1.1`
 
 This file defines the minimum evidence required before tagging a production release.
 
-For `0.7.0.1-beta`, the same gates are used as beta promotion evidence. A beta can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
+For `7.0.1.1`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
 
 ## 1. Release Gate
 
@@ -125,7 +125,7 @@ Drivers that are intentionally materialize-only must be recorded as such, not co
 
 ## 5.1 Topology And Access Gate
 
-Required evidence before promoting topology/access features beyond beta:
+Required evidence before promoting topology/access features beyond the hardening baseline:
 
 - Node map API projection lists node role, health, address, optional location metadata and workload counts without exposing unnecessary secrets.
 - Managed backhaul graph shows active/degraded/failed links and the last probe reason.

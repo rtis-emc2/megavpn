@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `0.7.0.1-beta`
+**Release:** `7.0.1.1`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -51,10 +51,11 @@ infrastructure:
 - runtime binary repository for pinned artifacts;
 - audit, diagnostics, backup/restore and release gates.
 
-## Current Beta Status
+## Current Release Status
 
-`0.7.0.1-beta` is a beta hardening baseline. The codebase has moved from
-feature expansion to release stabilization. The current focus is:
+`7.0.1.1` is a hardening baseline for release stabilization. The codebase has
+moved from feature expansion to controlled production-readiness work. The
+current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;

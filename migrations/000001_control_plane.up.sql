@@ -1,5 +1,5 @@
 -- RTIS MegaVPN consolidated baseline migration.
--- Release: 0.7.0.1-beta
+-- Release: 7.0.1.1
 -- This file squashes the historical migration chain into a single
 -- fresh-install baseline. Existing databases that already recorded
 -- 000001_control_plane in schema_migrations will skip this file.
@@ -331,7 +331,7 @@ where type in ('node.inventory', 'node.inventory.sync')
 -- -----------------------------------------------------------------------------
 -- Section: claim_conn_busy_fix
 -- -----------------------------------------------------------------------------
--- Code-only migration marker retained for ordered migration compatibility in release 0.7.0.1-beta.
+-- Code-only migration marker retained for ordered migration compatibility in release 7.0.1.1.
 -- Fixes pgx "conn busy" in job claiming by closing candidate rows before issuing lock/update commands.
 select 1;
 
@@ -402,7 +402,7 @@ on conflict do nothing;
 -- -----------------------------------------------------------------------------
 -- Section: capability_install_framework
 -- -----------------------------------------------------------------------------
--- Capability installation framework retained for release 0.7.0.1-beta.
+-- Capability installation framework retained for release 7.0.1.1.
 -- Adds install job metadata/events and normalizes service definitions for nginx and xray-core.
 
 alter table service_definitions
@@ -464,7 +464,7 @@ on conflict do nothing;
 -- -----------------------------------------------------------------------------
 -- Section: capability_install_hardening
 -- -----------------------------------------------------------------------------
--- Capability install hardening retained for release 0.7.0.1-beta.
+-- Capability install hardening retained for release 7.0.1.1.
 -- Makes capability result storage tolerant to failed installers and installer-owned states.
 
 alter table node_capabilities
@@ -1414,28 +1414,28 @@ alter table backhaul_links
 -- -----------------------------------------------------------------------------
 -- Section: job_lease_recovery
 -- -----------------------------------------------------------------------------
--- Code-only migration marker retained for ordered migration compatibility in release 0.7.0.1-beta.
+-- Code-only migration marker retained for ordered migration compatibility in release 7.0.1.1.
 -- Adds backend stale job lease recovery used by Jobs API and managed backhaul cleanup/delete flows.
 select 1;
 
 -- -----------------------------------------------------------------------------
 -- Section: agent_version_visibility
 -- -----------------------------------------------------------------------------
--- Code-only migration marker retained for ordered migration compatibility in release 0.7.0.1-beta.
+-- Code-only migration marker retained for ordered migration compatibility in release 7.0.1.1.
 -- Agent register/heartbeat now refresh agent_version/protocol_version and Nodes UI exposes per-node/bulk agent update actions.
 select 1;
 
 -- -----------------------------------------------------------------------------
 -- Section: backhaul_profile_apply_semantics
 -- -----------------------------------------------------------------------------
--- Code-only migration marker retained for ordered migration compatibility in release 0.7.0.1-beta.
+-- Code-only migration marker retained for ordered migration compatibility in release 7.0.1.1.
 -- Backhaul apply now queues all selected transport profiles and treats
 -- materialize-only drivers as materialized, not active.
 
 -- -----------------------------------------------------------------------------
 -- Section: backhaul_apply_runtime_dependencies
 -- -----------------------------------------------------------------------------
--- Code-only migration marker retained for ordered migration compatibility in release 0.7.0.1-beta.
+-- Code-only migration marker retained for ordered migration compatibility in release 7.0.1.1.
 -- Backhaul apply now verifies/installs WireGuard/OpenVPN runtime dependencies,
 -- enforces unique L3 transport CIDRs and uses node-scoped locks for node jobs.
 
