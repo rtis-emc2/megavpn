@@ -29,6 +29,45 @@ Use:
 7. Confirm `MEGAVPN_AGENT_ALLOW_AUTO_REGISTER=false`.
 8. Confirm `MEGAVPN_PUBLIC_BASE_URL` exactly matches the public TLS endpoint.
 
+## Repository History Rewrite
+
+Use this only for an approved release maintenance window. Rewriting `main` changes
+commit identities, breaks old clones, invalidates old tag pointers and can confuse
+automation that pins commits.
+
+Required controls:
+
+1. Freeze deploys and merges.
+2. Create an offline mirror backup of the remote repository.
+3. Confirm the working tree contains only reviewed release content.
+4. Run `scripts/release-gate.sh` and the clean-install checklist.
+5. Create a clean import commit from the reviewed tree.
+6. Move the release tag to the clean import commit.
+7. Force-update the protected branch only with `--force-with-lease`.
+8. Verify remote `main`, the release tag and deployed artifacts point to the same
+   release version.
+
+Operator command outline:
+
+```bash
+git clone --mirror <remote-url> megavpn-history-backup.git
+git status --short
+git checkout --orphan release-clean
+git add -A
+git commit -m "Release 0.7.0.1-beta clean import"
+git tag -f v0.7.0.1-beta
+git push --force-with-lease origin release-clean:main
+git push --force-with-lease origin v0.7.0.1-beta
+```
+
+Recovery plan:
+
+1. Stop deployment automation.
+2. Push the backed-up `main` reference from the mirror if rollback is required.
+3. Recreate old tags from the mirror.
+4. Notify operators to reclone or hard-reset their local checkout to the new
+   branch tip after the final decision.
+
 ## Backup
 
 Standard backup:

@@ -2,6 +2,8 @@
 
 This file defines the minimum evidence required before tagging a production release.
 
+For `0.7.x-beta`, the same gates are used as beta promotion evidence. A beta can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
+
 ## 1. Release Gate
 
 Required command:
@@ -73,11 +75,13 @@ Minimum runtime evidence:
 
 Required checks:
 
+- A fresh Ubuntu host can install the Control Plane from documented scripts or manual steps without relying on previous local state.
 - `systemd-analyze verify deploy/systemd/*.service` passes on a Linux host with systemd.
 - `nginx -t` passes on the target host after managed control-plane TLS apply.
 - `scripts/backup.sh` produces an archive from the disposable DB.
 - `scripts/restore.sh` restores the archive into a separate disposable DB.
 - Rollback plan is documented for the exact release version.
+- Rewritten-history deployment, when used, has an explicit maintenance window and a documented server-side checkout recovery procedure.
 
 Run backup/restore drill:
 
@@ -106,12 +110,24 @@ Minimum matrix:
 - WireGuard
 - Xray Reality
 - Xray WebSocket/Nginx edge
+- VLESS instance-level egress through managed ingress-to-egress backhaul
 - HTTP Proxy
 - MTProto
 - Shadowsocks
 - IPsec/L2TP
 
 Drivers that are intentionally materialize-only must be recorded as such, not counted as active runtime success.
+
+## 5.1 Topology And Access Gate
+
+Required evidence before promoting topology/access features beyond beta:
+
+- Node map API projection lists node role, health, address, optional location metadata and workload counts without exposing unnecessary secrets.
+- Managed backhaul graph shows active/degraded/failed links and the last probe reason.
+- Client provisioning clearly shows which inbound services were selected for a client.
+- VLESS subscription endpoint, when enabled, uses per-client bearer token rotation, audit events, `Cache-Control: no-store` and authenticated preview/download.
+- Traffic camouflage profiles validate Nginx and Xray config before apply and expose rollback on failed `nginx -t` or runtime validation.
+- Nginx edge profiles bind explicit certificate material and do not silently fall back to an unintended self-signed profile after a managed certificate exists.
 
 ## 6. Observability Gate
 

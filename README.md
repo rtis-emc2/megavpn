@@ -1,10 +1,12 @@
 # RTIS MegaVPN
 
-**RTIS MegaVPN 0.6.10.90-alpha**
+**RTIS MegaVPN 0.7.0.1-beta**
 
 RTIS MegaVPN — self-hosted distributed VPN orchestration platform.
 
 Canonical repository: `github.com/rtis-emc2/megavpn`
+
+License: Apache License 2.0. See `LICENSE`.
 
 Проект предназначен для централизованного управления VPN, proxy и edge-инфраструктурой через единую Control Plane с удаленными Agent-managed nodes.
 
@@ -35,22 +37,30 @@ VPN / Proxy Services
 
 # Current Status
 
-Release: `0.6.10.90-alpha`
+Release: `0.7.0.1-beta`
 
-Current branch status: expanded service-pack matrix for standalone services, provisioning/artifact/share-link smoke runner for the test server, stricter revision/apply lifecycle with validation markers, rollback baseline and revision diff visibility, certificate lifecycle hardening, job payload validation, deployment baseline stabilization, a top-tabbed node console, actionable node lifecycle/onboarding guidance, visible agent public URL runtime config, automatic SSH bootstrap handoff into the agent-managed channel, HTTPS-only control plane edge guidance, interactive Control Plane installer with secure defaults, sudo/snap Go path handling and correct systemd oneshot migration result handling, UI-backed Control Plane TLS profile settings, worker-driven nginx TLS edge apply, unified service driver contract with typed operation and health-check interfaces, operation-aware agent runtime handlers, service-specific agent validation registry, driver-backed instance runtime health/drift projection with retained observation history and UI-visible health/drift reasons, no-store web asset delivery plus release-versioned frontend asset URLs, OpenVPN transitional runtime handling that treats an activating unit as operational only when the applied config and endpoint listener are observed, OpenVPN client config customization through generated-config append lines plus advanced full client template override, Shadowsocks remediation that clearly separates missing `ss-server`/libev runtime install failures from instance apply failures, automatic 32-character mixed-class Shadowsocks bootstrap and access password generation, live per-job progress for per-node and bulk agent update actions, bidirectional HMAC-signed agent transport for agent requests plus job/runtime-target responses with replay-window verification, route-policy enforceability and ingress egress/output projection for L3/L4 candidates vs observe-only routes, conservative kernel policy routing for IPv4 L3/L4 allow candidates through managed backhaul, compact modular Instances/Revisions/Services/Ops/Clients/Artifacts/Backhaul/Nodes/Settings/Certificates UI pages, safe instance soft-delete flow, a fixed modular UI dependency export that prevents the login screen from rendering as a blank page, an offline admin password reset utility for operational lockout recovery, local-file certificate import with RSA PKCS#1/PKCS#8 key support plus pre-import certificate preview, hardened SSH bootstrap known_hosts/key handling inside the worker sandbox, installer preservation of already-applied managed Control Plane TLS certificates, private-domain-free Xray WebSocket camouflage service-pack defaults with Nginx website fallback, UI-managed client egress/output route policy plus selective client provisioning and authenticated client config preview/download for OVPN/VLESS/WireGuard and related artifacts, managed ingress-egress backhaul links with explicit internal transport profile selection, WireGuard/OpenVPN install-on-apply auto-activation, WireGuard `/30` tunnel address rendering for deterministic peer routes, egress NAT bootstrap with nftables dependency enforcement, unique tunnel CIDR per L3 transport profile, materialize-only IPsec/Xray fallback profiles, stale job lease recovery for backhaul cleanup/delete operations, UI-visible agent version drift with per-node and bulk SSH-bootstrap agent update actions, guarded agent update buttons that surface missing `node.bootstrap` or SSH access preconditions before queueing jobs, corrected backhaul apply semantics that apply every selected profile while keeping profile-only drivers out of false `active` state, separated backhaul service readiness from delayed connectivity probes, preserved backhaul probe diagnostics with peer route lookup, packet-loss, latency and reason visibility across Jobs and Backhaul UI, explicit partial-apply visibility for ingress/egress backhaul sides, root-cause-first backhaul readiness failure messages, idempotent backhaul re-apply/cleanup that stops managed units and removes target `mgbh*` interfaces before recreating runtime state, quoted nft backhaul NAT comments plus stale sibling manifest/interface/listen-port cleanup for reliable WireGuard re-apply, deterministic per-link WireGuard endpoint ports for new backhaul links, OpenVPN static-key backhaul compatibility without version-sensitive compression directives, UI-visible first-line systemd diagnostics for failed backhaul jobs, and recent deleted Backhaul visibility with cleanup summaries after successful node cleanup.
+`0.7.0.1-beta` is the first beta baseline for the distributed access platform. The codebase has moved from alpha feature expansion into release-hardening: agent transport is signed bidirectionally, privileged jobs are typed and permission-gated, service instances have desired/revision/runtime state, node cleanup and binary repository workflows exist, and Xray/VLESS traffic egress is now resolved at the instance level through managed ingress-to-egress backhaul instead of through per-client VLESS groups.
+
+Release focus:
+
+- stable Control Plane install/update path on a clean Ubuntu host
+- signed agent channel and replay-window checks for agent requests, jobs and runtime targets
+- managed node enrollment, SSH bootstrap, agent update and emergency cleanup flows
+- PostgreSQL migrations through the current schema
+- service-pack based instance creation plus manual instance workflows
+- OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, Nginx and Backhaul runtime diagnostics
+- client provisioning with selective inbound services, authenticated config preview/download and route policy metadata
+- runtime binary repository for pinned artifacts that are not safely sourced from OS repositories
+- UI consistency for tables, instance grouping by node workload, job progress and service diagnostics
 
 Immediate program priorities:
 
-- stabilize clean GitHub baseline under `rtis-emc2/megavpn`
-- complete `0.6.10.90-alpha` CI/build/deploy verification
-- verify `MEGAVPN_PUBLIC_BASE_URL` with custom ports in Settings and Agent channel diagnostics
-- verify the control plane public edge terminates TLS on the same host/port used by `MEGAVPN_PUBLIC_BASE_URL`
-- verify Settings -> Control Plane TLS can select imported commercial certificates or self-signed fallback profile and apply nginx TLS edge through worker job
-- verify SSH bootstrap success changes node setup method to agent-managed while waiting for first `/agent/register` and heartbeat
-- verify the redesigned node bootstrap console on the remote test control plane without horizontal scrolling in access methods, bootstrap runs and enrollment tokens
-- production-smoke OpenVPN / WireGuard / HTTP Proxy / MTProto paths on the test server
-- run PostgreSQL integration tests with `MEGAVPN_TEST_DATABASE_DSN` against a disposable database/schema before production deploy
-- continue agent transport hardening, mTLS decision and release gates
+- run `scripts/release-gate.sh` and `scripts/self-test.sh` on a clean machine before promoting a beta build
+- run PostgreSQL integration tests with `MEGAVPN_TEST_DATABASE_DSN` against a disposable database/schema
+- production-smoke OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, Nginx edge and managed Backhaul paths
+- verify runtime binary artifacts, service-pack creation, apply, runtime convergence and cleanup on at least two nodes
+- finish the UI/UX roadmap for topology map, node links, VLESS subscription export, traffic camouflage profiles and Nginx edge profiles
+- complete a delegated repository-wide security scan before any stable release claim
 
 For repeatable service-pack and operational-truth smoke on the test server, use:
 
