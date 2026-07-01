@@ -31,7 +31,8 @@ The node map uses the following data:
 4. If the address is public, the API queries the configured GeoIP endpoint.
 5. Country, city, coordinates, ASN and network owner fields are cached in the
    `nodes` table.
-6. The Node Map page renders map tiles, node pins and drawable backhaul edges.
+6. The Node Map page renders the world map, node pins, selected-node details
+   and drawable backhaul edges.
 
 List requests also refresh stale or missing GeoIP cache entries in small batches
 controlled by `MEGAVPN_GEOIP_AUTO_ENRICH_LIMIT`.
@@ -49,9 +50,23 @@ Runtime variables in `/etc/megavpn/megavpn.env`:
 Use an internal GeoIP service in regulated environments. External GeoIP
 providers will see the public node IPs that are looked up.
 
+## UI Behavior
+
+The page is intentionally map-first:
+
+- the map uses tile imagery and does not require operators to enter
+  coordinates;
+- clicking a node pin selects the node and opens an inspector on the same page;
+- the inspector shows address, role, status, city/country, coordinates, network
+  owner, ASN/source metadata and related backhaul;
+- nodes without resolved coordinates are shown in a compact pending GeoIP block;
+- the compact mapped-node list is a selector, not a replacement for the Nodes
+  manage page.
+
 ## Backhaul Rendering
 
-The map overlays managed ingress-to-egress backhaul as lines between node pins:
+The map overlays managed ingress-to-egress backhaul as directed lines between
+node pins:
 
 - active/applied transports are rendered as healthy links;
 - provisioning/degraded links are rendered as warning links;
@@ -59,7 +74,8 @@ The map overlays managed ingress-to-egress backhaul as lines between node pins:
 - deleted links are not shown;
 - links with unresolved node coordinates are counted in the summary but not
   drawn;
-- the topology list below the map shows direction, driver, metric, endpoint and
+- metric labels are shown on mapped links when the route metric is configured;
+- the topology cards below the map show direction, driver, metric, endpoint and
   selected transport status for every non-deleted managed link.
 
 The Backhaul page remains the source of truth for apply, probe, cleanup and
