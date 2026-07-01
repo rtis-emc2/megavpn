@@ -70,6 +70,29 @@
     publicBaseURLStatusTag,
   } = appRuntime;
 
+  function createUnavailablePage(title, moduleName) {
+    return {
+      render: () => {
+        setTitle(title);
+        el('content').innerHTML = `
+          <section class="section-card">
+            <div class="section-head">
+              <div>
+                <h2>${escapeHTML(title)}</h2>
+                <p>This page module is not available in the currently loaded frontend assets.</p>
+              </div>
+              ${statusTag('unavailable')}
+            </div>
+            <div class="section-body">
+              <div class="notice compact-notice">
+                Refresh the page after deployment finishes. If the page stays unavailable, redeploy web assets and verify <code>${escapeHTML(moduleName)}</code> exists under the configured web root.
+              </div>
+            </div>
+          </section>`;
+      },
+    };
+  }
+
   const nodeExecutionModes = appConfig.nodeExecutionModes || {};
 
   const domainUI = window.MegaVPNDomainUI?.create?.({ state, escapeHTML, formatDate });
@@ -325,8 +348,7 @@
     setPage,
     statusTag,
     escapeHTML,
-  });
-  if (!nodeMapPage) throw new Error('MegaVPNNodeMapPage is not loaded');
+  }) || createUnavailablePage('Node Map', 'assets/node-map-page.js');
 
   const servicesPage = window.MegaVPNServicesPage?.create?.({
     state,

@@ -190,6 +190,21 @@ require_frontend_js_syntax() {
   done
 }
 
+require_frontend_asset_manifest() {
+  local ref path missing=0
+  while IFS= read -r ref; do
+    path="${ref%%\?*}"
+    if [[ "$path" != assets/* ]]; then
+      continue
+    fi
+    if [[ ! -f "web/$path" ]]; then
+      printf 'missing web/%s\n' "$path"
+      missing=1
+    fi
+  done < <(sed -nE 's/.*(src|href)="\.\/([^"]+)".*/\2/p' web/index.html)
+  [[ "$missing" -eq 0 ]]
+}
+
 require_static_security_patterns() {
   local found=0
   require_command rg || return 1
@@ -394,6 +409,7 @@ run_check "binary-version-commands" "All operational binaries print version and 
 run_check "shell-syntax" "Shell scripts parse under bash -n" require_shell_syntax
 run_check "control-plane-install-validation" "Control Plane installer validates non-interactive clean-install inputs" require_control_plane_install_validation
 run_check "frontend-js-syntax" "Static Web UI JavaScript parses under node --check" require_frontend_js_syntax
+run_check "frontend-asset-manifest" "Static Web UI index references only existing assets" require_frontend_asset_manifest
 run_check "static-security-patterns" "No banned production command patterns are present" require_static_security_patterns
 run_check "smoke-auth-coverage" "Smoke scripts that call protected API endpoints support bearer auth" require_smoke_auth_coverage
 run_check "migration-sequence" "SQL migration numbers are unique and gap-free" require_migration_sequence
