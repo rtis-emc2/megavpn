@@ -650,6 +650,16 @@ func buildVLESSClientArtifactContent(record domain.ProvisioningAccess, vlessURL,
 	if hostHeader := query.Get("host"); hostHeader != "" {
 		stream["host_header"] = hostHeader
 	}
+	outboundGroup := firstNonEmpty(
+		stringify(meta["vless_group"]),
+		stringify(meta["xray_group"]),
+		stringify(meta["outbound_group"]),
+		stringify(inbound["vless_group"]),
+		stringify(inbound["xray_group"]),
+		stringify(inbound["outbound_group"]),
+		stringify(record.Instance.Spec["default_vless_group"]),
+		"default",
+	)
 	credential := map[string]any{
 		"id":         firstNonEmpty(stringify(meta["xray_uuid"]), stringify(meta["uuid"])),
 		"encryption": "none",
@@ -673,6 +683,7 @@ func buildVLESSClientArtifactContent(record domain.ProvisioningAccess, vlessURL,
 			"service_code": record.Instance.ServiceCode,
 		},
 		"inbound_service": inbound,
+		"outbound_group":  outboundGroup,
 		"endpoint": map[string]any{
 			"host": host,
 			"port": port,
@@ -708,6 +719,9 @@ func buildVLESSClientArtifactContent(record domain.ProvisioningAccess, vlessURL,
 	}
 	if query.Get("flow") != "" {
 		lines = append(lines, "Flow: "+query.Get("flow"))
+	}
+	if outboundGroup != "" {
+		lines = append(lines, "Outbound group: "+outboundGroup)
 	}
 	lines = append(lines,
 		"",

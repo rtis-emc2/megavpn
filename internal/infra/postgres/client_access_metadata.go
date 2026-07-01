@@ -98,6 +98,46 @@ func (s *Store) clientInboundServiceMetadata(ctx context.Context, instanceID str
 	}, nil
 }
 
+func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, instanceID string, options map[string]any) (map[string]any, error) {
+	metadata, err := s.clientInboundServiceMetadata(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	inbound, _ := metadata["inbound_service"].(map[string]any)
+	if normalizeCapabilityCode(firstNonEmptyRouteValue(stringify(inbound["service_code"]))) != "xray-core" {
+		return metadata, nil
+	}
+	spec, err := s.latestInstanceSpec(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	groups := xrayVLESSGroups(spec)
+	defaultGroup := xrayDefaultVLESSGroupKey(spec, groups)
+	group := normalizeXrayVLESSGroupKey(firstNonEmptyRouteValue(
+		stringify(options["vless_group"]),
+		stringify(options["xray_group"]),
+		stringify(options["outbound_group"]),
+	))
+	if group == "" {
+		group = defaultGroup
+	}
+	allowed := xrayVLESSGroupKeySet(spec)
+	if _, ok := allowed[group]; !ok {
+		return nil, fmt.Errorf("vless outbound group %q is not defined for service instance %s", group, strings.TrimSpace(instanceID))
+	}
+	metadata["vless_group"] = group
+	metadata["xray_group"] = group
+	metadata["outbound_group"] = group
+	if inbound == nil {
+		inbound = map[string]any{}
+	}
+	inbound["vless_group"] = group
+	inbound["xray_group"] = group
+	inbound["outbound_group"] = group
+	metadata["inbound_service"] = inbound
+	return metadata, nil
+}
+
 func routeSourceTypeForService(serviceCode string) string {
 	switch normalizeCapabilityCode(serviceCode) {
 	case "wireguard":

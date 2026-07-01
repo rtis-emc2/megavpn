@@ -76,6 +76,9 @@ func ensureXrayInstanceDriverState(ctx context.Context, store *postgres.Store, i
 		if flow := firstNonEmpty(stringify(access.Access.Policy["flow"]), stringify(access.Access.Metadata["flow"]), stringify(spec["flow"])); flow != "" {
 			client["flow"] = flow
 		}
+		if group := xrayAccessVLESSGroup(spec, access.Access); group != "" {
+			client["vless_group"] = group
+		}
 		managedClients = append(managedClients, client)
 	}
 	spec["managed_clients"] = managedClients
@@ -87,6 +90,113 @@ func ensureXrayInstanceDriverState(ctx context.Context, store *postgres.Store, i
 		}
 	}
 	return nil
+}
+
+func xrayAccessVLESSGroup(spec map[string]any, access domain.ServiceAccess) string {
+	defaultGroup := xrayDefaultVLESSGroupLocal(spec)
+	group := normalizeXrayGroupKeyLocal(firstNonEmpty(
+		stringify(access.Policy["vless_group"]),
+		stringify(access.Policy["xray_group"]),
+		stringify(access.Policy["outbound_group"]),
+		stringify(access.Metadata["vless_group"]),
+		stringify(access.Metadata["xray_group"]),
+		stringify(access.Metadata["outbound_group"]),
+		defaultGroup,
+	))
+	if group == "" {
+		return defaultGroup
+	}
+	allowed := xrayGroupKeySetLocal(spec)
+	if len(allowed) > 0 {
+		if _, ok := allowed[group]; !ok {
+			return defaultGroup
+		}
+	}
+	return group
+}
+
+func xrayGroupKeySetLocal(spec map[string]any) map[string]struct{} {
+	raw := spec["vless_groups"]
+	if raw == nil {
+		raw = spec["xray_groups"]
+	}
+	if raw == nil {
+		raw = spec["outbound_groups"]
+	}
+	list, _ := raw.([]any)
+	set := make(map[string]struct{}, len(list))
+	for _, item := range list {
+		group, _ := item.(map[string]any)
+		if group == nil {
+			continue
+		}
+		key := normalizeXrayGroupKeyLocal(firstNonEmpty(stringify(group["key"]), stringify(group["name"]), stringify(group["id"])))
+		if key != "" {
+			set[key] = struct{}{}
+		}
+	}
+	return set
+}
+
+func xrayDefaultVLESSGroupLocal(spec map[string]any) string {
+	requested := normalizeXrayGroupKeyLocal(firstNonEmpty(
+		stringify(spec["default_vless_group"]),
+		stringify(spec["default_xray_group"]),
+		stringify(spec["default_outbound_group"]),
+	))
+	allowed := xrayGroupKeySetLocal(spec)
+	if requested != "" {
+		if len(allowed) == 0 {
+			return requested
+		}
+		if _, ok := allowed[requested]; ok {
+			return requested
+		}
+	}
+	raw := spec["vless_groups"]
+	if raw == nil {
+		raw = spec["xray_groups"]
+	}
+	if raw == nil {
+		raw = spec["outbound_groups"]
+	}
+	list, _ := raw.([]any)
+	for _, item := range list {
+		group, _ := item.(map[string]any)
+		if group == nil {
+			continue
+		}
+		key := normalizeXrayGroupKeyLocal(firstNonEmpty(stringify(group["key"]), stringify(group["name"]), stringify(group["id"])))
+		if key != "" {
+			return key
+		}
+	}
+	return "default"
+}
+
+func normalizeXrayGroupKeyLocal(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return ""
+	}
+	text = strings.ReplaceAll(text, " ", "_")
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '_' || r == '-' || r == '.' || r == ':':
+			b.WriteRune(r)
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return b.String()
 }
 
 func ensureOpenVPNInstanceAndClientState(ctx context.Context, store *postgres.Store, record *domain.ProvisioningAccess) error {

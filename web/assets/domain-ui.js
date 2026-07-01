@@ -475,6 +475,8 @@
             xray_path: stringValue(spec.path, '/ws'),
             xray_service_name: stringValue(spec.service_name, 'vless-grpc'),
             xray_flow: stringValue(spec.flow),
+            xray_default_vless_group: stringValue(spec.default_vless_group, 'default'),
+            xray_vless_groups: Array.isArray(spec.vless_groups) ? JSON.stringify(spec.vless_groups, null, 2) : '',
             config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
           }, presetKey);
         case 'openvpn':
@@ -646,8 +648,14 @@
             <div class="field"><label>HTTP path</label><input name="xray_path" value="${escapeHTML(draft.xray_path || '/ws')}" placeholder="/ws" /></div>
             <div class="field"><label>gRPC service name</label><input name="xray_service_name" value="${escapeHTML(draft.xray_service_name || 'vless-grpc')}" placeholder="vless-grpc" /></div>
             <div class="field"><label>Flow</label><input name="xray_flow" value="${escapeHTML(draft.xray_flow || '')}" placeholder="optional" /></div>
+            <div class="field"><label>Default outbound group</label><input name="xray_default_vless_group" value="${escapeHTML(draft.xray_default_vless_group || 'default')}" placeholder="default" /></div>
             <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/usr/local/etc/xray/xray.json')}" /></div>
             <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
+            <div class="field full">
+              <label>VLESS outbound groups</label>
+              <textarea name="xray_vless_groups" rows="8" placeholder='[{"key":"default","label":"Default direct","outbound_tag":"direct"},{"key":"restricted","label":"Restricted","outbound_tag":"block","rules":[{"domain":["geosite:category-ads-all"],"outbound_tag":"block"}]}]'>${escapeHTML(draft.xray_vless_groups || '')}</textarea>
+              <div class="field-hint">Groups are applied by Xray routing rules. Client provisioning assigns each VLESS user to one group.</div>
+            </div>
             <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"inbounds":[...],"outbounds":[...]}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
         case 'openvpn':
           return `${intro}
@@ -873,6 +881,15 @@
         spec.path = String(form.get('xray_path') || '').trim();
         spec.service_name = String(form.get('xray_service_name') || '').trim();
         spec.flow = String(form.get('xray_flow') || '').trim();
+        spec.default_vless_group = String(form.get('xray_default_vless_group') || 'default').trim() || 'default';
+        const vlessGroupsBody = String(form.get('xray_vless_groups') || '').trim();
+        if (vlessGroupsBody) {
+          const parsedGroups = JSON.parse(vlessGroupsBody);
+          if (!Array.isArray(parsedGroups)) throw new Error('VLESS outbound groups must be a JSON array');
+          spec.vless_groups = parsedGroups;
+        } else {
+          delete spec.vless_groups;
+        }
         if (configBody) {
           spec.config_json = JSON.parse(configBody);
           delete spec.config_content;

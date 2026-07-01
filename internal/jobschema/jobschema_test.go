@@ -234,6 +234,9 @@ func TestNormalizeClientProvisionInstanceIDs(t *testing.T) {
 	payload, err := Normalize("client.provision", map[string]any{
 		"client_id":    "client-1",
 		"instance_ids": []any{"instance-a", " instance-b "},
+		"service_options": map[string]any{
+			"instance-b": map[string]any{"vless_group": "restricted"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
@@ -244,6 +247,13 @@ func TestNormalizeClientProvisionInstanceIDs(t *testing.T) {
 	}
 	if len(ids) != 2 || ids[0] != "instance-a" || ids[1] != "instance-b" {
 		t.Fatalf("instance_ids = %#v, want normalized values", ids)
+	}
+	options, ok := payload["service_options"].(map[string]any)
+	if !ok {
+		t.Fatalf("service_options type = %T, want map", payload["service_options"])
+	}
+	if options["instance-b"] == nil {
+		t.Fatalf("service_options missing instance-b: %#v", options)
 	}
 }
 

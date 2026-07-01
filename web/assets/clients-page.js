@@ -81,6 +81,7 @@
         nodeRole: inbound.node_role || node?.role || 'role n/a',
         nodeAddress: inbound.node_address || node?.address || '',
         endpoint,
+        outboundGroup: metadata.vless_group || metadata.xray_group || metadata.outbound_group || inbound.vless_group || inbound.xray_group || inbound.outbound_group || '',
         availability: inbound.availability || (metadata.available_inbound === false ? 'disabled' : 'available'),
         available: inbound.available !== false && metadata.available_inbound !== false,
       };
@@ -202,6 +203,55 @@
       return (state.instances || []).filter((instance) => {
         return allowed.has(String(instance.service_code || '').trim()) && String(instance.status || '').toLowerCase() !== 'deleted';
       }).sort((left, right) => serviceInstanceLabel(left).localeCompare(serviceInstanceLabel(right)));
+    }
+
+    function normalizeVLESSGroupKey(value) {
+      return String(value || '').trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 64);
+    }
+
+    function vlessGroupsForInstance(instance) {
+      const spec = instance?.spec && typeof instance.spec === 'object' ? instance.spec : {};
+      const rawGroups = Array.isArray(spec.vless_groups)
+        ? spec.vless_groups
+        : (Array.isArray(spec.xray_groups) ? spec.xray_groups : (Array.isArray(spec.outbound_groups) ? spec.outbound_groups : []));
+      const seen = new Set();
+      const groups = rawGroups.map((group) => {
+        const source = group && typeof group === 'object' ? group : {};
+        const key = normalizeVLESSGroupKey(source.key || source.name || source.id);
+        if (!key || seen.has(key)) return null;
+        seen.add(key);
+        return {
+          key,
+          label: String(source.label || source.title || key).trim() || key,
+          outboundTag: String(source.outbound_tag || source.outboundTag || source.tag || 'direct').trim() || 'direct',
+        };
+      }).filter(Boolean);
+      if (!groups.length) {
+        const key = normalizeVLESSGroupKey(spec.default_vless_group || spec.default_xray_group || spec.default_outbound_group || 'default') || 'default';
+        groups.push({ key, label: key === 'default' ? 'Default direct' : key, outboundTag: 'direct' });
+      }
+      return groups;
+    }
+
+    function defaultVLESSGroupForInstance(instance, groups) {
+      const spec = instance?.spec && typeof instance.spec === 'object' ? instance.spec : {};
+      const wanted = normalizeVLESSGroupKey(spec.default_vless_group || spec.default_xray_group || spec.default_outbound_group || '');
+      if (wanted && groups.some((group) => group.key === wanted)) return wanted;
+      return groups[0]?.key || 'default';
+    }
+
+    function renderVLESSGroupSelect(instance) {
+      if (String(instance?.service_code || '').trim() !== 'xray-core') return '';
+      const groups = vlessGroupsForInstance(instance);
+      const selected = defaultVLESSGroupForInstance(instance, groups);
+      const options = groups.map((group) => {
+        return `<option value="${escapeHTML(group.key)}"${group.key === selected ? ' selected' : ''}>${escapeHTML(group.label)} -> ${escapeHTML(group.outboundTag)}</option>`;
+      }).join('');
+      return `
+        <span class="client-choice-option-row">
+          <span>Outbound group</span>
+          <select class="client-vless-group-select" data-instance-id="${escapeHTML(instance.id)}">${options}</select>
+        </span>`;
     }
 
     function serviceInstanceOptions(instances, selectedIDs = [], emptyText = 'No provisionable instances') {
@@ -434,6 +484,11 @@
         <div id="clientProvisionResult" class="form-result"></div>`);
       document.getElementById('cancelProvisionBtn')?.addEventListener('click', closeModal);
       document.getElementById('clientProvisionForm')?.addEventListener('submit', (event) => submitClientProvision(event, clientID));
+      document.querySelectorAll('.client-vless-group-select').forEach((select) => {
+        ['click', 'mousedown', 'mouseup', 'keydown'].forEach((eventName) => {
+          select.addEventListener(eventName, (event) => event.stopPropagation());
+        });
+      });
     }
 
     function renderProvisionInstanceChoices(instances = []) {
@@ -453,6 +508,7 @@
               <strong>${escapeHTML(instance.name || instance.slug || instance.id)}</strong>
               <small>${escapeHTML(compactServiceLabel(instance.service_code))} · ${escapeHTML(node?.name || instance.node_id || 'node')} · ${escapeHTML(node?.role || 'role n/a')}</small>
               <em>${escapeHTML(endpointLabel(instance))}</em>
+              ${renderVLESSGroupSelect(instance)}
               <span class="client-choice-selected">Selected for client</span>
             </span>
             <span class="client-choice-tags">${statusTag(runtimeStatus)}${statusTag(healthStatus)}</span>
@@ -476,7 +532,18 @@
         return;
       }
       try {
-        const data = await sendJSON(`/api/v1/clients/${clientID}/provision`, 'POST', { instance_ids: selectedIDs });
+        const selectedSet = new Set(selectedIDs);
+        const serviceOptions = {};
+        event.currentTarget.querySelectorAll('.client-vless-group-select').forEach((select) => {
+          const instanceID = String(select.dataset.instanceId || '').trim();
+          const group = normalizeVLESSGroupKey(select.value);
+          if (instanceID && group && selectedSet.has(instanceID)) {
+            serviceOptions[instanceID] = { vless_group: group };
+          }
+        });
+        const payload = { instance_ids: selectedIDs };
+        if (Object.keys(serviceOptions).length) payload.service_options = serviceOptions;
+        const data = await sendJSON(`/api/v1/clients/${clientID}/provision`, 'POST', payload);
         if (target) target.innerHTML = renderActionResponse(data, 'Client provision');
         await refresh();
       } catch (err) {
@@ -492,6 +559,7 @@
             <td>
               <strong>${escapeHTML(inbound.serviceLabel)}</strong>
               <div class="timeline-meta">${escapeHTML(inbound.instanceName)}</div>
+              ${inbound.outboundGroup ? `<div class="timeline-meta">outbound group: ${escapeHTML(inbound.outboundGroup)}</div>` : ''}
             </td>
             <td><span class="tag">${escapeHTML(compactServiceLabel(inbound.serviceCode))}</span></td>
             <td>

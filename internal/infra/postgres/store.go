@@ -1579,17 +1579,31 @@ func (s *Store) SetClientStatus(ctx context.Context, clientID, status string) (d
 }
 
 func (s *Store) ProvisionClient(ctx context.Context, clientID string, instanceIDs []string) (domain.Job, error) {
-	instanceIDs, err := s.ensureClientProvisioningAccesses(ctx, clientID, instanceIDs, true)
+	return s.ProvisionClientWithOptions(ctx, clientID, instanceIDs, nil)
+}
+
+func (s *Store) ProvisionClientWithOptions(ctx context.Context, clientID string, instanceIDs []string, serviceOptions map[string]map[string]any) (domain.Job, error) {
+	instanceIDs, err := s.ensureClientProvisioningAccesses(ctx, clientID, instanceIDs, true, serviceOptions)
 	if err != nil {
 		return domain.Job{}, err
 	}
-	j, err := s.CreateJob(ctx, domain.Job{Type: "client.provision", ScopeType: "client", ScopeID: &clientID, Payload: map[string]any{"client_id": clientID, "instance_ids": instanceIDs}})
+	payload := map[string]any{"client_id": clientID, "instance_ids": instanceIDs}
+	effectiveOptions := make(map[string]map[string]any)
+	for _, instanceID := range instanceIDs {
+		if options := serviceOptions[instanceID]; len(options) > 0 {
+			effectiveOptions[instanceID] = options
+		}
+	}
+	if len(effectiveOptions) > 0 {
+		payload["service_options"] = effectiveOptions
+	}
+	j, err := s.CreateJob(ctx, domain.Job{Type: "client.provision", ScopeType: "client", ScopeID: &clientID, Payload: payload})
 	_, _ = s.CreateAudit(ctx, "system", "client.provision", "client", &clientID, "client provisioning queued")
 	return j, err
 }
 
 func (s *Store) CreateArtifactBuildJob(ctx context.Context, clientID, artifactType string, instanceIDs []string) (domain.Job, error) {
-	instanceIDs, err := s.ensureClientProvisioningAccesses(ctx, clientID, instanceIDs, false)
+	instanceIDs, err := s.ensureClientProvisioningAccesses(ctx, clientID, instanceIDs, false, nil)
 	if err != nil {
 		return domain.Job{}, err
 	}
@@ -1611,7 +1625,7 @@ func (s *Store) CreateArtifactBuildJob(ctx context.Context, clientID, artifactTy
 	return j, err
 }
 
-func (s *Store) ensureClientProvisioningAccesses(ctx context.Context, clientID string, instanceIDs []string, markPending bool) ([]string, error) {
+func (s *Store) ensureClientProvisioningAccesses(ctx context.Context, clientID string, instanceIDs []string, markPending bool, serviceOptions map[string]map[string]any) ([]string, error) {
 	if _, err := s.GetClient(ctx, clientID); err != nil {
 		return nil, err
 	}
@@ -1643,7 +1657,7 @@ func (s *Store) ensureClientProvisioningAccesses(ctx context.Context, clientID s
 	}
 	for _, iid := range instanceIDs {
 		var accessID string
-		metadata, err := s.clientInboundServiceMetadata(ctx, iid)
+		metadata, err := s.clientProvisioningServiceMetadata(ctx, iid, serviceOptions[iid])
 		if err != nil {
 			return nil, err
 		}

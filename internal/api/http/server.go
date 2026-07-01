@@ -123,6 +123,7 @@ type Store interface {
 	CreateClient(context.Context, domain.Client) (domain.Client, error)
 	SetClientStatus(context.Context, string, string) (domain.Client, error)
 	ProvisionClient(context.Context, string, []string) (domain.Job, error)
+	ProvisionClientWithOptions(context.Context, string, []string, map[string]map[string]any) (domain.Job, error)
 	CreateArtifactBuildJob(context.Context, string, string, []string) (domain.Job, error)
 	RevokeClient(context.Context, string) (domain.Job, error)
 	ListServiceAccesses(context.Context, string) ([]domain.ServiceAccess, error)
@@ -454,7 +455,8 @@ func maxRequestBytesHandler(next nethttp.Handler, defaultLimit int64) nethttp.Ha
 type response map[string]any
 
 type provisionRequest struct {
-	InstanceIDs []string `json:"instance_ids"`
+	InstanceIDs    []string                  `json:"instance_ids"`
+	ServiceOptions map[string]map[string]any `json:"service_options"`
 }
 type artifactRequest struct {
 	Type        string   `json:"type"`
@@ -1326,7 +1328,7 @@ func (s *Server) provisionClient(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 400, "invalid provision payload")
 		return
 	}
-	j, err := s.store.ProvisionClient(r.Context(), idParam(r), req.InstanceIDs)
+	j, err := s.store.ProvisionClientWithOptions(r.Context(), idParam(r), req.InstanceIDs, req.ServiceOptions)
 	if err != nil {
 		writeErr(w, 409, err.Error())
 		return

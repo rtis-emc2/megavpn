@@ -466,6 +466,11 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else if ok {
 			normalized["instance_ids"] = ids
 		}
+		if options, err := optionalMap(payload, "service_options"); err != nil {
+			return nil, err
+		} else if options != nil {
+			normalized["service_options"] = options
+		}
 	case "artifact.build":
 		clientID, err := requireString(payload, "client_id")
 		if err != nil {
@@ -572,10 +577,17 @@ func requireMap(payload map[string]any, key string) (map[string]any, error) {
 		return nil, validationf("payload.%s is required", key)
 	}
 	value, ok := raw.(map[string]any)
-	if !ok {
-		return nil, validationf("payload.%s must be an object", key)
+	if ok {
+		return value, nil
 	}
-	return value, nil
+	if typed, ok := raw.(map[string]map[string]any); ok {
+		value := make(map[string]any, len(typed))
+		for nestedKey, nestedValue := range typed {
+			value[nestedKey] = nestedValue
+		}
+		return value, nil
+	}
+	return nil, validationf("payload.%s must be an object", key)
 }
 
 func optionalMap(payload map[string]any, key string) (map[string]any, error) {
@@ -584,10 +596,17 @@ func optionalMap(payload map[string]any, key string) (map[string]any, error) {
 		return nil, nil
 	}
 	value, ok := raw.(map[string]any)
-	if !ok {
-		return nil, validationf("payload.%s must be an object", key)
+	if ok {
+		return value, nil
 	}
-	return value, nil
+	if typed, ok := raw.(map[string]map[string]any); ok {
+		value := make(map[string]any, len(typed))
+		for nestedKey, nestedValue := range typed {
+			value[nestedKey] = nestedValue
+		}
+		return value, nil
+	}
+	return nil, validationf("payload.%s must be an object", key)
 }
 
 func optionalBool(payload map[string]any, key string) (bool, bool, error) {

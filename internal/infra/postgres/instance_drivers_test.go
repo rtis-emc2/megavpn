@@ -262,6 +262,79 @@ func TestBuildXrayServerConfigTLS(t *testing.T) {
 	}
 }
 
+func TestBuildXrayServerConfigAddsVLESSGroupRouting(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "default",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "11111111-1111-4111-8111-111111111111",
+				"email":       "direct-user",
+				"vless_group": "default",
+			},
+			map[string]any{
+				"id":          "22222222-2222-4222-8222-222222222222",
+				"email":       "restricted-user",
+				"vless_group": "restricted",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{
+				"key":          "default",
+				"label":        "Default direct",
+				"outbound_tag": "direct",
+			},
+			map[string]any{
+				"key":          "restricted",
+				"label":        "Restricted",
+				"outbound_tag": "block",
+				"rules": []any{
+					map[string]any{
+						"domain":       []any{"geosite:category-ads-all"},
+						"outbound_tag": "block",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	inbounds := cfg["inbounds"].([]any)
+	settings := inbounds[0].(map[string]any)["settings"].(map[string]any)
+	clients := settings["clients"].([]any)
+	if len(clients) != 2 {
+		t.Fatalf("clients = %#v, want 2", clients)
+	}
+	if _, leaked := clients[0].(map[string]any)["vless_group"]; leaked {
+		t.Fatalf("internal vless_group leaked into xray client: %#v", clients[0])
+	}
+
+	routing, ok := cfg["routing"].(map[string]any)
+	if !ok {
+		t.Fatalf("routing missing: %#v", cfg)
+	}
+	rules, ok := routing["rules"].([]any)
+	if !ok || len(rules) != 3 {
+		t.Fatalf("routing rules = %#v, want 3", routing["rules"])
+	}
+	if got := stringify(rules[0].(map[string]any)["outboundTag"]); got != "direct" {
+		t.Fatalf("first routing outboundTag = %q, want direct", got)
+	}
+	if got := stringify(rules[1].(map[string]any)["outboundTag"]); got != "block" {
+		t.Fatalf("restricted domain rule outboundTag = %q, want block", got)
+	}
+	if got := stringify(rules[2].(map[string]any)["outboundTag"]); got != "block" {
+		t.Fatalf("restricted fallback outboundTag = %q, want block", got)
+	}
+}
+
 func TestBuildXrayUnitFileDoesNotUseShell(t *testing.T) {
 	t.Parallel()
 

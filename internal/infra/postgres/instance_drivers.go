@@ -749,6 +749,7 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 		if !ok {
 			return nil, fmt.Errorf("xray config_json must be an object")
 		}
+		managedClients := xrayManagedClientSpecs(spec["managed_clients"])
 		clients := xrayManagedClients(spec["managed_clients"])
 		tag := firstString(spec["managed_inbound_tag"], "vless-in")
 		inbounds, _ := cfg["inbounds"].([]any)
@@ -781,6 +782,7 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 		}
 		inbounds[targetIdx] = inbound
 		cfg["inbounds"] = inbounds
+		applyXrayVLESSGroupRouting(cfg, spec, managedClients)
 		return cfg, nil
 	}
 
@@ -788,6 +790,7 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 	if port <= 0 {
 		port = 443
 	}
+	managedClients := xrayManagedClientSpecs(spec["managed_clients"])
 	clients := xrayManagedClients(spec["managed_clients"])
 	network := firstString(spec["network"], spec["type"], spec["transport"], "tcp")
 	security := firstString(spec["security"], "reality")
@@ -874,11 +877,9 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 				"streamSettings": streamSettings,
 			},
 		},
-		"outbounds": []any{
-			map[string]any{"protocol": "freedom", "tag": "direct"},
-			map[string]any{"protocol": "blackhole", "tag": "block"},
-		},
+		"outbounds": xrayOutboundsWithGroups(nil, xrayVLESSGroups(spec)),
 	}
+	applyXrayVLESSGroupRouting(cfg, spec, managedClients)
 	if sniffing := truthy(spec["sniffing_enabled"]); sniffing || spec["sniffing_enabled"] == nil {
 		inbounds := cfg["inbounds"].([]any)
 		inbound := inbounds[0].(map[string]any)
@@ -1654,9 +1655,17 @@ func (s *Store) resolveSecretText(ctx context.Context, refRaw, inlineRaw any) (s
 	return firstString(inlineRaw), nil
 }
 
-func xrayManagedClients(raw any) []any {
+type xrayVLESSGroup struct {
+	Key         string
+	Label       string
+	OutboundTag string
+	Outbound    map[string]any
+	Rules       []map[string]any
+}
+
+func xrayManagedClientSpecs(raw any) []map[string]any {
 	list, _ := raw.([]any)
-	out := make([]any, 0, len(list))
+	out := make([]map[string]any, 0, len(list))
 	for _, item := range list {
 		client, _ := cloneAny(item).(map[string]any)
 		if client == nil {
@@ -1666,6 +1675,336 @@ func xrayManagedClients(raw any) []any {
 			continue
 		}
 		out = append(out, client)
+	}
+	return out
+}
+
+func xrayManagedClients(raw any) []any {
+	specs := xrayManagedClientSpecs(raw)
+	out := make([]any, 0, len(specs))
+	for _, client := range specs {
+		rendered := map[string]any{
+			"id": strings.TrimSpace(stringify(client["id"])),
+		}
+		if email := firstString(client["email"]); email != "" {
+			rendered["email"] = email
+		}
+		if flow := firstString(client["flow"]); flow != "" {
+			rendered["flow"] = flow
+		}
+		if level := firstIntValue(client["level"]); level >= 0 {
+			if _, ok := client["level"]; ok {
+				rendered["level"] = level
+			}
+		}
+		out = append(out, rendered)
+	}
+	return out
+}
+
+func xrayVLESSGroups(spec map[string]any) []xrayVLESSGroup {
+	if spec == nil {
+		return nil
+	}
+	raw := spec["vless_groups"]
+	if raw == nil {
+		raw = spec["xray_groups"]
+	}
+	if raw == nil {
+		raw = spec["outbound_groups"]
+	}
+	list, _ := raw.([]any)
+	groups := make([]xrayVLESSGroup, 0, len(list))
+	seen := make(map[string]struct{}, len(list))
+	for _, item := range list {
+		groupRaw, _ := cloneAny(item).(map[string]any)
+		if groupRaw == nil {
+			continue
+		}
+		key := normalizeXrayVLESSGroupKey(firstString(groupRaw["key"], groupRaw["name"], groupRaw["id"]))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		outbound, _ := cloneAny(groupRaw["outbound"]).(map[string]any)
+		if outbound != nil && firstString(outbound["protocol"]) == "" {
+			outbound = nil
+		}
+		outboundTag := normalizeXrayOutboundTag(firstString(groupRaw["outbound_tag"], groupRaw["outboundTag"], groupRaw["tag"]))
+		if outbound != nil {
+			if tag := normalizeXrayOutboundTag(firstString(outbound["tag"])); tag != "" {
+				outboundTag = tag
+			} else if outboundTag != "" {
+				outbound["tag"] = outboundTag
+			}
+		}
+		if outboundTag == "" {
+			outboundTag = "direct"
+		}
+		if outbound == nil && !isBuiltInXrayOutboundTag(outboundTag) {
+			outboundTag = "direct"
+		}
+		group := xrayVLESSGroup{
+			Key:         key,
+			Label:       firstString(groupRaw["label"], groupRaw["title"], key),
+			OutboundTag: outboundTag,
+			Outbound:    outbound,
+			Rules:       xrayVLESSGroupRules(groupRaw["rules"]),
+		}
+		groups = append(groups, group)
+		seen[key] = struct{}{}
+	}
+	return groups
+}
+
+func xrayVLESSGroupRules(raw any) []map[string]any {
+	list, _ := raw.([]any)
+	out := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		rule, _ := cloneAny(item).(map[string]any)
+		if rule == nil {
+			continue
+		}
+		out = append(out, rule)
+	}
+	return out
+}
+
+func xrayDefaultVLESSGroupKey(spec map[string]any, groups []xrayVLESSGroup) string {
+	requested := normalizeXrayVLESSGroupKey(firstString(spec["default_vless_group"], spec["default_xray_group"], spec["default_outbound_group"]))
+	if requested != "" {
+		for _, group := range groups {
+			if group.Key == requested {
+				return requested
+			}
+		}
+	}
+	if len(groups) > 0 {
+		return groups[0].Key
+	}
+	if requested != "" {
+		return requested
+	}
+	return "default"
+}
+
+func xrayVLESSGroupKeySet(spec map[string]any) map[string]struct{} {
+	groups := xrayVLESSGroups(spec)
+	set := make(map[string]struct{}, len(groups)+1)
+	for _, group := range groups {
+		set[group.Key] = struct{}{}
+	}
+	if len(set) == 0 {
+		set[xrayDefaultVLESSGroupKey(spec, groups)] = struct{}{}
+	}
+	return set
+}
+
+func normalizeXrayVLESSGroupKey(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return ""
+	}
+	text = strings.ReplaceAll(text, " ", "_")
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '_' || r == '-' || r == '.' || r == ':':
+			b.WriteRune(r)
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return b.String()
+}
+
+func normalizeXrayOutboundTag(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '_' || r == '-' || r == '.' || r == ':':
+			b.WriteRune(r)
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return b.String()
+}
+
+func isBuiltInXrayOutboundTag(tag string) bool {
+	return tag == "direct" || tag == "block"
+}
+
+func xrayOutboundsWithGroups(raw any, groups []xrayVLESSGroup) []any {
+	outbounds, _ := cloneAny(raw).([]any)
+	if len(outbounds) == 0 {
+		outbounds = []any{
+			map[string]any{"protocol": "freedom", "tag": "direct"},
+			map[string]any{"protocol": "blackhole", "tag": "block"},
+		}
+	}
+	seen := make(map[string]struct{}, len(outbounds)+len(groups))
+	for _, item := range outbounds {
+		outbound, _ := item.(map[string]any)
+		if outbound == nil {
+			continue
+		}
+		if tag := normalizeXrayOutboundTag(firstString(outbound["tag"])); tag != "" {
+			seen[tag] = struct{}{}
+		}
+	}
+	for _, group := range groups {
+		if group.Outbound == nil {
+			continue
+		}
+		outbound, _ := cloneAny(group.Outbound).(map[string]any)
+		if outbound == nil {
+			continue
+		}
+		tag := normalizeXrayOutboundTag(firstString(outbound["tag"], group.OutboundTag))
+		if tag == "" {
+			continue
+		}
+		outbound["tag"] = tag
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		outbounds = append(outbounds, outbound)
+		seen[tag] = struct{}{}
+	}
+	return outbounds
+}
+
+func applyXrayVLESSGroupRouting(cfg map[string]any, spec map[string]any, clients []map[string]any) {
+	groups := xrayVLESSGroups(spec)
+	if len(groups) == 0 {
+		return
+	}
+	cfg["outbounds"] = xrayOutboundsWithGroups(cfg["outbounds"], groups)
+	rules := xrayVLESSGroupRoutingRules(spec, groups, clients)
+	if len(rules) == 0 {
+		return
+	}
+	routing, _ := cfg["routing"].(map[string]any)
+	if routing == nil {
+		routing = map[string]any{}
+	}
+	if firstString(routing["domainStrategy"]) == "" {
+		routing["domainStrategy"] = firstString(spec["routing_domain_strategy"], "AsIs")
+	}
+	existingRules, _ := routing["rules"].([]any)
+	routing["rules"] = append(existingRules, rules...)
+	cfg["routing"] = routing
+}
+
+func xrayVLESSGroupRoutingRules(spec map[string]any, groups []xrayVLESSGroup, clients []map[string]any) []any {
+	if len(groups) == 0 || len(clients) == 0 {
+		return nil
+	}
+	inboundTag := firstString(spec["managed_inbound_tag"], "vless-in")
+	known := make(map[string]xrayVLESSGroup, len(groups))
+	for _, group := range groups {
+		known[group.Key] = group
+	}
+	defaultGroup := xrayDefaultVLESSGroupKey(spec, groups)
+	usersByGroup := make(map[string][]string, len(groups))
+	for _, client := range clients {
+		user := firstString(client["email"])
+		if user == "" {
+			continue
+		}
+		groupKey := normalizeXrayVLESSGroupKey(firstString(client["vless_group"], client["xray_group"], client["outbound_group"], client["group"]))
+		if groupKey == "" {
+			groupKey = defaultGroup
+		}
+		if _, ok := known[groupKey]; !ok {
+			groupKey = defaultGroup
+		}
+		usersByGroup[groupKey] = append(usersByGroup[groupKey], user)
+	}
+	rules := make([]any, 0)
+	for _, group := range groups {
+		users := uniqueSortedStrings(usersByGroup[group.Key])
+		if len(users) == 0 {
+			continue
+		}
+		for _, rawRule := range group.Rules {
+			rule, _ := cloneAny(rawRule).(map[string]any)
+			if rule == nil {
+				continue
+			}
+			if firstString(rule["type"]) == "" {
+				rule["type"] = "field"
+			}
+			delete(rule, "outbound_tag")
+			delete(rule, "group")
+			delete(rule, "key")
+			rule["user"] = anyStringList(users)
+			if firstString(rule["inboundTag"]) == "" && inboundTag != "" {
+				rule["inboundTag"] = []any{inboundTag}
+			}
+			tag := normalizeXrayOutboundTag(firstString(rawRule["outboundTag"], rawRule["outbound_tag"], group.OutboundTag))
+			if tag == "" {
+				tag = group.OutboundTag
+			}
+			rule["outboundTag"] = tag
+			rules = append(rules, rule)
+		}
+		rules = append(rules, map[string]any{
+			"type":        "field",
+			"inboundTag":  []any{inboundTag},
+			"user":        anyStringList(users),
+			"outboundTag": group.OutboundTag,
+		})
+	}
+	return rules
+}
+
+func uniqueSortedStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func anyStringList(values []string) []any {
+	out := make([]any, 0, len(values))
+	for _, value := range values {
+		out = append(out, value)
 	}
 	return out
 }

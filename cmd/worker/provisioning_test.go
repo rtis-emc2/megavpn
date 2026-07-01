@@ -76,6 +76,7 @@ func TestBuildXrayArtifactsIncludesVLESSClientProfile(t *testing.T) {
 					"service_label": "Xray VLESS",
 					"endpoint":      "vpn.example.test:443",
 				},
+				"vless_group": "restricted",
 			},
 		},
 		Client: domain.Client{ID: "client-1", Username: "client-one", Email: "client@example.test"},
@@ -113,6 +114,8 @@ func TestBuildXrayArtifactsIncludesVLESSClientProfile(t *testing.T) {
 		"Client JSON:",
 		`"protocol": "vless"`,
 		`"inbound_service"`,
+		"Outbound group: restricted",
+		`"outbound_group": "restricted"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("artifact body missing %q:\n%s", want, body)
