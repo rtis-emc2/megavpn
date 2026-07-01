@@ -247,11 +247,18 @@ func (s *Store) ensureBaselineClientAccessRoute(ctx context.Context, clientID, a
 	}
 	nodeID := strings.TrimSpace(instance.NodeID)
 	now := time.Now().UTC()
+	accessMeta, err := s.clientInboundServiceMetadata(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	inbound, _ := accessMeta["inbound_service"].(map[string]any)
 	meta := mustJSON(map[string]any{
 		"baseline":     true,
+		"route_type":   "service_inbound_baseline",
 		"service_code": instance.ServiceCode,
 		"instance":     instance.Name,
 		"slug":         instance.Slug,
+		"inbound":      inbound,
 	})
 	_, err = s.db.Exec(ctx, `insert into client_access_routes(
 		id,
@@ -437,6 +444,9 @@ func (s *Store) buildNodeRoutePolicyPayload(ctx context.Context, nodeID string) 
 			"created_at":       createdAt.UTC().Format(time.RFC3339),
 			"updated_at":       updatedAt.UTC().Format(time.RFC3339),
 		}
+		if inbound := routeInboundServiceProjection(metadata, accessMetadata); len(inbound) > 0 {
+			entry["inbound_service"] = inbound
+		}
 		if serviceAccessID != nil && strings.TrimSpace(*serviceAccessID) != "" {
 			entry["service_access_id"] = strings.TrimSpace(*serviceAccessID)
 		}
@@ -527,6 +537,23 @@ func routeSourceIdentity(serviceCode string, metadata map[string]any) map[string
 		}
 	}
 	return map[string]any{"type": "unknown"}
+}
+
+func routeInboundServiceProjection(routeMetadata, accessMetadata map[string]any) map[string]any {
+	if routeMetadata != nil {
+		if inbound, ok := routeMetadata["inbound"].(map[string]any); ok && len(inbound) > 0 {
+			return inbound
+		}
+		if inbound, ok := routeMetadata["inbound_service"].(map[string]any); ok && len(inbound) > 0 {
+			return inbound
+		}
+	}
+	if accessMetadata != nil {
+		if inbound, ok := accessMetadata["inbound_service"].(map[string]any); ok && len(inbound) > 0 {
+			return inbound
+		}
+	}
+	return nil
 }
 
 func routeEnforcementProjection(entry map[string]any) map[string]any {

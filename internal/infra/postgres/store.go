@@ -1643,12 +1643,17 @@ func (s *Store) ensureClientProvisioningAccesses(ctx context.Context, clientID s
 	}
 	for _, iid := range instanceIDs {
 		var accessID string
-		err := s.db.QueryRow(ctx, `insert into service_accesses(id,client_account_id,instance_id,status,provision_mode,created_at,updated_at)
-			values($1,$2,$3,'pending','manual',now(),now())
+		metadata, err := s.clientInboundServiceMetadata(ctx, iid)
+		if err != nil {
+			return nil, err
+		}
+		err = s.db.QueryRow(ctx, `insert into service_accesses(id,client_account_id,instance_id,status,provision_mode,metadata_json,created_at,updated_at)
+			values($1,$2,$3,'pending','manual',$5,now(),now())
 			on conflict(client_account_id, instance_id) do update set
 				status=case when $4::boolean then 'pending' else service_accesses.status end,
+				metadata_json=service_accesses.metadata_json || excluded.metadata_json,
 				updated_at=now()
-			returning id`, id.New(), clientID, iid, markPending).Scan(&accessID)
+			returning id`, id.New(), clientID, iid, markPending, mustJSON(metadata)).Scan(&accessID)
 		if err != nil {
 			return nil, err
 		}

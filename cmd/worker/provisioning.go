@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -605,8 +606,13 @@ func buildXrayArtifacts(record domain.ProvisioningAccess) ([]generatedArtifactFi
 	if alpn := firstNonEmpty(stringify(meta["public_alpn"]), stringify(meta["alpn"]), stringify(spec["public_alpn"]), stringify(spec["alpn"])); alpn != "" {
 		query.Set("alpn", alpn)
 	}
-	label := url.QueryEscape(firstNonEmpty(stringify(spec["client_label_prefix"]), record.Instance.Name, record.Instance.Slug, "xray") + "-" + firstNonEmpty(record.Client.Username, record.Access.ID))
+	rawLabel := firstNonEmpty(stringify(spec["client_label_prefix"]), record.Instance.Name, record.Instance.Slug, "xray") + "-" + firstNonEmpty(record.Client.Username, record.Access.ID)
+	label := url.QueryEscape(rawLabel)
 	vlessURL := fmt.Sprintf("vless://%s@%s:%d?%s#%s", xrayUUID, host, port, query.Encode(), label)
+	content, err := buildVLESSClientArtifactContent(record, vlessURL, rawLabel, host, port, security, network, query)
+	if err != nil {
+		return nil, err
+	}
 
 	accessID := record.Access.ID
 	filename := sanitizeLocalFilename(firstNonEmpty(record.Client.Username, record.Client.DisplayName, "client")) + "--" + sanitizeLocalFilename(firstNonEmpty(record.Instance.Slug, record.Instance.Name, "xray")) + ".vless.txt"
@@ -614,8 +620,105 @@ func buildXrayArtifacts(record domain.ProvisioningAccess) ([]generatedArtifactFi
 		ArtifactType:    "vless_url",
 		ServiceAccessID: &accessID,
 		Filename:        filename,
-		Content:         []byte(vlessURL + "\n"),
+		Content:         content,
 	}}, nil
+}
+
+func buildVLESSClientArtifactContent(record domain.ProvisioningAccess, vlessURL, label, host string, port int, security, network string, query url.Values) ([]byte, error) {
+	meta := record.Access.Metadata
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	inbound, _ := meta["inbound_service"].(map[string]any)
+	stream := map[string]any{
+		"network":     network,
+		"security":    security,
+		"sni":         query.Get("sni"),
+		"fingerprint": query.Get("fp"),
+		"alpn":        query.Get("alpn"),
+	}
+	if security == "reality" {
+		stream["reality_public_key"] = query.Get("pbk")
+		stream["short_id"] = query.Get("sid")
+	}
+	if path := query.Get("path"); path != "" {
+		stream["path"] = path
+	}
+	if serviceName := query.Get("serviceName"); serviceName != "" {
+		stream["service_name"] = serviceName
+	}
+	if hostHeader := query.Get("host"); hostHeader != "" {
+		stream["host_header"] = hostHeader
+	}
+	credential := map[string]any{
+		"id":         firstNonEmpty(stringify(meta["xray_uuid"]), stringify(meta["uuid"])),
+		"encryption": "none",
+	}
+	if flow := query.Get("flow"); flow != "" {
+		credential["flow"] = flow
+	}
+	profile := map[string]any{
+		"name":              label,
+		"protocol":          "vless",
+		"service_access_id": record.Access.ID,
+		"client": map[string]any{
+			"id":       record.Client.ID,
+			"username": record.Client.Username,
+			"email":    record.Client.Email,
+		},
+		"instance": map[string]any{
+			"id":           record.Instance.ID,
+			"name":         record.Instance.Name,
+			"slug":         record.Instance.Slug,
+			"service_code": record.Instance.ServiceCode,
+		},
+		"inbound_service": inbound,
+		"endpoint": map[string]any{
+			"host": host,
+			"port": port,
+		},
+		"credential": credential,
+		"stream":     stream,
+		"uri":        vlessURL,
+	}
+	profileJSON, err := json.MarshalIndent(profile, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	lines := []string{
+		"VLESS client access",
+		"",
+		"Client: " + firstNonEmpty(record.Client.Username, record.Client.DisplayName, record.Client.ID),
+		"Instance: " + firstNonEmpty(record.Instance.Name, record.Instance.Slug, record.Instance.ID),
+		fmt.Sprintf("Endpoint: %s:%d", host, port),
+		"Network: " + network,
+		"Security: " + security,
+	}
+	if query.Get("sni") != "" {
+		lines = append(lines, "SNI: "+query.Get("sni"))
+	}
+	if query.Get("fp") != "" {
+		lines = append(lines, "Fingerprint: "+query.Get("fp"))
+	}
+	if query.Get("pbk") != "" {
+		lines = append(lines, "Reality public key: "+query.Get("pbk"))
+	}
+	if query.Get("sid") != "" {
+		lines = append(lines, "Reality short id: "+query.Get("sid"))
+	}
+	if query.Get("flow") != "" {
+		lines = append(lines, "Flow: "+query.Get("flow"))
+	}
+	lines = append(lines,
+		"",
+		"Import URI:",
+		vlessURL,
+		"",
+		"Client JSON:",
+		string(profileJSON),
+		"",
+	)
+	return []byte(strings.Join(lines, "\n")), nil
 }
 
 func buildShadowsocksArtifacts(record domain.ProvisioningAccess) ([]generatedArtifactFile, error) {

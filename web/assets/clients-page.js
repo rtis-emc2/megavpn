@@ -66,6 +66,26 @@
       return `${instance.endpoint_host}:${instance.endpoint_port || 0}`;
     }
 
+    function serviceAccessInboundInfo(access) {
+      const metadata = access?.metadata && typeof access.metadata === 'object' ? access.metadata : {};
+      const inbound = metadata.inbound_service && typeof metadata.inbound_service === 'object' ? metadata.inbound_service : {};
+      const instance = findInstance(access?.instance_id);
+      const node = findNode(inbound.node_id || instance?.node_id);
+      const serviceCode = inbound.service_code || instance?.service_code || 'unknown';
+      const endpoint = inbound.endpoint || endpointLabel(instance);
+      return {
+        serviceCode,
+        serviceLabel: inbound.service_label || compactServiceLabel(serviceCode),
+        instanceName: inbound.instance_name || instance?.name || access?.instance_id || 'instance',
+        nodeName: inbound.node_name || node?.name || instance?.node_id || 'node',
+        nodeRole: inbound.node_role || node?.role || 'role n/a',
+        nodeAddress: inbound.node_address || node?.address || '',
+        endpoint,
+        availability: inbound.availability || (metadata.available_inbound === false ? 'disabled' : 'available'),
+        available: inbound.available !== false && metadata.available_inbound !== false,
+      };
+    }
+
     function serviceInstanceLabel(instance) {
       const node = findNode(instance.node_id);
       const role = node?.role ? `/${node.role}` : '';
@@ -464,17 +484,23 @@
 
     function renderServiceAccessRows(accessList, clientID) {
       return accessList.map((access) => {
-        const instance = findInstance(access.instance_id);
-        const serviceCode = instance?.service_code || 'unknown';
+        const inbound = serviceAccessInboundInfo(access);
         return `
           <tr>
-            <td>${escapeHTML(instance?.name || access.instance_id)}</td>
-            <td><span class="tag">${escapeHTML(serviceCode)}</span></td>
-            <td>${escapeHTML(endpointLabel(instance))}</td>
-            <td>${statusTag(access.status || 'unknown')}</td>
-            <td>${renderRotateButtons(clientID, access.id, serviceCode)}</td>
+            <td>
+              <strong>${escapeHTML(inbound.serviceLabel)}</strong>
+              <div class="timeline-meta">${escapeHTML(inbound.instanceName)}</div>
+            </td>
+            <td><span class="tag">${escapeHTML(compactServiceLabel(inbound.serviceCode))}</span></td>
+            <td>
+              <strong>${escapeHTML(inbound.nodeName)}</strong>
+              <div class="timeline-meta">${escapeHTML(inbound.nodeRole)}${inbound.nodeAddress ? ` · ${escapeHTML(inbound.nodeAddress)}` : ''}</div>
+            </td>
+            <td><code>${escapeHTML(inbound.endpoint)}</code></td>
+            <td><div class="client-status-cluster">${statusTag(access.status || 'unknown')}${statusTag(inbound.availability || 'available')}</div></td>
+            <td>${renderRotateButtons(clientID, access.id, inbound.serviceCode)}</td>
           </tr>`;
-      }).join('') || '<tr><td colspan="5"><div class="empty">No service accesses for this client.</div></td></tr>';
+      }).join('') || '<tr><td colspan="6"><div class="empty">No service accesses for this client.</div></td></tr>';
     }
 
     function renderRotateButtons(clientID, accessID, serviceCode) {
@@ -500,11 +526,13 @@
         const instance = findInstance(route.instance_id);
         const node = findNode(route.node_id);
         const managed = route.metadata?.baseline === true || route.metadata?.baseline === 'true';
+        const inbound = route.metadata?.inbound || route.metadata?.inbound_service || {};
+        const serviceLabel = inbound.service_label || compactServiceLabel(instance?.service_code || '');
         return `
           <tr>
             <td><strong>${escapeHTML(route.name || route.destination)}</strong><div class="timeline-meta">${managed ? 'managed baseline' : 'manual policy'}</div></td>
             <td>${escapeHTML(client.username || client.display_name || client.id)}</td>
-            <td>${escapeHTML(instance?.name || route.instance_id || 'global')}</td>
+            <td><strong>${escapeHTML(serviceLabel)}</strong><div class="timeline-meta">${escapeHTML(instance?.name || route.instance_id || 'global')}</div></td>
             <td>${escapeHTML(node?.name || route.node_id || 'n/a')}</td>
             <td><span class="tag">${escapeHTML(route.destination_type || 'endpoint')}</span> ${escapeHTML(route.destination || 'n/a')}</td>
             <td>${escapeHTML(route.protocol || 'any')} / ${escapeHTML(route.ports || '*')}</td>
@@ -619,6 +647,33 @@
         </div>`;
     }
 
+    function renderInboundServiceCards(accessList = []) {
+      if (!accessList.length) {
+        return '<div class="empty compact-empty">No inbound services are available to this client yet. Run provisioning and select service instances.</div>';
+      }
+      return `
+        <div class="client-inbound-grid">
+          ${accessList.map((access) => {
+            const inbound = serviceAccessInboundInfo(access);
+            return `
+              <article class="client-inbound-card">
+                <div>
+                  <strong>${escapeHTML(inbound.serviceLabel)}</strong>
+                  <small>${escapeHTML(inbound.instanceName)}</small>
+                </div>
+                <div class="client-inbound-meta">
+                  <span>${escapeHTML(inbound.nodeName)} · ${escapeHTML(inbound.nodeRole)}</span>
+                  <code>${escapeHTML(inbound.endpoint)}</code>
+                </div>
+                <div class="client-status-cluster">
+                  ${statusTag(access.status || 'unknown')}
+                  ${statusTag(inbound.availability || (inbound.available ? 'available' : 'disabled'))}
+                </div>
+              </article>`;
+          }).join('')}
+        </div>`;
+    }
+
     async function openClientAccessesModal(clientID) {
       const client = findClient(clientID);
       if (!client) return;
@@ -635,17 +690,27 @@
         const artifactList = Array.isArray(artifacts) ? artifacts : [];
         const shareLinkList = Array.isArray(shareLinks) ? shareLinks : [];
         const accessOptions = accessList.map((access) => {
-          const instance = findInstance(access.instance_id);
-          return `<option value="${escapeHTML(access.id)}">${escapeHTML(instance?.name || access.instance_id)} - ${escapeHTML(access.status || 'unknown')}</option>`;
+          const inbound = serviceAccessInboundInfo(access);
+          return `<option value="${escapeHTML(access.id)}">${escapeHTML(inbound.serviceLabel)} - ${escapeHTML(inbound.endpoint)} - ${escapeHTML(access.status || 'unknown')}</option>`;
         }).join('');
         el('modalBody').innerHTML = `
           <div id="clientAccessRotateResult" class="form-result"></div>
           ${renderClientAccessOverview(client, accessList, routeList, artifactList, shareLinkList)}
+          <section class="table-card compact-card client-inbound-section">
+            <div class="table-head">
+              <div>
+                <h2>Inbound services</h2>
+                <p class="table-subtitle">Service entrypoints this client is allowed to use after provisioning.</p>
+              </div>
+              <span class="tag">${escapeHTML(String(accessList.length))}</span>
+            </div>
+            ${renderInboundServiceCards(accessList)}
+          </section>
           <section class="table-card compact-card">
             <div class="table-head"><h2>Service Accesses</h2><span class="tag">${escapeHTML(String(accessList.length))}</span></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>Instance</th><th>Service</th><th>Endpoint</th><th>Status</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Inbound</th><th>Service</th><th>Node</th><th>Endpoint</th><th>Status</th><th>Actions</th></tr></thead>
                 <tbody>${renderServiceAccessRows(accessList, clientID)}</tbody>
               </table>
             </div>

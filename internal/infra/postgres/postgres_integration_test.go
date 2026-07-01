@@ -165,12 +165,20 @@ func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	if len(accesses) != 1 || accesses[0].Status != "pending" || accesses[0].InstanceID != instance.ID {
 		t.Fatalf("service accesses = %#v, want one pending access for instance", accesses)
 	}
+	inbound, _ := accesses[0].Metadata["inbound_service"].(map[string]any)
+	if inbound["service_code"] != "wireguard" || inbound["node_id"] != node.ID || inbound["endpoint_port"] == nil {
+		t.Fatalf("service access inbound metadata = %#v, want service/node/endpoint snapshot", inbound)
+	}
 	routes, err := store.ListClientAccessRoutes(ctx, client.ID)
 	if err != nil {
 		t.Fatalf("list client access routes: %v", err)
 	}
 	if len(routes) != 1 || routes[0].ServiceAccessID == nil || routes[0].NodeID == nil || *routes[0].NodeID != node.ID {
 		t.Fatalf("client access routes = %#v, want one baseline route for node", routes)
+	}
+	routeInbound, _ := routes[0].Metadata["inbound"].(map[string]any)
+	if routeInbound["service_code"] != "wireguard" || routeInbound["instance_id"] != instance.ID {
+		t.Fatalf("baseline route inbound metadata = %#v, want service snapshot", routeInbound)
 	}
 
 	workerJob, ok, err := store.ClaimJob(ctx, "integration-worker")
@@ -205,6 +213,15 @@ func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	}
 	if routeCount, ok := agentRouteJob.Payload["route_count"].(float64); !ok || int(routeCount) != 1 {
 		t.Fatalf("route policy route_count = %#v, want 1", agentRouteJob.Payload["route_count"])
+	}
+	payloadRoutes, _ := agentRouteJob.Payload["routes"].([]any)
+	if len(payloadRoutes) != 1 {
+		t.Fatalf("route policy routes = %#v, want one route", agentRouteJob.Payload["routes"])
+	}
+	payloadRoute, _ := payloadRoutes[0].(map[string]any)
+	payloadInbound, _ := payloadRoute["inbound_service"].(map[string]any)
+	if payloadInbound["service_code"] != "wireguard" || payloadInbound["instance_id"] != instance.ID {
+		t.Fatalf("route policy inbound_service = %#v, want service snapshot", payloadInbound)
 	}
 }
 

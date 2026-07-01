@@ -64,3 +64,58 @@ func TestBuildShadowsocksArtifactsUsesManagedAccountFallback(t *testing.T) {
 		t.Fatalf("artifact body = %q, want managed account endpoint", body)
 	}
 }
+
+func TestBuildXrayArtifactsIncludesVLESSClientProfile(t *testing.T) {
+	record := domain.ProvisioningAccess{
+		Access: domain.ServiceAccess{
+			ID: "access-xray",
+			Metadata: map[string]any{
+				"xray_uuid": "3c917b7e-4cf7-48f9-95bf-0f0a35f82b93",
+				"inbound_service": map[string]any{
+					"service_code":  "xray-core",
+					"service_label": "Xray VLESS",
+					"endpoint":      "vpn.example.test:443",
+				},
+			},
+		},
+		Client: domain.Client{ID: "client-1", Username: "client-one", Email: "client@example.test"},
+		Instance: domain.Instance{
+			ID:           "instance-1",
+			Name:         "edge-vless",
+			Slug:         "edge-vless",
+			ServiceCode:  "xray-core",
+			EndpointHost: "vpn.example.test",
+			EndpointPort: 443,
+			Spec: map[string]any{
+				"security":           "reality",
+				"network":            "tcp",
+				"server_name":        "vpn.example.test",
+				"fingerprint":        "chrome",
+				"reality_public_key": "public-key-value",
+				"short_id":           "0123456789abcdef",
+				"flow":               "xtls-rprx-vision",
+			},
+		},
+	}
+
+	files, err := buildXrayArtifacts(record)
+	if err != nil {
+		t.Fatalf("build xray artifacts: %v", err)
+	}
+	if len(files) != 1 || files[0].ArtifactType != "vless_url" {
+		t.Fatalf("files = %#v, want one vless_url artifact", files)
+	}
+	body := string(files[0].Content)
+	for _, want := range []string{
+		"VLESS client access",
+		"vless://3c917b7e-4cf7-48f9-95bf-0f0a35f82b93@vpn.example.test:443?",
+		"Reality public key: public-key-value",
+		"Client JSON:",
+		`"protocol": "vless"`,
+		`"inbound_service"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("artifact body missing %q:\n%s", want, body)
+		}
+	}
+}

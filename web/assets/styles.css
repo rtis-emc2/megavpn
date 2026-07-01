@@ -1649,6 +1649,50 @@ tr:hover td { background: #f8fafc; }
   gap: 10px;
   margin-bottom: 16px;
 }
+.client-inbound-section {
+  margin-bottom: 16px;
+}
+.client-inbound-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 16px;
+}
+.client-inbound-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+.client-inbound-card strong,
+.client-inbound-card small,
+.client-inbound-meta span,
+.client-inbound-meta code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.client-inbound-card strong {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.2;
+}
+.client-inbound-card small,
+.client-inbound-meta span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.client-inbound-meta {
+  display: grid;
+  gap: 4px;
+}
+.client-inbound-meta code {
+  color: var(--text);
+  font-size: 12px;
+}
 .compact-empty {
   padding: 14px;
 }
@@ -3052,6 +3096,7 @@ tr:hover td { background: #f8fafc; }
   .client-summary-grid,
   .client-workflow-strip,
   .client-access-overview,
+  .client-inbound-grid,
   .pool-summary-grid,
   .pool-space-grid,
   .pack-create-summary,
@@ -3153,6 +3198,7 @@ tr:hover td { background: #f8fafc; }
   .client-workflow-strip,
   .client-provision-choice-grid,
   .client-access-overview,
+  .client-inbound-grid,
   .pack-create-form-grid,
   .pack-create-summary,
   .pack-component-grid {
