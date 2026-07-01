@@ -13,6 +13,9 @@ import (
 
 type firewallStore interface {
 	FirewallInventory(context.Context) (domain.FirewallInventory, error)
+	CreateFirewallPolicy(context.Context, domain.FirewallPolicy) (domain.FirewallPolicy, error)
+	UpdateFirewallPolicy(context.Context, string, domain.FirewallPolicy) (domain.FirewallPolicy, error)
+	DeleteFirewallPolicy(context.Context, string) (domain.FirewallPolicy, error)
 	CreateFirewallAddressList(context.Context, domain.FirewallAddressList) (domain.FirewallAddressList, error)
 	UpdateFirewallAddressList(context.Context, string, domain.FirewallAddressList) (domain.FirewallAddressList, error)
 	DeleteFirewallAddressList(context.Context, string) (domain.FirewallAddressList, error)
@@ -51,6 +54,69 @@ func (s *Server) listFirewallInventory(w nethttp.ResponseWriter, r *nethttp.Requ
 		return
 	}
 	writeJSON(w, 200, inventory)
+}
+
+func (s *Server) createFirewallPolicy(w nethttp.ResponseWriter, r *nethttp.Request) {
+	store, ok := s.store.(firewallStore)
+	if !ok {
+		writeErr(w, 501, "firewall catalog is not supported")
+		return
+	}
+	var req domain.FirewallPolicy
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid firewall policy payload")
+		return
+	}
+	created, err := store.CreateFirewallPolicy(r.Context(), req)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if authCtx, ok := authFromRequest(r); ok {
+		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "firewall.policy.create", "firewall", &created.ID, "firewall policy created: "+created.Key)
+	}
+	writeJSON(w, 201, created)
+}
+
+func (s *Server) updateFirewallPolicy(w nethttp.ResponseWriter, r *nethttp.Request) {
+	store, ok := s.store.(firewallStore)
+	if !ok {
+		writeErr(w, 501, "firewall catalog is not supported")
+		return
+	}
+	policyID := strings.TrimSpace(r.PathValue("id"))
+	var req domain.FirewallPolicy
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid firewall policy payload")
+		return
+	}
+	updated, err := store.UpdateFirewallPolicy(r.Context(), policyID, req)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if authCtx, ok := authFromRequest(r); ok {
+		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "firewall.policy.update", "firewall", &updated.ID, "firewall policy updated: "+updated.Key)
+	}
+	writeJSON(w, 200, updated)
+}
+
+func (s *Server) deleteFirewallPolicy(w nethttp.ResponseWriter, r *nethttp.Request) {
+	store, ok := s.store.(firewallStore)
+	if !ok {
+		writeErr(w, 501, "firewall catalog is not supported")
+		return
+	}
+	policyID := strings.TrimSpace(r.PathValue("id"))
+	deleted, err := store.DeleteFirewallPolicy(r.Context(), policyID)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if authCtx, ok := authFromRequest(r); ok {
+		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "firewall.policy.delete", "firewall", &deleted.ID, "firewall policy deleted: "+deleted.Key)
+	}
+	writeJSON(w, 200, deleted)
 }
 
 func (s *Server) createFirewallAddressList(w nethttp.ResponseWriter, r *nethttp.Request) {

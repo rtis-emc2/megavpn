@@ -83,12 +83,13 @@
       const rules = rulesForPolicy(policy.id);
       const canManage = hasPermission('firewall.manage');
       const canApply = hasPermission('firewall.apply');
+      const protectedPolicy = policy.key === 'control_plane_default' || policy.key === 'node_base';
       return `
         <article class="firewall-policy-card">
           <div class="firewall-policy-head">
             <div>
               <h3>${escapeHTML(policy.label || policy.key)}</h3>
-              <div class="metric-caption"><code>${escapeHTML(policy.key || policy.id)}</code> · ${escapeHTML(policy.scope || 'node')}</div>
+              <div class="metric-caption"><code>${escapeHTML(policy.key || policy.id)}</code> · ${escapeHTML(policy.scope || 'node')}${policy.node_name ? ` · ${escapeHTML(policy.node_name)}` : ''}</div>
             </div>
             ${statusTag(policy.status || 'unknown')}
           </div>
@@ -108,8 +109,10 @@
               </div>`).join('') : '<div class="empty compact">No rules configured. Default accept remains active.</div>'}
           </div>
           <div class="pool-actions">
+            <button class="secondary-btn firewall-edit-policy-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canManage ? '' : ' disabled'}>Edit policy</button>
             <button class="secondary-btn firewall-add-rule-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canManage ? '' : ' disabled'}>Add rule</button>
             <button class="primary-btn firewall-apply-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canApply ? '' : ' disabled'}>Apply to node</button>
+            <button class="danger-btn firewall-delete-policy-btn" type="button" data-policy-id="${escapeHTML(policy.id)}" data-policy-name="${escapeHTML(policy.label || policy.key)}"${canManage && !protectedPolicy ? '' : ' disabled'}>Delete</button>
           </div>
         </article>`;
     }
@@ -117,7 +120,7 @@
     function renderAddressLists() {
       const inv = inventory();
       if (!inv.lists.length) {
-        return '<tr><td colspan="5"><div class="empty">No address lists configured.</div></td></tr>';
+        return `<tr><td colspan="5"><div class="empty">No address lists configured.${hasPermission('firewall.manage') ? ' Create a list before adding source or destination matchers.' : ''}</div></td></tr>`;
       }
       return inv.lists.map((list) => `
         <tr>
@@ -138,7 +141,7 @@
     function renderEntryRows() {
       const inv = inventory();
       if (!inv.entries.length) {
-        return '<tr><td colspan="6"><div class="empty">No address entries configured.</div></td></tr>';
+        return `<tr><td colspan="6"><div class="empty">No address entries configured.${hasPermission('firewall.manage') ? ' Add entries to reusable address lists.' : ''}</div></td></tr>`;
       }
       return inv.entries.map((entry) => {
         const list = addressListByID(entry.list_id);
@@ -162,7 +165,7 @@
     function renderRuleRows() {
       const inv = inventory();
       if (!inv.rules.length) {
-        return '<tr><td colspan="9"><div class="empty">No firewall rules configured.</div></td></tr>';
+        return `<tr><td colspan="9"><div class="empty">No firewall rules configured.${hasPermission('firewall.manage') ? ' Create a policy rule or keep default accept.' : ''}</div></td></tr>`;
       }
       return inv.rules.map((rule) => {
         const policy = policyByID(rule.policy_id);
@@ -230,6 +233,38 @@
         </nav>`;
     }
 
+    function renderActionBoard(inv) {
+      const canManage = hasPermission('firewall.manage');
+      const canApply = hasPermission('firewall.apply');
+      const firstPolicy = inv.policies.find((policy) => policy.key === 'node_base') || inv.policies[0] || {};
+      const firstNode = (state.nodes || [])[0] || {};
+      const applyDisabled = !firstPolicy.id || !firstNode.id;
+      if (!canManage && !canApply) {
+        return `
+          <section class="section-card firewall-action-board">
+            <div>
+              <h3>Read-only firewall catalog</h3>
+              <p>Your current role can inspect policies, rules and node state, but cannot change or apply firewall configuration.</p>
+            </div>
+            <div class="tag">missing firewall.manage / firewall.apply</div>
+          </section>`;
+      }
+      return `
+        <section class="section-card firewall-action-board">
+          <div>
+            <h3>Build firewall policy</h3>
+            <p>Create reusable address lists, attach entries, define ordered rules, then apply a policy to selected nodes.</p>
+          </div>
+          <div class="inline-actions">
+            ${canManage ? '<button class="primary-btn" id="addFirewallPolicyBtnTop" type="button">Create policy</button>' : ''}
+            ${canManage ? '<button class="secondary-btn" id="addFirewallListBtnTop" type="button">Create address list</button>' : ''}
+            ${canManage ? '<button class="secondary-btn" id="addFirewallEntryBtnTop" type="button">Add address entry</button>' : ''}
+            ${canManage ? '<button class="secondary-btn" id="addFirewallRuleBtnTop" type="button">Create rule</button>' : ''}
+            ${canApply ? `<button class="secondary-btn firewall-apply-quick-btn" type="button" data-policy-id="${escapeHTML(firstPolicy.id || '')}" data-node-id="${escapeHTML(firstNode.id || '')}"${applyDisabled ? ' disabled' : ''}>Apply to node</button>` : ''}
+          </div>
+        </section>`;
+    }
+
     function renderPolicySection(inv) {
       return `
         <section class="table-card">
@@ -240,11 +275,11 @@
             </div>
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(inv.policies.length))} policies</span>
-              ${hasPermission('firewall.manage') ? '<button class="secondary-btn" id="addFirewallListBtn" type="button">Add address list</button><button class="secondary-btn" id="addFirewallRuleBtn" type="button">Add rule</button>' : ''}
+              ${hasPermission('firewall.manage') ? '<button class="secondary-btn" id="addFirewallPolicyBtn" type="button">Add policy</button><button class="secondary-btn" id="addFirewallListBtn" type="button">Add address list</button><button class="secondary-btn" id="addFirewallRuleBtn" type="button">Add rule</button>' : ''}
             </div>
           </div>
           <div class="firewall-policy-grid">
-            ${inv.policies.length ? inv.policies.map(renderPolicyCard).join('') : '<div class="empty">No firewall policies configured.</div>'}
+            ${inv.policies.length ? inv.policies.map(renderPolicyCard).join('') : `<div class="empty">No firewall policies configured.${hasPermission('firewall.manage') ? ' Create a policy first, then add rules to it.' : ''}</div>`}
           </div>
         </section>`;
     }
@@ -347,6 +382,7 @@
               <span class="tag">${escapeHTML(String(inv.entries.length))} address entries</span>
             </div>
           </section>
+          ${renderActionBoard(inv)}
           ${renderTabs(inv)}
           <div class="firewall-tab-panel bounded-stack" data-firewall-panel="overview"${active === 'overview' ? '' : ' hidden'}>${renderOverview(inv)}</div>
           <div class="firewall-tab-panel bounded-stack" data-firewall-panel="policies"${active === 'policies' ? '' : ' hidden'}>${renderPolicySection(inv)}</div>
@@ -377,12 +413,23 @@
     }
 
     function bindActions() {
+      document.getElementById('addFirewallPolicyBtnTop')?.addEventListener('click', () => openPolicyModal(''));
+      document.getElementById('addFirewallListBtnTop')?.addEventListener('click', openAddressListModal);
+      document.getElementById('addFirewallEntryBtnTop')?.addEventListener('click', () => openAddressEntryModal(''));
+      document.getElementById('addFirewallRuleBtnTop')?.addEventListener('click', () => openRuleModal(''));
+      document.getElementById('addFirewallPolicyBtn')?.addEventListener('click', () => openPolicyModal(''));
       document.getElementById('addFirewallListBtn')?.addEventListener('click', openAddressListModal);
       document.getElementById('addFirewallRuleBtn')?.addEventListener('click', () => openRuleModal(''));
       document.getElementById('addFirewallListBtnAddress')?.addEventListener('click', openAddressListModal);
       document.getElementById('addFirewallRuleBtnRules')?.addEventListener('click', () => openRuleModal(''));
       document.querySelectorAll('.firewall-add-rule-btn').forEach((button) => {
         button.addEventListener('click', () => openRuleModal(button.dataset.policyId || ''));
+      });
+      document.querySelectorAll('.firewall-edit-policy-btn').forEach((button) => {
+        button.addEventListener('click', () => openPolicyModal(button.dataset.policyId || ''));
+      });
+      document.querySelectorAll('.firewall-delete-policy-btn').forEach((button) => {
+        button.addEventListener('click', () => openDeletePolicyModal(button.dataset.policyId || '', button.dataset.policyName || 'policy'));
       });
       document.querySelectorAll('.firewall-add-entry-btn').forEach((button) => {
         button.addEventListener('click', () => openAddressEntryModal(button.dataset.listId || ''));
@@ -411,6 +458,46 @@
       document.querySelectorAll('.firewall-node-apply-btn').forEach((button) => {
         button.addEventListener('click', () => openApplyModal('', button.dataset.nodeId || ''));
       });
+      document.querySelectorAll('.firewall-apply-quick-btn').forEach((button) => {
+        button.addEventListener('click', () => openApplyModal(button.dataset.policyId || '', button.dataset.nodeId || ''));
+      });
+    }
+
+    function openPolicyModal(policyID = '') {
+      const policy = policyByID(policyID) || {};
+      const editing = Boolean(policy.id);
+      const selectedNodeID = policy.node_id || '';
+      openModal(editing ? `Edit policy: ${policy.label || policy.key}` : 'Create firewall policy', 'Firewall policy', `
+        <form id="firewallPolicyForm" class="form-grid" data-policy-id="${escapeHTML(policy.id || '')}">
+          <div class="field"><label>Name</label><input name="label" required placeholder="Production node baseline" value="${escapeHTML(policy.label || '')}" /></div>
+          <div class="field"><label>Key</label><input name="key" placeholder="production_node_baseline" value="${escapeHTML(policy.key || '')}" /><small>Leave empty to generate from name.</small></div>
+          <div class="field"><label>Scope</label><select name="scope" id="firewallPolicyScope">
+            ${selectOption('node', policy.scope || 'node', 'node')}
+            ${selectOption('control_plane', policy.scope || 'node', 'control plane')}
+            ${selectOption('template', policy.scope || 'node', 'template')}
+          </select></div>
+          <div class="field"><label>Target node</label><select name="node_id" id="firewallPolicyNodeID">
+            <option value="">all nodes / generic policy</option>
+            ${(state.nodes || []).map((node) => `<option value="${escapeHTML(node.id)}"${node.id === selectedNodeID ? ' selected' : ''}>${escapeHTML(node.name || node.id)} · ${escapeHTML(node.role || 'node')} · ${escapeHTML(node.address || 'n/a')}</option>`).join('')}
+          </select><small>Only used for node-scoped policy.</small></div>
+          <div class="field"><label>Default input</label><select name="default_input_policy">${defaultPolicyOptions(policy.default_input_policy || 'accept')}</select></div>
+          <div class="field"><label>Default forward</label><select name="default_forward_policy">${defaultPolicyOptions(policy.default_forward_policy || 'accept')}</select></div>
+          <div class="field"><label>Default output</label><select name="default_output_policy">${defaultPolicyOptions(policy.default_output_policy || 'accept')}</select></div>
+          <div class="field"><label>Status</label><select name="status">${selectOption('active', policy.status || 'active')}${selectOption('disabled', policy.status || 'active')}</select></div>
+          <div class="field full"><label>Description</label><textarea name="description" rows="3" placeholder="What this policy protects and where it should be applied">${escapeHTML(policy.description || '')}</textarea></div>
+          <div class="notice field full">Default chain policy is catalog metadata in this release. Explicit rules are applied to managed chains; strict default enforcement remains controlled by rollout policy.</div>
+          <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save policy' : 'Create policy'}</button><button class="secondary-btn" type="button" id="cancelFirewallPolicyBtn">Cancel</button></div>
+        </form>
+        <div id="firewallPolicyResult" class="form-result"></div>`, { wide: true });
+      document.getElementById('cancelFirewallPolicyBtn')?.addEventListener('click', closeModal);
+      document.getElementById('firewallPolicyForm')?.addEventListener('submit', submitPolicy);
+      const syncNodeSelect = () => {
+        const scope = String(document.getElementById('firewallPolicyScope')?.value || 'node');
+        const nodeSelect = document.getElementById('firewallPolicyNodeID');
+        if (nodeSelect) nodeSelect.disabled = scope !== 'node';
+      };
+      document.getElementById('firewallPolicyScope')?.addEventListener('change', syncNodeSelect);
+      syncNodeSelect();
     }
 
     function openAddressListModal(listID = '') {
@@ -438,6 +525,17 @@
 
     function openAddressEntryModal(listID, entryID = '') {
       const lists = inventory().lists;
+      if (!lists.length) {
+        openModal('Create address list first', 'Firewall address list', `
+          <p class="notice">Address entries belong to a named address list. Create the list, then add CIDR, IP range, address or DNS entries to it.</p>
+          <div class="inline-actions">
+            <button class="primary-btn" id="createFirewallListFromEntryBtn" type="button">Create address list</button>
+            <button class="secondary-btn" id="cancelFirewallEntryBtn" type="button">Cancel</button>
+          </div>`);
+        document.getElementById('createFirewallListFromEntryBtn')?.addEventListener('click', () => openAddressListModal(''));
+        document.getElementById('cancelFirewallEntryBtn')?.addEventListener('click', closeModal);
+        return;
+      }
       const entry = entryByID(entryID) || {};
       const editing = Boolean(entry.id);
       const selected = addressListByID(listID) || lists[0] || {};
@@ -457,6 +555,17 @@
 
     function openRuleModal(policyID, ruleID = '') {
       const inv = inventory();
+      if (!inv.policies.length) {
+        openModal('Create policy first', 'Firewall rule', `
+          <p class="notice">Firewall rules must belong to a policy. Create a policy first, then add ordered rules to it.</p>
+          <div class="inline-actions">
+            <button class="primary-btn" id="createFirewallPolicyFromRuleBtn" type="button">Create policy</button>
+            <button class="secondary-btn" id="cancelFirewallRuleBtn" type="button">Cancel</button>
+          </div>`);
+        document.getElementById('createFirewallPolicyFromRuleBtn')?.addEventListener('click', () => openPolicyModal(''));
+        document.getElementById('cancelFirewallRuleBtn')?.addEventListener('click', closeModal);
+        return;
+      }
       const rule = ruleByID(ruleID) || {};
       const editing = Boolean(rule.id);
       const selected = policyByID(policyID || rule.policy_id) || inv.policies[0] || {};
@@ -513,6 +622,18 @@
       document.getElementById('confirmFirewallListDeleteBtn')?.addEventListener('click', () => deleteAddressList(listID));
     }
 
+    function openDeletePolicyModal(policyID, label) {
+      openModal(`Delete policy: ${label || policyID}`, 'Firewall', `
+        <p class="danger-text">Policy deletion also removes its catalog rules. It is blocked while a node still references this policy state.</p>
+        <div class="inline-actions">
+          <button class="danger-btn" id="confirmFirewallPolicyDeleteBtn" type="button">Delete policy</button>
+          <button class="secondary-btn" id="cancelFirewallPolicyDeleteBtn" type="button">Cancel</button>
+        </div>
+        <div id="firewallDeleteResult" class="form-result"></div>`);
+      document.getElementById('cancelFirewallPolicyDeleteBtn')?.addEventListener('click', closeModal);
+      document.getElementById('confirmFirewallPolicyDeleteBtn')?.addEventListener('click', () => deletePolicy(policyID));
+    }
+
     function openDeleteAddressEntryModal(listID, entryID, value) {
       openModal(`Delete address entry: ${value || entryID}`, 'Firewall', `
         <p class="danger-text">Rules that use this address list will no longer match this value after the next apply.</p>
@@ -536,6 +657,18 @@
         <div id="firewallDeleteResult" class="form-result"></div>`);
       document.getElementById('cancelFirewallRuleDeleteBtn')?.addEventListener('click', closeModal);
       document.getElementById('confirmFirewallRuleDeleteBtn')?.addEventListener('click', () => deleteRule(policyID, ruleID));
+    }
+
+    async function deletePolicy(policyID) {
+      const result = document.getElementById('firewallDeleteResult');
+      if (result) result.innerHTML = '<span class="tag warn">deleting</span>';
+      try {
+        await sendJSON(`/api/v1/firewall/policies/${encodeURIComponent(policyID)}`, 'DELETE', null);
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
     }
 
     async function deleteAddressList(listID) {
@@ -567,6 +700,38 @@
       if (result) result.innerHTML = '<span class="tag warn">deleting</span>';
       try {
         await sendJSON(`/api/v1/firewall/policies/${encodeURIComponent(policyID)}/rules/${encodeURIComponent(ruleID)}`, 'DELETE', null);
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function submitPolicy(event) {
+      event.preventDefault();
+      const policyID = String(event.currentTarget?.dataset?.policyId || '').trim();
+      const form = new FormData(event.currentTarget);
+      const result = document.getElementById('firewallPolicyResult');
+      if (result) result.innerHTML = `<span class="tag warn">${policyID ? 'saving' : 'creating'}</span>`;
+      try {
+        const scope = String(form.get('scope') || 'node').trim();
+        const nodeID = scope === 'node' ? String(form.get('node_id') || '').trim() : '';
+        const payload = {
+          key: String(form.get('key') || '').trim(),
+          label: String(form.get('label') || '').trim(),
+          description: String(form.get('description') || '').trim(),
+          scope,
+          node_id: nodeID || null,
+          default_input_policy: String(form.get('default_input_policy') || 'accept').trim(),
+          default_forward_policy: String(form.get('default_forward_policy') || 'accept').trim(),
+          default_output_policy: String(form.get('default_output_policy') || 'accept').trim(),
+          status: String(form.get('status') || 'active').trim(),
+        };
+        if (policyID) {
+          await sendJSON(`/api/v1/firewall/policies/${encodeURIComponent(policyID)}`, 'PUT', payload);
+        } else {
+          await sendJSON('/api/v1/firewall/policies', 'POST', payload);
+        }
         closeModal();
         await refresh();
       } catch (err) {
@@ -706,6 +871,14 @@
         options.push(`<option value="${escapeHTML(list.id)}"${list.id === selectedID ? ' selected' : ''}>${escapeHTML(list.label || list.key)} · ${escapeHTML(list.key || list.id)}</option>`);
       }
       return options.join('');
+    }
+
+    function defaultPolicyOptions(selected) {
+      return [
+        selectOption('accept', selected),
+        selectOption('drop', selected),
+        selectOption('reject', selected),
+      ].join('');
     }
 
     return { render };

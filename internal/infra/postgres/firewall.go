@@ -65,6 +65,103 @@ func (s *Store) FirewallInventory(ctx context.Context) (domain.FirewallInventory
 	}, nil
 }
 
+func (s *Store) CreateFirewallPolicy(ctx context.Context, input domain.FirewallPolicy) (domain.FirewallPolicy, error) {
+	policy, err := normalizeFirewallPolicy(input, domain.FirewallPolicy{})
+	if err != nil {
+		return domain.FirewallPolicy{}, err
+	}
+	nodeID := nullableFirewallID(policy.NodeID)
+	row := s.db.QueryRow(ctx, `with inserted as (
+insert into firewall_policies(id,key,label,description,scope,node_id,default_input_policy,default_forward_policy,default_output_policy,status,created_at,updated_at)
+values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),now())
+returning id,key,label,description,scope,node_id,default_input_policy,default_forward_policy,default_output_policy,status,created_at,updated_at
+)
+select p.id,p.key,p.label,p.description,p.scope,coalesce(p.node_id::text,''),coalesce(n.name,''),p.default_input_policy,p.default_forward_policy,p.default_output_policy,p.status,0,p.created_at,p.updated_at
+from inserted p
+left join nodes n on n.id=p.node_id`,
+		id.New(), policy.Key, policy.Label, policy.Description, policy.Scope, nodeID,
+		policy.DefaultInputPolicy, policy.DefaultForwardPolicy, policy.DefaultOutputPolicy, policy.Status)
+	created, err := scanFirewallPolicy(row)
+	if err != nil {
+		return domain.FirewallPolicy{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "firewall.policy.create", "firewall", &created.ID, "firewall policy created: "+created.Key)
+	return created, nil
+}
+
+func (s *Store) UpdateFirewallPolicy(ctx context.Context, policyID string, input domain.FirewallPolicy) (domain.FirewallPolicy, error) {
+	policyID = strings.TrimSpace(policyID)
+	if policyID == "" {
+		return domain.FirewallPolicy{}, fmt.Errorf("firewall policy id is required")
+	}
+	current, err := s.getFirewallPolicy(ctx, policyID)
+	if err != nil {
+		return domain.FirewallPolicy{}, err
+	}
+	policy, err := normalizeFirewallPolicy(input, current)
+	if err != nil {
+		return domain.FirewallPolicy{}, err
+	}
+	nodeID := nullableFirewallID(policy.NodeID)
+	row := s.db.QueryRow(ctx, `with updated as (
+update firewall_policies
+set key=$2,label=$3,description=$4,scope=$5,node_id=$6,default_input_policy=$7,default_forward_policy=$8,default_output_policy=$9,status=$10,updated_at=now()
+where id=$1 and status <> 'deleted'
+returning id,key,label,description,scope,node_id,default_input_policy,default_forward_policy,default_output_policy,status,created_at,updated_at
+)
+select p.id,p.key,p.label,p.description,p.scope,coalesce(p.node_id::text,''),coalesce(n.name,''),p.default_input_policy,p.default_forward_policy,p.default_output_policy,p.status,
+	(select count(*) from firewall_rules r where r.policy_id=p.id and r.status <> 'deleted')::int,
+	p.created_at,p.updated_at
+from updated p
+left join nodes n on n.id=p.node_id`,
+		current.ID, policy.Key, policy.Label, policy.Description, policy.Scope, nodeID,
+		policy.DefaultInputPolicy, policy.DefaultForwardPolicy, policy.DefaultOutputPolicy, policy.Status)
+	updated, err := scanFirewallPolicy(row)
+	if err != nil {
+		return domain.FirewallPolicy{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "firewall.policy.update", "firewall", &updated.ID, "firewall policy updated: "+updated.Key)
+	return updated, nil
+}
+
+func (s *Store) DeleteFirewallPolicy(ctx context.Context, policyID string) (domain.FirewallPolicy, error) {
+	policyID = strings.TrimSpace(policyID)
+	if policyID == "" {
+		return domain.FirewallPolicy{}, fmt.Errorf("firewall policy id is required")
+	}
+	current, err := s.getFirewallPolicy(ctx, policyID)
+	if err != nil {
+		return domain.FirewallPolicy{}, err
+	}
+	if in(current.Key, "control_plane_default", "node_base") {
+		return domain.FirewallPolicy{}, fmt.Errorf("baseline firewall policy cannot be deleted")
+	}
+	var refs int
+	if err := s.db.QueryRow(ctx, `select count(*)::int from firewall_node_state where policy_id=$1`, current.ID).Scan(&refs); err != nil {
+		return domain.FirewallPolicy{}, err
+	}
+	if refs > 0 {
+		return domain.FirewallPolicy{}, fmt.Errorf("firewall policy is assigned to %d node state record(s); apply another policy before deleting it", refs)
+	}
+	row := s.db.QueryRow(ctx, `with deleted_rules as (
+	update firewall_rules set status='deleted',enabled=false,updated_at=now() where policy_id=$1 and status <> 'deleted'
+), deleted_policy as (
+	update firewall_policies
+	set key=$2,status='deleted',updated_at=now()
+	where id=$1 and status <> 'deleted'
+	returning id,key,label,description,scope,node_id,default_input_policy,default_forward_policy,default_output_policy,status,created_at,updated_at
+)
+select p.id,p.key,p.label,p.description,p.scope,coalesce(p.node_id::text,''),coalesce(n.name,''),p.default_input_policy,p.default_forward_policy,p.default_output_policy,p.status,0,p.created_at,p.updated_at
+from deleted_policy p
+left join nodes n on n.id=p.node_id`, current.ID, archivedFirewallKey(current.Key, current.ID))
+	deleted, err := scanFirewallPolicy(row)
+	if err != nil {
+		return domain.FirewallPolicy{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "firewall.policy.delete", "firewall", &deleted.ID, "firewall policy deleted: "+current.Key)
+	return deleted, nil
+}
+
 func (s *Store) CreateFirewallAddressList(ctx context.Context, input domain.FirewallAddressList) (domain.FirewallAddressList, error) {
 	input.Key = strings.ToLower(strings.TrimSpace(input.Key))
 	input.Label = strings.TrimSpace(input.Label)
@@ -144,10 +241,10 @@ func (s *Store) DeleteFirewallAddressList(ctx context.Context, listID string) (d
 	row := s.db.QueryRow(ctx, `with deleted_entries as (
 	update firewall_address_entries set status='deleted',updated_at=now() where list_id=$1 and status <> 'deleted'
 ), deleted_list as (
-	update firewall_address_lists set status='deleted',updated_at=now() where id=$1 and status <> 'deleted'
+	update firewall_address_lists set key=$2,status='deleted',updated_at=now() where id=$1 and status <> 'deleted'
 	returning id,key,label,description,scope,status,created_at,updated_at
 )
-select id,key,label,description,scope,status,0,created_at,updated_at from deleted_list`, current.ID)
+select id,key,label,description,scope,status,0,created_at,updated_at from deleted_list`, current.ID, archivedFirewallKey(current.Key, current.ID))
 	deleted, err := scanFirewallAddressList(row)
 	if err != nil {
 		return domain.FirewallAddressList{}, err
@@ -694,6 +791,46 @@ func scanFirewallNodeState(row firewallScanner) (domain.FirewallNodeState, error
 	return item, nil
 }
 
+func normalizeFirewallPolicy(input, current domain.FirewallPolicy) (domain.FirewallPolicy, error) {
+	policy := input
+	policy.Key = strings.ToLower(strings.TrimSpace(firewallFirst(policy.Key, current.Key)))
+	policy.Label = strings.TrimSpace(firewallFirst(policy.Label, current.Label))
+	policy.Description = strings.TrimSpace(policy.Description)
+	policy.Scope = normalizeFirewallPolicyScope(firewallFirst(policy.Scope, current.Scope))
+	var err error
+	policy.DefaultInputPolicy, err = normalizeFirewallDefaultPolicy(firewallFirst(policy.DefaultInputPolicy, current.DefaultInputPolicy, "accept"))
+	if err != nil {
+		return domain.FirewallPolicy{}, fmt.Errorf("default input policy: %w", err)
+	}
+	policy.DefaultForwardPolicy, err = normalizeFirewallDefaultPolicy(firewallFirst(policy.DefaultForwardPolicy, current.DefaultForwardPolicy, "accept"))
+	if err != nil {
+		return domain.FirewallPolicy{}, fmt.Errorf("default forward policy: %w", err)
+	}
+	policy.DefaultOutputPolicy, err = normalizeFirewallDefaultPolicy(firewallFirst(policy.DefaultOutputPolicy, current.DefaultOutputPolicy, "accept"))
+	if err != nil {
+		return domain.FirewallPolicy{}, fmt.Errorf("default output policy: %w", err)
+	}
+	policy.Status = normalizeFirewallStatus(firewallFirst(policy.Status, current.Status))
+	if policy.Label == "" {
+		return domain.FirewallPolicy{}, fmt.Errorf("firewall policy label is required")
+	}
+	if policy.Key == "" {
+		policy.Key = slugifyFirewallKey(policy.Label)
+	}
+	if !firewallKeyRE.MatchString(policy.Key) {
+		return domain.FirewallPolicy{}, fmt.Errorf("firewall policy key must use lowercase letters, numbers, dot, dash or underscore")
+	}
+	if policy.NodeID != nil {
+		nodeID := strings.TrimSpace(*policy.NodeID)
+		if nodeID == "" || policy.Scope != "node" {
+			policy.NodeID = nil
+		} else {
+			policy.NodeID = &nodeID
+		}
+	}
+	return policy, nil
+}
+
 func normalizeFirewallRule(input domain.FirewallRule) (domain.FirewallRule, error) {
 	rule := input
 	if input.Status == "" && !input.Enabled {
@@ -819,6 +956,22 @@ func normalizeFirewallScope(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func normalizeFirewallPolicyScope(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if in(value, "control_plane", "node", "template") {
+		return value
+	}
+	return "node"
+}
+
+func normalizeFirewallDefaultPolicy(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if in(value, "accept", "drop", "reject") {
+		return value, nil
+	}
+	return "", fmt.Errorf("must be accept, drop or reject")
 }
 
 func normalizeFirewallStatus(value string) string {
@@ -973,6 +1126,30 @@ func nullableFirewallID(value *string) any {
 		return nil
 	}
 	return strings.TrimSpace(*value)
+}
+
+func archivedFirewallKey(key, idValue string) string {
+	key = strings.TrimSpace(key)
+	idValue = strings.ReplaceAll(strings.TrimSpace(idValue), "-", "")
+	if idValue == "" {
+		idValue = "deleted"
+	}
+	suffix := "_deleted_" + idValue
+	if len(suffix) > 24 {
+		suffix = suffix[:24]
+	}
+	limit := 63 - len(suffix)
+	if limit < 1 {
+		limit = 1
+	}
+	if len(key) > limit {
+		key = key[:limit]
+	}
+	key = strings.Trim(key, "_.-")
+	if key == "" {
+		key = "deleted"
+	}
+	return key + suffix
 }
 
 func slugifyFirewallKey(value string) string {

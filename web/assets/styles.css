@@ -3602,6 +3602,29 @@ tr:hover td { background: #f8fafc; }
   gap: 12px;
   padding: 18px;
 }
+.firewall-action-board {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  max-width: 1320px;
+}
+.firewall-action-board h3 {
+  margin: 0 0 5px;
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.25;
+}
+.firewall-action-board p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.firewall-action-board .inline-actions {
+  justify-content: flex-end;
+}
 .firewall-policy-card {
   display: grid;
   gap: 12px;
@@ -4398,6 +4421,12 @@ tr:hover td { background: #f8fafc; }
   .firewall-policy-facts,
   .firewall-rule-preview div:not(.empty) {
     grid-template-columns: 1fr;
+  }
+  .firewall-action-board {
+    grid-template-columns: 1fr;
+  }
+  .firewall-action-board .inline-actions {
+    justify-content: flex-start;
   }
   .node-detail-list > div { grid-template-columns: 1fr; gap: 5px; }
   .instance-manage-summary { grid-template-columns: 1fr; }
