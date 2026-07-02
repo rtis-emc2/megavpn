@@ -54,12 +54,23 @@ func (s *Server) withPermission(permission string, next nethttp.Handler) nethttp
 			writeErr(w, 401, "invalid session")
 			return
 		}
-		if permission != "" && !rbac.HasPermission(authCtx.PermissionCodes, permission) {
+		if !authContextHasPermission(authCtx, permission) {
 			writeErr(w, 403, "forbidden")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, authCtx)))
 	})
+}
+
+func authContextHasPermission(authCtx domain.AuthContext, permission string) bool {
+	permission = strings.TrimSpace(permission)
+	if permission == "" {
+		return true
+	}
+	if platformUserHasRole(authCtx.RoleCodes, "superadmin") {
+		return true
+	}
+	return rbac.HasPermission(authCtx.PermissionCodes, permission)
 }
 
 func authFromRequest(r *nethttp.Request) (domain.AuthContext, bool) {

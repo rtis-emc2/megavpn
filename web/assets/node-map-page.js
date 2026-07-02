@@ -515,27 +515,29 @@
           : (activeJobSummary ? `Active jobs: ${activeJobSummary}.` : routeText);
         return `
           <article class="node-map-backhaul-card ${linkTone(status)}${busy ? ' updating' : ''}">
-            <div>
-              <span class="mini-label">Backhaul</span>
-              <h3>${escapeHTML(link.name || 'managed link')}</h3>
-              <p>${escapeHTML(ingress?.name || 'ingress pending')} -> ${escapeHTML(egress?.name || 'egress pending')}</p>
+            <div class="node-map-backhaul-head">
+              <div>
+                <span class="mini-label">Backhaul</span>
+                <h3>${escapeHTML(link.name || 'managed link')}</h3>
+                <p>${escapeHTML(ingress?.name || 'ingress pending')} -> ${escapeHTML(egress?.name || 'egress pending')}</p>
+              </div>
+              <div class="node-map-backhaul-tags">
+                ${statusTag(status)}
+                ${statusTag(backhaulDriver(link))}
+                ${metric ? statusTag(`metric ${metric}`) : ''}
+                ${statusTag(drawable ? 'mapped' : 'waiting GeoIP')}
+              </div>
             </div>
-            <div class="node-map-backhaul-tags">
-              ${statusTag(status)}
-              ${statusTag(backhaulDriver(link))}
-              ${metric ? statusTag(`metric ${metric}`) : ''}
-              ${statusTag(drawable ? 'mapped' : 'waiting GeoIP')}
-            </div>
-            ${endpoint ? `<div class="muted-mono">${escapeHTML(endpoint)}</div>` : ''}
             ${issue ? `<div class="node-map-backhaul-issue">${escapeHTML(issue)}</div>` : ''}
-            <div class="node-map-route-control">
+            <div class="node-map-backhaul-route-row">
+              <span class="muted-mono">${escapeHTML(endpoint || 'endpoint pending')}</span>
               <label class="node-map-route-switch ${routeEnabled ? 'enabled' : 'disabled'}${busy ? ' busy' : ''}">
                 <input class="node-map-route-input" type="checkbox" data-link-id="${escapeHTML(linkID)}" ${routeEnabled ? 'checked' : ''} ${busy || typeof sendJSON !== 'function' ? 'disabled' : ''}>
                 <span></span>
                 <strong>${escapeHTML(routeEnabled ? 'Route enabled' : 'Route disabled')}</strong>
               </label>
-              <small>${escapeHTML(routeHint)}</small>
             </div>
+            <small class="node-map-route-hint">${escapeHTML(routeHint)}</small>
           </article>`;
       }).join('');
       const notice = renderRouteNotice();

@@ -18,7 +18,6 @@ import (
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/jobschema"
-	"github.com/rtis-emc2/megavpn/internal/rbac"
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
@@ -1618,7 +1617,7 @@ func (s *Server) createJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	if permission := requiredPermissionForJobType(j.Type); permission != "" {
 		authCtx, ok := authFromRequest(r)
-		if !ok || !rbac.HasPermission(authCtx.PermissionCodes, permission) {
+		if !ok || !authContextHasPermission(authCtx, permission) {
 			writeErr(w, 403, "job type requires "+permission)
 			return
 		}

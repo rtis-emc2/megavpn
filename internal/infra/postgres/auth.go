@@ -397,12 +397,19 @@ func (s *Store) ResolveAuthContext(ctx context.Context, tokenHash string) (domai
 		return out, err
 	}
 
-	permRows, err := s.db.Query(ctx, `select distinct p.code
+	var permRows pgx.Rows
+	permissionQuery := `select distinct p.code
 		from permissions p
 		join role_permissions rp on rp.permission_id=p.id
 		join platform_user_roles pur on pur.role_id=rp.role_id
 		where pur.user_id=$1
-		order by p.code`, out.User.ID)
+		order by p.code`
+	if hasRoleCode(out.RoleCodes, "superadmin") {
+		permissionQuery = `select code from permissions order by code`
+		permRows, err = s.db.Query(ctx, permissionQuery)
+	} else {
+		permRows, err = s.db.Query(ctx, permissionQuery, out.User.ID)
+	}
 	if err != nil {
 		return out, err
 	}

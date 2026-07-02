@@ -82,6 +82,7 @@
     }
 
     function hasPermission(code) {
+      if (hasRole('superadmin')) return true;
       return Array.isArray(state.authPermissions) && state.authPermissions.includes(code);
     }
 

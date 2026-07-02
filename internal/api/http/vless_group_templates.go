@@ -9,7 +9,6 @@ import (
 	nethttp "net/http"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
-	"github.com/rtis-emc2/megavpn/internal/rbac"
 )
 
 type vlessGroupTemplateCatalogStore interface {
@@ -110,7 +109,7 @@ func cloneRulesHTTP(in []map[string]any) []map[string]any {
 func (s *Server) listVLESSGroupTemplates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if truthyQuery(r, "include_inactive") {
 		authCtx, ok := authFromRequest(r)
-		if !ok || !rbac.HasPermission(authCtx.PermissionCodes, "settings.manage") {
+		if !ok || !authContextHasPermission(authCtx, "settings.manage") {
 			writeErr(w, 403, "settings.manage permission is required")
 			return
 		}

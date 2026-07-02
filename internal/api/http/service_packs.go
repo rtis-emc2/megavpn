@@ -12,7 +12,6 @@ import (
 	nethttp "net/http"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
-	"github.com/rtis-emc2/megavpn/internal/rbac"
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
@@ -282,7 +281,7 @@ func findServicePack(key string) (servicePackDefinition, bool) {
 func (s *Server) listServicePacks(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if truthyQuery(r, "include_inactive") {
 		authCtx, ok := authFromRequest(r)
-		if !ok || !rbac.HasPermission(authCtx.PermissionCodes, "settings.manage") {
+		if !ok || !authContextHasPermission(authCtx, "settings.manage") {
 			writeErr(w, 403, "settings.manage permission is required")
 			return
 		}
