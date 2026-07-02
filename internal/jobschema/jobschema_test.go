@@ -376,15 +376,17 @@ func TestNormalizeNodeBackhaulProbe(t *testing.T) {
 
 func TestNormalizeNodeBackhaulCleanup(t *testing.T) {
 	payload, err := Normalize("node.backhaul.cleanup", map[string]any{
-		"node_id":         "node-1",
-		"link_id":         "link-1",
-		"transport_id":    "transport-1",
-		"role":            "ingress",
-		"driver":          "openvpn_udp",
-		"delete_batch_id": "batch-1",
-		"systemd_units":   []any{" megavpn-backhaul-link.service "},
-		"paths":           []any{"/etc/systemd/system/megavpn-backhaul-link.service"},
-		"directories":     []any{"/etc/megavpn/backhaul/link"},
+		"node_id":                "node-1",
+		"link_id":                "link-1",
+		"transport_id":           "transport-1",
+		"role":                   "ingress",
+		"driver":                 "openvpn_udp",
+		"delete_batch_id":        "batch-1",
+		"route_disable_batch_id": " disable-batch-1 ",
+		"route_action":           "DISABLE",
+		"systemd_units":          []any{" megavpn-backhaul-link.service "},
+		"paths":                  []any{"/etc/systemd/system/megavpn-backhaul-link.service"},
+		"directories":            []any{"/etc/megavpn/backhaul/link"},
 	})
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
@@ -392,6 +394,35 @@ func TestNormalizeNodeBackhaulCleanup(t *testing.T) {
 	units, ok := payload["systemd_units"].([]string)
 	if !ok || len(units) != 1 || units[0] != "megavpn-backhaul-link.service" {
 		t.Fatalf("systemd_units = %#v, want normalized string slice", payload["systemd_units"])
+	}
+	if got := payload["route_disable_batch_id"]; got != "disable-batch-1" {
+		t.Fatalf("route_disable_batch_id = %v, want disable-batch-1", got)
+	}
+	if got := payload["route_action"]; got != "disable" {
+		t.Fatalf("route_action = %v, want disable", got)
+	}
+}
+
+func TestNormalizeNodeRoutePolicyApplyAcceptsGoRouteObjects(t *testing.T) {
+	payload, err := Normalize("node.route_policy.apply", map[string]any{
+		"node_id": "node-1",
+		"routes": []map[string]any{
+			{"route_id": "route-1", "status": "active"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	routes, ok := payload["routes"].([]any)
+	if !ok || len(routes) != 1 {
+		t.Fatalf("routes = %#v, want one normalized route object", payload["routes"])
+	}
+	if route, ok := routes[0].(map[string]any); !ok || route["route_id"] != "route-1" {
+		t.Fatalf("routes[0] = %#v, want route object", routes[0])
+	}
+
+	if _, err := Normalize("node.route_policy.apply", map[string]any{"node_id": "node-1", "routes": []any{"bad"}}); err == nil {
+		t.Fatal("expected non-object route item to be rejected")
 	}
 }
 

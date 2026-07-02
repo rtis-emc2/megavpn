@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rtis-emc2/megavpn/internal/backhaul"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
 )
@@ -222,6 +223,171 @@ func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	payloadInbound, _ := payloadRoute["inbound_service"].(map[string]any)
 	if payloadInbound["service_code"] != "wireguard" || payloadInbound["instance_id"] != instance.ID {
 		t.Fatalf("route policy inbound_service = %#v, want service snapshot", payloadInbound)
+	}
+}
+
+func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	ingress, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-ingress-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "198.51.100.10",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create ingress node: %v", err)
+	}
+	egress, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-egress-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "203.0.113.20",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create egress node: %v", err)
+	}
+	link, err := store.CreateBackhaulLink(ctx, domain.BackhaulLink{
+		Name:          "it-backhaul-" + suffix,
+		IngressNodeID: ingress.ID,
+		EgressNodeID:  egress.ID,
+		DesiredDriver: backhaul.DriverWireGuard,
+		RouteMetric:   20,
+		Metadata: map[string]any{
+			"endpoint_host": egress.Address,
+			"tunnel_cidr":   "10.240.251.0/30",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create backhaul link: %v", err)
+	}
+	if len(link.Transports) != 1 {
+		t.Fatalf("backhaul transports = %#v, want one transport", link.Transports)
+	}
+
+	applyJobs, err := store.CreateBackhaulApplyJobs(ctx, link.ID)
+	if err != nil {
+		t.Fatalf("create backhaul apply jobs: %v", err)
+	}
+	if len(applyJobs) != 2 {
+		t.Fatalf("backhaul apply jobs = %d, want ingress and egress jobs", len(applyJobs))
+	}
+	for _, job := range applyJobs {
+		role, _ := job.Payload["role"].(string)
+		if role != "ingress" && role != "egress" {
+			t.Fatalf("backhaul apply role = %#v, want ingress or egress", job.Payload["role"])
+		}
+		if err := store.CompleteJob(ctx, job.ID, "succeeded", map[string]any{
+			"link_id":      link.ID,
+			"transport_id": link.Transports[0].ID,
+			"role":         role,
+			"health":       map[string]any{"status": "healthy"},
+		}); err != nil {
+			t.Fatalf("complete %s backhaul apply job: %v", role, err)
+		}
+	}
+	activeLink, err := store.GetBackhaulLink(ctx, link.ID)
+	if err != nil {
+		t.Fatalf("get active backhaul link: %v", err)
+	}
+	if activeLink.Status != "active" || len(activeLink.Transports) != 1 || activeLink.Transports[0].Status != "active" {
+		t.Fatalf("backhaul state = link:%s transports:%#v, want active selected transport", activeLink.Status, activeLink.Transports)
+	}
+
+	client, err := store.CreateClient(ctx, domain.Client{
+		Username:    "it-route-client-" + suffix,
+		DisplayName: "Integration Route Client",
+		Email:       "it-route-client-" + suffix + "@example.invalid",
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	route, err := store.CreateClientAccessRoute(ctx, client.ID, domain.ClientAccessRoute{
+		NodeID:          &ingress.ID,
+		Name:            "remote-egress-" + suffix,
+		Status:          "active",
+		Action:          "allow",
+		DestinationType: "cidr",
+		Destination:     "0.0.0.0/0",
+		Protocol:        "any",
+		Ports:           "*",
+		Policy: map[string]any{
+			"egress_mode":    "egress_node",
+			"egress_node_id": egress.ID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create client access route: %v", err)
+	}
+	routeJob, err := store.CreateNodeRoutePolicyApplyJob(ctx, ingress.ID)
+	if err != nil {
+		t.Fatalf("create route policy job with active backhaul: %v", err)
+	}
+	routeEntry := routePolicyPayloadRoute(t, routeJob.Payload, route.ID)
+	egressProjection := routePolicyPayloadEgress(t, routeEntry)
+	if got := strings.TrimSpace(stringify(egressProjection["status"])); got != "candidate" {
+		t.Fatalf("active route egress status = %q, want candidate; egress=%#v", got, egressProjection)
+	}
+	managedBackhaul, _ := egressProjection["managed_backhaul"].(map[string]any)
+	if managedBackhaul["link_id"] != link.ID || managedBackhaul["transport_id"] != link.Transports[0].ID {
+		t.Fatalf("managed backhaul = %#v, want active link %s transport %s", managedBackhaul, link.ID, link.Transports[0].ID)
+	}
+
+	disabledLink, disableJobs, err := store.SetBackhaulRouteEnabled(ctx, link.ID, false)
+	if err != nil {
+		t.Fatalf("disable backhaul route: %v", err)
+	}
+	if disabledLink.Status != "disabled" {
+		t.Fatalf("disabled link status = %q, want disabled", disabledLink.Status)
+	}
+	var cleanupJobs int
+	var refreshJob *domain.Job
+	for idx := range disableJobs {
+		job := disableJobs[idx]
+		switch job.Type {
+		case "node.backhaul.cleanup":
+			cleanupJobs++
+			if got := strings.TrimSpace(stringify(job.Payload["route_disable_batch_id"])); got == "" {
+				t.Fatalf("cleanup job payload missing route_disable_batch_id: %#v", job.Payload)
+			}
+			if got := strings.TrimSpace(stringify(job.Payload["route_action"])); got != "disable" {
+				t.Fatalf("cleanup job route_action = %q, want disable", got)
+			}
+		case "node.route_policy.apply":
+			refreshJob = &disableJobs[idx]
+		}
+	}
+	if cleanupJobs != 2 || refreshJob == nil {
+		t.Fatalf("disable jobs = %#v, want two cleanup jobs and one route policy refresh", disableJobs)
+	}
+	disabledRoute := routePolicyPayloadRoute(t, refreshJob.Payload, route.ID)
+	disabledEgress := routePolicyPayloadEgress(t, disabledRoute)
+	if got := strings.TrimSpace(stringify(disabledEgress["status"])); got != "blocked" {
+		t.Fatalf("disabled route egress status = %q, want blocked; egress=%#v", got, disabledEgress)
+	}
+	if _, ok := disabledEgress["managed_backhaul"]; ok {
+		t.Fatalf("disabled route still contains managed_backhaul: %#v", disabledEgress)
+	}
+
+	reloaded, err := store.GetBackhaulLink(ctx, link.ID)
+	if err != nil {
+		t.Fatalf("reload disabled backhaul: %v", err)
+	}
+	if reloaded.Status != "disabled" || len(reloaded.Transports) != 1 || reloaded.Transports[0].Status != "disabled" {
+		t.Fatalf("reloaded disabled backhaul = link:%s transports:%#v, want disabled", reloaded.Status, reloaded.Transports)
 	}
 }
 
@@ -809,6 +975,36 @@ func TestPostgresIntegrationAgentVersionProjection(t *testing.T) {
 	if projected.AgentVersion != heartbeatAgentVersion {
 		t.Fatalf("projected agent version = %q, want heartbeat version", projected.AgentVersion)
 	}
+}
+
+func routePolicyPayloadRoute(t *testing.T, payload map[string]any, routeID string) map[string]any {
+	t.Helper()
+
+	routes, ok := payload["routes"].([]any)
+	if !ok {
+		t.Fatalf("route policy payload routes type = %T, want []any; payload=%#v", payload["routes"], payload)
+	}
+	for _, raw := range routes {
+		route, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("route policy route type = %T, want map[string]any", raw)
+		}
+		if strings.TrimSpace(stringify(route["route_id"])) == routeID {
+			return route
+		}
+	}
+	t.Fatalf("route %s not found in route policy payload: %#v", routeID, payload)
+	return nil
+}
+
+func routePolicyPayloadEgress(t *testing.T, route map[string]any) map[string]any {
+	t.Helper()
+
+	egress, ok := route["egress"].(map[string]any)
+	if !ok {
+		t.Fatalf("route egress type = %T, want map[string]any; route=%#v", route["egress"], route)
+	}
+	return egress
 }
 
 func setupPostgresIntegrationStore(t *testing.T) (*Store, context.Context) {

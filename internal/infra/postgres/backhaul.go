@@ -337,10 +337,11 @@ func (s *Store) SetBackhaulRouteEnabled(ctx context.Context, linkID string, enab
 		_, _ = s.db.Exec(ctx, `update backhaul_links set status='disabled', updated_at=now() where id=$1`, link.ID)
 		link.Status = "disabled"
 		_, _ = s.CreateAudit(ctx, "system", "backhaul.route.disable", "backhaul", &link.ID, "managed backhaul route disabled")
-		if routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID); err == nil {
-			return link, []domain.Job{routeJob}, nil
+		routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID)
+		if err != nil {
+			return domain.BackhaulLink{}, nil, fmt.Errorf("queue route policy refresh after backhaul route disable: %w", err)
 		}
-		return link, nil, nil
+		return link, []domain.Job{routeJob}, nil
 	}
 
 	batchID := id.New()
@@ -375,9 +376,11 @@ func (s *Store) SetBackhaulRouteEnabled(ctx context.Context, linkID string, enab
 		where link_id=$1`, link.ID)
 	_, _ = s.CreateAudit(ctx, "system", "backhaul.route.disable", "backhaul", &link.ID, "managed backhaul route disable queued")
 	link.Status = "disabled"
-	if routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID); err == nil {
-		jobs = append(jobs, routeJob)
+	routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID)
+	if err != nil {
+		return domain.BackhaulLink{}, jobs, fmt.Errorf("queue route policy refresh after backhaul route disable: %w", err)
 	}
+	jobs = append(jobs, routeJob)
 	return link, jobs, nil
 }
 

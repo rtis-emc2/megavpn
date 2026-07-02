@@ -101,6 +101,11 @@ Minimum production path for the first ingress/egress pair:
 11. Verify route projection uses `managed_backhaul` for the primary candidate,
     `managed_backhauls` for the failover set, and route policy job reports
     `enforced=true`.
+12. When disabling a mapped backhaul route, the control plane marks the link and
+    transports `disabled`, queues scoped cleanup jobs with
+    `route_disable_batch_id`, and queues a mandatory ingress route-policy
+    refresh. The disabled link remains visible in topology but is excluded from
+    `managed_backhaul` route selection until enabled again.
 
 ## Failure Scenarios
 

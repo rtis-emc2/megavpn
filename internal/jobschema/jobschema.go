@@ -277,7 +277,16 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		normalized["transport_id"] = transportID
 		normalized["role"] = role
 		normalized["driver"] = driverCode
-		trimOptionalStrings(normalized, payload, "interface_name", "delete_batch_id")
+		trimOptionalStrings(normalized, payload, "interface_name", "delete_batch_id", "route_disable_batch_id")
+		if routeAction, err := optionalString(payload, "route_action"); err != nil {
+			return nil, err
+		} else if routeAction != "" {
+			routeAction = strings.ToLower(routeAction)
+			if routeAction != "disable" {
+				return nil, validationf("payload.route_action must be disable")
+			}
+			normalized["route_action"] = routeAction
+		}
 		if systemdUnits, ok, err := optionalStringSlice(payload, "systemd_units"); err != nil {
 			return nil, err
 		} else if ok {
@@ -320,9 +329,9 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 			normalized["enforcement_mode"] = strings.ToLower(enforcementMode)
 		}
 		if rawRoutes, ok := payload["routes"]; ok {
-			routes, ok := rawRoutes.([]any)
-			if !ok {
-				return nil, validationf("payload.routes must be an array")
+			routes, err := normalizeObjectArray(rawRoutes, "payload.routes")
+			if err != nil {
+				return nil, err
 			}
 			normalized["routes"] = routes
 		} else {
@@ -734,6 +743,28 @@ func optionalStringSlice(payload map[string]any, key string) ([]string, bool, er
 		return out, true, nil
 	default:
 		return nil, false, validationf("payload.%s must be an array of strings", key)
+	}
+}
+
+func normalizeObjectArray(value any, field string) ([]any, error) {
+	switch items := value.(type) {
+	case []any:
+		out := make([]any, 0, len(items))
+		for idx, item := range items {
+			if _, ok := item.(map[string]any); !ok {
+				return nil, validationf("%s[%d] must be an object", field, idx)
+			}
+			out = append(out, item)
+		}
+		return out, nil
+	case []map[string]any:
+		out := make([]any, 0, len(items))
+		for _, item := range items {
+			out = append(out, item)
+		}
+		return out, nil
+	default:
+		return nil, validationf("%s must be an array", field)
 	}
 }
 

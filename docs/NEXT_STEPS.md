@@ -33,7 +33,9 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
    WireGuard, HTTP Proxy, MTProto and Shadowsocks.
 7. Validate and harden the topology workspace: local static world map, GeoIP
    node placement, node owner metadata, role/health badges, backhaul edges,
-   route toggles, failed-hop diagnostics and per-node workload drill-down.
+   operator-facing route-toggle UX on real nodes, failed-hop diagnostics and
+   per-node workload drill-down. Backend route-toggle schema, cleanup batch
+   metadata and route-policy refresh regression coverage are in place.
 8. Validate VLESS access groups end to end: default route, local breakout,
    selected egress node, target-only access, blocked access, ad-block rule and
    provisioning selection.
