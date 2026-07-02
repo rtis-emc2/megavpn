@@ -1,3 +1,4 @@
+-- Release: 7.0.1.2
 -- Client VLESS subscription token registry.
 
 create extension if not exists pgcrypto;

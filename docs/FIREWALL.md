@@ -15,7 +15,7 @@ The workflow is:
 1. Create reusable address lists for operators, trusted networks, VPN pools or
    blocked destinations.
 2. Add entries to address lists. Leave type on auto-detect for CIDR, single IP
-   or DNS names.
+   or IP range entries.
 3. Create ordered rules inside a policy. Lower priority is evaluated first.
 4. Apply the policy to a node and watch the node firewall state.
 
@@ -51,6 +51,10 @@ This release applies explicit allow/drop/reject rules into managed nftables
 chains. Default chain policy fields are stored as rollout metadata; strict
 default-policy enforcement must be enabled only after a controlled migration
 plan exists, otherwise operators can lock themselves out.
+
+Address-list entries with DNS type are stored for catalog context only in this
+release. Node-side nftables apply renders CIDR, single IP address and IP range
+entries; a DNS-only list cannot be used as an active rule matcher.
 
 ## Failure Handling
 

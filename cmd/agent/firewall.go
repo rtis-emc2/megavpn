@@ -145,6 +145,11 @@ func ensureFirewallNFTChains(ctx context.Context) error {
 }
 
 func cleanupFirewallNFTSets(ctx context.Context) error {
+	for _, chain := range []string{firewallInputChain, firewallForwardChain, firewallOutputChain} {
+		if code, out := runInstallCommand(ctx, "nft", "flush", "chain", firewallNFTFamily, firewallNFTTable, chain); code != 0 {
+			return fmt.Errorf("flush nft chain %s failed: %s", chain, firstLine(out))
+		}
+	}
 	code, out := runInstallCommand(ctx, "nft", "list", "table", firewallNFTFamily, firewallNFTTable)
 	if code != 0 {
 		return fmt.Errorf("list nft table failed: %s", firstLine(out))

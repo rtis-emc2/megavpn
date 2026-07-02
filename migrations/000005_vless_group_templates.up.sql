@@ -1,3 +1,4 @@
+-- Release: 7.0.1.2
 -- Centralized VLESS access group templates.
 
 create table if not exists vless_group_templates (

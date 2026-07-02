@@ -1,3 +1,4 @@
+-- Release: 7.0.1.2
 -- Add automatic GeoIP cache fields for node map rendering.
 
 alter table nodes

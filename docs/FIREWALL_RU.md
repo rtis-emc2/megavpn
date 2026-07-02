@@ -15,7 +15,7 @@ English companion: [FIREWALL.md](FIREWALL.md).
 1. Создать reusable address lists для операторов, доверенных сетей, VPN-пулов
    или заблокированных destinations.
 2. Добавить entries в address lists. Тип можно оставить auto-detect для CIDR,
-   одиночного IP или DNS имени.
+   одиночного IP или IP range.
 3. Создать ordered rules внутри policy. Меньший priority применяется раньше.
 4. Применить policy на node и проверить node firewall state.
 
@@ -51,6 +51,10 @@ drop invalid packets.
 chains. Поля default chain policy пока хранятся как rollout metadata; strict
 default-policy enforcement надо включать только после controlled migration plan,
 иначе оператор может заблокировать себе доступ.
+
+DNS entries в address lists в этом релизе хранятся только как catalog context.
+Node-side nftables apply рендерит CIDR, одиночные IP-адреса и IP ranges;
+DNS-only list нельзя использовать как active matcher в rule.
 
 ## Обработка ошибок
 
