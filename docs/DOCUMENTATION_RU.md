@@ -21,11 +21,12 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | 7 | [RBAC matrix](RBAC_MATRIX.md) | Роли, permissions и privileged job rules |
 | 8 | [Managed backhaul](BACKHAUL.md) | Модель связи ingress -> egress |
 | 9 | [Карта нод](NODE_MAP_RU.md) | GeoIP-размещение нод и overlay managed backhaul |
-| 10 | [VLESS access groups](VLESS_GROUPS_RU.md) | Reusable VLESS client routing groups |
-| 11 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
-| 12 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
-| 13 | [Security review](SECURITY_REVIEW_7.0.1.2.md) | Security и release review artifact |
-| 14 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
+| 10 | [Каталог firewall-политик](FIREWALL_RU.md) | Managed firewall policies, address lists, rules и node apply state |
+| 11 | [VLESS access groups](VLESS_GROUPS_RU.md) | Reusable VLESS client routing groups |
+| 12 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
+| 13 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
+| 14 | [Security review](SECURITY_REVIEW_7.0.1.2.md) | Security и release review artifact |
+| 15 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
 
 ## Владение документацией
 
@@ -38,6 +39,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | Security | `docs/THREAT_MODEL.md`, `docs/RBAC_MATRIX.md` | Threat model, roles, permissions и privileged jobs. |
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection и troubleshooting. |
 | Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP-размещение нод, локальная статичная карта, node owner metadata и backhaul overlay. |
+| Firewall | `docs/FIREWALL.md`, `docs/FIREWALL_RU.md` | Managed firewall catalog, address lists, rules и node apply state. |
 | VLESS client routing | `docs/VLESS_GROUPS.md`, `docs/VLESS_GROUPS_RU.md` | Reusable access groups, default VLESS group selection и provisioning behavior. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic и tactical product planning. |
 

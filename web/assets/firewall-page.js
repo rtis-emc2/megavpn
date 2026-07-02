@@ -251,9 +251,15 @@
       }
       return `
         <section class="section-card firewall-action-board">
-          <div>
+          <div class="firewall-action-main">
             <h3>Build firewall policy</h3>
             <p>Create reusable address lists, attach entries, define ordered rules, then apply a policy to selected nodes.</p>
+            <div class="firewall-flow" aria-label="Firewall workflow">
+              <button type="button" data-firewall-jump="addressLists"><strong>1</strong><span>Address lists</span></button>
+              <button type="button" data-firewall-jump="rules"><strong>2</strong><span>Rules</span></button>
+              <button type="button" data-firewall-jump="policies"><strong>3</strong><span>Policies</span></button>
+              <button type="button" data-firewall-jump="nodeState"><strong>4</strong><span>Apply state</span></button>
+            </div>
           </div>
           <div class="inline-actions">
             ${canManage ? '<button class="primary-btn" id="addFirewallPolicyBtnTop" type="button">Create policy</button>' : ''}
@@ -329,7 +335,7 @@
             </div>
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(inv.entries.length))} entries</span>
-              ${hasPermission('firewall.manage') ? '<button class="secondary-btn" id="addFirewallListBtnAddress" type="button">Add address list</button>' : ''}
+              ${hasPermission('firewall.manage') ? '<button class="secondary-btn" id="addFirewallEntryBtnAddress" type="button">Add entry</button><button class="secondary-btn" id="addFirewallListBtnAddress" type="button">Add address list</button>' : ''}
             </div>
           </div>
           <div class="table-wrap">
@@ -421,7 +427,15 @@
       document.getElementById('addFirewallListBtn')?.addEventListener('click', openAddressListModal);
       document.getElementById('addFirewallRuleBtn')?.addEventListener('click', () => openRuleModal(''));
       document.getElementById('addFirewallListBtnAddress')?.addEventListener('click', openAddressListModal);
+      document.getElementById('addFirewallEntryBtnAddress')?.addEventListener('click', () => openAddressEntryModal(''));
       document.getElementById('addFirewallRuleBtnRules')?.addEventListener('click', () => openRuleModal(''));
+      document.querySelectorAll('[data-firewall-jump]').forEach((button) => {
+        button.addEventListener('click', () => {
+          state.firewallTab = button.dataset.firewallJump || 'overview';
+          localStorage.setItem('megavpn.firewallTab', state.firewallTab);
+          render();
+        });
+      });
       document.querySelectorAll('.firewall-add-rule-btn').forEach((button) => {
         button.addEventListener('click', () => openRuleModal(button.dataset.policyId || ''));
       });
@@ -542,7 +556,7 @@
       openModal(editing ? `Edit address entry: ${entry.value || entry.id}` : 'Add address entry', 'Firewall address list', `
         <form id="firewallAddressEntryForm" class="form-grid" data-entry-id="${escapeHTML(entry.id || '')}">
           <div class="field"><label>Address list</label><select name="list_id"${editing ? ' disabled' : ''} required>${lists.map((list) => `<option value="${escapeHTML(list.id)}"${list.id === selected.id ? ' selected' : ''}>${escapeHTML(list.label || list.key)}</option>`).join('')}</select>${editing ? `<input type="hidden" name="list_id" value="${escapeHTML(selected.id || '')}" />` : ''}</div>
-          <div class="field"><label>Type</label><select name="value_type" required>${selectOption('', entry.value_type || '')}${selectOption('cidr', entry.value_type || '')}${selectOption('address', entry.value_type || '')}${selectOption('range', entry.value_type || '')}${selectOption('dns', entry.value_type || '')}</select></div>
+          <div class="field"><label>Type</label><select name="value_type">${selectOption('', entry.value_type || '', 'auto detect')}${selectOption('cidr', entry.value_type || '')}${selectOption('address', entry.value_type || '')}${selectOption('range', entry.value_type || '')}${selectOption('dns', entry.value_type || '')}</select><small>Leave auto detect for CIDR, single IP or DNS names.</small></div>
           <div class="field"><label>Value</label><input name="value" required placeholder="203.0.113.0/24" value="${escapeHTML(entry.value || '')}" /></div>
           <div class="field"><label>Label</label><input name="label" placeholder="office range" value="${escapeHTML(entry.label || '')}" /></div>
           <div class="field"><label>Status</label><select name="status">${selectOption('active', entry.status || 'active')}${selectOption('disabled', entry.status || 'active')}</select></div>
@@ -570,6 +584,12 @@
       const editing = Boolean(rule.id);
       const selected = policyByID(policyID || rule.policy_id) || inv.policies[0] || {};
       openModal(editing ? `Edit firewall rule: ${rule.comment || rule.id}` : 'Add firewall rule', 'Firewall policy', `
+        <div class="firewall-rule-presets">
+          <button type="button" data-firewall-rule-preset="ssh">SSH admin</button>
+          <button type="button" data-firewall-rule-preset="https">HTTPS control</button>
+          <button type="button" data-firewall-rule-preset="wireguard">WireGuard UDP</button>
+          <button type="button" data-firewall-rule-preset="drop_invalid">Drop invalid</button>
+        </div>
         <form id="firewallRuleForm" class="form-grid" data-rule-id="${escapeHTML(rule.id || '')}" data-policy-id="${escapeHTML(selected.id || '')}">
           <div class="field"><label>Policy</label><select name="policy_id"${editing ? ' disabled' : ''} required>${inv.policies.map((policy) => `<option value="${escapeHTML(policy.id)}"${policy.id === selected.id ? ' selected' : ''}>${escapeHTML(policy.label || policy.key)}</option>`).join('')}</select>${editing ? `<input type="hidden" name="policy_id" value="${escapeHTML(selected.id || '')}" />` : ''}</div>
           <div class="field"><label>Priority</label><input name="priority" type="number" min="1" max="65000" value="${escapeHTML(String(rule.priority || 1000))}" required /></div>
@@ -591,7 +611,9 @@
         </form>
         <div id="firewallRuleResult" class="form-result"></div>`, { wide: true });
       document.getElementById('cancelFirewallRuleBtn')?.addEventListener('click', closeModal);
-      document.getElementById('firewallRuleForm')?.addEventListener('submit', submitRule);
+      const form = document.getElementById('firewallRuleForm');
+      form?.addEventListener('submit', submitRule);
+      bindRulePresets(form);
     }
 
     function openApplyModal(policyID, nodeID) {
@@ -732,6 +754,7 @@
         } else {
           await sendJSON('/api/v1/firewall/policies', 'POST', payload);
         }
+        selectFirewallTab('policies');
         closeModal();
         await refresh();
       } catch (err) {
@@ -758,6 +781,7 @@
         } else {
           await sendJSON('/api/v1/firewall/address-lists', 'POST', payload);
         }
+        selectFirewallTab('addressLists');
         closeModal();
         await refresh();
       } catch (err) {
@@ -784,6 +808,7 @@
         } else {
           await sendJSON(`/api/v1/firewall/address-lists/${encodeURIComponent(listID)}/entries`, 'POST', payload);
         }
+        selectFirewallTab('addressLists');
         closeModal();
         await refresh();
       } catch (err) {
@@ -822,6 +847,7 @@
         } else {
           await sendJSON(`/api/v1/firewall/policies/${encodeURIComponent(policyID)}/rules`, 'POST', payload);
         }
+        selectFirewallTab('rules');
         closeModal();
         await refresh();
       } catch (err) {
@@ -842,6 +868,7 @@
         if (typeof watchJob === 'function' && job?.id) {
           await watchJob(job.id, result);
         }
+        selectFirewallTab('nodeState');
         closeModal();
         await refresh();
       } catch (err) {
@@ -859,6 +886,76 @@
         if (text) return text;
       }
       return '';
+    }
+
+    function selectFirewallTab(tab) {
+      state.firewallTab = tab;
+      localStorage.setItem('megavpn.firewallTab', tab);
+    }
+
+    function bindRulePresets(form) {
+      if (!form) return;
+      document.querySelectorAll('[data-firewall-rule-preset]').forEach((button) => {
+        button.addEventListener('click', () => applyRulePreset(form, button.dataset.firewallRulePreset || ''));
+      });
+    }
+
+    function setFormValue(form, name, value) {
+      const field = form.querySelector(`[name="${name}"]`);
+      if (field) field.value = value;
+    }
+
+    function setFormChecked(form, name, value) {
+      const field = form.querySelector(`[name="${name}"]`);
+      if (field) field.checked = Boolean(value);
+    }
+
+    function applyRulePreset(form, preset) {
+      const presets = {
+        ssh: {
+          priority: '100',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'tcp',
+          dst_ports: '22',
+          state_match: 'new,established',
+          comment: 'allow SSH management from approved sources',
+        },
+        https: {
+          priority: '110',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'tcp',
+          dst_ports: '443',
+          state_match: 'new,established',
+          comment: 'allow HTTPS control channel',
+        },
+        wireguard: {
+          priority: '300',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'udp',
+          dst_ports: '51820',
+          state_match: 'new,established',
+          comment: 'allow WireGuard listener',
+        },
+        drop_invalid: {
+          priority: '50',
+          chain: 'input',
+          action: 'drop',
+          protocol: 'any',
+          dst_ports: '',
+          src_ports: '',
+          state_match: 'invalid',
+          comment: 'drop invalid tracked packets',
+        },
+      };
+      const values = presets[preset];
+      if (!values) return;
+      Object.entries(values).forEach(([name, value]) => setFormValue(form, name, value));
+      setFormValue(form, 'src_ports', values.src_ports || '');
+      setFormValue(form, 'status', 'active');
+      setFormChecked(form, 'enabled', true);
     }
 
     function selectOption(value, selected, label = value) {

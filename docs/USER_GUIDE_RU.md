@@ -571,7 +571,29 @@ Share link - bearer URL. Его безопасность зависит от:
 Plaintext token показывается только при создании ссылки. Если он потерян,
 создайте новую ссылку.
 
-## 18. Jobs, Audit и troubleshooting
+## 18. Firewall policies
+
+`Firewall` - это staged policy catalog, а не прямой редактор node-side правил.
+
+Рекомендуемый workflow:
+
+1. Откройте `Firewall -> Address lists` и создайте reusable source или
+   destination lists.
+2. Добавьте entries. Тип можно оставить auto-detect, если не нужно явно
+   выбрать CIDR, single IP, range или DNS.
+3. Откройте `Firewall -> Rules` и создайте ordered rules. Используйте presets
+   для типовых SSH, HTTPS, WireGuard или invalid-packet случаев, затем уточните
+   source lists и ports.
+4. Откройте `Firewall -> Policies`, чтобы проверить defaults и количество rules.
+5. Откройте `Firewall -> Node state` или apply action в policy и поставьте apply
+   на выбранную node.
+
+Изменения catalog вступают в силу только после завершения `node.firewall.apply`.
+Default chain policies в этом релизе хранятся как rollout metadata; strict
+default enforcement нужно включать отдельным controlled rollout, чтобы не
+заблокировать operator access.
+
+## 19. Jobs, Audit и troubleshooting
 
 `Jobs` показывает queue, status, result и failure reason.
 
@@ -586,6 +608,7 @@ Plaintext token показывается только при создании с
 | Shadowsocks config не создан | Instance logs | generated config path, package install, password/spec |
 | VLESS не использует egress | Instance config, Backhaul, route policy | default outbound, active backhaul, policy projection |
 | Backhaul завершился ошибкой | Backhaul modal, Jobs | ingress/egress side, interface, route lookup, packet loss |
+| Firewall apply завершился ошибкой | Firewall -> Node state, Jobs | rendered policy, agent logs, nftables support |
 | Client config некорректен | Clients -> Access/Artifacts | selected services, revision applied, artifact build result |
 
 Audit должен отвечать на вопросы:
@@ -595,9 +618,10 @@ Audit должен отвечать на вопросы:
 - кто применил instance;
 - кто установил runtime capability;
 - кто создал/revoked share link;
+- кто изменил или применил firewall policy;
 - кто изменил settings/certificates.
 
-## 19. Безопасное удаление
+## 20. Безопасное удаление
 
 Удаление instance не должно быть только удалением строки из базы.
 
@@ -616,7 +640,7 @@ Audit должен отвечать на вопросы:
 - опционально может удалить agent;
 - не должен ломать unrelated backhaul/routes за пределами managed scopes.
 
-## 20. Production checklist
+## 21. Production checklist
 
 Перед production rollout:
 
@@ -632,7 +656,7 @@ Audit должен отвечать на вопросы:
 10. Audit review.
 11. Rollback plan.
 
-## 21. Роли
+## 22. Роли
 
 Кратко:
 

@@ -574,7 +574,28 @@ A share link is a bearer URL. Its safety depends on:
 The plaintext token is shown only when the link is created. If it is lost, create
 a new share link.
 
-## 18. Jobs, Audit And Troubleshooting
+## 18. Firewall Policies
+
+`Firewall` is a staged policy catalog, not an immediate node-side editor.
+
+Recommended workflow:
+
+1. Open `Firewall -> Address lists` and create reusable source or destination
+   lists.
+2. Add entries. Leave entry type on auto-detect unless you need to force CIDR,
+   single IP, range or DNS.
+3. Open `Firewall -> Rules` and create ordered rules. Use presets for common
+   SSH, HTTPS, WireGuard or invalid-packet cases, then adjust source lists and
+   ports.
+4. Open `Firewall -> Policies` to review defaults and rule count.
+5. Open `Firewall -> Node state` or policy apply action and queue apply for the
+   selected node.
+
+Catalog changes become effective only after `node.firewall.apply` completes.
+Default chain policies are stored as rollout metadata in this release; strict
+default enforcement must be rolled out deliberately to avoid operator lockout.
+
+## 19. Jobs, Audit And Troubleshooting
 
 `Jobs` shows queue status, result and failure reason.
 
@@ -589,6 +610,7 @@ Common cases:
 | Shadowsocks config missing | Instance logs | generated config path, package install, password/spec |
 | VLESS does not use egress | Instance config, Backhaul, route policy | default outbound, active backhaul, policy projection |
 | Backhaul failed | Backhaul modal, Jobs | ingress/egress side, interface, route lookup, packet loss |
+| Firewall apply failed | Firewall -> Node state, Jobs | rendered policy, agent logs, nftables support |
 | Client config invalid | Clients -> Access/Artifacts | selected services, revision applied, artifact build result |
 
 Audit should answer:
@@ -598,9 +620,10 @@ Audit should answer:
 - who applied an instance;
 - who installed a runtime capability;
 - who created or revoked a share link;
+- who changed or applied firewall policy;
 - who changed settings/certificates.
 
-## 19. Safe Deletion
+## 20. Safe Deletion
 
 Instance deletion must not be only a database row update.
 
@@ -619,7 +642,7 @@ Emergency node cleanup:
 - can optionally remove the agent;
 - must not break unrelated backhaul/routes outside managed scopes.
 
-## 20. Production Checklist
+## 21. Production Checklist
 
 Before production rollout:
 

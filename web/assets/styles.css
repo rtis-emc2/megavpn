@@ -3665,6 +3665,11 @@ tr:hover td { background: #f8fafc; }
   gap: 14px;
   max-width: 1320px;
 }
+.firewall-action-main {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
 .firewall-action-board h3 {
   margin: 0 0 5px;
   color: var(--text);
@@ -3680,6 +3685,53 @@ tr:hover td { background: #f8fafc; }
 }
 .firewall-action-board .inline-actions {
   justify-content: flex-end;
+}
+.firewall-flow,
+.firewall-rule-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.firewall-flow button,
+.firewall-rule-presets button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.firewall-flow button:hover,
+.firewall-rule-presets button:hover {
+  border-color: rgba(185, 28, 28, 0.28);
+  background: #fff7f7;
+}
+.firewall-flow strong {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.firewall-flow span {
+  white-space: nowrap;
+}
+.firewall-rule-presets {
+  margin-bottom: 14px;
+}
+.firewall-rule-presets button {
+  min-height: 38px;
+  padding: 8px 12px;
 }
 .firewall-policy-card {
   display: grid;
@@ -4813,6 +4865,12 @@ tr:hover td { background: #f8fafc; }
   .vless-groups-intro,
   .vless-group-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .firewall-action-board {
+    grid-template-columns: 1fr;
+  }
+  .firewall-action-board .inline-actions {
+    justify-content: flex-start;
   }
   .node-map-inspector {
     width: min(390px, calc(100% - 420px));
