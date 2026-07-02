@@ -21,7 +21,7 @@ func TestClientVLESSSubscriptionProfileBuildsURI(t *testing.T) {
 				"outbound_group":     "egress-eu",
 			},
 		},
-		Client: domain.Client{Username: "alice"},
+		Client: domain.Client{DisplayName: "Alice Smith"},
 		Instance: domain.Instance{
 			ID:           "instance-1",
 			Name:         "edge-vless",
@@ -53,11 +53,14 @@ func TestClientVLESSSubscriptionProfileBuildsURI(t *testing.T) {
 		"fp=chrome",
 		"pbk=public-key",
 		"sid=abcd",
-		"#edge-vless-alice",
+		"#edge-vless-Alice%20Smith",
 	} {
 		if !strings.Contains(profile.URI, fragment) {
 			t.Fatalf("subscription URI %q does not contain %q", profile.URI, fragment)
 		}
+	}
+	if strings.Contains(profile.URI, "#edge-vless-Alice+Smith") {
+		t.Fatalf("subscription URI label must use fragment escaping, got %q", profile.URI)
 	}
 }
 

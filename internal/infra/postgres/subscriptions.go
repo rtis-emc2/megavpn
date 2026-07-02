@@ -291,6 +291,6 @@ func buildClientVLESSSubscriptionURI(record domain.ProvisioningAccess) (string, 
 	}
 	labelBase := firstString(spec["client_label_prefix"], record.Instance.Name, record.Instance.Slug, "xray")
 	clientLabel := firstString(record.Client.Username, record.Client.DisplayName, record.Access.ID)
-	label := url.QueryEscape(labelBase + "-" + clientLabel)
+	label := url.PathEscape(labelBase + "-" + clientLabel)
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s", uuid, host, port, query.Encode(), label), outboundGroup, true
 }

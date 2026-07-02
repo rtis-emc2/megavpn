@@ -992,7 +992,7 @@
       document.querySelectorAll('.client-share-revoke-btn').forEach((button) => {
         button.addEventListener('click', () => revokeClientShareLink(button.dataset.clientId, button.dataset.linkId));
       });
-      document.querySelectorAll('.client-subscription-revoke-btn').forEach((button) => {
+      document.querySelectorAll('.client-subscription-revoke-btn:not([disabled])').forEach((button) => {
         button.addEventListener('click', () => revokeClientSubscription(button.dataset.clientId, button.dataset.subscriptionId));
       });
       document.querySelectorAll('.client-artifact-preview-btn').forEach((button) => {
@@ -1042,8 +1042,9 @@
                 <button class="secondary-btn" id="copySubscriptionURLBtn" type="button"${url ? '' : ' disabled'}>Copy URL</button>
                 <button class="secondary-btn" id="backToClientAccessBtn" type="button">Back to client access</button>
               </div>
+              <div id="clientSubscriptionCopyStatus" class="form-help" style="margin-top:8px"></div>
             </div>`;
-          document.getElementById('copySubscriptionURLBtn')?.addEventListener('click', () => copyTextToClipboard(url, 'clientSubscriptionResult'));
+          document.getElementById('copySubscriptionURLBtn')?.addEventListener('click', () => copyTextToClipboard(url, 'clientSubscriptionCopyStatus'));
           document.getElementById('backToClientAccessBtn')?.addEventListener('click', () => openClientAccessesModal(clientID));
         }
         await refresh();
@@ -1064,15 +1065,15 @@
       }
     }
 
-    async function copyTextToClipboard(value, resultID) {
-      const result = document.getElementById(resultID);
+    async function copyTextToClipboard(value, statusID) {
+      const status = document.getElementById(statusID);
       try {
         await navigator.clipboard.writeText(value);
-        if (result) result.insertAdjacentHTML('beforeend', '<div class="tag ok" style="margin-top:8px">copied</div>');
+        if (status) status.innerHTML = '<span class="tag ok">copied</span>';
       } catch (_) {
         const input = document.getElementById('clientSubscriptionURL');
         input?.select();
-        if (result) result.insertAdjacentHTML('beforeend', '<div class="tag warn" style="margin-top:8px">select and copy manually</div>');
+        if (status) status.innerHTML = '<span class="tag warn">select and copy manually</span>';
       }
     }
 
