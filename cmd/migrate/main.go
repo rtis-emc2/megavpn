@@ -116,7 +116,7 @@ func ensureSquashedMigrationCompatibility(ctx context.Context, db *database.DB) 
 			return nil
 		}
 	}
-	return fmt.Errorf("database has partial legacy migration history before the consolidated baseline; apply the previous release migrations through %s before deploying this squashed migration set", latestLegacyVersion)
+	return fmt.Errorf("database has partial legacy migration history before the current migration baseline; apply the previous release migrations through %s before deploying this release", latestLegacyVersion)
 }
 
 func resolveMigrationsDir(configured string) (string, error) {

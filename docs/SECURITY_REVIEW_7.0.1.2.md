@@ -1,8 +1,8 @@
-# Security and Release Review: 7.0.1.1
+# Security and Release Review: 7.0.1.2
 
-**Release:** `7.0.1.1`
+**Release:** `7.0.1.2`
 
-Date: 2026-07-01
+Date: 2026-07-02
 
 Scope:
 
@@ -23,7 +23,7 @@ the full release gates listed below.
 
 | Control | Result |
 | --- | --- |
-| Release version and tag consistency | Pass after `v7.0.1.1` tag on reviewed commit |
+| Release version and tag consistency | Pass after `v7.0.1.2` tag on reviewed commit |
 | Agent unsigned 200/204 response rejection tests | Present and passing |
 | Signed empty 204 response path | Present and passing |
 | Generic privileged job API restriction | Privileged apply, cleanup, capability, route-policy and emergency-cleanup job types require typed endpoints |
@@ -77,8 +77,8 @@ Skipped production evidence:
 
 Planned next work:
 
-- Node topology map with location metadata, workload badges and managed links.
-- Backhaul graph with per-edge health and failed-hop diagnostics.
+- Backhaul graph with per-edge health, route disable/enable evidence and
+  failed-hop diagnostics.
 - VLESS subscription endpoint with per-client token rotation and selected inbound
   service visibility.
 - Traffic camouflage profiles for Xray/Nginx public edge modes.

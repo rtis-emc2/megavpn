@@ -25,8 +25,16 @@
     }
 
     const config = window.MegaVPNAppConfig?.nodeMap || {};
-    const STATIC_MAP_URL = String(config.staticMapURL || './assets/world-map.svg');
+    const STATIC_MAP_URL = safeStaticMapURL(config.staticMapURL);
     const routeUpdates = new Set();
+
+    function safeStaticMapURL(value) {
+      const fallback = './assets/world-map.svg';
+      const raw = String(value || fallback).trim();
+      if (!raw || raw.includes('..')) return fallback;
+      if (!/^\.\/assets\/[a-z0-9/_-]+(?:\.[a-z0-9]+)?$/i.test(raw)) return fallback;
+      return raw;
+    }
 
     function finiteNumber(value) {
       const num = Number(value);

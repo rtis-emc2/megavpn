@@ -1,5 +1,5 @@
 -- Node map location metadata.
--- Release: 7.0.1.1
+-- Release: 7.0.1.2
 
 alter table nodes
   add column if not exists location_label text not null default '';

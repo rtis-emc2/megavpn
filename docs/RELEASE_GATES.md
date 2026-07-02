@@ -1,10 +1,10 @@
 # Release Gates
 
-**Release:** `7.0.1.1`
+**Release:** `7.0.1.2`
 
 This file defines the minimum evidence required before tagging a production release.
 
-For `7.0.1.1`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
+For `7.0.1.2`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
 
 ## 1. Release Gate
 
