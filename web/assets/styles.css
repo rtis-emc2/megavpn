@@ -4314,6 +4314,17 @@ tr:hover td { background: #f8fafc; }
   font-size: 12px;
   line-height: 1.4;
 }
+.node-map-backhaul-issue {
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
 .node-map-route-switch {
   display: inline-flex;
   align-items: center;
@@ -4370,6 +4381,8 @@ tr:hover td { background: #f8fafc; }
   outline-offset: 3px;
 }
 .node-map-route-notice {
+  display: grid;
+  gap: 4px;
   margin: 14px 16px 0;
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -4377,6 +4390,19 @@ tr:hover td { background: #f8fafc; }
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+}
+.node-map-route-notice strong {
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.node-map-route-notice small {
+  display: block;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+  opacity: 0.82;
 }
 .node-map-route-notice.healthy {
   border-color: #bbf7d0;

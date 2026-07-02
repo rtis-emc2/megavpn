@@ -80,7 +80,11 @@ node pins:
 - the topology cards below the map show direction, driver, metric, endpoint and
   selected transport status for every non-deleted managed link;
 - the route switch in each topology card queues managed enable/disable jobs for
-  the selected link.
+  the selected link and shows the accepted job types returned by the API;
+- topology cards show active backhaul cleanup/apply jobs and ingress node
+  route-policy jobs while convergence is still pending;
+- selected transport errors are shown directly on the topology card so failed
+  links have an immediate operator hint without leaving the map page.
 
 The Backhaul page remains the source of truth for apply, probe, cleanup and
 detailed transport diagnostics. Node Map is a topology view, not a replacement

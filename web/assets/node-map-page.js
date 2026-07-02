@@ -180,7 +180,58 @@
 
     function backhaulEndpoint(link) {
       const transport = selectedTransport(link);
-      return String(transport?.endpoint || '').trim();
+      const explicit = String(transport?.endpoint || '').trim();
+      if (explicit) return explicit;
+      const host = String(transport?.endpoint_host || '').trim();
+      if (!host) return '';
+      const port = Number(transport?.endpoint_port || 0);
+      const protocol = String(transport?.protocol || '').trim();
+      const address = port > 0 ? `${host}:${port}` : host;
+      return protocol ? `${address} ${protocol}` : address;
+    }
+
+    function backhaulIssue(link) {
+      const transport = selectedTransport(link);
+      return String(transport?.last_error || link?.last_error || '').trim();
+    }
+
+    function jobStatusActive(status) {
+      return ['queued', 'running', 'retrying'].includes(normalizeStatus(status, ''));
+    }
+
+    function jobTypeLabel(type) {
+      return String(type || 'job')
+        .replace(/^node\./, '')
+        .replace(/_/g, ' ')
+        .replace(/\./g, ' ')
+        .trim() || 'job';
+    }
+
+    function jobTypeSummary(jobs) {
+      const counts = new Map();
+      (Array.isArray(jobs) ? jobs : []).forEach((job) => {
+        const label = jobTypeLabel(job?.type);
+        counts.set(label, (counts.get(label) || 0) + 1);
+      });
+      return Array.from(counts.entries())
+        .map(([label, count]) => `${label}${count > 1 ? ` x${count}` : ''}`)
+        .join(', ');
+    }
+
+    function activeBackhaulJobs(link) {
+      const linkID = String(link?.id || '');
+      const ingressNodeID = String(link?.ingress_node_id || '');
+      return (Array.isArray(state.jobs) ? state.jobs : []).filter((job) => {
+        if (!jobStatusActive(job?.status)) return false;
+        const scopeType = normalizeStatus(job?.scope_type, '');
+        const scopeID = String(job?.scope_id || '').trim();
+        const nodeID = String(job?.node_id || '').trim();
+        const jobType = String(job?.type || '').trim();
+        if (scopeType === 'backhaul' && scopeID === linkID) return true;
+        if (jobType === 'node.route_policy.apply' && nodeID === ingressNodeID) return true;
+        const payload = job?.payload || {};
+        return String(payload.link_id || payload.backhaul_link_id || '').trim() === linkID;
+      });
     }
 
     function linkMetric(link) {
@@ -448,14 +499,20 @@
         const drawable = locatedLookup.has(String(link.ingress_node_id || '')) && locatedLookup.has(String(link.egress_node_id || ''));
         const status = backhaulStatus(link);
         const endpoint = backhaulEndpoint(link);
+        const issue = backhaulIssue(link);
         const metric = linkMetric(link);
         const linkID = String(link.id || '');
         const disabled = normalizeStatus(link.status, '') === 'disabled';
         const busy = routeUpdates.has(linkID);
         const routeEnabled = !disabled;
+        const activeJobs = activeBackhaulJobs(link);
+        const activeJobSummary = jobTypeSummary(activeJobs);
         const routeText = routeEnabled
           ? 'Participates in managed routing and route-policy selection.'
           : 'Removed from managed routing until it is enabled again.';
+        const routeHint = busy
+          ? 'Route state update is queued...'
+          : (activeJobSummary ? `Active jobs: ${activeJobSummary}.` : routeText);
         return `
           <article class="node-map-backhaul-card ${linkTone(status)}${busy ? ' updating' : ''}">
             <div>
@@ -470,19 +527,18 @@
               ${statusTag(drawable ? 'mapped' : 'waiting GeoIP')}
             </div>
             ${endpoint ? `<div class="muted-mono">${escapeHTML(endpoint)}</div>` : ''}
+            ${issue ? `<div class="node-map-backhaul-issue">${escapeHTML(issue)}</div>` : ''}
             <div class="node-map-route-control">
               <label class="node-map-route-switch ${routeEnabled ? 'enabled' : 'disabled'}${busy ? ' busy' : ''}">
                 <input class="node-map-route-input" type="checkbox" data-link-id="${escapeHTML(linkID)}" ${routeEnabled ? 'checked' : ''} ${busy || typeof sendJSON !== 'function' ? 'disabled' : ''}>
                 <span></span>
                 <strong>${escapeHTML(routeEnabled ? 'Route enabled' : 'Route disabled')}</strong>
               </label>
-              <small>${escapeHTML(busy ? 'Route state update is queued...' : routeText)}</small>
+              <small>${escapeHTML(routeHint)}</small>
             </div>
           </article>`;
       }).join('');
-      const notice = state.nodeMapRouteNotice
-        ? `<div class="node-map-route-notice ${escapeHTML(safeClassToken(state.nodeMapRouteNotice.tone || ''))}">${escapeHTML(state.nodeMapRouteNotice.text || '')}</div>`
-        : '';
+      const notice = renderRouteNotice();
       return `
         <section class="section-card node-map-topology-card">
           <div class="section-head compact">
@@ -494,6 +550,21 @@
           ${notice}
           <div class="node-map-backhaul-grid">${rows}</div>
         </section>`;
+    }
+
+    function renderRouteNotice() {
+      const notice = state.nodeMapRouteNotice;
+      if (!notice) return '';
+      const jobs = Array.isArray(notice.jobs) ? notice.jobs : [];
+      const details = [
+        String(notice.detail || '').trim(),
+        jobs.length ? `Jobs: ${jobTypeSummary(jobs)}.` : '',
+      ].filter(Boolean);
+      return `
+        <div class="node-map-route-notice ${escapeHTML(safeClassToken(notice.tone || ''))}">
+          <strong>${escapeHTML(notice.text || '')}</strong>
+          ${details.map((detail) => `<small>${escapeHTML(detail)}</small>`).join('')}
+        </div>`;
     }
 
     function renderLocationDirectory(items) {
@@ -548,17 +619,21 @@
       routeUpdates.add(linkID);
       state.nodeMapRouteNotice = {
         tone: 'warning',
-        text: enabled ? 'Route enable has been requested.' : 'Route disable has been requested.',
+        text: enabled ? 'Route enable request is being sent.' : 'Route disable request is being sent.',
+        detail: 'Waiting for the control plane to queue the required node jobs.',
+        jobs: [],
       };
       render();
       try {
         const result = await sendJSON(`/api/v1/backhaul-links/${encodeURIComponent(linkID)}/route`, 'PATCH', { enabled });
         mergeBackhaulLink(result?.link);
+        const jobs = Array.isArray(result?.jobs) ? result.jobs : [];
+        const summary = jobTypeSummary(jobs);
         state.nodeMapRouteNotice = {
           tone: 'healthy',
-          text: enabled
-            ? `Route enable queued${result?.job_count ? `: ${result.job_count} job(s)` : '.'}`
-            : `Route disable queued${result?.job_count ? `: ${result.job_count} job(s)` : '.'}`,
+          text: enabled ? 'Route enable accepted.' : 'Route disable accepted.',
+          detail: summary ? `Queued: ${summary}.` : 'No new job was required; route state was already current.',
+          jobs,
         };
         if (typeof loadCore === 'function') {
           await loadCore();
@@ -567,6 +642,8 @@
         state.nodeMapRouteNotice = {
           tone: 'danger',
           text: err?.message || 'Route state update failed.',
+          detail: 'The UI kept the previous route state. Check jobs and retry after the issue is fixed.',
+          jobs: [],
         };
       } finally {
         routeUpdates.delete(linkID);

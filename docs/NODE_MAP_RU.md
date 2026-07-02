@@ -77,7 +77,11 @@ provider будет видеть публичные IP нод, по которы
 - под картой отображаются компактные topology cards с направлением, driver,
   metric, endpoint и статусом выбранного транспорта;
 - route switch в каждой topology card ставит managed enable/disable jobs для
-  выбранной связи.
+  выбранной связи и показывает типы jobs, которые API принял в очередь;
+- topology cards показывают активные backhaul cleanup/apply jobs и jobs
+  route-policy на ingress-ноде, пока convergence еще не завершен;
+- ошибки выбранного transport показываются прямо на topology card, чтобы
+  оператор видел первичную причину failed-связи без перехода со страницы карты.
 
 Страница Backhaul остается источником правды для apply, probe, cleanup и
 детальной диагностики transport. Node Map - это визуальная топология, а не
