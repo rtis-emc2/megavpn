@@ -267,10 +267,9 @@
 
     function project(location) {
       const lat = clampLatitude(location.latitude);
-      const sin = Math.sin((lat * Math.PI) / 180);
       return {
         x: ((location.longitude + 180) / 360) * 100,
-        y: (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * 100,
+        y: ((90 - lat) / 180) * 100,
       };
     }
 
