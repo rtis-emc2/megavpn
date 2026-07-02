@@ -38,6 +38,8 @@
       servicesCatalog: [],
       servicePacks: [],
       servicePackCatalog: [],
+      vlessGroupTemplates: [],
+      vlessGroupCatalog: [],
       serviceInstallers: [],
       binaryArtifacts: [],
       serviceCapabilitiesByNode: {},

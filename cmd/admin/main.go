@@ -171,12 +171,20 @@ func seedServicePacks(args []string) error {
 	if err := store.EnsureDefaultServicePacks(ctx, defaults); err != nil {
 		return fmt.Errorf("seed service pack templates: %w", err)
 	}
+	groupDefaults := apihttp.DefaultVLESSGroupTemplates()
+	if err := store.EnsureDefaultVLESSGroupTemplates(ctx, groupDefaults); err != nil {
+		return fmt.Errorf("seed vless group templates: %w", err)
+	}
 	active, err := store.ListServicePacks(ctx)
 	if err != nil {
 		return fmt.Errorf("verify service pack templates: %w", err)
 	}
+	activeGroups, err := store.ListVLESSGroupTemplates(ctx)
+	if err != nil {
+		return fmt.Errorf("verify vless group templates: %w", err)
+	}
 
-	fmt.Printf("service pack defaults seeded: defaults=%d active=%d\n", len(defaults), len(active))
+	fmt.Printf("service pack defaults seeded: defaults=%d active=%d vless_group_defaults=%d active_vless_groups=%d\n", len(defaults), len(active), len(groupDefaults), len(activeGroups))
 	return nil
 }
 

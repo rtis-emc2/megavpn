@@ -64,6 +64,43 @@
       servicePKIProfileOptions,
     } = domainUI;
     const INSTANCE_PAGE_SIZE = 100;
+    const INSTANCE_TABS = [
+      ['list', 'Instances', 'runtime state'],
+      ['create-pack', 'Create from pack', 'template rollout'],
+      ['manual', 'Manual instance', 'single service'],
+      ['service-packs', 'Service pack catalog', 'pack templates'],
+      ['vless-groups', 'VLESS groups', 'client routing'],
+    ];
+
+    function normalizedInstancesView() {
+      const view = String(state.instancesView || 'list');
+      return INSTANCE_TABS.some(([key]) => key === view) ? view : 'list';
+    }
+
+    function setInstancesView(view) {
+      state.instancesView = INSTANCE_TABS.some(([key]) => key === view) ? view : 'list';
+      if (state.instancesView !== 'create-pack') {
+        state.instancesCreateResult = null;
+      }
+      render();
+    }
+
+    function renderInstancesTabs(activeView = normalizedInstancesView()) {
+      return `
+        <nav class="page-tabs instances-tabs" aria-label="Instances workspace">
+          ${INSTANCE_TABS.map(([key, label, hint]) => `
+            <button class="page-tab instances-tab-btn ${key === activeView ? 'is-active' : ''}" type="button" data-instances-view="${escapeHTML(key)}">
+              <span>${escapeHTML(label)}</span>
+              <small>${escapeHTML(hint)}</small>
+            </button>`).join('')}
+        </nav>`;
+    }
+
+    function bindInstancesTabs() {
+      document.querySelectorAll('.instances-tab-btn').forEach((button) => {
+        button.addEventListener('click', () => setInstancesView(button.dataset.instancesView || 'list'));
+      });
+    }
 
     function instanceEndpoint(instance) {
       const host = String(instance?.endpoint_host || '').trim();
@@ -922,6 +959,7 @@
       const endpointHint = selectedPack?.endpoint_hint || 'edge.example.com';
       const endpointRequired = Boolean(selectedPack?.requires_endpoint_host);
       el('content').innerHTML = `
+        ${renderInstancesTabs('create-pack')}
         <section class="table-card instance-create-page">
           <div class="table-head instance-create-head">
             <div>
@@ -986,6 +1024,7 @@
     }
 
     function bindCreateFromPackPage() {
+      bindInstancesTabs();
       document.getElementById('backToInstancesBtn')?.addEventListener('click', openInstancesListPage);
       document.getElementById('createInstanceBtn')?.addEventListener('click', openManualInstancePage);
       document.getElementById('resetPackCreateFormBtn')?.addEventListener('click', () => {
@@ -1067,6 +1106,7 @@
     function renderManualInstancePage() {
       setTitle('Manual instance');
       el('content').innerHTML = `
+        ${renderInstancesTabs('manual')}
         <section class="table-card instance-create-page">
           <div class="table-head instance-create-head">
             <div>
@@ -1101,6 +1141,7 @@
             </section>
           </div>
         </section>`;
+      bindInstancesTabs();
       document.getElementById('backToInstancesBtn')?.addEventListener('click', openInstancesListPage);
       document.getElementById('createServicePackBtn')?.addEventListener('click', openCreateFromPackPage);
       renderCreateInstanceForm('manualInstanceCreateMount', { submitLabel: 'Create manual instance' });
@@ -1190,13 +1231,363 @@
       });
     }
 
+    function canManageVLESSGroups() {
+      return hasPermission('settings.manage');
+    }
+
+    function vlessGroupCatalogItems() {
+      const source = canManageVLESSGroups()
+        ? (state.vlessGroupCatalog || state.vlessGroupTemplates || [])
+        : (state.vlessGroupTemplates || []);
+      return (Array.isArray(source) ? source : [])
+        .filter((group) => group && group.key)
+        .filter((group) => String(group.status || 'active').toLowerCase() !== 'deleted')
+        .slice()
+        .sort((left, right) => Number(left.display_order || 1000) - Number(right.display_order || 1000)
+          || String(left.label || left.key).localeCompare(String(right.label || right.key), 'en'));
+    }
+
+    function vlessGroupModeLabel(group) {
+      const mode = String(group?.access_mode || group?.egress_mode || 'instance_default').toLowerCase();
+      if (mode === 'local_breakout' || mode === 'local' || mode === 'direct') return 'Current node exit';
+      if (mode === 'egress_node' || mode === 'remote_egress' || mode === 'remote_node') return 'Selected egress node';
+      if (mode === 'instance_only' || mode === 'target_instance') return 'Instance-only access';
+      if (mode === 'block' || mode === 'blocked' || group?.outbound_tag === 'block') return 'Blocked';
+      return 'Instance default route';
+    }
+
+    function nodeLabelByID(nodeID) {
+      const node = nodeByID(nodeID);
+      if (!node) return nodeID || 'not selected';
+      return [node.name, node.role, node.address].filter(Boolean).join(' · ');
+    }
+
+    function instanceLabelByID(instanceID) {
+      const instance = (state.instances || []).find((item) => String(item.id || '') === String(instanceID || ''));
+      if (!instance) return instanceID || 'not selected';
+      return [instance.name || instance.slug || instance.id, serviceLabel(instance.service_code), instanceEndpoint(instance)].filter(Boolean).join(' · ');
+    }
+
+    function vlessGroupRouteDetails(group) {
+      const parts = [vlessGroupModeLabel(group)];
+      if (group?.egress_node_id) parts.push(nodeLabelByID(group.egress_node_id));
+      if (group?.target_instance_id) parts.push(instanceLabelByID(group.target_instance_id));
+      if (group?.ad_block) parts.push('ad blocking');
+      const rules = Array.isArray(group?.rules) ? group.rules.length : 0;
+      const extraRules = Array.isArray(group?.extra_rules) ? group.extra_rules.length : 0;
+      if (rules + extraRules > 0) parts.push(`${rules + extraRules} advanced rules`);
+      return parts.join(' · ');
+    }
+
+    function renderVLESSGroupCards(groups) {
+      if (!groups.length) {
+        return '<div class="empty">No VLESS group templates loaded. Run migrations and seed defaults, or add the first group manually.</div>';
+      }
+      const manage = canManageVLESSGroups();
+      return `
+        <div class="vless-group-card-grid">
+          ${groups.map((group) => {
+            const status = String(group.status || 'active').toLowerCase();
+            return `
+              <article class="vless-template-card">
+                <div class="vless-template-card-head">
+                  <div>
+                    <h3>${escapeHTML(group.label || group.key)}</h3>
+                    <code>${escapeHTML(group.key)}</code>
+                  </div>
+                  ${status !== 'active' ? statusTag(status) : ''}
+                </div>
+                <p>${escapeHTML(group.description || 'Reusable VLESS client routing group.')}</p>
+                <div class="vless-template-route">
+                  <span>${escapeHTML(vlessGroupRouteDetails(group))}</span>
+                </div>
+                <div class="vless-template-actions">
+                  ${manage ? `<button class="secondary-btn vless-group-edit-btn" type="button" data-group-key="${escapeHTML(group.key)}">Edit</button>` : ''}
+                  ${manage && status === 'active' ? `<button class="secondary-btn vless-group-disable-btn" type="button" data-group-key="${escapeHTML(group.key)}">Disable</button>` : ''}
+                  ${manage && status === 'disabled' ? `<button class="secondary-btn vless-group-enable-btn" type="button" data-group-key="${escapeHTML(group.key)}">Enable</button>` : ''}
+                  ${manage ? `<button class="danger-btn vless-group-delete-btn" type="button" data-group-key="${escapeHTML(group.key)}">Delete</button>` : ''}
+                </div>
+              </article>`;
+          }).join('')}
+        </div>`;
+    }
+
+    function renderVLESSGroupsPage() {
+      setTitle('VLESS groups');
+      const groups = vlessGroupCatalogItems();
+      const active = groups.filter((group) => String(group.status || 'active').toLowerCase() === 'active');
+      el('content').innerHTML = `
+        ${renderInstancesTabs('vless-groups')}
+        <section class="table-card vless-groups-page">
+          <div class="table-head">
+            <div>
+              <h2>VLESS groups</h2>
+              <div class="metric-caption">Reusable client routing groups applied to every saved VLESS instance.</div>
+            </div>
+            <div class="table-tools">
+              <span class="tag">${escapeHTML(String(active.length))} active</span>
+              <span class="tag">${escapeHTML(String(groups.length))} templates</span>
+              ${canManageVLESSGroups() ? '<button class="secondary-btn" id="addVLESSGroupBtn" type="button">Add group</button>' : '<span class="tag">settings.manage required</span>'}
+            </div>
+          </div>
+          <div class="vless-groups-intro">
+            <div>
+              <strong>Routing model</strong>
+              <span>Set groups once here, then assign clients to a group during provisioning. VLESS instance forms only choose the default group.</span>
+            </div>
+            <div>
+              <strong>Safe defaults</strong>
+              <span>Default, current-node exit, ad-blocked default and blocked groups are seeded automatically.</span>
+            </div>
+          </div>
+          ${renderVLESSGroupCards(groups)}
+        </section>`;
+      bindInstancesTabs();
+      bindVLESSGroupActions();
+    }
+
+    function bindVLESSGroupActions() {
+      document.getElementById('addVLESSGroupBtn')?.addEventListener('click', () => openVLESSGroupEditor(''));
+      document.querySelectorAll('.vless-group-edit-btn').forEach((button) => {
+        button.addEventListener('click', () => openVLESSGroupEditor(button.dataset.groupKey || ''));
+      });
+      document.querySelectorAll('.vless-group-enable-btn').forEach((button) => {
+        button.addEventListener('click', () => setVLESSGroupStatus(button.dataset.groupKey || '', 'enable'));
+      });
+      document.querySelectorAll('.vless-group-disable-btn').forEach((button) => {
+        button.addEventListener('click', () => setVLESSGroupStatus(button.dataset.groupKey || '', 'disable'));
+      });
+      document.querySelectorAll('.vless-group-delete-btn').forEach((button) => {
+        button.addEventListener('click', () => deleteVLESSGroupTemplate(button.dataset.groupKey || ''));
+      });
+    }
+
+    function vlessGroupEditorModel(groupKey) {
+      const existing = vlessGroupCatalogItems().find((group) => group.key === groupKey);
+      if (existing) return JSON.parse(JSON.stringify(existing));
+      return {
+        key: 'remote_egress',
+        label: 'Remote egress',
+        description: 'Route selected clients through a specific egress node.',
+        access_mode: 'egress_node',
+        egress_mode: 'egress_node',
+        outbound_tag: 'direct',
+        rules: [],
+        extra_rules: [],
+        display_order: 50,
+        status: 'active',
+      };
+    }
+
+    function vlessModeOptions(selected) {
+      const mode = String(selected || 'instance_default');
+      const options = [
+        ['instance_default', 'Instance default route'],
+        ['local_breakout', 'Current node exit'],
+        ['egress_node', 'Selected egress node'],
+        ['instance_only', 'Only selected instance'],
+        ['block', 'Block all traffic'],
+      ];
+      return options.map(([value, label]) => `<option value="${escapeHTML(value)}"${value === mode ? ' selected' : ''}>${escapeHTML(label)}</option>`).join('');
+    }
+
+    function targetInstanceOptionsForGroup(selectedID = '') {
+      const selected = String(selectedID || '').trim();
+      const instances = (state.instances || [])
+        .filter((instance) => String(instance.status || '').toLowerCase() !== 'deleted')
+        .sort((left, right) => instanceLabelByID(left.id).localeCompare(instanceLabelByID(right.id), 'en'));
+      const rows = ['<option value="">Select target instance</option>'];
+      for (const instance of instances) {
+        rows.push(`<option value="${escapeHTML(instance.id)}"${instance.id === selected ? ' selected' : ''}>${escapeHTML(instanceLabelByID(instance.id))}</option>`);
+      }
+      return rows.join('');
+    }
+
+    function openVLESSGroupEditor(groupKey) {
+      if (!canManageVLESSGroups()) {
+        openActionOutcomeModal('VLESS groups', 'settings.manage required', 'failed', 'Your role cannot manage VLESS group templates.', []);
+        return;
+      }
+      const model = vlessGroupEditorModel(groupKey);
+      const rules = Array.isArray(model.extra_rules) && model.extra_rules.length
+        ? model.extra_rules
+        : (Array.isArray(model.rules) ? model.rules : []);
+      openModal(groupKey ? `Edit VLESS group: ${model.label || groupKey}` : 'Add VLESS group', 'Global client routing template', `
+        <form id="vlessGroupEditorForm" class="form-grid vless-group-editor-form">
+          <div class="field">
+            <label>Key</label>
+            <input name="key" value="${escapeHTML(model.key || '')}" placeholder="remote_egress" required${groupKey ? ' readonly' : ''}>
+            <div class="field-hint">Stable identifier used by client provisioning.</div>
+          </div>
+          <div class="field">
+            <label>Label</label>
+            <input name="label" value="${escapeHTML(model.label || '')}" placeholder="Remote egress" required>
+          </div>
+          <div class="field full">
+            <label>Description</label>
+            <input name="description" value="${escapeHTML(model.description || '')}" placeholder="Short operator-facing explanation">
+          </div>
+          <div class="field">
+            <label>Mode</label>
+            <select name="access_mode" data-vless-mode>${vlessModeOptions(model.access_mode || model.egress_mode)}</select>
+          </div>
+          <div class="field" data-vless-egress-field>
+            <label>Egress node</label>
+            <select name="egress_node_id">${nodeOptions(model.egress_node_id || '', { roles: ['egress'], includeEmpty: true, emptyLabel: 'Select egress node' })}</select>
+          </div>
+          <div class="field" data-vless-target-field>
+            <label>Target instance</label>
+            <select name="target_instance_id">${targetInstanceOptionsForGroup(model.target_instance_id || '')}</select>
+          </div>
+          <div class="field">
+            <label>Order</label>
+            <input name="display_order" type="number" min="1" max="9999" value="${escapeHTML(model.display_order || 100)}">
+          </div>
+          <div class="field" data-vless-adblock-field>
+            <label>Filtering</label>
+            <label class="checkbox-line">
+              <input name="ad_block" type="checkbox"${model.ad_block ? ' checked' : ''}>
+              <span>Block managed ad domains</span>
+            </label>
+          </div>
+          <details class="field full advanced-form-section">
+            <summary>Advanced route rules JSON</summary>
+            <textarea name="rules_json" rows="5" spellcheck="false" placeholder='[{"domain":["example.com"],"outbound_tag":"direct"}]'>${escapeHTML(rules.length ? JSON.stringify(rules, null, 2) : '')}</textarea>
+            <div class="field-hint">Optional Xray routing rules. Instance-only mode automatically creates an allow rule for the selected target instance.</div>
+          </details>
+          <div class="field full inline-actions">
+            <button class="primary-btn" type="submit">Save group</button>
+            <button class="secondary-btn" id="cancelVLESSGroupEditorBtn" type="button">Cancel</button>
+          </div>
+        </form>
+        <div id="vlessGroupEditorResult" class="form-result"></div>`, { wide: true });
+      document.getElementById('cancelVLESSGroupEditorBtn')?.addEventListener('click', closeModal);
+      bindVLESSGroupEditorMode();
+      document.getElementById('vlessGroupEditorForm')?.addEventListener('submit', submitVLESSGroupEditor);
+    }
+
+    function bindVLESSGroupEditorMode() {
+      const form = document.getElementById('vlessGroupEditorForm');
+      if (!form) return;
+      const modeSelect = form.querySelector('[data-vless-mode]');
+      const egressField = form.querySelector('[data-vless-egress-field]');
+      const targetField = form.querySelector('[data-vless-target-field]');
+      const adBlockField = form.querySelector('[data-vless-adblock-field]');
+      const egressSelect = form.querySelector('select[name="egress_node_id"]');
+      const targetSelect = form.querySelector('select[name="target_instance_id"]');
+      const sync = () => {
+        const mode = String(modeSelect?.value || 'instance_default');
+        if (egressField) egressField.hidden = mode !== 'egress_node';
+        if (targetField) targetField.hidden = mode !== 'instance_only';
+        if (adBlockField) adBlockField.hidden = mode === 'block' || mode === 'instance_only';
+        if (egressSelect) {
+          egressSelect.disabled = mode !== 'egress_node';
+          egressSelect.required = mode === 'egress_node';
+          if (mode !== 'egress_node') egressSelect.value = '';
+        }
+        if (targetSelect) {
+          targetSelect.disabled = mode !== 'instance_only';
+          targetSelect.required = mode === 'instance_only';
+          if (mode !== 'instance_only') targetSelect.value = '';
+        }
+      };
+      modeSelect?.addEventListener('change', sync);
+      sync();
+    }
+
+    async function submitVLESSGroupEditor(event) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const result = document.getElementById('vlessGroupEditorResult');
+      const data = new FormData(form);
+      const mode = String(data.get('access_mode') || 'instance_default');
+      const rulesBody = String(data.get('rules_json') || '').trim();
+      let rules = [];
+      if (rulesBody) {
+        try {
+          rules = JSON.parse(rulesBody);
+          if (!Array.isArray(rules)) throw new Error('Rules JSON must be an array');
+        } catch (err) {
+          if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message || 'Invalid rules JSON')}</span>`;
+          return;
+        }
+      }
+      const payload = {
+        key: String(data.get('key') || '').trim(),
+        label: String(data.get('label') || '').trim(),
+        description: String(data.get('description') || '').trim(),
+        access_mode: mode,
+        egress_mode: mode === 'instance_default' ? 'default' : mode,
+        outbound_tag: mode === 'block' || mode === 'instance_only' ? 'block' : 'direct',
+        egress_node_id: mode === 'egress_node' ? String(data.get('egress_node_id') || '').trim() : '',
+        target_instance_id: mode === 'instance_only' ? String(data.get('target_instance_id') || '').trim() : '',
+        ad_block: mode !== 'block' && mode !== 'instance_only' && data.get('ad_block') === 'on',
+        rules: mode === 'instance_only' ? [] : rules,
+        extra_rules: mode === 'instance_only' ? rules : [],
+        status: 'active',
+        source: 'operator',
+        display_order: Number(data.get('display_order') || 100) || 100,
+      };
+      if (result) result.innerHTML = '<span class="tag warn">saving</span>';
+      try {
+        const saved = await sendJSON(`/api/v1/vless-groups/${encodeURIComponent(payload.key)}`, 'PUT', payload);
+        if (result) result.innerHTML = `<span class="tag ok">saved</span> <code>${escapeHTML(saved.key || payload.key)}</code>`;
+        await refresh();
+        closeModal();
+        renderVLESSGroupsPage();
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message || 'save failed')}</span>`;
+      }
+    }
+
+    async function setVLESSGroupStatus(groupKey, action) {
+      if (!groupKey || !canManageVLESSGroups()) return;
+      try {
+        await sendJSON(`/api/v1/vless-groups/${encodeURIComponent(groupKey)}/${action}`, 'POST', {});
+        await refresh();
+        renderVLESSGroupsPage();
+      } catch (err) {
+        openActionOutcomeModal('VLESS groups', 'Status change failed', 'failed', err.message || 'VLESS group status change failed.', [
+          { label: 'Group', value: groupKey },
+        ]);
+      }
+    }
+
+    async function deleteVLESSGroupTemplate(groupKey) {
+      if (!groupKey || !canManageVLESSGroups()) return;
+      if (!window.confirm(`Delete VLESS group ${groupKey}? Existing applied revisions are not changed until VLESS instances are saved and applied again.`)) return;
+      try {
+        await sendJSON(`/api/v1/vless-groups/${encodeURIComponent(groupKey)}`, 'DELETE', null);
+        await refresh();
+        renderVLESSGroupsPage();
+      } catch (err) {
+        openActionOutcomeModal('VLESS groups', 'Delete failed', 'failed', err.message || 'VLESS group delete failed.', [
+          { label: 'Group', value: groupKey },
+        ]);
+      }
+    }
+
     function render() {
-      if (state.instancesView === 'create-pack') {
+      const view = normalizedInstancesView();
+      if (view === 'create-pack') {
         renderCreateFromPackPage();
         return;
       }
-      if (state.instancesView === 'manual') {
+      if (view === 'manual') {
         renderManualInstancePage();
+        return;
+      }
+      if (view === 'service-packs') {
+        setTitle('Service pack catalog');
+        el('content').innerHTML = `
+          ${renderInstancesTabs('service-packs')}
+          ${renderServicePackCatalog()}`;
+        bindInstancesTabs();
+        bindServicePackCatalogActions();
+        return;
+      }
+      if (view === 'vless-groups') {
+        renderVLESSGroupsPage();
         return;
       }
       state.instancesView = 'list';
@@ -1204,6 +1595,7 @@
       const instances = Array.isArray(state.instances) ? state.instances : [];
       const runtimeReports = Array.isArray(state.instanceRuntimeStates) ? state.instanceRuntimeStates.length : 0;
       el('content').innerHTML = `
+        ${renderInstancesTabs('list')}
         <section class="table-card instances-overview">
           <div class="table-head">
             <h2>Instances</h2>
@@ -1215,9 +1607,19 @@
             </div>
           </div>
           <div class="instances-list">${renderInstancesList(instances)}</div>
-        </section>
-        ${renderServicePackCatalog()}`;
+        </section>`;
+      bindInstancesTabs();
       bindActions();
+    }
+
+    function bindServicePackCatalogActions() {
+      document.getElementById('addServicePackTemplateBtn')?.addEventListener('click', () => openServicePackEditor(''));
+      document.querySelectorAll('.service-pack-edit-btn').forEach((button) => {
+        button.addEventListener('click', () => openServicePackEditor(button.dataset.packKey));
+      });
+      document.querySelectorAll('.service-pack-delete-btn').forEach((button) => {
+        button.addEventListener('click', () => deleteServicePackTemplate(button.dataset.packKey));
+      });
     }
 
     function renderServicePackCatalog() {

@@ -895,9 +895,10 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 }
 .instance-manage-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.34fr);
+  grid-template-columns: minmax(0, 1120px) minmax(320px, 420px);
   gap: 16px;
   align-items: start;
+  justify-content: start;
 }
 .instance-manage-main {
   display: grid;
@@ -913,6 +914,7 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 }
 .instance-manage-form {
   align-items: start;
+  max-width: 1120px;
 }
 .instance-manage-form .service-fields {
   border-top: 1px solid var(--line);
@@ -1673,6 +1675,10 @@ tr:hover td { background: #f8fafc; }
 .page-tab.is-active {
   border-color: rgba(185, 28, 28, 0.34);
   background: #fff7f7;
+}
+.instances-tabs {
+  max-width: 1280px;
+  margin: 0 0 12px;
 }
 .page-tab span {
   display: flex;
@@ -3187,51 +3193,101 @@ tr:hover td { background: #f8fafc; }
   border-radius: 9px;
   font-size: 13px;
 }
-.vless-groups-editor {
+.instance-service-profile-card {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fafc;
 }
-.vless-groups-grid {
+.instance-service-profile-main {
   display: grid;
-  gap: 10px;
+  gap: 5px;
+  min-width: 0;
 }
-.vless-group-row {
+.instance-service-profile-main strong {
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.25;
+}
+.instance-service-profile-main span {
+  max-width: 900px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.instance-service-profile-facts {
   display: grid;
-  grid-template-columns: minmax(120px, 0.8fr) minmax(160px, 1.2fr) minmax(210px, 1.4fr) minmax(220px, 1.5fr) minmax(240px, 1.7fr) minmax(120px, 0.7fr) minmax(92px, 0.5fr);
-  gap: 10px;
-  padding: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.instance-service-profile-facts span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.instance-service-profile-facts code {
+  display: block;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.instance-service-profile-preset {
+  display: grid;
+  gap: 7px;
+  max-width: 360px;
+}
+.vless-global-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #f8fafc;
 }
-.vless-group-checkbox {
-  min-height: 36px;
-  padding: 7px 0;
+.vless-global-summary div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
-.vless-group-remove-field {
-  align-self: end;
+.vless-global-summary strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.3;
 }
-.vless-group-advanced {
+.vless-global-summary span:not(.tag) {
   color: var(--muted);
-}
-.vless-group-advanced summary {
-  cursor: pointer;
   font-size: 12px;
-  font-weight: 700;
+  line-height: 1.4;
 }
-.vless-group-advanced textarea {
-  margin-top: 8px;
+.advanced-form-section {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
 }
-.vless-groups-preview {
-  color: var(--muted);
-}
-.vless-groups-preview summary {
+.advanced-form-section summary {
   cursor: pointer;
+  color: var(--text);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
+  line-height: 1.3;
 }
-.vless-groups-preview textarea {
-  margin-top: 8px;
+.advanced-form-section textarea {
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
 }
 .instance-list-toolbar-actions {
   display: flex;
@@ -4576,6 +4632,103 @@ tr:hover td { background: #f8fafc; }
   gap: 8px;
   flex-wrap: wrap;
 }
+.vless-groups-page {
+  overflow: hidden;
+  max-width: 1480px;
+}
+.vless-groups-intro {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px;
+  border-top: 1px solid var(--line);
+  background: #f8fafc;
+}
+.vless-groups-intro > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+.vless-groups-intro strong {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.3;
+}
+.vless-groups-intro span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.vless-group-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px;
+}
+.vless-template-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+.vless-template-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.vless-template-card-head h3 {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.25;
+}
+.vless-template-card-head code,
+.vless-template-route span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.vless-template-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.vless-template-route {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.vless-template-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.vless-template-actions button {
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+.vless-group-editor-form {
+  max-width: 980px;
+}
 @media (max-width: 1180px) {
   .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .split { grid-template-columns: 1fr; }
@@ -4629,7 +4782,10 @@ tr:hover td { background: #f8fafc; }
   .node-map-summary-grid,
   .node-map-detail-grid,
   .pack-create-summary,
-  .pack-component-grid {
+  .pack-component-grid,
+  .instance-service-profile-facts,
+  .vless-groups-intro,
+  .vless-group-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .node-map-inspector {
@@ -4868,7 +5024,9 @@ tr:hover td { background: #f8fafc; }
   .pack-create-form-grid,
   .pack-create-summary,
   .pack-component-grid,
-  .vless-group-row {
+  .instance-service-profile-facts,
+  .vless-groups-intro,
+  .vless-group-card-grid {
     grid-template-columns: 1fr;
   }
   .table-head,
@@ -4886,6 +5044,11 @@ tr:hover td { background: #f8fafc; }
   }
   .pack-details-head,
   .pack-create-actions {
+    flex-direction: column;
+  }
+  .vless-global-summary,
+  .vless-template-card-head {
+    align-items: flex-start;
     flex-direction: column;
   }
   .pack-create-actions button {

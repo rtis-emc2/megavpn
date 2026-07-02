@@ -350,6 +350,9 @@ func (s *Store) renderXrayPayloadSpec(ctx context.Context, instance domain.Insta
 			files = append(files, certFiles...)
 		}
 	}
+	if err := s.hydrateXrayVLESSGroupTargetRules(ctx, spec); err != nil {
+		return nil, err
+	}
 	config, err := buildXrayServerConfig(instance, spec)
 	if err != nil {
 		return nil, err
@@ -1660,6 +1663,7 @@ type xrayVLESSGroup struct {
 	Label       string
 	EgressMode  string
 	OutboundTag string
+	TargetID    string
 	Outbound    map[string]any
 	AdBlock     bool
 	Rules       []map[string]any
@@ -1748,14 +1752,19 @@ func xrayVLESSGroups(spec map[string]any) []xrayVLESSGroup {
 		if outbound == nil && !isBuiltInXrayOutboundTag(outboundTag) {
 			outboundTag = "direct"
 		}
+		rules := xrayVLESSGroupRules(groupRaw["rules"])
+		if extraRules := xrayVLESSGroupRules(groupRaw["extra_rules"]); len(extraRules) > 0 {
+			rules = append(rules, extraRules...)
+		}
 		group := xrayVLESSGroup{
 			Key:         key,
 			Label:       firstString(groupRaw["label"], groupRaw["title"], key),
 			EgressMode:  strings.ToLower(firstString(groupRaw["egress_mode"], groupRaw["access_mode"], groupRaw["mode"])),
 			OutboundTag: outboundTag,
+			TargetID:    firstString(groupRaw["target_instance_id"], groupRaw["targetInstanceID"]),
 			Outbound:    outbound,
 			AdBlock:     xrayVLESSGroupAdBlock(groupRaw),
-			Rules:       xrayVLESSGroupRules(groupRaw["rules"]),
+			Rules:       rules,
 		}
 		groups = append(groups, group)
 		seen[key] = struct{}{}
@@ -1764,7 +1773,7 @@ func xrayVLESSGroups(spec map[string]any) []xrayVLESSGroup {
 }
 
 func xrayVLESSGroupRules(raw any) []map[string]any {
-	list, _ := raw.([]any)
+	list := sliceRuleItemsFromAny(raw)
 	out := make([]map[string]any, 0, len(list))
 	for _, item := range list {
 		rule, _ := cloneAny(item).(map[string]any)
@@ -1786,7 +1795,7 @@ func xrayVLESSGroupAdBlock(group map[string]any) bool {
 	if truthy(group["ad_block"]) || truthy(group["adBlock"]) || truthy(group["block_ads"]) || truthy(group["blockAds"]) {
 		return true
 	}
-	list, _ := group["rules"].([]any)
+	list := sliceRuleItemsFromAny(group["rules"])
 	for _, item := range list {
 		rule, _ := cloneAny(item).(map[string]any)
 		if xrayVLESSRuleIsManagedAdBlock(rule) {
@@ -1794,6 +1803,107 @@ func xrayVLESSGroupAdBlock(group map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func sliceRuleItemsFromAny(raw any) []any {
+	if raw == nil {
+		return nil
+	}
+	switch value := raw.(type) {
+	case []any:
+		return value
+	case []map[string]any:
+		out := make([]any, 0, len(value))
+		for _, item := range value {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func (s *Store) hydrateXrayVLESSGroupTargetRules(ctx context.Context, spec map[string]any) error {
+	if spec == nil {
+		return nil
+	}
+	groups, ok := spec["vless_groups"].([]any)
+	if !ok || len(groups) == 0 {
+		return nil
+	}
+	updated := make([]any, 0, len(groups))
+	for _, item := range groups {
+		group, _ := cloneAny(item).(map[string]any)
+		if group == nil {
+			updated = append(updated, item)
+			continue
+		}
+		targetID := firstString(group["target_instance_id"], group["targetInstanceID"])
+		mode := strings.ToLower(firstString(group["egress_mode"], group["access_mode"], group["mode"]))
+		if targetID == "" || mode != "instance_only" {
+			updated = append(updated, group)
+			continue
+		}
+		target, err := s.GetInstance(ctx, targetID)
+		if err != nil {
+			return fmt.Errorf("vless group %q target instance lookup failed: %w", firstString(group["key"], group["name"], "unknown"), err)
+		}
+		rule, err := xrayVLESSTargetInstanceRule(target, firstString(group["allow_outbound_tag"], "direct"))
+		if err != nil {
+			return fmt.Errorf("vless group %q target instance is not routable: %w", firstString(group["key"], group["name"], "unknown"), err)
+		}
+		rules := sliceMapRulesFromAny(group["rules"])
+		rules = append(rules, rule)
+		group["rules"] = rules
+		group["outbound_tag"] = "block"
+		updated = append(updated, group)
+	}
+	spec["vless_groups"] = updated
+	return nil
+}
+
+func xrayVLESSTargetInstanceRule(target domain.Instance, outboundTag string) (map[string]any, error) {
+	host := strings.TrimSpace(target.EndpointHost)
+	port := target.EndpointPort
+	if host == "" {
+		return nil, fmt.Errorf("target instance %s has empty endpoint host", target.ID)
+	}
+	if port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("target instance %s has invalid endpoint port", target.ID)
+	}
+	tag := normalizeXrayOutboundTag(outboundTag)
+	if tag == "" {
+		tag = "direct"
+	}
+	rule := map[string]any{
+		"type":        "field",
+		"port":        strconv.Itoa(port),
+		"outboundTag": tag,
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		rule["ip"] = []any{host}
+	} else {
+		rule["domain"] = []any{host}
+	}
+	return rule, nil
+}
+
+func sliceMapRulesFromAny(raw any) []any {
+	if raw == nil {
+		return []any{}
+	}
+	switch value := raw.(type) {
+	case []any:
+		return sliceFromAny(value)
+	case []map[string]any:
+		out := make([]any, 0, len(value))
+		for _, item := range value {
+			out = append(out, cloneMap(item))
+		}
+		return out
+	default:
+		return []any{}
+	}
 }
 
 func xrayVLESSRuleIsManagedAdBlock(rule map[string]any) bool {

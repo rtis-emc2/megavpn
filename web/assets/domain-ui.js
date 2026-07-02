@@ -413,20 +413,6 @@
       return out;
     }
 
-    function parseVLESSGroupsDraft(raw) {
-      if (Array.isArray(raw)) return raw;
-      const body = String(raw || '').trim();
-      if (!body) {
-        return [{ key: 'default', label: 'Default access', outbound_tag: 'direct' }];
-      }
-      try {
-        const parsed = JSON.parse(body);
-        return Array.isArray(parsed) && parsed.length ? parsed : [{ key: 'default', label: 'Default access', outbound_tag: 'direct' }];
-      } catch (_) {
-        return [{ key: 'default', label: 'Default access', outbound_tag: 'direct' }];
-      }
-    }
-
     function isManagedVLESSAdBlockRule(rule) {
       if (!rule || typeof rule !== 'object') return false;
       const outboundTag = String(rule.outboundTag || rule.outbound_tag || '').trim().toLowerCase();
@@ -461,13 +447,14 @@
       if (['deny', 'blocked'].includes(accessMode)) accessMode = 'block';
       if (outboundTag === 'block' && !modeSource && !Array.isArray(source.rules)) accessMode = 'block';
       if (source.target_instance_id && !modeSource) accessMode = 'instance_only';
-      const rawRules = Array.isArray(source.extra_rules)
-        ? source.extra_rules
-        : (accessMode === 'instance_only' ? [] : (Array.isArray(source.rules) ? source.rules : []));
+      const rawRules = Array.isArray(source.rules) ? source.rules : [];
+      const rawExtraRules = Array.isArray(source.extra_rules) ? source.extra_rules : [];
       const sourceRules = rawRules.filter((rule) => !isManagedVLESSAdBlockRule(rule));
+      const sourceExtraRules = rawExtraRules.filter((rule) => !isManagedVLESSAdBlockRule(rule));
       return {
         key,
         label: String(source.label || source.title || key || `Group ${index + 1}`).trim(),
+        description: String(source.description || '').trim(),
         access_mode: accessMode,
         outbound_tag: outboundTag,
         egress_node_id: String(source.egress_node_id || source.node_id || source.egress?.egress_node_id || source.egress?.node_id || '').trim(),
@@ -475,79 +462,105 @@
         target_instance_label: String(source.target_instance_label || '').trim(),
         ad_block: vlessGroupAdBlockEnabled(source),
         rules: sourceRules,
+        extra_rules: sourceExtraRules,
+        display_order: Number(source.display_order || source.displayOrder || 1000),
       };
     }
 
-    function renderVLESSGroupRow(group, index) {
-      const normalized = normalizeVLESSGroupForEditor(group, index);
-      const rulesBody = normalized.rules.length ? JSON.stringify(normalized.rules, null, 2) : '';
-      const modeOptions = [
-        ['instance_default', 'Use instance default route'],
-        ['local_breakout', 'Exit from current node'],
-        ['egress_node', 'Exit from selected egress node'],
-        ['instance_only', 'Allow only selected instance'],
-        ['block', 'Block all traffic'],
-      ];
-      return `
-        <div class="vless-group-row" data-vless-group-row>
-          <div class="field compact">
-            <label>Key</label>
-            <input data-vless-group-key value="${escapeHTML(normalized.key)}" placeholder="default" />
-          </div>
-          <div class="field compact">
-            <label>Label</label>
-            <input data-vless-group-label value="${escapeHTML(normalized.label)}" placeholder="Default access" />
-          </div>
-          <div class="field compact">
-            <label>Mode</label>
-            <select data-vless-group-mode>
-              ${modeOptions.map(([value, label]) => `<option value="${escapeHTML(value)}"${value === normalized.access_mode ? ' selected' : ''}>${escapeHTML(label)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field compact" data-vless-group-egress-field>
-            <label>Egress node</label>
-            <select data-vless-group-egress-node>${nodeOptions(normalized.egress_node_id, { roles: ['egress'], includeEmpty: true, emptyLabel: 'Select egress node' })}</select>
-          </div>
-          <div class="field compact" data-vless-group-target-field>
-            <label>Target instance</label>
-            <select data-vless-group-target-instance>${targetInstanceOptions(normalized.target_instance_id)}</select>
-          </div>
-          <div class="field compact vless-group-adblock-field" data-vless-group-adblock-field>
-            <label>Filtering</label>
-            <label class="checkbox-line vless-group-checkbox">
-              <input type="checkbox" data-vless-group-adblock${normalized.ad_block ? ' checked' : ''}>
-              <span>Block ads</span>
-            </label>
-          </div>
-          <div class="field compact vless-group-remove-field">
-            <label>Action</label>
-            <button class="secondary-btn vless-group-remove-btn" type="button">Remove</button>
-          </div>
-          <details class="field full compact vless-group-advanced">
-            <summary>Advanced route rules JSON</summary>
-            <textarea data-vless-group-rules rows="3" placeholder='[{"domain":["geosite:category-ads-all"],"outbound_tag":"block"}]'>${escapeHTML(rulesBody)}</textarea>
-          </details>
-        </div>`;
+    function activeVLESSGroupTemplates() {
+      const source = Array.isArray(state.vlessGroupTemplates) && state.vlessGroupTemplates.length
+        ? state.vlessGroupTemplates
+        : (Array.isArray(state.vlessGroupCatalog) ? state.vlessGroupCatalog : []);
+      const active = source
+        .filter((group) => group && String(group.status || 'active').toLowerCase() === 'active')
+        .map((group, index) => normalizeVLESSGroupForEditor(group, index))
+        .filter((group) => group.key)
+        .sort((left, right) => Number(left.display_order || left.displayOrder || 1000) - Number(right.display_order || right.displayOrder || 1000)
+          || String(left.label || left.key).localeCompare(String(right.label || right.key), 'en'));
+      if (active.length) return active;
+      return [{ key: 'default', label: 'Default access', access_mode: 'instance_default', egress_mode: 'default', outbound_tag: 'direct', rules: [] }];
     }
 
-    function renderVLESSGroupEditor(draft = {}) {
-      const groups = parseVLESSGroupsDraft(draft.xray_vless_groups).map(normalizeVLESSGroupForEditor);
-      const json = JSON.stringify(groups, null, 2);
+    function vlessGroupTemplateOptions(selectedKey = '') {
+      const selected = String(selectedKey || '').trim() || 'default';
+      return activeVLESSGroupTemplates()
+        .map((group) => {
+          const meta = [];
+          if (group.access_mode === 'local_breakout') meta.push('current node');
+          if (group.access_mode === 'egress_node') meta.push('egress node');
+          if (group.access_mode === 'instance_only') meta.push('instance only');
+          if (group.access_mode === 'block' || group.outbound_tag === 'block') meta.push('blocked');
+          if (group.ad_block) meta.push('ad block');
+          const label = [group.label || group.key, meta.join(', ')].filter(Boolean).join(' · ');
+          return `<option value="${escapeHTML(group.key)}"${group.key === selected ? ' selected' : ''}>${escapeHTML(label)}</option>`;
+        })
+        .join('');
+    }
+
+    function vlessGroupTemplateToSpecGroup(template) {
+      const source = normalizeVLESSGroupForEditor(template, 0);
+      const group = {
+        key: source.key || 'default',
+        label: source.label || source.key || 'Default access',
+      };
+      if (source.description) group.description = source.description;
+      if (source.access_mode === 'instance_default') {
+        group.access_mode = 'instance_default';
+        group.egress_mode = 'default';
+        group.outbound_tag = 'direct';
+      } else if (source.access_mode === 'local_breakout') {
+        group.access_mode = 'local_breakout';
+        group.egress_mode = 'local_breakout';
+        group.outbound_tag = 'direct';
+      } else if (source.access_mode === 'egress_node') {
+        group.access_mode = 'egress_node';
+        group.egress_mode = 'egress_node';
+        group.egress_node_id = source.egress_node_id;
+        group.outbound_tag = source.outbound_tag || 'direct';
+      } else if (source.access_mode === 'instance_only') {
+        const targetInstance = findInstanceByID(source.target_instance_id);
+        group.access_mode = 'instance_only';
+        group.target_instance_id = source.target_instance_id || '';
+        group.target_instance_label = targetInstance ? serviceInstanceLabel(targetInstance) : source.target_instance_label || '';
+        group.outbound_tag = 'block';
+        const targetRule = endpointRuleForInstance(targetInstance);
+        if (targetRule) group.rules = [targetRule];
+      } else if (source.access_mode === 'block') {
+        group.access_mode = 'block';
+        group.egress_mode = 'block';
+        group.outbound_tag = 'block';
+      }
+      const rules = []
+        .concat(Array.isArray(source.rules) ? source.rules : [])
+        .concat(Array.isArray(source.extra_rules) ? source.extra_rules : []);
+      if (rules.length) {
+        group.rules = Array.isArray(group.rules) ? group.rules.concat(rules) : rules;
+      }
+      if (source.ad_block && source.access_mode !== 'block' && source.access_mode !== 'instance_only') {
+        const managedRule = managedVLESSAdBlockRule();
+        const existingRules = Array.isArray(group.rules) ? group.rules : [];
+        if (!existingRules.some(isManagedVLESSAdBlockRule)) {
+          group.rules = [managedRule].concat(existingRules);
+        }
+        group.ad_block = true;
+      }
+      return group;
+    }
+
+    function vlessGroupTemplatesAsSpecGroups() {
+      return activeVLESSGroupTemplates().map(vlessGroupTemplateToSpecGroup);
+    }
+
+    function renderVLESSGroupCatalogSummary(selectedKey = '') {
+      const groups = activeVLESSGroupTemplates();
+      const selected = String(selectedKey || '').trim() || 'default';
       return `
-        <div class="field full vless-groups-editor" data-vless-groups-editor>
-          <label>VLESS outbound groups</label>
-          <input type="hidden" name="xray_vless_groups" data-vless-groups-json value="${escapeHTML(json)}">
-          <div class="vless-groups-grid" data-vless-group-rows>
-            ${groups.map(renderVLESSGroupRow).join('')}
+        <div class="vless-global-summary">
+          <div>
+            <strong>${escapeHTML(String(groups.length))} global VLESS groups</strong>
+            <span>Managed in Instances / VLESS groups. Every saved VLESS instance receives this catalog.</span>
           </div>
-          <div class="inline-actions compact-actions">
-            <button class="secondary-btn vless-group-add-btn" type="button">Add group</button>
-          </div>
-          <details class="vless-groups-preview">
-            <summary>Generated JSON preview</summary>
-            <textarea data-vless-groups-preview rows="7" readonly>${escapeHTML(json)}</textarea>
-          </details>
-          <div class="field-hint">Groups are provision-time access profiles for VLESS users. Use the instance default route for normal access, local breakout for current-node exit, selected egress node for dedicated remote exit, instance-only for a constrained target, or block for deny groups.</div>
+          <span class="tag">${escapeHTML(selected)} default</span>
         </div>`;
     }
 
@@ -583,20 +596,27 @@
       const recommendations = blueprint.recommendations || [];
       return `
         <div class="field full">
-          <div class="code-block">
-            <div><strong>${escapeHTML(blueprint.label)}</strong> · ${escapeHTML(blueprint.runtime || 'runtime n/a')}</div>
-            <div class="metric-caption" style="margin-top:6px">${escapeHTML(blueprint.description || '')}</div>
-            <div class="metric-caption" style="margin-top:6px">Service code: <code>${escapeHTML(normalizeInstanceServiceCode(serviceCode))}</code> · Runtime code: <code>${escapeHTML(blueprint.runtimeCode || normalizeInstanceServiceCode(serviceCode))}</code></div>
-            <div class="metric-caption" style="margin-top:8px">Default unit: <code>${escapeHTML(blueprint.unitPattern || 'n/a')}</code> · Config path: <code>${escapeHTML(blueprint.pathPattern || 'n/a')}</code></div>
+          <div class="instance-service-profile-card">
+            <div class="instance-service-profile-main">
+              <div class="instance-panel-label">${escapeHTML(blueprint.serviceKind || 'service')}</div>
+              <strong>${escapeHTML(blueprint.label)}</strong>
+              <span>${escapeHTML(blueprint.description || '')}</span>
+            </div>
+            <div class="instance-service-profile-facts">
+              <span>Service <code>${escapeHTML(normalizeInstanceServiceCode(serviceCode))}</code></span>
+              <span>Runtime <code>${escapeHTML(blueprint.runtimeCode || normalizeInstanceServiceCode(serviceCode))}</code></span>
+              <span>Unit <code>${escapeHTML(blueprint.unitPattern || 'n/a')}</code></span>
+              <span>Config <code>${escapeHTML(blueprint.pathPattern || 'n/a')}</code></span>
+            </div>
             ${Array.isArray(blueprint.companionTo) && blueprint.companionTo.length ? `<div class="metric-caption" style="margin-top:6px">Companion services: <code>${escapeHTML(blueprint.companionTo.join(', '))}</code></div>` : ''}
             ${blueprint.companionNote ? `<div class="metric-caption" style="margin-top:6px">${escapeHTML(blueprint.companionNote)}</div>` : ''}
             ${presets.length ? `
-              <div style="margin-top:12px">
+              <div class="instance-service-profile-preset">
                 <label>Preset</label>
                 <select name="service_profile">
                   ${presets.map((item) => `<option value="${escapeHTML(item.key)}"${item.key === preset?.key ? ' selected' : ''}>${escapeHTML(item.label)}${item.recommended ? ' (recommended)' : ''}</option>`).join('')}
                 </select>
-                <div class="metric-caption" style="margin-top:6px">${escapeHTML(preset?.description || '')}</div>
+                <div class="field-hint">${escapeHTML(preset?.description || '')}</div>
               </div>` : ''}
             ${platformNotes.length ? `<div class="metric-caption" style="margin-top:10px">${platformNotes.map((line) => `CA / platform: ${escapeHTML(line)}`).join('<br>')}</div>` : ''}
             ${recommendations.length ? `<div class="metric-caption" style="margin-top:10px">${recommendations.map((line) => `• ${escapeHTML(line)}`).join('<br>')}</div>` : ''}
@@ -684,7 +704,6 @@
             xray_egress_mode: stringValue(spec.egress_mode, spec.xray_egress_mode, spec.vless_egress_mode, spec.xray_egress?.mode, 'auto'),
             xray_egress_node_id: stringValue(spec.egress_node_id, spec.xray_egress_node_id, spec.vless_egress_node_id, spec.xray_egress?.egress_node_id, spec.xray_egress?.node_id),
             xray_default_vless_group: stringValue(spec.default_vless_group, 'default'),
-            xray_vless_groups: Array.isArray(spec.vless_groups) ? JSON.stringify(spec.vless_groups, null, 2) : '',
             config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
           }, presetKey);
         case 'openvpn':
@@ -862,11 +881,18 @@
               <option value="local_breakout"${draft.xray_egress_mode === 'local_breakout' || draft.xray_egress_mode === 'direct' || draft.xray_egress_mode === 'local' ? ' selected' : ''}>local breakout</option>
             </select></div>
             <div class="field"><label>Egress node</label><select name="xray_egress_node_id">${nodeOptions(draft.xray_egress_node_id || '', { roles: ['egress'], includeEmpty: true, emptyLabel: 'Auto or select egress node' })}</select></div>
-            <div class="field"><label>Default outbound group</label><input name="xray_default_vless_group" value="${escapeHTML(draft.xray_default_vless_group || 'default')}" placeholder="default" /></div>
+            <div class="field">
+              <label>Default VLESS group</label>
+              <select name="xray_default_vless_group">${vlessGroupTemplateOptions(draft.xray_default_vless_group || 'default')}</select>
+              <div class="field-hint">Groups are managed globally on the VLESS groups tab.</div>
+            </div>
             <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/usr/local/etc/xray/xray.json')}" /></div>
             <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0640')}" /></div>
-            ${renderVLESSGroupEditor(draft)}
-            <div class="field full"><label>Advanced JSON override</label><textarea name="config_body" rows="12" placeholder='{"inbounds":[...],"outbounds":[...]}'>${escapeHTML(draft.config_body || '')}</textarea></div>`;
+            <div class="field full">${renderVLESSGroupCatalogSummary(draft.xray_default_vless_group || 'default')}</div>
+            <details class="field full advanced-form-section">
+              <summary>Advanced JSON override</summary>
+              <textarea name="config_body" rows="8" placeholder='{"inbounds":[...],"outbounds":[...]}'>${escapeHTML(draft.config_body || '')}</textarea>
+            </details>`;
         case 'openvpn':
           return `${intro}
             <div class="field"><label>Protocol</label><select name="ovpn_proto">
@@ -1051,7 +1077,6 @@
           }
         });
       }
-      bindVLESSGroupsEditor(form);
       const portInput = form.querySelector('input[name="endpoint_port"]');
       if (portInput && resolvedDraft.endpoint_port) {
         applyAutoFieldValue(portInput, String(resolvedDraft.endpoint_port), options.forceDefaults);
@@ -1065,180 +1090,6 @@
           syncInstanceServiceFields(formID, serviceCode, null, { forceDefaults: true, presetKey: presetSelect.value });
           }, { once: true });
       }
-    }
-
-    function bindVLESSGroupsEditor(form) {
-      const editor = form.querySelector('[data-vless-groups-editor]');
-      if (!editor) return;
-      const rowsContainer = editor.querySelector('[data-vless-group-rows]');
-      const hidden = editor.querySelector('[data-vless-groups-json]');
-      const preview = editor.querySelector('[data-vless-groups-preview]');
-      const addButton = editor.querySelector('.vless-group-add-btn');
-      if (!rowsContainer || !hidden) return;
-
-      const syncRowVisibility = (row) => {
-        const mode = String(row.querySelector('[data-vless-group-mode]')?.value || 'instance_default');
-        const egressField = row.querySelector('[data-vless-group-egress-field]');
-        const targetField = row.querySelector('[data-vless-group-target-field]');
-        const adBlockField = row.querySelector('[data-vless-group-adblock-field]');
-        const egressSelect = row.querySelector('[data-vless-group-egress-node]');
-        const targetSelect = row.querySelector('[data-vless-group-target-instance]');
-        if (egressField) egressField.hidden = mode !== 'egress_node';
-        if (targetField) targetField.hidden = mode !== 'instance_only';
-        if (adBlockField) adBlockField.hidden = mode === 'block' || mode === 'instance_only';
-        if (egressSelect) {
-          egressSelect.required = mode === 'egress_node';
-          egressSelect.disabled = mode !== 'egress_node';
-          if (mode !== 'egress_node') egressSelect.setCustomValidity('');
-        }
-        if (targetSelect) {
-          targetSelect.required = mode === 'instance_only';
-          targetSelect.disabled = mode !== 'instance_only';
-          if (mode !== 'instance_only') targetSelect.setCustomValidity('');
-        }
-      };
-
-      const syncAllRows = () => {
-        rowsContainer.querySelectorAll('[data-vless-group-row]').forEach(syncRowVisibility);
-      };
-
-      const serialize = () => {
-        const groups = [];
-        let valid = true;
-        rowsContainer.querySelectorAll('[data-vless-group-row]').forEach((row, index) => {
-          const keyInput = row.querySelector('[data-vless-group-key]');
-          const labelInput = row.querySelector('[data-vless-group-label]');
-          const modeSelect = row.querySelector('[data-vless-group-mode]');
-          const egressNodeSelect = row.querySelector('[data-vless-group-egress-node]');
-          const targetInstanceSelect = row.querySelector('[data-vless-group-target-instance]');
-          const adBlockInput = row.querySelector('[data-vless-group-adblock]');
-          const rulesInput = row.querySelector('[data-vless-group-rules]');
-          const key = String(keyInput?.value || '').trim();
-          if (keyInput) {
-            keyInput.setCustomValidity(key ? '' : 'Group key is required');
-            if (!key) valid = false;
-          }
-          const mode = String(modeSelect?.value || 'instance_default').trim() || 'instance_default';
-          const group = {
-            key,
-            label: String(labelInput?.value || key || `Group ${index + 1}`).trim(),
-          };
-          if (mode === 'instance_default') {
-            group.access_mode = 'instance_default';
-            group.egress_mode = 'default';
-            group.outbound_tag = 'direct';
-          } else if (mode === 'local_breakout') {
-            group.access_mode = 'local_breakout';
-            group.egress_mode = 'local_breakout';
-            group.outbound_tag = 'direct';
-          } else if (mode === 'egress_node') {
-            const egressNodeID = String(egressNodeSelect?.value || '').trim();
-            if (egressNodeSelect) {
-              egressNodeSelect.setCustomValidity(egressNodeID ? '' : 'Select egress node for this group');
-              if (!egressNodeID) valid = false;
-            }
-            group.access_mode = 'egress_node';
-            group.egress_mode = 'egress_node';
-            group.egress_node_id = egressNodeID;
-            group.outbound_tag = 'direct';
-          } else if (mode === 'instance_only') {
-            const targetInstanceID = String(targetInstanceSelect?.value || '').trim();
-            const targetInstance = findInstanceByID(targetInstanceID);
-            if (targetInstanceSelect) {
-              targetInstanceSelect.setCustomValidity(targetInstanceID ? '' : 'Select target instance for this group');
-              if (!targetInstanceID) valid = false;
-            }
-            group.access_mode = 'instance_only';
-            group.target_instance_id = targetInstanceID;
-            group.target_instance_label = targetInstance ? serviceInstanceLabel(targetInstance) : '';
-            group.outbound_tag = 'block';
-            const targetRule = endpointRuleForInstance(targetInstance);
-            if (targetInstanceSelect && targetInstanceID && !targetRule) {
-              targetInstanceSelect.setCustomValidity('Selected instance must have endpoint host and port');
-              valid = false;
-            }
-            if (targetRule) {
-              group.rules = [targetRule];
-            }
-          } else if (mode === 'block') {
-            group.access_mode = 'block';
-            group.egress_mode = 'block';
-            group.outbound_tag = 'block';
-          }
-          const rulesBody = String(rulesInput?.value || '').trim();
-          if (rulesInput) rulesInput.setCustomValidity('');
-          if (rulesBody) {
-            try {
-              const parsedRules = JSON.parse(rulesBody);
-              if (!Array.isArray(parsedRules)) throw new Error('Rules JSON must be an array');
-              if (mode === 'instance_only') {
-                group.extra_rules = parsedRules;
-              }
-              group.rules = Array.isArray(group.rules) && group.rules.length ? group.rules.concat(parsedRules) : parsedRules;
-            } catch (err) {
-              if (rulesInput) rulesInput.setCustomValidity(err?.message || 'Invalid rules JSON');
-              valid = false;
-            }
-          }
-          const adBlock = adBlockInput?.checked === true && mode !== 'block' && mode !== 'instance_only';
-          if (adBlock) {
-            group.ad_block = true;
-            group.rules = Array.isArray(group.rules) && group.rules.length ? [managedVLESSAdBlockRule()].concat(group.rules) : [managedVLESSAdBlockRule()];
-          }
-          if (key) groups.push(group);
-        });
-        if (!groups.length) {
-          groups.push({ key: 'default', label: 'Default access', access_mode: 'instance_default', egress_mode: 'default', outbound_tag: 'direct' });
-        }
-        const json = JSON.stringify(groups, null, 2);
-        hidden.value = json;
-        if (preview) preview.value = json;
-        syncAllRows();
-        return valid;
-      };
-
-      editor.addEventListener('input', serialize);
-      editor.addEventListener('change', serialize);
-      rowsContainer.addEventListener('click', (event) => {
-        const button = event.target?.closest?.('.vless-group-remove-btn');
-        if (!button) return;
-        const row = button.closest('[data-vless-group-row]');
-        if (!row) return;
-        if (rowsContainer.querySelectorAll('[data-vless-group-row]').length <= 1) {
-          row.querySelector('[data-vless-group-key]').value = 'default';
-          row.querySelector('[data-vless-group-label]').value = 'Default access';
-          row.querySelector('[data-vless-group-mode]').value = 'instance_default';
-          const egressSelect = row.querySelector('[data-vless-group-egress-node]');
-          const targetSelect = row.querySelector('[data-vless-group-target-instance]');
-          const adBlockInput = row.querySelector('[data-vless-group-adblock]');
-          if (egressSelect) egressSelect.value = '';
-          if (targetSelect) targetSelect.value = '';
-          if (adBlockInput) adBlockInput.checked = false;
-          row.querySelector('[data-vless-group-rules]').value = '';
-        } else {
-          row.remove();
-        }
-        serialize();
-      });
-      addButton?.addEventListener('click', () => {
-        const nextIndex = rowsContainer.querySelectorAll('[data-vless-group-row]').length;
-        rowsContainer.insertAdjacentHTML('beforeend', renderVLESSGroupRow({
-          key: `group-${nextIndex + 1}`,
-          label: `Group ${nextIndex + 1}`,
-          access_mode: 'instance_default',
-          rules: [],
-        }, nextIndex));
-        serialize();
-      });
-      form.addEventListener('submit', (event) => {
-        if (serialize()) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        const invalid = editor.querySelector(':invalid');
-        if (invalid?.reportValidity) invalid.reportValidity();
-      }, true);
-      syncAllRows();
-      serialize();
     }
 
     function buildInstanceSpecPayload(serviceCode, form, baseSpec = {}, endpointPort = 0) {
@@ -1279,14 +1130,7 @@
           ...(xrayEgressNodeID ? { egress_node_id: xrayEgressNodeID } : {}),
         };
         spec.default_vless_group = String(form.get('xray_default_vless_group') || 'default').trim() || 'default';
-        const vlessGroupsBody = String(form.get('xray_vless_groups') || '').trim();
-        if (vlessGroupsBody) {
-          const parsedGroups = JSON.parse(vlessGroupsBody);
-          if (!Array.isArray(parsedGroups)) throw new Error('VLESS outbound groups must be a JSON array');
-          spec.vless_groups = parsedGroups;
-        } else {
-          delete spec.vless_groups;
-        }
+        spec.vless_groups = vlessGroupTemplatesAsSpecGroups();
         if (configBody) {
           spec.config_json = JSON.parse(configBody);
           delete spec.config_content;
@@ -1636,6 +1480,8 @@
       renderInstanceServiceFields,
       syncInstanceServiceFields,
       buildInstanceSpecPayload,
+      activeVLESSGroupTemplates,
+      vlessGroupTemplatesAsSpecGroups,
       renderServicePackProfilePanel,
       syncCreateServicePackDefaults,
     };

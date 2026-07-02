@@ -6,6 +6,7 @@ import (
 )
 
 var ErrServicePackNotFound = errors.New("service pack not found")
+var ErrVLESSGroupTemplateNotFound = errors.New("vless group template not found")
 
 type Node struct {
 	ID                   string     `json:"id"`
@@ -198,6 +199,24 @@ type ServicePackDefinition struct {
 	Source               string                 `json:"source,omitempty"`
 	Version              int                    `json:"version,omitempty"`
 	DisplayOrder         int                    `json:"display_order,omitempty"`
+}
+
+type VLESSGroupTemplate struct {
+	Key              string           `json:"key"`
+	Label            string           `json:"label"`
+	Description      string           `json:"description"`
+	AccessMode       string           `json:"access_mode"`
+	EgressMode       string           `json:"egress_mode"`
+	EgressNodeID     string           `json:"egress_node_id,omitempty"`
+	TargetInstanceID string           `json:"target_instance_id,omitempty"`
+	OutboundTag      string           `json:"outbound_tag"`
+	AdBlock          bool             `json:"ad_block"`
+	Rules            []map[string]any `json:"rules"`
+	ExtraRules       []map[string]any `json:"extra_rules,omitempty"`
+	Status           string           `json:"status,omitempty"`
+	Source           string           `json:"source,omitempty"`
+	Version          int              `json:"version,omitempty"`
+	DisplayOrder     int              `json:"display_order,omitempty"`
 }
 
 type Instance struct {

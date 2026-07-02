@@ -458,6 +458,15 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			spec["pki_profile"] = req.OpenVPNPKIProfile
 		}
 		applyXrayEgressOverrideHTTP(component, spec, req.XrayEgressMode, req.XrayEgressNodeID)
+		componentService := strings.TrimSpace(component.ServiceCode)
+		if strings.EqualFold(componentService, driver.XrayCore) || strings.EqualFold(componentService, "xray") {
+			vlessGroups, err := s.availableVLESSGroupTemplates(r.Context())
+			if err != nil {
+				writeErr(w, 409, "vless group catalog preflight failed: "+err.Error())
+				return
+			}
+			ensureVLESSDefaultGroup(spec, vlessGroups)
+		}
 		instance := domain.Instance{
 			NodeID:       req.NodeID,
 			ServiceCode:  component.ServiceCode,

@@ -36,6 +36,8 @@
       state.servicesCatalog = [];
       state.servicePacks = [];
       state.servicePackCatalog = [];
+      state.vlessGroupTemplates = [];
+      state.vlessGroupCatalog = [];
       state.serviceInstallers = [];
       state.binaryArtifacts = [];
       state.serviceCapabilitiesByNode = {};
@@ -97,10 +99,14 @@
       const backhaulDrivers = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul/drivers', []) : [];
       const servicesCatalog = await fetchJSON('/api/v1/services', []);
       const servicePacks = await fetchJSON('/api/v1/service-packs', []);
+      const vlessGroupTemplates = await fetchJSON('/api/v1/vless-groups', []);
       const serviceCapabilitiesByNode = hasPermission('node.read') ? await fetchJSON('/api/v1/nodes/capabilities', {}) : {};
       const servicePackCatalog = hasPermission('settings.manage')
         ? await fetchJSON('/api/v1/service-packs?include_inactive=1', servicePacks)
         : servicePacks;
+      const vlessGroupCatalog = hasPermission('settings.manage')
+        ? await fetchJSON('/api/v1/vless-groups?include_inactive=1', vlessGroupTemplates)
+        : vlessGroupTemplates;
       const serviceInstallers = await fetchJSON('/api/v1/services/installers', []);
       const binaryArtifacts = hasPermission('binary_repository.read') ? await fetchJSON('/api/v1/binary-artifacts', []) : [];
       const platformCertificates = (hasPermission('instance.read') || hasPermission('settings.manage')) ? await fetchJSON('/api/v1/platform/certificates', []) : [];
@@ -131,6 +137,11 @@
       state.servicePacks = normalizeServicePackList(servicePacks);
       if (!state.servicePacks.length && state.servicePackCatalog.length) {
         state.servicePacks = activeServicePacksFromCatalog(state.servicePackCatalog);
+      }
+      state.vlessGroupCatalog = Array.isArray(vlessGroupCatalog) ? vlessGroupCatalog : [];
+      state.vlessGroupTemplates = Array.isArray(vlessGroupTemplates) ? vlessGroupTemplates : [];
+      if (!state.vlessGroupTemplates.length && state.vlessGroupCatalog.length) {
+        state.vlessGroupTemplates = state.vlessGroupCatalog.filter((group) => String(group.status || 'active').toLowerCase() === 'active');
       }
       state.serviceInstallers = Array.isArray(serviceInstallers) ? serviceInstallers : [];
       state.binaryArtifacts = Array.isArray(binaryArtifacts) ? binaryArtifacts : [];
