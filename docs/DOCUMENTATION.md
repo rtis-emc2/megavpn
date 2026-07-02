@@ -21,10 +21,11 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | 7 | [RBAC matrix](RBAC_MATRIX.md) | Roles, permissions and privileged job rules |
 | 8 | [Managed backhaul](BACKHAUL.md) | Ingress-to-egress transport model |
 | 9 | [Node map](NODE_MAP.md) | GeoIP node placement and backhaul topology overlay |
-| 10 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
-| 11 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
-| 12 | [Security review](SECURITY_REVIEW_7.0.1.1.md) | Security and release review artifact |
-| 13 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
+| 10 | [VLESS access groups](VLESS_GROUPS.md) | Reusable VLESS client routing groups |
+| 11 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
+| 12 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
+| 13 | [Security review](SECURITY_REVIEW_7.0.1.1.md) | Security and release review artifact |
+| 14 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
 
 ## Documentation Ownership
 
@@ -37,6 +38,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | Security | `docs/THREAT_MODEL.md`, `docs/RBAC_MATRIX.md` | Threat model, roles, permissions and privileged jobs. |
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection and troubleshooting. |
 | Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP node placement, local static map, node owner metadata and backhaul overlay. |
+| VLESS client routing | `docs/VLESS_GROUPS.md`, `docs/VLESS_GROUPS_RU.md` | Reusable access groups, default VLESS group selection and provisioning behavior. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic and tactical product planning. |
 
 ## Language Policy

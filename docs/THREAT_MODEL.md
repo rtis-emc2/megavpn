@@ -14,7 +14,9 @@ MegaVPN consists of:
 - Generated VPN/proxy service configs and client artifacts.
 - Runtime binary repository and pinned node downloads.
 - Managed ingress-to-egress backhaul route projection.
-- Node topology map with GeoIP metadata and managed backhaul overlay, plus VLESS subscription endpoints.
+- Node topology map with GeoIP metadata and managed backhaul overlay.
+- VLESS access groups for client routing policy. VLESS subscription endpoints
+  are roadmap scope until explicitly enabled and documented.
 
 ## Trust Boundaries
 
@@ -29,6 +31,7 @@ MegaVPN consists of:
 | Generated artifacts | Artifact root | Filesystem path data | Artifact-root symlink containment before serving |
 | Runtime binary repository | Artifact root and signed agent download | External release URLs and uploaded files | HTTPS import, SHA-256 pinning, artifact-root containment, service-specific install path allowlists |
 | VLESS ingress to egress | Xray instance route config | Client traffic and public network | Instance-level default outbound, managed backhaul source routing, explicit access groups |
+| VLESS access groups | Group catalog and client bindings | Operator mistakes and client traffic | Central catalog, apply-time rendering, target-only allow rules, final block fallback |
 
 ## Primary Assets
 

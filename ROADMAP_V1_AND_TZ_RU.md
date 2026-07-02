@@ -99,8 +99,9 @@ Release blockers:
 
 ### 3.2 Database / Domain Model
 
-Исторические миграции объединены в consolidated baseline migration для текущего
-релиза.
+Database changes применяются через ordered migration set для текущего релиза.
+Baseline schema хранится в первой migration, а последующие post-baseline
+migrations добавляют расширения без ручного изменения database.
 
 Есть таблицы или расширения для:
 

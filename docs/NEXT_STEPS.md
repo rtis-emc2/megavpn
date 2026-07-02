@@ -31,33 +31,36 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
 6. Validate service-pack and runtime paths on a test server: IPsec/L2TP, Xray
    Reality, Xray+Nginx gRPC, Xray WebSocket camouflage, OpenVPN TCP/UDP,
    WireGuard, HTTP Proxy, MTProto and Shadowsocks.
-7. Design the topology workspace: node map, location metadata, role/health
-   badges, workload density, backhaul edges, failed-hop diagnostics and
-   per-node workload drill-down.
-8. Design the VLESS subscription endpoint: per-client token, selected inbound
+7. Validate and harden the topology workspace: local static world map, GeoIP
+   node placement, node owner metadata, role/health badges, backhaul edges,
+   route toggles, failed-hop diagnostics and per-node workload drill-down.
+8. Validate VLESS access groups end to end: default route, local breakout,
+   selected egress node, target-only access, blocked access, ad-block rule and
+   provisioning selection.
+9. Design the VLESS subscription endpoint: per-client token, selected inbound
    services, rotation, cache headers, QR/text export and provisioning status.
-9. Formalize traffic-camouflage profiles: Xray WebSocket/gRPC edge, hidden
+10. Formalize traffic-camouflage profiles: Xray WebSocket/gRPC edge, hidden
    path, fallback upstream, SNI/TLS binding, Nginx preview, validation and
    rollback.
-10. Extract the Nginx edge profile catalog: reusable definitions, certificate
+11. Extract the Nginx edge profile catalog: reusable definitions, certificate
     binding, generated config diff, atomic apply and operator-visible failure.
-11. Keep ACME automation paused until a canonical challenge strategy is chosen:
+12. Keep ACME automation paused until a canonical challenge strategy is chosen:
     `HTTP-01`, `DNS-01` or delegated external ACME.
-12. Run API only with explicit bootstrap credentials:
+13. Run API only with explicit bootstrap credentials:
     `MEGAVPN_BOOTSTRAP_ADMIN_USERNAME` and
     `MEGAVPN_BOOTSTRAP_ADMIN_PASSWORD`.
-13. Create OpenAPI/public API and internal agent API contracts.
-14. Formalize typed job payload schemas on top of `internal/jobschema`.
-15. Decide the v1.0 agent-transport security target for mandatory mTLS versus
+14. Create OpenAPI/public API and internal agent API contracts.
+15. Formalize typed job payload schemas on top of `internal/jobschema`.
+16. Decide the v1.0 agent-transport security target for mandatory mTLS versus
     signed HTTP messages over HTTPS.
-16. Continue UI split by moving node management, bootstrap diagnostics and
+17. Continue UI split by moving node management, bootstrap diagnostics and
     workload views out of `app.js`.
-17. Complete revision workflow: candidate, validated, applied, rollback, apply
+18. Complete revision workflow: candidate, validated, applied, rollback, apply
     history and safe rollback engine.
-18. Continue routing hardening: rollback/remove stage for retired policies,
+19. Continue routing hardening: rollback/remove stage for retired policies,
     conntrack visibility, MTU/MSS clamp and route-policy telemetry.
-19. Complete managed backhaul multi-driver enforcement: controlled Xray TUN,
+20. Complete managed backhaul multi-driver enforcement: controlled Xray TUN,
     strongSwan/IKEv2, OpenVPN certificate-mode P2P and health probes.
-20. When the maintenance window is approved, rewrite Git history for sensitive
+21. When the maintenance window is approved, rewrite Git history for sensitive
     historical commits/tags and update deployed checkouts with the documented
     history-rewrite procedure.

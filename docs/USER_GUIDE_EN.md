@@ -235,9 +235,14 @@ In the UI, verify:
 4. `/api/v1/ready` reports `ready` only when production preflight is correct.
 5. `Jobs`, `Nodes`, `Services`, `Instances`, `Clients`, `Backhaul` and
    `Certificates` open without errors.
-6. `Instances -> Create from pack` shows the service-pack catalog. Default
-   templates are created by the consolidated baseline migration; if the list is
-   empty, verify that migrations ran against the same database used by the API.
+6. `Instances` shows the workspace tabs: instance list, create from pack,
+   manual instance, service-pack catalog and VLESS groups.
+7. `Instances -> Create from pack` shows the service-pack catalog. Default
+   templates are created by the ordered migration set; if the list is empty,
+   verify that every migration has run against the same database used by the
+   API.
+8. `Instances -> VLESS groups` shows default groups for default route, current
+   node exit, ad-blocked default and blocked access.
 
 If the installer used self-signed TLS, replace it through:
 
@@ -351,10 +356,10 @@ Operational model:
    pool.
 4. Inter-pool routing can be enabled or blocked by policy.
 
-Default pool `remote_access_v4` is created by the consolidated baseline
-migration. Pack/manual specs with `address_pool_mode=auto` receive a free subnet
-from the catalog. Use manual CIDR only as an intentional override; active
-allocations lock pool deletion.
+Default pool `remote_access_v4` is created by the current migration set.
+Pack/manual specs with `address_pool_mode=auto` receive a free subnet from the
+catalog. Use manual CIDR only as an intentional override; active allocations
+lock pool deletion.
 
 ## 12. Managed Backhaul
 
@@ -423,7 +428,7 @@ Use this for standard production baselines.
 5. Set base name and endpoint host.
 6. Select a TLS edge certificate if the pack contains Nginx/Xray TLS.
 7. Select an OpenVPN CA profile if the pack contains OpenVPN.
-8. If the pack contains VLESS, select `VLESS routing`:
+8. If the pack contains VLESS, select instance-level `VLESS routing`:
    - `Auto through managed backhaul` for a single unambiguous active backhaul;
    - `Use selected egress node` when the VLESS instance must exit through a
      specific remote egress node;
@@ -498,8 +503,8 @@ Where to configure it:
   Use `egress node` when the whole VLESS instance must exit through a remote
   egress node. Select the exact `Egress node` when more than one link exists or
   deterministic output is required.
-- The same `Manage` view contains `VLESS outbound groups`. These groups are
-  provisioning-time access policies, not just labels:
+- `Instances -> VLESS groups`: configure reusable VLESS access groups once.
+  These groups are provisioning-time access policies, not just labels:
   - `Use instance default route`: follow the instance-level egress policy.
   - `Exit from current node`: force local breakout on the VLESS node.
   - `Exit from selected egress node`: resolve the selected egress node through
@@ -509,8 +514,10 @@ Where to configure it:
   - `Block all traffic`: deny traffic for quarantine or suspended access.
   - `Block ads`: add a managed Xray `geosite:category-ads-all` rule for users
     in that group. The Xray runtime must include the required geosite data.
-  `Default outbound group` selects the group used when a client binding does
-  not specify one.
+- `Instances -> Manage` for the Xray/VLESS instance: `Default VLESS group`
+  selects the group used when a client binding does not specify one. Advanced
+  JSON override is intentionally collapsed and should be used only for
+  non-standard transport experiments.
 - `Clients -> Provision`: when selecting a VLESS inbound, choose the access
   group. The group is saved in the client access binding and used for
   provisioning.
@@ -526,8 +533,15 @@ Minimal path for “enter through VLESS and exit through another node”:
 4. Either select `Use selected egress node` during `Create from pack`, or open
    `Instances -> Manage`, set `Egress mode = egress node` for the VLESS
    instance and select the target egress node.
-5. Click `Apply` on the instance.
-6. If client route rules are used, run `Sync route policy`.
+5. Open `Instances -> VLESS groups` if a client-specific group is required.
+   For example, create `Exit from selected egress node` for users that must use
+   a specific egress node, or `Allow only selected instance` for restricted
+   access.
+6. Click `Apply` on the instance.
+7. If client route rules are used, run `Sync route policy`.
+
+See [VLESS access groups](VLESS_GROUPS.md) for the detailed group model,
+runtime behavior and validation rules.
 
 ## 16. Clients And Provisioning
 

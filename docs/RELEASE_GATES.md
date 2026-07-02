@@ -130,6 +130,9 @@ Required evidence before promoting topology/access features beyond the hardening
 - Node map API projection resolves approximate country/city/provider metadata from public node IPs, skips private addresses, and does not expose unnecessary secrets.
 - Managed backhaul graph shows active/degraded/failed links and the last probe reason.
 - Client provisioning clearly shows which inbound services were selected for a client.
+- VLESS access groups are managed centrally under `Instances -> VLESS groups`;
+  default, local-breakout, selected-egress, target-only and blocked behavior is
+  covered by provisioning/apply evidence.
 - VLESS subscription endpoint, when enabled, uses per-client bearer token rotation, audit events, `Cache-Control: no-store` and authenticated preview/download.
 - Traffic camouflage profiles validate Nginx and Xray config before apply and expose rollback on failed `nginx -t` or runtime validation.
 - Nginx edge profiles bind explicit certificate material and do not silently fall back to an unintended self-signed profile after a managed certificate exists.

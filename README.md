@@ -33,6 +33,7 @@ Start here:
 - [RBAC matrix](docs/RBAC_MATRIX.md)
 - [Managed backhaul](docs/BACKHAUL.md)
 - [Node map](docs/NODE_MAP.md)
+- [VLESS access groups](docs/VLESS_GROUPS.md)
 - [Self-testing](docs/SELF_TESTING.md)
 - [Roadmap and technical specification](ROADMAP_V1_AND_TZ.md)
 
@@ -64,6 +65,7 @@ current focus is:
 - typed privileged job APIs and job-type permission matrix;
 - node bootstrap, update and emergency cleanup workflows;
 - service-pack/manual instance creation, apply and runtime convergence;
+- centralized VLESS access groups for client routing policy;
 - OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, Nginx and Backhaul smoke matrix;
 - client provisioning and route-policy validation;
 - operator-visible diagnostics for jobs, runtime capabilities and service logs.

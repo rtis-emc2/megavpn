@@ -34,6 +34,7 @@ Operator
 - [RBAC matrix](docs/RBAC_MATRIX.md)
 - [Managed backhaul](docs/BACKHAUL.md)
 - [Карта нод](docs/NODE_MAP_RU.md)
+- [VLESS access groups](docs/VLESS_GROUPS_RU.md)
 - [Self-testing](docs/SELF_TESTING.md)
 - [Roadmap и техническая спецификация](ROADMAP_V1_AND_TZ_RU.md)
 
@@ -63,6 +64,7 @@ RTIS MegaVPN предназначен для production-oriented эксплуа�
 - typed privileged job APIs и permission matrix;
 - bootstrap/update/emergency cleanup для nodes;
 - создание и применение instances через packs/manual flow;
+- централизованные VLESS access groups для client routing policy;
 - smoke matrix для OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, Nginx,
   Backhaul;
 - provisioning клиентов и проверка route policy;

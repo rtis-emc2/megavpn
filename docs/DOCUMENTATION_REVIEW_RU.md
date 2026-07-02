@@ -2,7 +2,7 @@
 
 **Релиз:** `7.0.1.1`
 
-**Дата:** 2026-07-01
+**Дата:** 2026-07-02
 
 Этот review фиксирует текущую структуру документации, найденные проблемы и
 исправления без изменения версии релиза.
@@ -22,6 +22,7 @@ English review: [DOCUMENTATION_REVIEW.md](DOCUMENTATION_REVIEW.md).
 | Roadmap, release evidence и operational procedures были плохо разделены | Был риск stale operational instructions в overview docs | README теперь ссылается на source-of-truth docs, а не дублирует runbooks |
 | Текущий релиз не был виден в каждом основном документе | Оператор мог спутать текущий release baseline с историческими roadmap notes | Добавлен release banner `7.0.1.1` в поддерживаемые docs |
 | Roadmap и next-step notes смешивали языки под базовыми именами файлов | Ownership документации был неочевиден для русской и английской аудитории | Roadmap и next-step notes разделены на английские defaults и `_RU` пары |
+| VLESS access groups вынесены из instance manage, но docs описывали старый workflow | Оператор мог искать группы не в той вкладке или забыть re-apply VLESS instance | Добавлены парные документы по VLESS access groups и обновлен operator guide под `Instances -> VLESS groups` |
 
 ## Новая структура
 
@@ -39,6 +40,8 @@ English review: [DOCUMENTATION_REVIEW.md](DOCUMENTATION_REVIEW.md).
 | `docs/THREAT_MODEL.md` | Threat model and residual risks |
 | `docs/RBAC_MATRIX.md` | Roles, permissions and privileged job rules |
 | `docs/BACKHAUL.md` | Managed ingress-to-egress transport model |
+| `docs/VLESS_GROUPS.md` | Английская модель VLESS access groups |
+| `docs/VLESS_GROUPS_RU.md` | Русская модель VLESS access groups |
 | `ROADMAP_V1_AND_TZ.md` | Product roadmap and technical specification |
 | `ROADMAP_V1_AND_TZ_RU.md` | Русский roadmap и техническая спецификация |
 | `docs/NEXT_STEPS.md` | Английская тактическая точка next-step |
@@ -68,10 +71,8 @@ English review: [DOCUMENTATION_REVIEW.md](DOCUMENTATION_REVIEW.md).
 3. Internal agent API contract.
 4. Service-specific troubleshooting matrix на русском и английском.
 5. Client configuration examples по каждому сервису.
-6. Dedicated VLESS subscription и route-group deep-dive после финализации этих
-   workflows.
-7. Документация VLESS subscription после реализации feature.
-8. Документация traffic camouflage и Nginx edge profile после реализации.
+6. Документация VLESS subscription после реализации feature.
+7. Документация traffic camouflage и Nginx edge profile после реализации.
 
 ## Правила сопровождения
 

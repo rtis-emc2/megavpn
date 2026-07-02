@@ -2,7 +2,7 @@
 
 **Release:** `7.0.1.1`
 
-**Date:** 2026-07-01
+**Date:** 2026-07-02
 
 This review records the current documentation structure, the problems found and
 the remediation applied without changing the release version.
@@ -22,6 +22,7 @@ Russian review: [DOCUMENTATION_REVIEW_RU.md](DOCUMENTATION_REVIEW_RU.md).
 | Product roadmap, release evidence and operational procedures were not clearly separated | High risk of stale operational instructions in overview docs | README now links to source-of-truth docs instead of duplicating runbooks |
 | Release version was not visible in every primary document | Operators could confuse current release docs with historical roadmap notes | Added a `7.0.1.1` release banner to maintained documentation files |
 | Roadmap and next-step notes mixed languages under default filenames | Documentation ownership was unclear for English and Russian operators | Split roadmap and next-step notes into English defaults and `_RU` companions |
+| VLESS access groups moved out of instance manage but docs still described the old workflow | Operators could configure client groups in the wrong place or miss the required re-apply step | Added paired VLESS access-group docs and updated the operator guide to use `Instances -> VLESS groups` |
 
 ## Applied Structure
 
@@ -39,6 +40,8 @@ Russian review: [DOCUMENTATION_REVIEW_RU.md](DOCUMENTATION_REVIEW_RU.md).
 | `docs/THREAT_MODEL.md` | Threat model and residual risks |
 | `docs/RBAC_MATRIX.md` | Roles, permissions and privileged job rules |
 | `docs/BACKHAUL.md` | Managed ingress-to-egress transport model |
+| `docs/VLESS_GROUPS.md` | English VLESS access-group routing model |
+| `docs/VLESS_GROUPS_RU.md` | Russian VLESS access-group routing model |
 | `ROADMAP_V1_AND_TZ.md` | Product roadmap and technical specification |
 | `ROADMAP_V1_AND_TZ_RU.md` | Russian roadmap and technical specification |
 | `docs/NEXT_STEPS.md` | English tactical next-step checkpoint |
@@ -66,10 +69,8 @@ These gaps should be tracked before a stable release:
 3. Internal agent API contract.
 4. Service-specific troubleshooting matrix in Russian and English.
 5. Client configuration examples per service.
-6. Dedicated VLESS subscription and route-group deep-dive after those workflows
-   are finalized.
-7. VLESS subscription documentation after feature implementation.
-8. Traffic camouflage and Nginx edge profile documentation after feature
+6. Dedicated VLESS subscription documentation after feature implementation.
+7. Traffic camouflage and Nginx edge profile documentation after feature
    implementation.
 
 ## Maintenance Policy
