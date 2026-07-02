@@ -37,7 +37,8 @@ The codebase already has a working control-plane foundation:
 - OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, HTTP Proxy, MTProto, IPsec/L2TP
   and Nginx service-driver foundation.
 - Managed ingress-to-egress backhaul.
-- Client provisioning, artifacts, share links and email delivery.
+- Client provisioning, artifacts, share links, VLESS subscriptions and email
+  delivery.
 - Backup/restore, deployment scripts, self-test and release gates.
 
 This is not a stable production release yet. It is a hardening baseline that
@@ -85,7 +86,7 @@ operate across multiple nodes.
 | --- | --- | --- | --- |
 | Node map | Show location, role, workload and health for every node. | Add topology projection, optional coordinates, region/provider labels and map/table UI. | Medium |
 | Node links | Visualize backhaul and route-policy paths. | Reuse managed backhaul links and runtime probes; render healthy/degraded/failed edges. | Medium |
-| VLESS subscriptions | Export per-client subscriptions for selected inbound services. | Add subscription token, rotation, QR/text export, cache-control and provisioning result state. | Medium |
+| VLESS subscriptions | Export per-client subscriptions for selected inbound services. | Implemented per-client token registry, rotation, revocation, public no-store feed and current active-access filtering; remaining work is QR/text export polish and live E2E evidence. | Medium |
 | Traffic camouflage | Formalize WebSocket/gRPC/fallback edge profiles. | Move Xray/Nginx camouflage into reusable profiles with validation and preview. | High |
 | Nginx edge | Make edge profiles first-class. | Add profile catalog, certificate binding, config diff, `nginx -t`, atomic apply and rollback. | Medium |
 | Runtime artifacts | Reduce manual binary handling. | Add preset fetchers, SHA-256 calculation, artifact status, signed download tickets and install logs. | Low |
@@ -186,5 +187,7 @@ Required evidence:
 4. Validate service-pack creation, apply, runtime logs and cleanup on real nodes.
 5. Validate OpenVPN client config generation and customizable templates.
 6. Validate VLESS ingress with managed egress route policy.
-7. Complete topology-map and node-link design before implementing the UI.
-8. Keep release banners and English/Russian documentation pairs synchronized.
+7. Validate VLESS subscription rotation, public feed import and revocation on a
+   real client profile.
+8. Complete topology-map and node-link design before implementing the UI.
+9. Keep release banners and English/Russian documentation pairs synchronized.

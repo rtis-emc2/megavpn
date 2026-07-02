@@ -1680,11 +1680,13 @@ func (s *Store) SetClientStatus(ctx context.Context, clientID, status string) (d
 		_, _ = s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
 		_, _ = s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
 		_, _ = s.db.Exec(ctx, `update share_links set status='revoked' where client_account_id=$1 and status='active'`, clientID)
+		_, _ = s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, clientID)
 		s.queueRoutePolicyJobsForClient(ctx, clientID)
 	} else if status == "deleted" {
 		_, _ = s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
 		_, _ = s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
 		_, _ = s.db.Exec(ctx, `update share_links set status='revoked' where client_account_id=$1 and status='active'`, clientID)
+		_, _ = s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, clientID)
 		s.queueRoutePolicyJobsForClient(ctx, clientID)
 	}
 	_, _ = s.CreateAudit(ctx, "system", "client."+status, "client", &clientID, "client status changed")
@@ -1838,6 +1840,7 @@ func (s *Store) RevokeClient(ctx context.Context, clientID string) (domain.Job, 
 	_, _ = s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
 	_, _ = s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
 	_, _ = s.db.Exec(ctx, `update share_links set status='revoked' where client_account_id=$1 and status='active'`, clientID)
+	_, _ = s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, clientID)
 	s.queueRoutePolicyJobsForClient(ctx, clientID)
 	j, err := s.CreateJob(ctx, domain.Job{Type: "client.revoke", ScopeType: "client", ScopeID: &clientID, Payload: map[string]any{"client_id": clientID}})
 	_, _ = s.CreateAudit(ctx, "system", "client.revoke", "client", &clientID, "client revoke queued")
@@ -2346,6 +2349,7 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 				_, _ = s.db.Exec(ctx, `update client_accounts set status='revoked',updated_at=now() where id=$1`, *scopeID)
 				_, _ = s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, *scopeID)
 				_, _ = s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, *scopeID)
+				_, _ = s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, *scopeID)
 				s.queueRoutePolicyJobsForClient(ctx, *scopeID)
 			}
 		case "platform.control_plane_tls.apply":

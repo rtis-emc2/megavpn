@@ -69,8 +69,7 @@ These gaps should be tracked before a stable release:
 3. Internal agent API contract.
 4. Service-specific troubleshooting matrix in Russian and English.
 5. Client configuration examples per service.
-6. Dedicated VLESS subscription documentation after feature implementation.
-7. Traffic camouflage and Nginx edge profile documentation after feature
+6. Traffic camouflage and Nginx edge profile documentation after feature
    implementation.
 
 ## Maintenance Policy

@@ -25,7 +25,7 @@
 | `instance.apply` | Instance | Apply/restart/start/stop/enable/disable |
 | `client.read` | Client | Client accounts/access |
 | `client.write` | Client | Client account mutation |
-| `client.provision` | Client | Provision/revoke access |
+| `client.provision` | Client | Provision/revoke access and rotate/revoke VLESS subscriptions |
 | `artifact.read` | Artifact | Artifact list/download/preview |
 | `artifact.export` | Artifact | Artifact build jobs |
 | `share_link.manage` | Artifact | Publish/revoke public share links |

@@ -25,6 +25,7 @@ client artifacts.
 | Client | Client account that receives selected inbound services. |
 | Artifact | Generated client config or bundle. |
 | Share link | Temporary artifact URL. The plaintext token is shown only once. |
+| VLESS subscription | Per-client bearer URL that returns current active VLESS profiles. The plaintext token is shown only once after rotation. |
 
 ## 2. Prepare The Control Plane Host
 
@@ -556,12 +557,13 @@ runtime behavior and validation rules.
 8. Build artifacts: `.ovpn`, VLESS URL, WireGuard config, Shadowsocks URI or
    bundle.
 9. Preview/download generated material before sending it to the client.
-10. Optionally publish a share link or send email.
+10. Optionally publish a share link, rotate a VLESS subscription URL or send
+    email.
 
 Provisioning must not silently grant every compatible service. Operators choose
 the exact inbound services per client.
 
-## 17. Share Links And Email
+## 17. Share Links, VLESS Subscriptions And Email
 
 A share link is a bearer URL. Its safety depends on:
 
@@ -573,6 +575,23 @@ A share link is a bearer URL. Its safety depends on:
 
 The plaintext token is shown only when the link is created. If it is lost, create
 a new share link.
+
+A VLESS subscription is also a bearer URL, but it does not serve a static
+artifact. It resolves the current active VLESS service accesses for the client
+and returns a newline-separated profile feed. Use it only after provisioning has
+completed, because the feed requires the generated VLESS UUID stored in service
+access metadata.
+
+Operator workflow:
+
+1. Open `Clients -> Access`.
+2. Confirm the client has active VLESS inbound access.
+3. In `VLESS Subscription`, click `Rotate subscription`.
+4. Copy the generated URL immediately. The plaintext token is not stored.
+5. Revoke the subscription when the URL is no longer trusted.
+
+See [VLESS subscriptions](VLESS_SUBSCRIPTIONS.md) for token lifecycle,
+failure scenarios and public endpoint behavior.
 
 ## 18. Firewall Policies
 
@@ -620,6 +639,7 @@ Audit should answer:
 - who applied an instance;
 - who installed a runtime capability;
 - who created or revoked a share link;
+- who rotated or revoked a VLESS subscription;
 - who changed or applied firewall policy;
 - who changed settings/certificates.
 

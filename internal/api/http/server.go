@@ -161,6 +161,10 @@ type Store interface {
 	ListShareLinks(context.Context, string) ([]domain.ShareLink, error)
 	RevokeShareLink(context.Context, string, string) (domain.ShareLink, error)
 	ResolveShareLinkArtifact(context.Context, string) (domain.ShareLink, domain.Artifact, error)
+	ListClientSubscriptions(context.Context, string) ([]domain.ClientSubscription, error)
+	RotateClientSubscription(context.Context, string, time.Duration) (domain.ClientSubscription, error)
+	RevokeClientSubscription(context.Context, string, string) (domain.ClientSubscription, error)
+	ResolveClientVLESSSubscription(context.Context, string) (domain.ClientSubscriptionDocument, error)
 	CreateSecretRef(context.Context, string, []byte, map[string]any) (domain.SecretRef, error)
 	ResolveSecretValue(context.Context, string) (domain.SecretRef, []byte, error)
 	CreateClientEmailDelivery(context.Context, domain.ClientEmailDelivery) (domain.ClientEmailDelivery, error)
@@ -287,6 +291,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	}
 	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /share/{token}", s.withRateLimit("public_share_download", 120, time.Minute, s.publicShareDownload))
+	mux.HandleFunc("GET /subscribe/vless/{token}", s.withRateLimit("public_vless_subscription", 120, time.Minute, s.publicVLESSSubscription))
 	mux.HandleFunc("GET /assets/{path...}", s.assets)
 	mux.HandleFunc("GET /agent/binary-artifacts/{artifact_id}/download", s.agentBinaryArtifactDownload)
 	mux.HandleFunc("GET /health", s.health)
@@ -452,6 +457,9 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("GET /api/v1/clients/{id}/share-links", "artifact.read", s.clientShareLinks)
 	protected("POST /api/v1/clients/{id}/share-links", "share_link.manage", s.publishShareLink)
 	protected("POST /api/v1/clients/{id}/share-links/{link_id}/revoke", "share_link.manage", s.revokeShareLink)
+	protected("GET /api/v1/clients/{id}/subscriptions", "client.read", s.clientSubscriptions)
+	protected("POST /api/v1/clients/{id}/subscriptions/rotate", "client.provision", s.rotateClientSubscription)
+	protected("POST /api/v1/clients/{id}/subscriptions/{subscription_id}/revoke", "client.provision", s.revokeClientSubscription)
 	protected("POST /api/v1/clients/{id}/deliver-email", "artifact.export", s.deliverClientEmail)
 	protected("GET /api/v1/backhaul/drivers", "node.read", s.listBackhaulDrivers)
 	protected("GET /api/v1/backhaul-links", "node.read", s.listBackhaulLinks)
@@ -516,6 +524,9 @@ type rollbackRevisionRequest struct {
 type shareLinkRequest struct {
 	TargetID string `json:"target_id"`
 	TTLHours int    `json:"ttl_hours"`
+}
+type subscriptionRequest struct {
+	TTLHours int `json:"ttl_hours"`
 }
 
 type capabilityInstallRequest struct {
@@ -1518,6 +1529,49 @@ func (s *Server) publishShareLink(w nethttp.ResponseWriter, r *nethttp.Request) 
 }
 func (s *Server) revokeShareLink(w nethttp.ResponseWriter, r *nethttp.Request) {
 	x, err := s.store.RevokeShareLink(r.Context(), idParam(r), strings.TrimSpace(r.PathValue("link_id")))
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, x)
+}
+func (s *Server) clientSubscriptions(w nethttp.ResponseWriter, r *nethttp.Request) {
+	x, err := s.store.ListClientSubscriptions(r.Context(), idParam(r))
+	if err != nil {
+		writeErr(w, 500, "list client subscriptions failed")
+		return
+	}
+	if x == nil {
+		x = []domain.ClientSubscription{}
+	}
+	writeJSON(w, 200, x)
+}
+func (s *Server) rotateClientSubscription(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req subscriptionRequest
+	if !decodeOptional(r, &req) {
+		writeErr(w, 400, "invalid subscription payload")
+		return
+	}
+	if req.TTLHours < 0 || req.TTLHours > 8760 {
+		writeErr(w, 400, "ttl_hours must be between 0 and 8760")
+		return
+	}
+	ttl := time.Duration(req.TTLHours) * time.Hour
+	x, err := s.store.RotateClientSubscription(r.Context(), idParam(r), ttl)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	redacted := x
+	redacted.Token = ""
+	writeJSON(w, 201, response{
+		"subscription":     redacted,
+		"subscription_url": joinPublicURL(s.publicBaseURL, "/subscribe/vless/"+x.Token),
+		"message":          "VLESS subscription token rotated; copy the URL now because the token is not stored in plaintext.",
+	})
+}
+func (s *Server) revokeClientSubscription(w nethttp.ResponseWriter, r *nethttp.Request) {
+	x, err := s.store.RevokeClientSubscription(r.Context(), idParam(r), strings.TrimSpace(r.PathValue("subscription_id")))
 	if err != nil {
 		writeErr(w, 409, err.Error())
 		return

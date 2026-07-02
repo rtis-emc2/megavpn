@@ -39,8 +39,9 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
 8. Validate VLESS access groups end to end: default route, local breakout,
    selected egress node, target-only access, blocked access, ad-block rule and
    provisioning selection.
-9. Design the VLESS subscription endpoint: per-client token, selected inbound
-   services, rotation, cache headers, QR/text export and provisioning status.
+9. Validate VLESS subscriptions end to end: rotate/revoke token, one-time URL
+   display, public `Cache-Control: no-store` feed, active-access filtering,
+   QR/text export and provisioning-result visibility.
 10. Formalize traffic-camouflage profiles: Xray WebSocket/gRPC edge, hidden
    path, fallback upstream, SNI/TLS binding, Nginx preview, validation and
    rollback.

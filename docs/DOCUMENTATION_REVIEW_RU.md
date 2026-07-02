@@ -71,8 +71,7 @@ English review: [DOCUMENTATION_REVIEW.md](DOCUMENTATION_REVIEW.md).
 3. Internal agent API contract.
 4. Service-specific troubleshooting matrix на русском и английском.
 5. Client configuration examples по каждому сервису.
-6. Документация VLESS subscription после реализации feature.
-7. Документация traffic camouflage и Nginx edge profile после реализации.
+6. Документация traffic camouflage и Nginx edge profile после реализации.
 
 ## Правила сопровождения
 

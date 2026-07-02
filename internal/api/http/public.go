@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
@@ -29,6 +30,37 @@ func (s *Server) publicShareDownload(w http.ResponseWriter, r *http.Request) {
 	if err := s.serveArtifactDownload(w, r, artifact); err != nil {
 		writeErr(w, artifactHTTPStatus(err), err.Error())
 	}
+}
+
+func (s *Server) publicVLESSSubscription(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	token := strings.TrimSpace(r.PathValue("token"))
+	if token == "" {
+		writeErr(w, 400, "subscription token is required")
+		return
+	}
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	if format != "" && format != "base64" && format != "plain" {
+		writeErr(w, 400, "unsupported subscription format")
+		return
+	}
+	doc, err := s.store.ResolveClientVLESSSubscription(r.Context(), token)
+	if err != nil {
+		writeErr(w, 404, err.Error())
+		return
+	}
+	lines := make([]string, 0, len(doc.Profiles))
+	for _, profile := range doc.Profiles {
+		if uri := strings.TrimSpace(profile.URI); uri != "" {
+			lines = append(lines, uri)
+		}
+	}
+	body := strings.Join(lines, "\n")
+	if format == "" || format == "base64" {
+		body = base64.StdEncoding.EncodeToString([]byte(body))
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(body + "\n"))
 }
 
 func (s *Server) clientArtifactDownload(w http.ResponseWriter, r *http.Request) {

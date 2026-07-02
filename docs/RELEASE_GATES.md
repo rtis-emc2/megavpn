@@ -133,7 +133,9 @@ Required evidence before promoting topology/access features beyond the hardening
 - VLESS access groups are managed centrally under `Instances -> VLESS groups`;
   default, local-breakout, selected-egress, target-only and blocked behavior is
   covered by provisioning/apply evidence.
-- VLESS subscription endpoint, when enabled, uses per-client bearer token rotation, audit events, `Cache-Control: no-store` and authenticated preview/download.
+- VLESS subscription endpoint uses per-client bearer token rotation, audit events,
+  `Cache-Control: no-store`, active-access filtering and one-time plaintext URL
+  display.
 - Traffic camouflage profiles validate Nginx and Xray config before apply and expose rollback on failed `nginx -t` or runtime validation.
 - Nginx edge profiles bind explicit certificate material and do not silently fall back to an unintended self-signed profile after a managed certificate exists.
 

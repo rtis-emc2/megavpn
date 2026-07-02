@@ -23,10 +23,11 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | 9 | [Node map](NODE_MAP.md) | GeoIP node placement and backhaul topology overlay |
 | 10 | [Firewall policy catalog](FIREWALL.md) | Managed firewall policies, address lists, rules and node apply state |
 | 11 | [VLESS access groups](VLESS_GROUPS.md) | Reusable VLESS client routing groups |
-| 12 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
-| 13 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
-| 14 | [Security review](SECURITY_REVIEW_7.0.1.2.md) | Security and release review artifact |
-| 15 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
+| 12 | [VLESS subscriptions](VLESS_SUBSCRIPTIONS.md) | Per-client VLESS subscription tokens and delivery workflow |
+| 13 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
+| 14 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
+| 15 | [Security review](SECURITY_REVIEW_7.0.1.2.md) | Security and release review artifact |
+| 16 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
 
 ## Documentation Ownership
 
@@ -41,6 +42,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP node placement, local static map, node owner metadata and backhaul overlay. |
 | Firewall | `docs/FIREWALL.md`, `docs/FIREWALL_RU.md` | Managed firewall catalog, address lists, rules and node apply state. |
 | VLESS client routing | `docs/VLESS_GROUPS.md`, `docs/VLESS_GROUPS_RU.md` | Reusable access groups, default VLESS group selection and provisioning behavior. |
+| VLESS subscriptions | `docs/VLESS_SUBSCRIPTIONS.md`, `docs/VLESS_SUBSCRIPTIONS_RU.md` | Per-client bearer-token rotation, public feed behavior and operator delivery workflow. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic and tactical product planning. |
 
 ## Language Policy
@@ -78,4 +80,3 @@ These items must be closed before a stable release claim:
   PostgreSQL and offline installs.
 - Bilingual troubleshooting matrix for every supported service.
 - Service-specific client configuration examples.
-- Dedicated deep-dive documentation for VLESS subscriptions.

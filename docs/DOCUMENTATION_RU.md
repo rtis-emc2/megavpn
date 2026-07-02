@@ -23,10 +23,11 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | 9 | [Карта нод](NODE_MAP_RU.md) | GeoIP-размещение нод и overlay managed backhaul |
 | 10 | [Каталог firewall-политик](FIREWALL_RU.md) | Managed firewall policies, address lists, rules и node apply state |
 | 11 | [VLESS access groups](VLESS_GROUPS_RU.md) | Reusable VLESS client routing groups |
-| 12 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
-| 13 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
-| 14 | [Security review](SECURITY_REVIEW_7.0.1.2.md) | Security и release review artifact |
-| 15 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
+| 12 | [VLESS-подписки](VLESS_SUBSCRIPTIONS_RU.md) | Per-client VLESS subscription tokens и workflow доставки |
+| 13 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
+| 14 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
+| 15 | [Security review](SECURITY_REVIEW_7.0.1.2.md) | Security и release review artifact |
+| 16 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
 
 ## Владение документацией
 
@@ -41,6 +42,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP-размещение нод, локальная статичная карта, node owner metadata и backhaul overlay. |
 | Firewall | `docs/FIREWALL.md`, `docs/FIREWALL_RU.md` | Managed firewall catalog, address lists, rules и node apply state. |
 | VLESS client routing | `docs/VLESS_GROUPS.md`, `docs/VLESS_GROUPS_RU.md` | Reusable access groups, default VLESS group selection и provisioning behavior. |
+| VLESS subscriptions | `docs/VLESS_SUBSCRIPTIONS.md`, `docs/VLESS_SUBSCRIPTIONS_RU.md` | Per-client bearer-token rotation, public feed behavior и operator delivery workflow. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic и tactical product planning. |
 
 ## Языковая политика
@@ -79,4 +81,3 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
   PostgreSQL и offline install.
 - Двуязычная troubleshooting matrix по всем сервисам.
 - Service-specific примеры клиентских конфигов.
-- Отдельная deep-dive документация по VLESS subscriptions.

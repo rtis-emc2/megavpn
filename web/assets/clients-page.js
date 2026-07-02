@@ -132,6 +132,15 @@
       return status;
     }
 
+    function subscriptionDisplayStatus(subscription) {
+      const status = String(subscription?.status || 'unknown').toLowerCase();
+      if (status === 'active' && subscription?.expires_at) {
+        const expiresAt = Date.parse(subscription.expires_at);
+        if (!Number.isNaN(expiresAt) && expiresAt <= Date.now()) return 'expired';
+      }
+      return status;
+    }
+
     function clientSummary(client) {
       const summary = client?.summary && typeof client.summary === 'object' ? client.summary : {};
       const clientID = client?.id || '';
@@ -772,11 +781,32 @@
       }).join('') || '<tr><td colspan="6"><div class="empty">No delivery links yet. Publish a link after a config artifact is ready.</div></td></tr>';
     }
 
-    function renderClientAccessOverview(client, accessList, routeList, artifactList, shareLinkList) {
+    function renderClientSubscriptionRows(subscriptionList, clientID) {
+      return (subscriptionList || []).map((subscription) => {
+        const displayStatus = subscriptionDisplayStatus(subscription);
+        const revoked = displayStatus === 'revoked';
+        return `
+        <tr>
+          <td><span class="tag">${escapeHTML(subscription.token_hint || 'hidden')}</span></td>
+          <td>${statusTag(displayStatus)}</td>
+          <td>${escapeHTML(formatDate(subscription.expires_at))}</td>
+          <td>${escapeHTML(subscription.last_used_at ? formatDate(subscription.last_used_at) : 'never')}</td>
+          <td>${escapeHTML(String(subscription.download_count || 0))}</td>
+          <td>
+            <div class="inline-actions compact-actions">
+              <button class="danger-btn client-subscription-revoke-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-subscription-id="${escapeHTML(subscription.id)}"${revoked ? ' disabled' : ''}>${revoked ? 'Revoked' : 'Revoke'}</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="6"><div class="empty">No VLESS subscription token yet. Rotate a token and copy the generated URL once.</div></td></tr>';
+    }
+
+    function renderClientAccessOverview(client, accessList, routeList, artifactList, shareLinkList, subscriptionList = []) {
       const activeAccesses = accessList.filter((item) => String(item.status || '').toLowerCase() === 'active').length;
       const pendingAccesses = accessList.filter((item) => String(item.status || '').toLowerCase() === 'pending').length;
       const readyArtifacts = artifactList.filter((item) => String(item.status || '').toLowerCase() === 'ready').length;
       const activeLinks = shareLinkList.filter(shareLinkIsUsable).length;
+      const activeSubscriptions = subscriptionList.filter((item) => subscriptionDisplayStatus(item) === 'active').length;
       return `
         <div class="client-access-overview">
           <div>
@@ -801,8 +831,8 @@
           </div>
           <div>
             <span>Delivery</span>
-            <strong>${escapeHTML(String(activeLinks))}</strong>
-            <small>active links</small>
+            <strong>${escapeHTML(String(activeLinks + activeSubscriptions))}</strong>
+            <small>${escapeHTML(String(activeLinks))} links · ${escapeHTML(String(activeSubscriptions))} subscriptions</small>
           </div>
         </div>`;
     }
@@ -842,23 +872,25 @@
       if (!client) return;
       openModal(`Client access: ${client.username}`, 'Provisioned service bindings and route policy', '<div class="empty">Loading service accesses...</div>', { wide: true });
       try {
-        const [accesses, routes, artifacts, shareLinks] = await Promise.all([
+        const [accesses, routes, artifacts, shareLinks, subscriptions] = await Promise.all([
           requestJSON(`/api/v1/clients/${clientID}/accesses`),
           requestJSON(`/api/v1/clients/${clientID}/routes`),
           requestJSON(`/api/v1/clients/${clientID}/artifacts`),
           requestJSON(`/api/v1/clients/${clientID}/share-links`),
+          requestJSON(`/api/v1/clients/${clientID}/subscriptions`),
         ]);
         const accessList = Array.isArray(accesses) ? accesses : [];
         const routeList = Array.isArray(routes) ? routes : [];
         const artifactList = Array.isArray(artifacts) ? artifacts : [];
         const shareLinkList = Array.isArray(shareLinks) ? shareLinks : [];
+        const subscriptionList = Array.isArray(subscriptions) ? subscriptions : [];
         const accessOptions = accessList.map((access) => {
           const inbound = serviceAccessInboundInfo(access);
           return `<option value="${escapeHTML(access.id)}">${escapeHTML(inbound.serviceLabel)} - ${escapeHTML(inbound.endpoint)} - ${escapeHTML(access.status || 'unknown')}</option>`;
         }).join('');
         el('modalBody').innerHTML = `
           <div id="clientAccessRotateResult" class="form-result"></div>
-          ${renderClientAccessOverview(client, accessList, routeList, artifactList, shareLinkList)}
+          ${renderClientAccessOverview(client, accessList, routeList, artifactList, shareLinkList, subscriptionList)}
           <section class="table-card compact-card client-inbound-section">
             <div class="table-head">
               <div>
@@ -912,6 +944,21 @@
           </section>
           <section class="table-card compact-card" style="margin-top:16px">
             <div class="table-head">
+              <h2>VLESS Subscription</h2>
+              <div class="table-tools">
+                <span class="tag">${escapeHTML(String(subscriptionList.length))} tokens</span>
+                <button class="secondary-btn" id="clientSubscriptionRotateBtn" type="button">Rotate subscription</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Token</th><th>Status</th><th>Expires</th><th>Last used</th><th>Downloads</th><th>Actions</th></tr></thead>
+                <tbody>${renderClientSubscriptionRows(subscriptionList, clientID)}</tbody>
+              </table>
+            </div>
+          </section>
+          <section class="table-card compact-card" style="margin-top:16px">
+            <div class="table-head">
               <h2>Delivery Links</h2>
               <div class="table-tools">
                 <span class="tag">${escapeHTML(String(shareLinkList.length))} links</span>
@@ -941,8 +988,12 @@
       document.getElementById('clientArtifactBuildBtn')?.addEventListener('click', () => openBuildClientArtifactsModal(clientID, accessList));
       document.getElementById('clientSharePublishBtn')?.addEventListener('click', () => openPublishShareLinkModal(clientID, artifactList));
       document.getElementById('clientManageEmailBtn')?.addEventListener('click', () => openClientEmailModal(clientID));
+      document.getElementById('clientSubscriptionRotateBtn')?.addEventListener('click', () => openRotateClientSubscriptionModal(clientID));
       document.querySelectorAll('.client-share-revoke-btn').forEach((button) => {
         button.addEventListener('click', () => revokeClientShareLink(button.dataset.clientId, button.dataset.linkId));
+      });
+      document.querySelectorAll('.client-subscription-revoke-btn').forEach((button) => {
+        button.addEventListener('click', () => revokeClientSubscription(button.dataset.clientId, button.dataset.subscriptionId));
       });
       document.querySelectorAll('.client-artifact-preview-btn').forEach((button) => {
         button.addEventListener('click', () => previewClientArtifact(button.dataset.clientId, button.dataset.artifactId));
@@ -953,6 +1004,76 @@
           window.open(url, '_blank', 'noopener,noreferrer');
         });
       });
+    }
+
+    function openRotateClientSubscriptionModal(clientID) {
+      const client = findClient(clientID);
+      if (!client) return;
+      openModal(`VLESS subscription: ${client.username}`, 'Rotate the per-client subscription token. The full URL is shown once after creation.', `
+        <form id="clientSubscriptionForm" class="form-grid">
+          <div class="field"><label>TTL hours</label><input name="ttl_hours" type="number" min="1" max="8760" value="720" /></div>
+          <div class="field full inline-actions">
+            <button class="primary-btn" type="submit">Rotate token</button>
+            <button class="secondary-btn" id="cancelSubscriptionRotateBtn" type="button">Cancel</button>
+          </div>
+        </form>
+        <div id="clientSubscriptionResult" class="form-result"></div>`);
+      document.getElementById('cancelSubscriptionRotateBtn')?.addEventListener('click', () => openClientAccessesModal(clientID));
+      document.getElementById('clientSubscriptionForm')?.addEventListener('submit', (event) => submitClientSubscriptionRotate(event, clientID));
+    }
+
+    async function submitClientSubscriptionRotate(event, clientID) {
+      event.preventDefault();
+      const target = document.getElementById('clientSubscriptionResult');
+      if (target) target.innerHTML = '<span class="tag warn">rotating subscription</span>';
+      try {
+        const form = new FormData(event.currentTarget);
+        const data = await sendJSON(`/api/v1/clients/${clientID}/subscriptions/rotate`, 'POST', {
+          ttl_hours: Number(form.get('ttl_hours') || 720),
+        });
+        const url = String(data.subscription_url || '').trim();
+        if (target) {
+          target.innerHTML = `
+            <div class="notice success">
+              <strong>Subscription URL created</strong>
+              <p>Copy it now. The plaintext token is not stored and cannot be displayed again.</p>
+              <input class="copy-input" id="clientSubscriptionURL" value="${escapeHTML(url || 'public base URL is not configured')}" readonly />
+              <div class="inline-actions" style="margin-top:10px">
+                <button class="secondary-btn" id="copySubscriptionURLBtn" type="button"${url ? '' : ' disabled'}>Copy URL</button>
+                <button class="secondary-btn" id="backToClientAccessBtn" type="button">Back to client access</button>
+              </div>
+            </div>`;
+          document.getElementById('copySubscriptionURLBtn')?.addEventListener('click', () => copyTextToClipboard(url, 'clientSubscriptionResult'));
+          document.getElementById('backToClientAccessBtn')?.addEventListener('click', () => openClientAccessesModal(clientID));
+        }
+        await refresh();
+      } catch (err) {
+        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function revokeClientSubscription(clientID, subscriptionID) {
+      const target = document.getElementById('clientAccessRotateResult');
+      if (target) target.innerHTML = '<span class="tag warn">revoking subscription</span>';
+      try {
+        await requestJSON(`/api/v1/clients/${clientID}/subscriptions/${subscriptionID}/revoke`, { method: 'POST' });
+        await refresh();
+        await openClientAccessesModal(clientID);
+      } catch (err) {
+        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function copyTextToClipboard(value, resultID) {
+      const result = document.getElementById(resultID);
+      try {
+        await navigator.clipboard.writeText(value);
+        if (result) result.insertAdjacentHTML('beforeend', '<div class="tag ok" style="margin-top:8px">copied</div>');
+      } catch (_) {
+        const input = document.getElementById('clientSubscriptionURL');
+        input?.select();
+        if (result) result.insertAdjacentHTML('beforeend', '<div class="tag warn" style="margin-top:8px">select and copy manually</div>');
+      }
     }
 
     function openBuildClientArtifactsModal(clientID, accessList = []) {
