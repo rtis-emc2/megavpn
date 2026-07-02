@@ -379,8 +379,13 @@
 
     function selectedLocatedNode(items) {
       const selectedID = String(state.nodeMapSelectedNodeID || '').trim();
-      const selected = selectedID ? items.find((item) => String(item.node.id || '') === selectedID) : null;
-      return selected || items[0] || null;
+      if (!selectedID) return null;
+      const selected = items.find((item) => String(item.node.id || '') === selectedID);
+      if (!selected) {
+        state.nodeMapSelectedNodeID = '';
+        return null;
+      }
+      return selected;
     }
 
     function renderTopologyLegend(located, unresolved, drawableLinks, links) {
@@ -421,13 +426,7 @@
 
     function renderSelectedNodePanel(item, nodeLookup) {
       if (!item) {
-        return `
-          <aside class="node-map-inspector">
-            <div class="node-map-inspector-empty">
-              <strong>No mapped nodes yet</strong>
-              <span>GeoIP will appear here after the API resolves public node addresses.</span>
-            </div>
-          </aside>`;
+        return '';
       }
       const { node, location } = item;
       return `
@@ -438,10 +437,13 @@
               <h3>${escapeHTML(node.name || 'node')}</h3>
               <p>${escapeHTML(node.address || 'address pending')}</p>
             </div>
-            <div class="node-map-node-tags">
-              ${statusTag(node.role || 'node')}
-              ${statusTag(nodeStatus(node))}
-              ${statusTag(geoStatus(node))}
+            <div class="node-map-inspector-actions">
+              <button class="icon-btn node-map-close-panel" type="button" aria-label="Close node details">&times;</button>
+              <div class="node-map-node-tags">
+                ${statusTag(node.role || 'node')}
+                ${statusTag(nodeStatus(node))}
+                ${statusTag(geoStatus(node))}
+              </div>
             </div>
           </div>
           <div class="node-map-inspector-facts">
@@ -606,6 +608,11 @@
       render();
     }
 
+    function clearSelectedNode() {
+      state.nodeMapSelectedNodeID = '';
+      render();
+    }
+
     function mergeBackhaulLink(link) {
       if (!link || !link.id || !Array.isArray(state.backhaulLinks)) return;
       const id = String(link.id);
@@ -665,7 +672,6 @@
       const viewport = mapViewport(located);
       const selected = selectedLocatedNode(located);
       const selectedID = String(selected?.node?.id || '');
-      if (selectedID) state.nodeMapSelectedNodeID = selectedID;
 
       el('content').innerHTML = `
         <section class="control-page-shell node-map-page">
@@ -704,6 +710,18 @@
 
       document.querySelectorAll('.node-map-pin, .node-map-location-row').forEach((button) => {
         button.addEventListener('click', () => selectNode(button.dataset.nodeId));
+      });
+      document.querySelectorAll('.node-map-close-panel').forEach((button) => {
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          clearSelectedNode();
+        });
+      });
+      document.querySelectorAll('.node-real-map').forEach((map) => {
+        map.addEventListener('click', (event) => {
+          if (event.target.closest('.node-map-pin, .node-map-inspector, .node-map-hud')) return;
+          clearSelectedNode();
+        });
       });
       document.querySelectorAll('.node-map-open-btn').forEach((button) => {
         button.addEventListener('click', () => openNode(button.dataset.nodeId));

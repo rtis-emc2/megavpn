@@ -4105,6 +4105,24 @@ tr:hover td { background: #f8fafc; }
   justify-content: space-between;
   gap: 12px;
 }
+.node-map-inspector-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+.node-map-close-panel {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 21px;
+  line-height: 1;
+}
+.node-map-close-panel:hover {
+  color: var(--text);
+}
 .node-map-inspector h3 {
   margin: 2px 0 4px;
   font-size: 22px;
@@ -4974,6 +4992,12 @@ tr:hover td { background: #f8fafc; }
   .node-map-link-chip > div {
     flex-direction: column;
     align-items: flex-start;
+  }
+  .node-map-inspector-head {
+    flex-direction: row;
+  }
+  .node-map-inspector-actions {
+    align-items: end;
   }
   .node-map-inspector-facts,
   .node-map-detail-grid,
