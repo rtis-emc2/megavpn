@@ -535,7 +535,7 @@ on conflict do nothing;
 -- -----------------------------------------------------------------------------
 -- Section: identity_access_foundation
 -- -----------------------------------------------------------------------------
--- MegaVPN MVP identity and access foundation.
+-- MegaVPN identity and access foundation.
 
 alter table audit_events
   add column if not exists actor_user_id uuid null;
@@ -730,7 +730,7 @@ on conflict do nothing;
 -- -----------------------------------------------------------------------------
 -- Section: secret_refs_and_agent_trust
 -- -----------------------------------------------------------------------------
--- MegaVPN MVP secret refs and agent trust foundation.
+-- MegaVPN secret refs and agent trust foundation.
 
 create table if not exists secret_refs(
   id uuid primary key,

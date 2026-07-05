@@ -33,15 +33,17 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
+
       - name: Build binaries
         run: ./scripts/build.sh
 
       - name: Check shell syntax
         run: |
           bash -n deploy-local.sh
-          bash -n scripts/alpha-smoke.sh
+          bash -n scripts/api-smoke.sh
           bash -n scripts/build.sh
           bash -n scripts/install-runtime.sh
           bash -n scripts/install-web.sh
           bash -n scripts/run-local.sh
-

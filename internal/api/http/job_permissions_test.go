@@ -43,3 +43,26 @@ func TestPrivilegedJobTypesMustUseTypedEndpoint(t *testing.T) {
 		t.Fatal("artifact.build should remain available to generic job API")
 	}
 }
+
+func TestGenericJobAPIAllowlist(t *testing.T) {
+	t.Parallel()
+
+	for _, jobType := range []string{"artifact.build", "client.provision", "client.revoke"} {
+		jobType := jobType
+		t.Run(jobType, func(t *testing.T) {
+			t.Parallel()
+			if !jobTypeAllowedInGenericAPI(jobType) {
+				t.Fatalf("expected %s to be allowed through generic job API", jobType)
+			}
+		})
+	}
+	for _, jobType := range []string{"node.inventory", "node.services.discover", "unknown.job"} {
+		jobType := jobType
+		t.Run(jobType, func(t *testing.T) {
+			t.Parallel()
+			if jobTypeAllowedInGenericAPI(jobType) {
+				t.Fatalf("expected %s to be blocked by generic job API", jobType)
+			}
+		})
+	}
+}

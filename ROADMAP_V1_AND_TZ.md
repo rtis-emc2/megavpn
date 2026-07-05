@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.13`
+**Release:** `7.0.1.14`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.13`
+**Code baseline:** RTIS MegaVPN `7.0.1.14`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,8 +23,8 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.13` continues the production-hardening line after the `7.0.1.12`
-traffic-camouflage boundary release. The codebase already has a working
+`7.0.1.14` continues the production-hardening line after the `7.0.1.13`
+operator-console typography release. The codebase already has a working
 control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
@@ -204,7 +204,29 @@ No database migration, API contract, agent behavior, runtime apply behavior,
 VLESS routing, firewall enforcement or traffic-camouflage rendering changed in
 this release.
 
-## 12. Immediate Next Actions
+## 12. Release 7.0.1.14 Closure
+
+The goal of `7.0.1.14` is security and release hardening before the next VPN
+feature increment.
+
+Closed in this release:
+
+- Go release baseline now requires patch-level `1.26.4`.
+- CI and release gate run `govulncheck@v1.5.0`.
+- Control-plane installer compares full Go semver, including patch version.
+- NGINX.org repository bootstrap verifies the signing key fingerprint before
+  importing node trust material.
+- Bootstrap env rendering rejects invalid keys and control characters.
+- Node name/address validation rejects control characters at HTTP and store
+  boundaries.
+- Generic job creation is restricted to an explicit allowlist and all new jobs
+  start as `queued`.
+- Early-stage installer and smoke-script naming artifacts were removed from the
+  active release path.
+
+No database migration or VPN runtime behavior changed in this release.
+
+## 13. Immediate Next Actions
 
 1. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
 2. Run disposable PostgreSQL migrations and integration tests.

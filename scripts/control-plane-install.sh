@@ -82,12 +82,17 @@ require_command() {
 }
 
 required_go_version() {
-  sed -nE 's/^go ([0-9]+(\.[0-9]+)?).*/\1/p' "$SRC_DIR/go.mod" | head -n 1
+  sed -nE 's/^go ([0-9]+(\.[0-9]+){1,2}).*/\1/p' "$SRC_DIR/go.mod" | head -n 1
 }
 
 installed_go_version() {
   command -v go >/dev/null 2>&1 || return 1
-  go version | awk '{print $3}' | sed -E 's/^go//; s/^([0-9]+\.[0-9]+).*/\1/'
+  local version
+  version="$(go env GOVERSION 2>/dev/null || true)"
+  if [[ -z "$version" ]]; then
+    version="$(go version | awk '{print $3}')"
+  fi
+  printf '%s' "$version" | sed -E 's/^go//; s/^([0-9]+(\.[0-9]+){1,2}).*/\1/'
 }
 
 version_ge() {

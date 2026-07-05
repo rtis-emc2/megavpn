@@ -29,6 +29,34 @@ func TestVerifyFileSHA256(t *testing.T) {
 	}
 }
 
+func TestPGPFingerprintOutputContains(t *testing.T) {
+	t.Parallel()
+
+	output := "pub:-:4096:1:ABF5BD827BD9BF62:1563811491:::-:::scESC::::::23::0:\n" +
+		"fpr:::::::::573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62:\n"
+	if !pgpFingerprintOutputContains(output, "573B FD6B 3D8F BC64 1079 A6AB ABF5 BD82 7BD9 BF62") {
+		t.Fatal("expected nginx.org signing key fingerprint to be accepted")
+	}
+	if pgpFingerprintOutputContains(output, "0000000000000000000000000000000000000000") {
+		t.Fatal("unexpected fingerprint match")
+	}
+}
+
+func TestSafeAptCodename(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"jammy", "noble", "bookworm", "ubuntu-24.04"} {
+		if !safeAptCodename(value) {
+			t.Fatalf("expected codename %q to be accepted", value)
+		}
+	}
+	for _, value := range []string{"", "noble main", "noble\nmain", "$(id)", "Noble"} {
+		if safeAptCodename(value) {
+			t.Fatalf("expected codename %q to be rejected", value)
+		}
+	}
+}
+
 func TestAptInstallFailureMessageForShadowsocks(t *testing.T) {
 	t.Parallel()
 

@@ -13,6 +13,14 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
+const (
+	nginxOrgSigningKeyURL         = "https://nginx.org/keys/nginx_signing.key"
+	nginxOrgSigningKeyFingerprint = "573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62"
+	nginxOrgKeyringPath           = "/usr/share/keyrings/nginx-archive-keyring.gpg"
+	nginxOrgSourceListPath        = "/etc/apt/sources.list.d/nginx.list"
+	nginxOrgPreferencesPath       = "/etc/apt/preferences.d/99nginx"
+)
+
 func (c client) installCapability(ctx context.Context, j job, st agentState) (string, map[string]any) {
 	serviceCode := normalizeCapabilityCode(stringFromMap(j.Payload, "service_code"))
 	strategy := stringFromMap(j.Payload, "strategy")
@@ -429,9 +437,9 @@ func installNginxUbuntuRepo(ctx context.Context, reason string) map[string]any {
 	if os.Geteuid() != 0 {
 		return map[string]any{"ok": false, "message": "nginx install requires root", "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason}
 	}
-	_ = os.Remove("/etc/apt/sources.list.d/nginx.list")
-	_ = os.Remove("/etc/apt/preferences.d/99nginx")
-	_ = os.Remove("/usr/share/keyrings/nginx-archive-keyring.gpg")
+	_ = os.Remove(nginxOrgSourceListPath)
+	_ = os.Remove(nginxOrgPreferencesPath)
+	_ = os.Remove(nginxOrgKeyringPath)
 	_ = run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "purge", "-y", "nginx")
 	_ = run("systemctl", "daemon-reload")
 	if !run("apt-get", "update") {
@@ -520,19 +528,47 @@ func installNginxOrg(ctx context.Context, channel string) map[string]any {
 	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "curl", "gnupg2", "ca-certificates", "lsb-release", "ubuntu-keyring") {
 		return map[string]any{"ok": false, "message": "nginx prerequisites install failed", "steps": steps}
 	}
-	if !run("bash", "-c", "curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor --yes --batch -o /usr/share/keyrings/nginx-archive-keyring.gpg") {
+	tmpKey, err := os.CreateTemp("", "megavpn-nginx-signing-*.key")
+	if err != nil {
+		return map[string]any{"ok": false, "message": "nginx signing key temp file creation failed", "error": err.Error(), "steps": steps}
+	}
+	keyPath := tmpKey.Name()
+	_ = tmpKey.Close()
+	defer os.Remove(keyPath)
+	if !run("curl", "-fsSL", nginxOrgSigningKeyURL, "-o", keyPath) {
+		return map[string]any{"ok": false, "message": "nginx signing key download failed", "steps": steps}
+	}
+	code, out := runInstallCommand(ctx, "gpg", "--show-keys", "--with-colons", "--fingerprint", keyPath)
+	steps = append(steps, map[string]any{"command": []string{"gpg", "--show-keys", "--with-colons", "--fingerprint", keyPath}, "exit_code": code, "output": truncate(out, 4000)})
+	if code != 0 {
+		return map[string]any{"ok": false, "message": "nginx signing key fingerprint read failed", "steps": steps}
+	}
+	if !pgpFingerprintOutputContains(out, nginxOrgSigningKeyFingerprint) {
+		return map[string]any{"ok": false, "message": "nginx signing key fingerprint mismatch", "expected_fingerprint": nginxOrgSigningKeyFingerprint, "steps": steps}
+	}
+	if !run("gpg", "--dearmor", "--yes", "--batch", "-o", nginxOrgKeyringPath, keyPath) {
 		return map[string]any{"ok": false, "message": "nginx signing key import failed", "steps": steps}
 	}
 	repo := "https://nginx.org/packages/ubuntu"
 	if channel == "mainline" {
 		repo = "https://nginx.org/packages/mainline/ubuntu"
 	}
-	cmd := "echo 'deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] " + repo + " '$(lsb_release -cs)' nginx' > /etc/apt/sources.list.d/nginx.list"
-	if !run("bash", "-c", cmd) {
-		return map[string]any{"ok": false, "message": "nginx repository setup failed", "steps": steps}
+	code, codenameOut := runInstallCommand(ctx, "lsb_release", "-cs")
+	steps = append(steps, map[string]any{"command": []string{"lsb_release", "-cs"}, "exit_code": code, "output": truncate(codenameOut, 4000)})
+	if code != 0 {
+		return map[string]any{"ok": false, "message": "nginx repository codename detection failed", "steps": steps}
 	}
-	if !run("bash", "-c", "printf 'Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n' > /etc/apt/preferences.d/99nginx") {
-		return map[string]any{"ok": false, "message": "nginx apt pinning setup failed", "steps": steps}
+	codename := strings.TrimSpace(codenameOut)
+	if !safeAptCodename(codename) {
+		return map[string]any{"ok": false, "message": "nginx repository codename is invalid", "codename": codename, "steps": steps}
+	}
+	repoLine := fmt.Sprintf("deb [signed-by=%s] %s %s nginx\n", nginxOrgKeyringPath, repo, codename)
+	if err := os.WriteFile(nginxOrgSourceListPath, []byte(repoLine), 0o644); err != nil {
+		return map[string]any{"ok": false, "message": "nginx repository setup failed", "error": err.Error(), "steps": steps}
+	}
+	preferences := "Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n"
+	if err := os.WriteFile(nginxOrgPreferencesPath, []byte(preferences), 0o644); err != nil {
+		return map[string]any{"ok": false, "message": "nginx apt pinning setup failed", "error": err.Error(), "steps": steps}
 	}
 	if !run("apt-get", "update") {
 		return map[string]any{"ok": false, "message": "apt update failed after nginx repo setup", "steps": steps}
@@ -544,6 +580,45 @@ func installNginxOrg(ctx context.Context, channel string) map[string]any {
 	verify := verifyNginx(ctx)
 	verify["steps"] = steps
 	return verify
+}
+
+func pgpFingerprintOutputContains(output, expected string) bool {
+	expected = normalizePGPFingerprint(expected)
+	if expected == "" {
+		return false
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) > 9 && fields[0] == "fpr" && normalizePGPFingerprint(fields[9]) == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizePGPFingerprint(value string) string {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, " ", "")
+	return value
+}
+
+func safeAptCodename(value string) bool {
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '.' || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func installXrayCore(ctx context.Context, channel string) map[string]any {

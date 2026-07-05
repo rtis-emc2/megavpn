@@ -31,6 +31,7 @@ RELEASE_CERTIFICATE_ID="${MEGAVPN_RELEASE_CERTIFICATE_ID:-}"
 RUN_RACE="${MEGAVPN_RELEASE_RUN_RACE:-1}"
 RUN_SERVICE_MATRIX="${MEGAVPN_RELEASE_RUN_SERVICE_MATRIX:-0}"
 ALLOW_SKIPS="${MEGAVPN_RELEASE_ALLOW_SKIPS:-0}"
+GOVULNCHECK_VERSION="${MEGAVPN_RELEASE_GOVULNCHECK_VERSION:-v1.5.0}"
 
 passed=0
 skipped=0
@@ -60,10 +61,14 @@ require_clean_static_scan() {
     log "unsafe production pattern found"
     return 1
   fi
-  if rg -n "curl .*\\|.*bash|bash -c .*curl" cmd internal scripts deploy --glob '!**/*_test.go' --glob '!scripts/release-gate.sh' --glob '!scripts/self-test.sh'; then
-    log "unpinned curl-to-shell production pattern found"
+  if rg -n "curl .*\\|.*(bash|sh|gpg|apt-key)|bash\", \"-c\", \"curl|sh\", \"-c\", \"curl|apt-key" cmd internal scripts deploy --glob '!**/*_test.go' --glob '!scripts/release-gate.sh' --glob '!scripts/self-test.sh'; then
+    log "unpinned curl pipe or apt key production pattern found"
     return 1
   fi
+}
+
+require_govulncheck() {
+  go run "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION" ./...
 }
 
 require_gofmt_clean() {
@@ -179,7 +184,7 @@ run_nginx_verify() {
 }
 
 run_api_smoke() {
-  MEGAVPN_PUBLIC_BASE_URL="$RELEASE_BASE_URL" scripts/alpha-smoke.sh
+  MEGAVPN_PUBLIC_BASE_URL="$RELEASE_BASE_URL" scripts/api-smoke.sh
 }
 
 run_service_matrix() {
@@ -189,6 +194,7 @@ run_service_matrix() {
 run_gate "gofmt-clean" require_gofmt_clean
 run_gate "version-tag-consistency" require_version_tag_consistency
 run_gate "go-test" go test ./...
+run_gate "govulncheck" require_govulncheck
 if [[ "$RUN_RACE" == "1" || "$RUN_RACE" == "true" ]]; then
   run_gate "go-test-race" go test -race ./...
 else

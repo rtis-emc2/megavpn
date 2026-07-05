@@ -170,11 +170,13 @@ func scanNode(row jobScanner) (domain.Node, error) {
 }
 
 func (s *Store) CreateNode(ctx context.Context, n domain.Node) (domain.Node, error) {
-	if strings.TrimSpace(n.Name) == "" {
-		return n, errors.New("node name is required")
+	n.Name = strings.TrimSpace(n.Name)
+	n.Address = strings.TrimSpace(n.Address)
+	if err := domain.ValidateRequiredSingleLine("node name", n.Name); err != nil {
+		return n, err
 	}
-	if strings.TrimSpace(n.Address) == "" {
-		return n, errors.New("node address is required")
+	if err := domain.ValidateRequiredSingleLine("node address", n.Address); err != nil {
+		return n, err
 	}
 	if n.ID == "" {
 		n.ID = id.New()
@@ -251,6 +253,12 @@ func (s *Store) UpdateNode(ctx context.Context, nodeID string, n domain.Node) (d
 	}
 	if n.Address == "" {
 		return domain.Node{}, errors.New("node address is required")
+	}
+	if err := domain.ValidateRequiredSingleLine("node name", n.Name); err != nil {
+		return domain.Node{}, err
+	}
+	if err := domain.ValidateRequiredSingleLine("node address", n.Address); err != nil {
+		return domain.Node{}, err
 	}
 	if n.Kind == "" {
 		n.Kind = current.Kind
@@ -2022,6 +2030,9 @@ func normalizeJobForInsert(j domain.Job) (domain.Job, []byte, error) {
 	if j.Status == "" {
 		j.Status = "queued"
 	}
+	if j.Status != "queued" {
+		return j, nil, fmt.Errorf("new jobs must start queued")
+	}
 	if j.ScopeType == "" {
 		j.ScopeType = "system"
 	}
@@ -2036,9 +2047,6 @@ func normalizeJobForInsert(j domain.Job) (domain.Job, []byte, error) {
 		return j, nil, err
 	}
 	j.Payload = normalizedPayload
-	if !in(j.Status, "queued", "running", "succeeded", "failed", "cancelled", "retrying") {
-		return j, nil, fmt.Errorf("unsupported job status %q", j.Status)
-	}
 	b, _ := json.Marshal(j.Payload)
 	if j.CreatedAt.IsZero() {
 		j.CreatedAt = time.Now().UTC()

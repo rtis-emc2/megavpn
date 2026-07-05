@@ -586,6 +586,8 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 			return nil, err
 		}
 		normalized["client_id"] = clientID
+	default:
+		return nil, validationf("unsupported job type %q", jobType)
 	}
 	return normalized, nil
 }

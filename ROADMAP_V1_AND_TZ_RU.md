@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.13`
+**Релиз:** `7.0.1.14`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.13
+Базовая версия кода: RTIS MegaVPN 7.0.1.14
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1014,11 +1014,34 @@ endpoint и создавать reverse-proxy loop.
 runtime apply behavior, VLESS routing, firewall enforcement и
 traffic-camouflage rendering.
 
-## 13. Immediate Next Actions
+## 13. Release 7.0.1.14 Closure
 
-1. Принять решения по open questions 1-4, потому что они влияют на scope, schema и frontend.
-2. Поднять Go toolchain/CI и зафиксировать build/test baseline.
-3. Создать OpenAPI/internal-agent-contract draft.
-4. Спроектировать mTLS/signed-job implementation.
-5. Вынести service driver contracts и начать с OpenVPN/Xray.
-6. Синхронизировать `docs/NEXT_STEPS.md` с этим документом.
+Цель релиза `7.0.1.14`: security и release hardening перед следующим
+инкрементом VPN-функциональности.
+
+Зафиксировано в этом релизе:
+
+- Go release baseline теперь требует patch-level `1.26.4`.
+- CI и release gate запускают `govulncheck@v1.5.0`.
+- Control-plane installer сравнивает полный Go semver, включая patch version.
+- NGINX.org repository bootstrap проверяет fingerprint signing key перед
+  импортом trust material на ноде.
+- Bootstrap env rendering отклоняет invalid keys и control characters.
+- Node name/address validation отклоняет control characters на HTTP и store
+  boundaries.
+- Generic job creation ограничен explicit allowlist, а новые jobs всегда
+  стартуют как `queued`.
+- Старые early-stage installer/smoke naming артефакты удалены из активного
+  release path.
+
+В релизе не менялись database migrations и VPN runtime behavior.
+
+## 14. Immediate Next Actions
+
+1. Прогнать clean-install procedure на свежем Ubuntu host и записать evidence.
+2. Прогнать disposable PostgreSQL migrations и integration tests.
+3. Проверить runtime artifact upload/fetch/install для Xray и Shadowsocks.
+4. Validate service-pack create/apply/delete на реальных disposable nodes.
+5. Validate VLESS ingress с managed egress route policy.
+6. Продолжить traffic-camouflage ingress case: config preview/diff,
+   `nginx -t` evidence surface и live fallback-site smoke.

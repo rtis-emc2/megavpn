@@ -381,7 +381,7 @@ require_api_smoke() {
   fi
   require_command curl || return 1
   require_command jq || return 1
-  MEGAVPN_PUBLIC_BASE_URL="$RELEASE_BASE_URL" scripts/alpha-smoke.sh
+  MEGAVPN_PUBLIC_BASE_URL="$RELEASE_BASE_URL" scripts/api-smoke.sh
 }
 
 require_vpn_service_matrix() {

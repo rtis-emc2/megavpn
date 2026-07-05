@@ -23,6 +23,14 @@ func TestNormalizeNodeBootstrap(t *testing.T) {
 	}
 }
 
+func TestNormalizeRejectsUnknownJobType(t *testing.T) {
+	t.Parallel()
+
+	if _, err := Normalize("legacy.unknown", map[string]any{}); err == nil {
+		t.Fatal("expected unknown job type to be rejected")
+	}
+}
+
 func TestNormalizeNodeCapabilityInstallPreservesDependents(t *testing.T) {
 	payload, err := Normalize("node.capability.install", map[string]any{
 		"node_id":                " node-1 ",

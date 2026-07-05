@@ -1,6 +1,6 @@
 module github.com/rtis-emc2/megavpn
 
-go 1.26
+go 1.26.4
 
 require github.com/jackc/pgx/v5 v5.9.2
 

@@ -33,6 +33,7 @@ type sshSession struct {
 const sshKnownHostsPath = "/var/lib/megavpn/ssh/known_hosts"
 
 var (
+	bootstrapEnvKeyPattern           = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 	bootstrapSSHUserPattern          = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
 	bootstrapSSHHostPattern          = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$`)
 	bootstrapSSHHostKeySHA256Pattern = regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{32,64}={0,2}$`)
@@ -74,7 +75,10 @@ func handleNodeBootstrapJob(ctx context.Context, log bootstrapLogger, store *pos
 	if err != nil {
 		return "failed", map[string]any{"error": err.Error(), "node_id": nodeID, "stage": "create_enrollment_token"}
 	}
-	agentEnv, bootstrapEnv := renderBootstrapEnvFiles(cfg, publicBaseURL, node, token.Token)
+	agentEnv, bootstrapEnv, err := renderBootstrapEnvFiles(cfg, publicBaseURL, node, token.Token)
+	if err != nil {
+		return "failed", map[string]any{"error": err.Error(), "node_id": nodeID, "stage": "render_bootstrap_env"}
+	}
 
 	if bootstrapMode == "manual_bundle" {
 		bootstrapRef, err := store.CreateSecretRef(ctx, "opaque", []byte(bootstrapEnv), map[string]any{
@@ -241,23 +245,49 @@ func validateControlPlaneReachability(publicBaseURL string, node domain.Node) er
 	return nil
 }
 
-func renderBootstrapEnvFiles(cfg config.Config, publicBaseURL string, node domain.Node, enrollmentToken string) (string, string) {
-	agentEnv := strings.Join([]string{
-		"MEGAVPN_AGENT_CONTROL_PLANE_URL=" + publicBaseURL,
-		"MEGAVPN_AGENT_STATE_PATH=/var/lib/megavpn/agent/state.json",
-		"MEGAVPN_AGENT_BOOTSTRAP_PATH=/etc/megavpn/agent-bootstrap.env",
-		"MEGAVPN_AGENT_POLL_INTERVAL=" + cfg.Agent.PollInterval.String(),
-		"",
-	}, "\n")
-	bootstrapEnv := strings.Join([]string{
-		"MEGAVPN_AGENT_NODE_ID=" + node.ID,
-		"MEGAVPN_AGENT_NODE_NAME=" + node.Name,
-		"MEGAVPN_AGENT_NODE_ADDRESS=" + firstNonEmpty(strings.TrimSpace(node.Address), strings.TrimSpace(node.Name)),
-		"MEGAVPN_AGENT_CONTROL_PLANE_URL=" + publicBaseURL,
-		"MEGAVPN_AGENT_ENROLLMENT_TOKEN=" + enrollmentToken,
-		"",
-	}, "\n")
-	return agentEnv, bootstrapEnv
+func renderBootstrapEnvFiles(cfg config.Config, publicBaseURL string, node domain.Node, enrollmentToken string) (string, string, error) {
+	agentEnv, err := renderEnvFile([]envEntry{
+		{key: "MEGAVPN_AGENT_CONTROL_PLANE_URL", value: publicBaseURL},
+		{key: "MEGAVPN_AGENT_STATE_PATH", value: "/var/lib/megavpn/agent/state.json"},
+		{key: "MEGAVPN_AGENT_BOOTSTRAP_PATH", value: "/etc/megavpn/agent-bootstrap.env"},
+		{key: "MEGAVPN_AGENT_POLL_INTERVAL", value: cfg.Agent.PollInterval.String()},
+	})
+	if err != nil {
+		return "", "", err
+	}
+	bootstrapEnv, err := renderEnvFile([]envEntry{
+		{key: "MEGAVPN_AGENT_NODE_ID", value: node.ID},
+		{key: "MEGAVPN_AGENT_NODE_NAME", value: node.Name},
+		{key: "MEGAVPN_AGENT_NODE_ADDRESS", value: firstNonEmpty(strings.TrimSpace(node.Address), strings.TrimSpace(node.Name))},
+		{key: "MEGAVPN_AGENT_CONTROL_PLANE_URL", value: publicBaseURL},
+		{key: "MEGAVPN_AGENT_ENROLLMENT_TOKEN", value: enrollmentToken},
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return agentEnv, bootstrapEnv, nil
+}
+
+type envEntry struct {
+	key   string
+	value string
+}
+
+func renderEnvFile(entries []envEntry) (string, error) {
+	var b strings.Builder
+	for _, entry := range entries {
+		if !bootstrapEnvKeyPattern.MatchString(entry.key) {
+			return "", fmt.Errorf("invalid bootstrap env key %q", entry.key)
+		}
+		if err := domain.ValidateSingleLine("bootstrap env "+entry.key, entry.value); err != nil {
+			return "", err
+		}
+		b.WriteString(entry.key)
+		b.WriteByte('=')
+		b.WriteString(entry.value)
+		b.WriteByte('\n')
+	}
+	return b.String(), nil
 }
 
 func selectBootstrapMethod(methods []domain.NodeAccessMethod) (domain.NodeAccessMethod, error) {

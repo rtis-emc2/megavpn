@@ -1094,6 +1094,12 @@ func (s *Server) updateNode(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func validateNodeProfile(n domain.Node) string {
+	if err := domain.ValidateRequiredSingleLine("node name", n.Name); err != nil {
+		return "invalid node payload: " + err.Error()
+	}
+	if err := domain.ValidateRequiredSingleLine("node address", n.Address); err != nil {
+		return "invalid node payload: " + err.Error()
+	}
 	if n.Role != "" && n.Role != "ingress" && n.Role != "egress" {
 		return "invalid node payload: role must be ingress or egress"
 	}
@@ -1615,6 +1621,10 @@ func (s *Server) createJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 400, "privileged job type must be created through its typed API")
 		return
 	}
+	if !jobTypeAllowedInGenericAPI(j.Type) {
+		writeErr(w, 400, "job type is not available through generic job API")
+		return
+	}
 	if permission := requiredPermissionForJobType(j.Type); permission != "" {
 		authCtx, ok := authFromRequest(r)
 		if !ok || !authContextHasPermission(authCtx, permission) {
@@ -1625,6 +1635,7 @@ func (s *Server) createJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if j.ScopeType == "" {
 		j.ScopeType = "system"
 	}
+	j.Status = "queued"
 	x, err := s.store.CreateJob(r.Context(), j)
 	if err != nil {
 		if jobschema.IsValidationError(err) {
@@ -1935,6 +1946,15 @@ func jobTypeMustUseTypedEndpoint(jobType string) bool {
 		"instance.disable",
 		"instance.diagnose",
 		"instance.delete":
+		return true
+	default:
+		return false
+	}
+}
+
+func jobTypeAllowedInGenericAPI(jobType string) bool {
+	switch strings.TrimSpace(jobType) {
+	case "artifact.build", "client.provision", "client.revoke":
 		return true
 	default:
 		return false

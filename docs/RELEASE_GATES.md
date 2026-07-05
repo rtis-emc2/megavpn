@@ -1,10 +1,10 @@
 # Release Gates
 
-**Release:** `7.0.1.13`
+**Release:** `7.0.1.14`
 
 This file defines the minimum evidence required before tagging a production release.
 
-For `7.0.1.13`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
+For `7.0.1.14`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
 
 ## 1. Release Gate
 
@@ -30,13 +30,14 @@ The baseline gate must pass:
 
 - `gofmt -l cmd internal` returns no files.
 - `go test ./...` passes.
+- `go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...` passes on the release Go patch version.
 - `go test -race ./...` passes. Disabling it with `MEGAVPN_RELEASE_RUN_RACE=0` is a local diagnostic shortcut and counts as a skipped release gate.
 - `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` passes.
 - Operational binaries print the same release through `--version`.
 - Shell scripts under `scripts/` pass `bash -n`.
 - The Control Plane installer accepts non-interactive clean-install inputs in validate-only mode.
 - Smoke scripts that call `/api/v1` support `MEGAVPN_AUTH_TOKEN`.
-- Static production scan finds no `/bin/sh -c`, `StrictHostKeyChecking=accept-new`, or curl-to-shell pattern outside tests.
+- Static production scan finds no `/bin/sh -c`, `StrictHostKeyChecking=accept-new`, curl-to-shell, curl-to-gpg or apt-key trust bootstrap pattern outside tests.
 
 ## 2. Security Gate
 
@@ -45,6 +46,9 @@ Required release evidence:
 - Share-link tokens are stored as `token_hash` plus `token_hint`; plaintext token is returned only once at publish time.
 - Agent transport rejects unsigned responses by default, including empty `204` polls.
 - SSH bootstrap requires pinned `ssh_host_key_sha256`.
+- Bootstrap env generation rejects control characters in node identity and rendered env values.
+- Generic job creation only allows explicitly supported manual job types, and new jobs must start as `queued`.
+- NGINX.org repository bootstrap verifies the signing key fingerprint before importing it into the node trust store.
 - Xray remote installer is fail-closed unless `MEGAVPN_XRAY_INSTALL_SCRIPT_SHA256` pins the downloaded script.
 - Audit events exist for bootstrap, instance apply, capability install/verify, share-link publish/revoke, login, settings and certificate changes.
 - Secret rotation runbook in `docs/OPERATIONS_RUNBOOK.md` is reviewed for this release.

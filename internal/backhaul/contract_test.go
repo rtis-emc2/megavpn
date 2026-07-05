@@ -30,7 +30,7 @@ func TestValidateTunnelCIDR(t *testing.T) {
 		t.Fatalf("valid /30 rejected: %v", err)
 	}
 	if err := ValidateTunnelCIDR("2001:db8::/64"); err == nil {
-		t.Fatal("IPv6 tunnel CIDR must be rejected for current backhaul MVP")
+		t.Fatal("IPv6 tunnel CIDR must be rejected for current backhaul scope")
 	}
 	if err := ValidateTunnelCIDR("10.240.1.0/32"); err == nil {
 		t.Fatal("/32 tunnel CIDR must be rejected")

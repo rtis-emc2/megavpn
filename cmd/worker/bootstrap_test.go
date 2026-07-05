@@ -3,8 +3,10 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
+	"github.com/rtis-emc2/megavpn/internal/platform/config"
 )
 
 func TestNormalizeSSHPrivateKeyAcceptsEscapedNewlines(t *testing.T) {
@@ -41,6 +43,46 @@ func TestValidateSSHBootstrapTargetRejectsOptionInjection(t *testing.T) {
 	}
 	if err := validateSSHBootstrapTarget(method); err == nil {
 		t.Fatal("expected unsafe ssh_user to be rejected")
+	}
+}
+
+func TestRenderBootstrapEnvFilesRejectsNewlineInjection(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{}
+	cfg.Agent.PollInterval = 10 * time.Second
+	node := domain.Node{
+		ID:      "node-1",
+		Name:    "edge-1\nMEGAVPN_AGENT_TOKEN=attacker",
+		Address: "203.0.113.10",
+	}
+	_, _, err := renderBootstrapEnvFiles(cfg, "https://control.example.com", node, "enrollment-token")
+	if err == nil {
+		t.Fatal("expected newline injection to be rejected")
+	}
+	if !strings.Contains(err.Error(), "control characters") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRenderBootstrapEnvFilesProducesSimpleEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{}
+	cfg.Agent.PollInterval = 10 * time.Second
+	node := domain.Node{ID: "node-1", Name: "edge-1", Address: "203.0.113.10"}
+	agentEnv, bootstrapEnv, err := renderBootstrapEnvFiles(cfg, "https://control.example.com", node, "enrollment-token")
+	if err != nil {
+		t.Fatalf("render bootstrap env files: %v", err)
+	}
+	if !strings.Contains(agentEnv, "MEGAVPN_AGENT_POLL_INTERVAL=10s\n") {
+		t.Fatalf("agent env missing poll interval: %q", agentEnv)
+	}
+	if !strings.Contains(bootstrapEnv, "MEGAVPN_AGENT_NODE_NAME=edge-1\n") {
+		t.Fatalf("bootstrap env missing node name: %q", bootstrapEnv)
+	}
+	if !strings.HasSuffix(bootstrapEnv, "\n") {
+		t.Fatalf("bootstrap env must end with newline: %q", bootstrapEnv)
 	}
 }
 
