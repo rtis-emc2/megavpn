@@ -1,6 +1,6 @@
 # VLESS Access Groups
 
-**Release:** `7.0.1.3`
+**Release:** `7.0.1.4`
 
 Russian companion: [VLESS_GROUPS_RU.md](VLESS_GROUPS_RU.md).
 
@@ -32,6 +32,11 @@ revision is created or updated, the active group catalog is embedded into the
 rendered instance spec. During apply, the driver converts groups into Xray
 routing rules scoped by client user/email.
 
+Saving, disabling or deleting a global VLESS group also runs a catalog sync for
+existing Xray/VLESS instances. The sync creates a validated instance revision
+with the current catalog and queues `instance.apply` for active instances, so
+remote nodes receive the new routing config without a manual instance edit.
+
 ## Modes
 
 | Mode | Result |
@@ -56,11 +61,11 @@ domain data installed.
 5. For `Only selected instance`, choose a target service instance with a valid
    endpoint host and port.
 6. Save the group.
-7. Open the target VLESS instance in `Instances -> Manage`.
-8. Select `Default VLESS group` if a default other than `Default access` is
+7. Review the sync result. Any failed instance is reported with the stage and
+   validation error.
+8. Open the target VLESS instance in `Instances -> Manage`.
+9. Select `Default VLESS group` if a default other than `Default access` is
    required.
-9. Apply the VLESS instance so the current group catalog is rendered into the
-   Xray config.
 10. During client provisioning, select the appropriate group for each VLESS
     inbound.
 
@@ -70,18 +75,21 @@ domain data installed.
 - `Selected egress node` requires an egress node.
 - `Only selected instance` requires a target instance or explicit advanced
   rules.
-- Deleted groups are removed from future rendered revisions, but already
-  applied configs are not changed until the VLESS instance is saved/applied.
+- Deleted groups are removed from future rendered revisions and the catalog
+  sync queues apply for active Xray/VLESS instances.
 - Disabled groups remain in the catalog for audit and rollback context, but are
   not offered as active provisioning choices.
 - Advanced route rules must be a JSON array of Xray-compatible field rules.
 
 ## Runtime Behavior
 
-- Group data is copied into an instance revision at save/create time.
+- Group data is copied into an instance revision at instance save/create time
+  and during global catalog sync.
 - Client provisioning stores the selected group key on the client access
   binding.
 - Apply renders Xray routing rules per client user/email.
+- A client binding that references a deleted or unknown group falls back to the
+  instance default group during render.
 - `Only selected instance` generates an allow rule for the target endpoint and
   a final block rule for all other traffic in that group.
 - Instance-level egress still decides the default route for `Default access`.
@@ -91,7 +99,7 @@ domain data installed.
 | Risk | Control |
 | --- | --- |
 | Client unexpectedly exits from the ingress node | Use `Instance default route` plus instance-level remote egress, or force `Selected egress node`. |
-| Stale group after edit | Re-apply affected VLESS instances after group changes. |
+| Stale group after edit | Save/status/delete runs catalog sync and queues apply; inspect sync failures if a node did not receive the update. |
 | Broken target-only group | Target instance must have endpoint host and port; otherwise revision validation fails. |
 | Missing ad-block data | Keep Xray geosite data installed with the runtime artifact/package. |
 | Overly broad advanced JSON | Keep advanced rules collapsed by default and reserve them for reviewed exceptions. |
@@ -110,7 +118,7 @@ Operators should be able to answer:
 | Symptom | Check |
 | --- | --- |
 | Group is not visible during provisioning | Confirm it is active and refresh core data. |
-| Changed group has no runtime effect | Re-apply the affected VLESS instance. |
+| Changed group has no runtime effect | Check the group mutation response for sync failures, then inspect the queued `instance.apply` job for that instance. |
 | Target-only group fails validation | Verify the target instance endpoint host and port. |
 | Remote egress is not used | Verify instance egress mode, selected egress node, active backhaul and route-policy sync. |
 | Ad blocking has no effect | Verify Xray geosite data and generated routing rules. |

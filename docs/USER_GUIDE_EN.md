@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.3`
+**Release:** `7.0.1.4`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -534,6 +534,9 @@ Where to configure it:
   - `Block all traffic`: deny traffic for quarantine or suspended access.
   - `Block ads`: add a managed Xray `geosite:category-ads-all` rule for users
     in that group. The Xray runtime must include the required geosite data.
+  Saving, disabling or deleting a group automatically syncs the catalog into
+  existing Xray/VLESS instances and queues apply jobs for active instances. If
+  sync fails for a specific instance, the UI shows the stage and error.
 - `Instances -> Manage` for the Xray/VLESS instance: `Default VLESS group`
   selects the group used when a client binding does not specify one. Advanced
   JSON override is intentionally collapsed and should be used only for
@@ -557,7 +560,8 @@ Minimal path for “enter through VLESS and exit through another node”:
    For example, create `Exit from selected egress node` for users that must use
    a specific egress node, or `Allow only selected instance` for restricted
    access.
-6. Click `Apply` on the instance.
+6. Click `Apply` on the instance if you changed instance-level `Egress mode`.
+   VLESS group changes themselves are propagated automatically by catalog sync.
 7. If client route rules are used, run `Sync route policy`.
 
 See [VLESS access groups](VLESS_GROUPS.md) for the detailed group model,

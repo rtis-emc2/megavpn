@@ -1588,6 +1588,35 @@
       sync();
     }
 
+    function vlessGroupSyncSummary(response) {
+      if (response?.sync_error) return `sync failed: ${response.sync_error}`;
+      const sync = response?.sync;
+      if (!sync) return 'saved';
+      const failed = Array.isArray(sync.failed_instances) ? sync.failed_instances.length : 0;
+      const changed = Number(sync.changed_instances || 0);
+      const queued = Number(sync.queued_apply_jobs || 0);
+      const skipped = Number(sync.skipped_apply_jobs || 0);
+      const parts = [];
+      if (changed > 0) parts.push(`${changed} instances synced`);
+      if (queued > 0) parts.push(`${queued} apply jobs queued`);
+      if (skipped > 0) parts.push(`${skipped} apply jobs skipped`);
+      if (failed > 0) parts.push(`${failed} sync failures`);
+      return parts.length ? parts.join(' · ') : 'catalog already current';
+    }
+
+    function showVLESSGroupSyncWarning(response, groupKey) {
+      const failed = Array.isArray(response?.sync?.failed_instances) ? response.sync.failed_instances : [];
+      if (!response?.sync_error && failed.length === 0) return;
+      const firstFailure = failed[0] || {};
+      openActionOutcomeModal('VLESS groups', 'Catalog sync warning', 'failed', 'Group was saved, but propagation needs attention.', [
+        { label: 'Group', value: groupKey || response?.key || 'n/a' },
+        { label: 'Changed instances', value: response?.sync?.changed_instances ?? 0 },
+        { label: 'Queued jobs', value: response?.sync?.queued_apply_jobs ?? 0 },
+        { label: 'Failed instances', value: failed.length },
+        { label: 'First failure', value: response?.sync_error || firstFailure.error || 'n/a' },
+      ]);
+    }
+
     async function submitVLESSGroupEditor(event) {
       event.preventDefault();
       const form = event.currentTarget;
@@ -1625,10 +1654,11 @@
       if (result) result.innerHTML = '<span class="tag warn">saving</span>';
       try {
         const saved = await sendJSON(`/api/v1/vless-groups/${encodeURIComponent(payload.key)}`, 'PUT', payload);
-        if (result) result.innerHTML = `<span class="tag ok">saved</span> <code>${escapeHTML(saved.key || payload.key)}</code>`;
+        if (result) result.innerHTML = `<span class="tag ok">saved</span> <code>${escapeHTML(saved.key || payload.key)}</code> <small>${escapeHTML(vlessGroupSyncSummary(saved))}</small>`;
         await refresh();
         closeModal();
         renderVLESSGroupsPage();
+        showVLESSGroupSyncWarning(saved, saved.key || payload.key);
       } catch (err) {
         if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message || 'save failed')}</span>`;
       }
@@ -1637,9 +1667,10 @@
     async function setVLESSGroupStatus(groupKey, action) {
       if (!groupKey || !canManageVLESSGroups()) return;
       try {
-        await sendJSON(`/api/v1/vless-groups/${encodeURIComponent(groupKey)}/${action}`, 'POST', {});
+        const response = await sendJSON(`/api/v1/vless-groups/${encodeURIComponent(groupKey)}/${action}`, 'POST', {});
         await refresh();
         renderVLESSGroupsPage();
+        showVLESSGroupSyncWarning(response, groupKey);
       } catch (err) {
         openActionOutcomeModal('VLESS groups', 'Status change failed', 'failed', err.message || 'VLESS group status change failed.', [
           { label: 'Group', value: groupKey },
@@ -1649,11 +1680,12 @@
 
     async function deleteVLESSGroupTemplate(groupKey) {
       if (!groupKey || !canManageVLESSGroups()) return;
-      if (!window.confirm(`Delete VLESS group ${groupKey}? Existing applied revisions are not changed until VLESS instances are saved and applied again.`)) return;
+      if (!window.confirm(`Delete VLESS group ${groupKey}? Active VLESS instances will be synced and applied automatically.`)) return;
       try {
-        await sendJSON(`/api/v1/vless-groups/${encodeURIComponent(groupKey)}`, 'DELETE', null);
+        const response = await sendJSON(`/api/v1/vless-groups/${encodeURIComponent(groupKey)}`, 'DELETE', null);
         await refresh();
         renderVLESSGroupsPage();
+        showVLESSGroupSyncWarning(response, groupKey);
       } catch (err) {
         openActionOutcomeModal('VLESS groups', 'Delete failed', 'failed', err.message || 'VLESS group delete failed.', [
           { label: 'Group', value: groupKey },

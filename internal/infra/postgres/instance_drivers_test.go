@@ -437,6 +437,39 @@ func TestBuildXrayServerConfigAddsVLESSGroupRouting(t *testing.T) {
 	}
 }
 
+func TestXrayVLESSGroupRoutingFallsBackUnknownClientGroupToDefault(t *testing.T) {
+	spec := map[string]any{
+		"default_vless_group": "default",
+		"vless_groups": []any{
+			map[string]any{
+				"key":          "default",
+				"label":        "Default access",
+				"outbound_tag": "direct",
+			},
+			map[string]any{
+				"key":          "blocked",
+				"label":        "Blocked",
+				"outbound_tag": "block",
+			},
+		},
+	}
+	rules := xrayVLESSGroupRoutingRules(spec, xrayVLESSGroups(spec), []map[string]any{
+		{"email": "default-user", "vless_group": "default"},
+		{"email": "missing-group-user", "vless_group": "deleted-group"},
+	})
+	if len(rules) != 1 {
+		t.Fatalf("routing rules = %#v, want one default fallback rule", rules)
+	}
+	rule := rules[0].(map[string]any)
+	if got := stringify(rule["outboundTag"]); got != "direct" {
+		t.Fatalf("fallback outboundTag = %q, want direct", got)
+	}
+	users, _ := rule["user"].([]any)
+	if len(users) != 2 || stringify(users[0]) != "default-user" || stringify(users[1]) != "missing-group-user" {
+		t.Fatalf("fallback users = %#v, want default and missing-group users", users)
+	}
+}
+
 func TestBuildXrayServerConfigAddsVLESSRemoteEgressOutbound(t *testing.T) {
 	cfg, err := buildXrayServerConfig(domain.Instance{
 		Name:         "edge-vless",

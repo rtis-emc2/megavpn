@@ -23,6 +23,16 @@ type vlessGroupTemplateCatalogManageStore interface {
 	SetVLESSGroupTemplateStatus(context.Context, string, string) (domain.VLESSGroupTemplate, error)
 }
 
+type vlessGroupTemplateCatalogSyncStore interface {
+	SyncVLESSGroupCatalog(context.Context) (domain.VLESSGroupCatalogSyncResult, error)
+}
+
+type vlessGroupTemplateMutationResponse struct {
+	domain.VLESSGroupTemplate
+	Sync      *domain.VLESSGroupCatalogSyncResult `json:"sync,omitempty"`
+	SyncError string                              `json:"sync_error,omitempty"`
+}
+
 func defaultVLESSGroupTemplates() []domain.VLESSGroupTemplate {
 	return []domain.VLESSGroupTemplate{
 		{
@@ -175,7 +185,12 @@ func (s *Server) upsertVLESSGroupTemplate(w nethttp.ResponseWriter, r *nethttp.R
 	if authCtx, ok := authFromRequest(r); ok {
 		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "vless_group.upsert", "vless_group", nil, "vless group template upserted: "+updated.Key)
 	}
-	writeJSON(w, 200, updated)
+	syncResult, syncErr := s.syncVLESSGroupCatalog(r.Context())
+	response := vlessGroupTemplateMutationResponse{VLESSGroupTemplate: updated, Sync: syncResult}
+	if syncErr != nil {
+		response.SyncError = syncErr.Error()
+	}
+	writeJSON(w, 200, response)
 }
 
 func (s *Server) setVLESSGroupTemplateStatus(status string) nethttp.HandlerFunc {
@@ -198,8 +213,25 @@ func (s *Server) setVLESSGroupTemplateStatus(status string) nethttp.HandlerFunc 
 		if authCtx, ok := authFromRequest(r); ok {
 			_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "vless_group."+status, "vless_group", nil, "vless group template "+status+": "+updated.Key)
 		}
-		writeJSON(w, 200, updated)
+		syncResult, syncErr := s.syncVLESSGroupCatalog(r.Context())
+		response := vlessGroupTemplateMutationResponse{VLESSGroupTemplate: updated, Sync: syncResult}
+		if syncErr != nil {
+			response.SyncError = syncErr.Error()
+		}
+		writeJSON(w, 200, response)
 	}
+}
+
+func (s *Server) syncVLESSGroupCatalog(ctx context.Context) (*domain.VLESSGroupCatalogSyncResult, error) {
+	syncStore, ok := s.store.(vlessGroupTemplateCatalogSyncStore)
+	if !ok {
+		return nil, nil
+	}
+	result, err := syncStore.SyncVLESSGroupCatalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (s *Server) availableVLESSGroupTemplates(ctx context.Context) ([]domain.VLESSGroupTemplate, error) {

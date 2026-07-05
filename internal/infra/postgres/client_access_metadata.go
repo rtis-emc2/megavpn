@@ -163,17 +163,316 @@ func (s *Store) ensureXrayProvisioningGroups(ctx context.Context, instanceID str
 	return enriched, nil
 }
 
+func (s *Store) SyncVLESSGroupCatalog(ctx context.Context) (domain.VLESSGroupCatalogSyncResult, error) {
+	instances, err := s.ListInstances(ctx)
+	if err != nil {
+		return domain.VLESSGroupCatalogSyncResult{}, err
+	}
+	result := domain.VLESSGroupCatalogSyncResult{}
+	for _, instance := range instances {
+		if normalizeInstanceRuntimeCode(instance.ServiceCode) != "xray-core" {
+			continue
+		}
+		result.ScannedInstances++
+		record := domain.VLESSGroupCatalogSyncInstance{
+			InstanceID: instance.ID,
+			NodeID:     instance.NodeID,
+			Status:     instance.Status,
+		}
+		spec, err := s.latestInstanceSpec(ctx, instance.ID)
+		if err != nil {
+			result.FailedInstances = append(result.FailedInstances, domain.VLESSGroupCatalogSyncFailure{
+				InstanceID: instance.ID,
+				NodeID:     instance.NodeID,
+				Stage:      "load_spec",
+				Error:      err.Error(),
+			})
+			continue
+		}
+		next, changed, err := s.syncXrayVLESSGroupCatalogSpec(ctx, instance, spec)
+		if err != nil {
+			result.FailedInstances = append(result.FailedInstances, domain.VLESSGroupCatalogSyncFailure{
+				InstanceID: instance.ID,
+				NodeID:     instance.NodeID,
+				Stage:      "sync_spec",
+				Error:      err.Error(),
+			})
+			continue
+		}
+		if !changed {
+			result.UnchangedInstances++
+			continue
+		}
+		materialized, err := s.materializeInstanceDriverSpecDefaults(ctx, instance, next)
+		if err != nil {
+			result.FailedInstances = append(result.FailedInstances, domain.VLESSGroupCatalogSyncFailure{
+				InstanceID: instance.ID,
+				NodeID:     instance.NodeID,
+				Stage:      "materialize_defaults",
+				Error:      err.Error(),
+			})
+			continue
+		}
+		status, _, validationErrors := s.validateInstanceRevisionSpec(ctx, instance, materialized)
+		if !in(status, "validated", "applied") {
+			result.FailedInstances = append(result.FailedInstances, domain.VLESSGroupCatalogSyncFailure{
+				InstanceID: instance.ID,
+				NodeID:     instance.NodeID,
+				Stage:      "validate_revision",
+				Error:      fmt.Sprintf("vless group catalog revision is not apply-ready; status=%s errors=%v", status, validationErrors),
+			})
+			continue
+		}
+		revision, err := s.ReplaceInstanceSpec(ctx, instance.ID, "system:vless-group-catalog-sync", materialized)
+		if err != nil {
+			result.FailedInstances = append(result.FailedInstances, domain.VLESSGroupCatalogSyncFailure{
+				InstanceID: instance.ID,
+				NodeID:     instance.NodeID,
+				Stage:      "create_revision",
+				Error:      err.Error(),
+			})
+			continue
+		}
+		if !in(strings.TrimSpace(revision.Status), "validated", "applied") {
+			result.FailedInstances = append(result.FailedInstances, domain.VLESSGroupCatalogSyncFailure{
+				InstanceID: instance.ID,
+				NodeID:     instance.NodeID,
+				Stage:      "create_revision",
+				Error:      fmt.Sprintf("vless group catalog revision is not apply-ready; status=%s errors=%v", strings.TrimSpace(revision.Status), revision.ValidationErrors),
+			})
+			continue
+		}
+		result.ChangedInstances++
+		record.Changed = true
+		record.RevisionID = revision.ID
+		if ok, reason := shouldQueueVLESSGroupCatalogApply(instance); !ok {
+			record.Skipped = true
+			record.Reason = reason
+			result.SkippedApplyJobs++
+			result.Instances = append(result.Instances, record)
+			continue
+		}
+		job, err := s.UpdateInstanceStatus(ctx, instance.ID, "apply")
+		if err != nil {
+			result.FailedInstances = append(result.FailedInstances, domain.VLESSGroupCatalogSyncFailure{
+				InstanceID: instance.ID,
+				NodeID:     instance.NodeID,
+				Stage:      "queue_apply",
+				Error:      err.Error(),
+			})
+			record.Skipped = true
+			record.Reason = "apply queue failed: " + err.Error()
+			result.Instances = append(result.Instances, record)
+			continue
+		}
+		record.ApplyQueued = true
+		record.ApplyJobID = job.ID
+		record.ApplyJobType = job.Type
+		result.QueuedApplyJobs++
+		result.Instances = append(result.Instances, record)
+	}
+	if result.ScannedInstances > 0 || len(result.FailedInstances) > 0 {
+		_, _ = s.CreateAudit(ctx, "system", "vless_group.catalog_sync", "vless_group", nil, fmt.Sprintf("vless group catalog sync: changed=%d queued=%d failed=%d", result.ChangedInstances, result.QueuedApplyJobs, len(result.FailedInstances)))
+	}
+	return result, nil
+}
+
+func (s *Store) syncXrayVLESSGroupCatalogSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, bool, error) {
+	original := cloneMap(spec)
+	enriched, _, err := s.specWithVLESSGroupCatalog(ctx, spec)
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err := s.resolveXrayVLESSGroupEgress(ctx, instance, enriched); err != nil {
+		return nil, false, err
+	}
+	return enriched, !reflect.DeepEqual(original, enriched), nil
+}
+
+func shouldQueueVLESSGroupCatalogApply(instance domain.Instance) (bool, string) {
+	if !instance.Enabled {
+		return false, "instance is disabled"
+	}
+	switch strings.ToLower(strings.TrimSpace(instance.Status)) {
+	case "", "active", "degraded", "failed", "provisioning":
+		return true, ""
+	case "draft":
+		return false, "instance is still a draft"
+	case "disabled":
+		return false, "instance status is disabled"
+	case "deleting", "deleted":
+		return false, "instance is deleting or deleted"
+	default:
+		return true, ""
+	}
+}
+
+func (s *Store) resolveXrayVLESSGroupEgress(ctx context.Context, instance domain.Instance, spec map[string]any) (bool, error) {
+	groups := sliceRuleItemsFromAny(spec["vless_groups"])
+	if len(groups) == 0 {
+		return false, nil
+	}
+	changed := false
+	updated := make([]any, 0, len(groups))
+	for idx, item := range groups {
+		group, _ := cloneAny(item).(map[string]any)
+		if group == nil {
+			updated = append(updated, item)
+			continue
+		}
+		groupKey := normalizeXrayVLESSGroupKey(firstString(group["key"], group["name"], group["id"]))
+		if groupKey == "" {
+			groupKey = fmt.Sprintf("group-%d", idx+1)
+			if setVLESSGroupMapValue(group, "key", groupKey) {
+				changed = true
+			}
+		}
+		mode := strings.ToLower(firstString(
+			group["egress_mode"],
+			group["access_mode"],
+			group["mode"],
+			"default",
+		))
+		switch mode {
+		case "", "auto", "default", "instance_default", "inherit":
+			if clearResolvedXrayVLESSGroupEgress(group) {
+				changed = true
+			}
+		case "local", "direct", "local_breakout", "current_node":
+			if setVLESSGroupMapValue(group, "egress_mode", "local_breakout") {
+				changed = true
+			}
+			if setVLESSGroupMapValue(group, "outbound_tag", "direct") {
+				changed = true
+			}
+			if clearResolvedXrayVLESSGroupEgress(group) {
+				changed = true
+			}
+		case "block", "blocked", "deny":
+			if setVLESSGroupMapValue(group, "outbound_tag", "block") {
+				changed = true
+			}
+			if clearResolvedXrayVLESSGroupEgress(group) {
+				changed = true
+			}
+		case "instance_only", "allow_instance", "target_instance":
+			if clearResolvedXrayVLESSGroupEgress(group) {
+				changed = true
+			}
+		case "egress_node", "remote_node", "remote_egress", "node":
+			egressNodeID := firstString(
+				group["egress_node_id"],
+				group["node_id"],
+				nestedVLESSGroupMap(group, "egress")["egress_node_id"],
+				nestedVLESSGroupMap(group, "egress")["node_id"],
+			)
+			if egressNodeID == "" {
+				return changed, fmt.Errorf("vless group %q requires egress_node_id", groupKey)
+			}
+			resolved, err := s.ResolveXrayVLESSEgress(ctx, instance.ID, egressNodeID)
+			if err != nil {
+				return changed, fmt.Errorf("vless group %q egress resolution failed: %w", groupKey, err)
+			}
+			if setVLESSGroupMapValue(group, "egress_mode", "egress_node") {
+				changed = true
+			}
+			if setVLESSGroupMapValue(group, "egress_node_id", egressNodeID) {
+				changed = true
+			}
+			if setVLESSGroupMapValue(group, "egress", resolved.Map()) {
+				changed = true
+			}
+			if setVLESSGroupMapValue(group, "egress_resolved_by", "control-plane:vless-group-catalog-sync") {
+				changed = true
+			}
+			if resolved.Mode == "local_breakout" {
+				if _, ok := group["outbound"]; ok {
+					delete(group, "outbound")
+					changed = true
+				}
+				if setVLESSGroupMapValue(group, "outbound_tag", "direct") {
+					changed = true
+				}
+				updated = append(updated, group)
+				continue
+			}
+			tag := normalizeXrayOutboundTag("egress-" + groupKey)
+			if tag == "" {
+				tag = fmt.Sprintf("egress-group-%d", idx+1)
+			}
+			outbound := map[string]any{
+				"tag":         tag,
+				"protocol":    "freedom",
+				"sendThrough": resolved.SendThrough,
+				"settings": map[string]any{
+					"domainStrategy": "UseIP",
+				},
+			}
+			if setVLESSGroupMapValue(group, "outbound_tag", tag) {
+				changed = true
+			}
+			if setVLESSGroupMapValue(group, "outbound", outbound) {
+				changed = true
+			}
+		default:
+			return changed, fmt.Errorf("unsupported vless group %q egress_mode %q", groupKey, mode)
+		}
+		updated = append(updated, group)
+	}
+	if !reflect.DeepEqual(spec["vless_groups"], updated) {
+		spec["vless_groups"] = updated
+		changed = true
+	}
+	return changed, nil
+}
+
+func clearResolvedXrayVLESSGroupEgress(group map[string]any) bool {
+	resolvedBy := strings.ToLower(firstString(group["egress_resolved_by"]))
+	if resolvedBy != "worker:xray-group-egress" && resolvedBy != "worker:xray-egress" && resolvedBy != "control-plane:vless-group-catalog-sync" {
+		return false
+	}
+	changed := false
+	for _, key := range []string{"outbound", "egress", "egress_resolved_by"} {
+		if _, ok := group[key]; ok {
+			delete(group, key)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func setVLESSGroupMapValue(target map[string]any, key string, value any) bool {
+	if reflect.DeepEqual(target[key], value) {
+		return false
+	}
+	target[key] = value
+	return true
+}
+
+func nestedVLESSGroupMap(source map[string]any, key string) map[string]any {
+	value, _ := source[key].(map[string]any)
+	if value == nil {
+		return map[string]any{}
+	}
+	return value
+}
+
 func (s *Store) specWithVLESSGroupCatalog(ctx context.Context, spec map[string]any) (map[string]any, bool, error) {
 	templates, err := s.ListVLESSGroupTemplates(ctx)
 	if err != nil {
 		return nil, false, err
 	}
-	if len(templates) == 0 {
+	catalog, err := s.ListVLESSGroupTemplateCatalog(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(templates) == 0 && len(catalog) == 0 {
 		return spec, false, nil
 	}
 	enriched := cloneMap(spec)
 	merged := make([]any, 0, len(templates)+len(xraySpecGroupItems(spec)))
 	seen := map[string]struct{}{}
+	managed := make(map[string]struct{}, len(catalog)+len(templates))
 	add := func(raw any) {
 		group, _ := cloneAny(raw).(map[string]any)
 		if group == nil {
@@ -190,10 +489,23 @@ func (s *Store) specWithVLESSGroupCatalog(ctx context.Context, spec map[string]a
 		merged = append(merged, group)
 		seen[key] = struct{}{}
 	}
+	for _, template := range catalog {
+		if key := normalizeXrayVLESSGroupKey(template.Key); key != "" {
+			managed[key] = struct{}{}
+		}
+	}
 	for _, template := range templates {
+		if key := normalizeXrayVLESSGroupKey(template.Key); key != "" {
+			managed[key] = struct{}{}
+		}
 		add(vlessTemplateSpecGroup(template))
 	}
 	for _, raw := range xraySpecGroupItems(spec) {
+		group, _ := cloneAny(raw).(map[string]any)
+		key := normalizeXrayVLESSGroupKey(firstString(group["key"], group["name"], group["id"]))
+		if _, ok := managed[key]; key != "" && ok {
+			continue
+		}
 		add(raw)
 	}
 	if len(merged) == 0 {

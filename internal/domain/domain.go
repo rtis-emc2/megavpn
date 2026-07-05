@@ -219,6 +219,36 @@ type VLESSGroupTemplate struct {
 	DisplayOrder     int              `json:"display_order,omitempty"`
 }
 
+type VLESSGroupCatalogSyncResult struct {
+	ScannedInstances   int                             `json:"scanned_instances"`
+	ChangedInstances   int                             `json:"changed_instances"`
+	UnchangedInstances int                             `json:"unchanged_instances"`
+	QueuedApplyJobs    int                             `json:"queued_apply_jobs"`
+	SkippedApplyJobs   int                             `json:"skipped_apply_jobs"`
+	FailedInstances    []VLESSGroupCatalogSyncFailure  `json:"failed_instances,omitempty"`
+	Instances          []VLESSGroupCatalogSyncInstance `json:"instances,omitempty"`
+}
+
+type VLESSGroupCatalogSyncInstance struct {
+	InstanceID   string `json:"instance_id"`
+	NodeID       string `json:"node_id,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Changed      bool   `json:"changed"`
+	ApplyQueued  bool   `json:"apply_queued"`
+	ApplyJobID   string `json:"apply_job_id,omitempty"`
+	ApplyJobType string `json:"apply_job_type,omitempty"`
+	RevisionID   string `json:"revision_id,omitempty"`
+	Skipped      bool   `json:"skipped,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+type VLESSGroupCatalogSyncFailure struct {
+	InstanceID string `json:"instance_id"`
+	NodeID     string `json:"node_id,omitempty"`
+	Stage      string `json:"stage"`
+	Error      string `json:"error"`
+}
+
 type Instance struct {
 	ID                    string         `json:"id"`
 	NodeID                string         `json:"node_id"`
