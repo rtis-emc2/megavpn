@@ -847,7 +847,7 @@
           <div class="field"><label>Priority</label><input name="priority" type="number" min="1" max="65000" value="${escapeHTML(String(rule.priority || 1000))}" required /></div>
           <div class="field"><label>Chain</label><select name="chain">${selectOption('input', rule.chain || 'input')}${selectOption('forward', rule.chain || 'input')}${selectOption('output', rule.chain || 'input')}</select></div>
           <div class="field"><label>Action</label><select name="action">${selectOption('accept', rule.action || 'accept')}${selectOption('drop', rule.action || 'accept')}${selectOption('reject', rule.action || 'accept')}</select></div>
-          <div class="field"><label>Protocol</label><select name="protocol">${selectOption('any', rule.protocol || 'any')}${selectOption('tcp', rule.protocol || 'any')}${selectOption('udp', rule.protocol || 'any')}${selectOption('icmp', rule.protocol || 'any')}</select></div>
+          <div class="field"><label>Protocol</label><select name="protocol">${selectOption('any', rule.protocol || 'any')}${selectOption('tcp', rule.protocol || 'any')}${selectOption('udp', rule.protocol || 'any')}${selectOption('icmp', rule.protocol || 'any')}${selectOption('icmpv6', rule.protocol || 'any')}</select></div>
           <div class="field"><label>Source list</label><select name="src_list_id">${addressListOptions(rule.src_list_id || '')}</select></div>
           <div class="field"><label>Destination list</label><select name="dst_list_id">${addressListOptions(rule.dst_list_id || '')}</select></div>
           <div class="field"><label>Source CIDR</label><input name="src_cidr" placeholder="any or 10.0.0.0/8" value="${escapeHTML(rule.src_cidr || '')}" /></div>
@@ -1118,6 +1118,10 @@
       if (result) result.innerHTML = `<span class="tag warn">${ruleID ? 'saving' : 'creating'}</span>`;
       try {
         const status = String(form.get('status') || 'active').trim();
+        const currentRule = ruleID ? (ruleByID(ruleID) || {}) : {};
+        const metadata = currentRule.metadata && typeof currentRule.metadata === 'object' && !Array.isArray(currentRule.metadata)
+          ? currentRule.metadata
+          : {};
         const payload = {
           priority: Number(form.get('priority') || 1000),
           chain: String(form.get('chain') || 'input').trim(),
@@ -1134,6 +1138,7 @@
           enabled: Boolean(form.get('enabled')),
           log: Boolean(form.get('log')),
           status: Boolean(form.get('enabled')) ? status : 'disabled',
+          metadata,
         };
         if (ruleID) {
           await sendJSON(`/api/v1/firewall/policies/${encodeURIComponent(policyID)}/rules/${encodeURIComponent(ruleID)}`, 'PUT', payload);

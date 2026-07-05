@@ -33,9 +33,9 @@ func TestRenderNodeFirewallPlan(t *testing.T) {
 		t.Fatalf("rule count = %d, want 1", plan.Count)
 	}
 	checks := []string{
-		"delete table inet megavpn",
-		"add table inet megavpn",
-		"add rule inet megavpn firewall_input",
+		"delete table inet megavpn_firewall",
+		"add table inet megavpn_firewall",
+		"add rule inet megavpn_firewall firewall_input",
 		"ct state { established, related }",
 		"ip saddr 10.0.0.0/8",
 		"tcp dport { 443, 8443 }",
@@ -45,6 +45,37 @@ func TestRenderNodeFirewallPlan(t *testing.T) {
 		if !strings.Contains(plan.Script, check) {
 			t.Fatalf("expected script to contain %q, got:\n%s", check, plan.Script)
 		}
+	}
+	if strings.Contains(plan.Script, "delete table inet megavpn\n") {
+		t.Fatalf("firewall plan must not delete shared inet megavpn table, got:\n%s", plan.Script)
+	}
+}
+
+func TestRenderNodeFirewallPlanRendersIPv6ICMP(t *testing.T) {
+	t.Parallel()
+
+	plan, err := renderNodeFirewallPlan(map[string]any{
+		"node_id": "node-1",
+		"rules": []any{
+			map[string]any{
+				"id":       "allow-icmpv6",
+				"priority": 105,
+				"chain":    "input",
+				"action":   "accept",
+				"protocol": "icmpv6",
+				"enabled":  true,
+				"status":   "active",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderNodeFirewallPlan returned error: %v", err)
+	}
+	if plan.Count != 1 {
+		t.Fatalf("rule count = %d, want 1", plan.Count)
+	}
+	if !strings.Contains(plan.Script, `ip6 nexthdr icmpv6 accept comment "megavpn:firewall:allow-icmpv6"`) {
+		t.Fatalf("expected ICMPv6 rule, got:\n%s", plan.Script)
 	}
 }
 
@@ -108,8 +139,8 @@ func TestRenderNodeFirewallPlanRendersAddressListSets(t *testing.T) {
 		t.Fatalf("rule count = %d, want 1", plan.Count)
 	}
 	for _, check := range []string{
-		"add set inet megavpn fwlist_trusted_ops_v4 { type ipv4_addr; flags interval; }",
-		"add element inet megavpn fwlist_trusted_ops_v4 { 10.10.10.10, 10.20.0.0/16, 10.30.0.10-10.30.0.20 }",
+		"add set inet megavpn_firewall fwlist_trusted_ops_v4 { type ipv4_addr; flags interval; }",
+		"add element inet megavpn_firewall fwlist_trusted_ops_v4 { 10.10.10.10, 10.20.0.0/16, 10.30.0.10-10.30.0.20 }",
 		"ip saddr @fwlist_trusted_ops_v4",
 		"tcp dport { 22, 443 }",
 	} {
@@ -186,8 +217,8 @@ func TestRenderNodeFirewallPlanRendersDualStackAddressListRules(t *testing.T) {
 		t.Fatalf("rule count = %d, want 2", plan.Count)
 	}
 	for _, check := range []string{
-		"add set inet megavpn fwlist_dual_stack_v4 { type ipv4_addr; flags interval; }",
-		"add set inet megavpn fwlist_dual_stack_v6 { type ipv6_addr; flags interval; }",
+		"add set inet megavpn_firewall fwlist_dual_stack_v4 { type ipv4_addr; flags interval; }",
+		"add set inet megavpn_firewall fwlist_dual_stack_v6 { type ipv6_addr; flags interval; }",
 		"ip daddr @fwlist_dual_stack_v4",
 		"ip6 daddr @fwlist_dual_stack_v6",
 	} {
@@ -218,9 +249,9 @@ func TestRenderNodeFirewallPlanEnforcesDefaultPolicies(t *testing.T) {
 		t.Fatalf("default policy enforcement = %q, want enforced", plan.DefaultPolicyEnforcement)
 	}
 	for _, check := range []string{
-		"add chain inet megavpn firewall_input { type filter hook input priority filter; policy drop; }",
-		"add chain inet megavpn firewall_forward { type filter hook forward priority filter; policy drop; }",
-		"add chain inet megavpn firewall_output { type filter hook output priority filter; policy drop; }",
+		"add chain inet megavpn_firewall firewall_input { type filter hook input priority filter; policy drop; }",
+		"add chain inet megavpn_firewall firewall_forward { type filter hook forward priority filter; policy drop; }",
+		"add chain inet megavpn_firewall firewall_output { type filter hook output priority filter; policy drop; }",
 		`ct state { established, related } accept comment "megavpn:firewall:system-established-input"`,
 		`iifname "lo" accept comment "megavpn:firewall:system-loopback-input"`,
 		`ip daddr 198.51.100.10/32 tcp dport 8443 accept comment "megavpn:firewall:system-control-plane-output"`,
@@ -307,9 +338,9 @@ func TestRenderNodeFirewallPlanObserveModeKeepsBasePoliciesAccept(t *testing.T) 
 		t.Fatalf("default policy enforcement = %q, want observe_only", plan.DefaultPolicyEnforcement)
 	}
 	for _, check := range []string{
-		"add chain inet megavpn firewall_input { type filter hook input priority filter; policy accept; }",
-		"add chain inet megavpn firewall_forward { type filter hook forward priority filter; policy accept; }",
-		"add chain inet megavpn firewall_output { type filter hook output priority filter; policy accept; }",
+		"add chain inet megavpn_firewall firewall_input { type filter hook input priority filter; policy accept; }",
+		"add chain inet megavpn_firewall firewall_forward { type filter hook forward priority filter; policy accept; }",
+		"add chain inet megavpn_firewall firewall_output { type filter hook output priority filter; policy accept; }",
 	} {
 		if !strings.Contains(plan.Script, check) {
 			t.Fatalf("expected script to contain %q, got:\n%s", check, plan.Script)

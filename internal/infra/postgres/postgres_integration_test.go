@@ -226,6 +226,93 @@ func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationDefaultFirewallBaseline(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	inventory, err := store.FirewallInventory(ctx)
+	if err != nil {
+		t.Fatalf("firewall inventory: %v", err)
+	}
+	secondInventory, err := store.FirewallInventory(ctx)
+	if err != nil {
+		t.Fatalf("second firewall inventory: %v", err)
+	}
+
+	var nodeBase domain.FirewallPolicy
+	for _, policy := range inventory.Policies {
+		if policy.Key == "node_base" {
+			nodeBase = policy
+			break
+		}
+	}
+	if nodeBase.ID == "" {
+		t.Fatal("node_base firewall policy was not seeded")
+	}
+	if nodeBase.Label != "Default node firewall" {
+		t.Fatalf("node_base label = %q, want Default node firewall", nodeBase.Label)
+	}
+	if nodeBase.DefaultInputPolicy != "drop" || nodeBase.DefaultForwardPolicy != "drop" || nodeBase.DefaultOutputPolicy != "accept" {
+		t.Fatalf("node_base defaults = input:%s forward:%s output:%s, want drop/drop/accept",
+			nodeBase.DefaultInputPolicy, nodeBase.DefaultForwardPolicy, nodeBase.DefaultOutputPolicy)
+	}
+
+	baselineRules := map[string]domain.FirewallRule{}
+	for _, rule := range inventory.Rules {
+		if rule.PolicyID != nodeBase.ID {
+			continue
+		}
+		key, _ := rule.Metadata["baseline_key"].(string)
+		if key != "" {
+			baselineRules[key] = rule
+		}
+	}
+	for _, key := range []string{
+		"drop_invalid_input",
+		"drop_invalid_forward",
+		"allow_icmp_v4",
+		"allow_icmp_v6",
+		"allow_edge_http_https",
+		"allow_ssh_trusted_operators",
+		"allow_vpn_client_forward",
+	} {
+		if _, ok := baselineRules[key]; !ok {
+			t.Fatalf("baseline firewall rule %q was not seeded; got keys %#v", key, baselineRules)
+		}
+	}
+	if baselineRules["allow_icmp_v6"].Protocol != "icmpv6" {
+		t.Fatalf("allow_icmp_v6 protocol = %q, want icmpv6", baselineRules["allow_icmp_v6"].Protocol)
+	}
+	if baselineRules["allow_ssh_trusted_operators"].Enabled {
+		t.Fatal("trusted SSH baseline rule must be disabled until trusted_operators is populated")
+	}
+
+	vpnListID := ""
+	for _, list := range inventory.AddressLists {
+		if list.Key == "vpn_client_sources" {
+			vpnListID = list.ID
+			break
+		}
+	}
+	if vpnListID == "" {
+		t.Fatal("vpn_client_sources address list was not seeded")
+	}
+	values := map[string]bool{}
+	for _, entry := range inventory.Entries {
+		if entry.ListID == vpnListID {
+			values[entry.Value] = true
+		}
+	}
+	for _, value := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fd00::/8"} {
+		if !values[value] {
+			t.Fatalf("vpn_client_sources entry %q missing; got %#v", value, values)
+		}
+	}
+	if len(secondInventory.Rules) != len(inventory.Rules) || len(secondInventory.Entries) != len(inventory.Entries) {
+		t.Fatalf("firewall seed is not idempotent: rules %d -> %d, entries %d -> %d",
+			len(inventory.Rules), len(secondInventory.Rules), len(inventory.Entries), len(secondInventory.Entries))
+	}
+}
+
 func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 

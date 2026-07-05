@@ -1,6 +1,6 @@
 # Firewall Policy Catalog
 
-**Release:** `7.0.1.27`
+**Release:** `7.0.1.28`
 
 Firewall is the managed policy workspace for node and control-plane boundaries.
 It is intentionally modeled as a catalog before apply: operators prepare address
@@ -48,6 +48,17 @@ policy, chain, action and text search across CIDR/list/port/comment fields.
 The `Address lists` view includes local search across list metadata and entry
 values.
 
+The built-in `Default node firewall` policy is the recommended minimal
+baseline for production nodes. In strict mode it denies unsolicited input and
+forwarded traffic, keeps node output at `accept`, allows IPv4/IPv6 diagnostics,
+allows public HTTP/HTTPS edge entrypoints and permits forwarding for the seeded
+private/CGNAT/ULA client source ranges in `vpn_client_sources`.
+
+The SSH rule is present but disabled until `trusted_operators` is populated and
+the operator deliberately enables it. Protocol listener ports beyond HTTP/HTTPS
+should be added only for services that are actually installed, using rule
+presets or service-specific policy.
+
 The apply dialog is split into two explicit modes:
 
 - `Rules only`: base chains stay at `accept`; explicit catalog rules are
@@ -73,10 +84,10 @@ By default, apply jobs install explicit allow/drop/reject rules into managed
 nftables chains while keeping base chain policy at `accept`. This is the safe
 staging mode for first rollout and catalog validation.
 
-Strict default-policy enforcement is now available per apply job through the
+Strict default-policy enforcement is available per apply job through the
 `enforce_default_policy` flag in the API/UI. In strict mode the agent replaces
-the managed `inet megavpn` table atomically with `nft -f`, recreates input,
-forward and output base chains and applies the policy defaults:
+the managed `inet megavpn_firewall` table atomically with `nft -f`, recreates
+input, forward and output base chains and applies the policy defaults:
 
 - `accept` is rendered as base chain policy `accept`.
 - `drop` is rendered as base chain policy `drop`.
@@ -97,10 +108,14 @@ strict output rollout from silently isolating a node.
 
 Address-list entries with DNS type are stored for catalog context only in this
 release. Node-side nftables apply renders CIDR, single IP address and IP range
-entries; a DNS-only list cannot be used as an active rule matcher.
+entries; a DNS-only list cannot be used as an active rule matcher. The rule
+protocol model supports `any`, `tcp`, `udp`, `icmp` and `icmpv6`.
 
 The managed table is owned by MegaVPN. Do not place hand-written rules in
-`inet megavpn`; strict apply replaces that table as a single managed unit.
+`inet megavpn_firewall`; strict apply replaces that table as a single managed
+unit. Route-policy and service-policy chains continue to use `inet megavpn`;
+firewall apply cleans legacy `firewall_*` chains from that shared table without
+deleting the table.
 
 ## Failure Handling
 

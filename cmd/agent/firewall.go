@@ -17,7 +17,8 @@ import (
 
 const (
 	firewallNFTFamily       = "inet"
-	firewallNFTTable        = "megavpn"
+	firewallNFTTable        = "megavpn_firewall"
+	firewallLegacyNFTTable  = "megavpn"
 	firewallInputChain      = "firewall_input"
 	firewallForwardChain    = "firewall_forward"
 	firewallOutputChain     = "firewall_output"
@@ -105,6 +106,9 @@ func (c *client) handleNodeFirewallJob(ctx context.Context, j job, st agentState
 		if err != nil {
 			return "failed", map[string]any{"error": err.Error(), "stage": "render"}
 		}
+		if err := cleanupLegacyFirewallNFTChains(ctx); err != nil {
+			return "failed", map[string]any{"error": err.Error(), "stage": "legacy_cleanup"}
+		}
 		if err := ensureFirewallNFTChains(ctx); err != nil {
 			return "failed", map[string]any{"error": err.Error(), "stage": "ensure_chains"}
 		}
@@ -159,6 +163,21 @@ func ensureFirewallNFTChains(ctx context.Context) error {
 		args := []string{"add", "chain", firewallNFTFamily, firewallNFTTable, spec.chain, "{", "type", "filter", "hook", spec.hook, "priority", "filter", ";", "policy", "accept", ";", "}"}
 		if code, out := runInstallCommand(ctx, "nft", args...); code != 0 {
 			return fmt.Errorf("create nft chain %s failed: %s", spec.chain, firstLine(out))
+		}
+	}
+	return nil
+}
+
+func cleanupLegacyFirewallNFTChains(ctx context.Context) error {
+	for _, chain := range []string{firewallInputChain, firewallForwardChain, firewallOutputChain} {
+		if code, _ := runInstallCommand(ctx, "nft", "list", "chain", firewallNFTFamily, firewallLegacyNFTTable, chain); code != 0 {
+			continue
+		}
+		if code, out := runInstallCommand(ctx, "nft", "flush", "chain", firewallNFTFamily, firewallLegacyNFTTable, chain); code != 0 {
+			return fmt.Errorf("flush legacy nft chain %s failed: %s", chain, firstLine(out))
+		}
+		if code, out := runInstallCommand(ctx, "nft", "delete", "chain", firewallNFTFamily, firewallLegacyNFTTable, chain); code != 0 {
+			return fmt.Errorf("delete legacy nft chain %s failed: %s", chain, firstLine(out))
 		}
 	}
 	return nil
@@ -568,8 +587,8 @@ func parseNodeFirewallRule(m map[string]any, idx int) (nodeFirewallRule, error) 
 	if rule.Protocol == "" {
 		rule.Protocol = "any"
 	}
-	if !inLocal(rule.Protocol, "any", "tcp", "udp", "icmp") {
-		return nodeFirewallRule{}, fmt.Errorf("firewall rule %s protocol must be any, tcp, udp or icmp", rule.ID)
+	if !inLocal(rule.Protocol, "any", "tcp", "udp", "icmp", "icmpv6") {
+		return nodeFirewallRule{}, fmt.Errorf("firewall rule %s protocol must be any, tcp, udp, icmp or icmpv6", rule.ID)
 	}
 	var err error
 	rule.SrcCIDR, err = normalizeNodeFirewallCIDR(rule.SrcCIDR)
@@ -669,6 +688,9 @@ func nodeFirewallRuleFamilies(rule nodeFirewallRule, srcList nodeFirewallAddress
 	if rule.Protocol == "icmp" {
 		allowed = intersectNodeFirewallFamilies(allowed, map[string]bool{"ip": true})
 	}
+	if rule.Protocol == "icmpv6" {
+		allowed = intersectNodeFirewallFamilies(allowed, map[string]bool{"ip6": true})
+	}
 	if len(allowed) == 0 {
 		return nil, fmt.Errorf("source and destination address families do not overlap")
 	}
@@ -727,6 +749,8 @@ func renderNodeFirewallRuleLine(rule nodeFirewallRule, family, srcSet, dstSet st
 		}
 	case "icmp":
 		parts = append(parts, "ip", "protocol", "icmp")
+	case "icmpv6":
+		parts = append(parts, "ip6", "nexthdr", "icmpv6")
 	}
 	parts = append(parts, rule.Action, "comment", nftQuote(nodeFirewallRuleComment(rule)))
 	return strings.Join(parts, " "), nil
