@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1357,6 +1358,15 @@ func appendNginxReverseProxyLocation(lines []string, locationPath, upstreamURL s
 			"        proxy_set_header X-Forwarded-Proto $scheme;",
 		)
 	}
+	if truthy(spec["websocket_upgrade"]) || truthy(spec["websocket_upgrade_enabled"]) || truthy(spec["ws_upgrade"]) {
+		lines = append(lines,
+			"        proxy_set_header Upgrade $http_upgrade;",
+			"        proxy_set_header Connection \"upgrade\";",
+			"        proxy_read_timeout "+firstString(spec["websocket_read_timeout"], spec["proxy_read_timeout"], "3600s")+";",
+			"        proxy_send_timeout "+firstString(spec["websocket_send_timeout"], spec["proxy_send_timeout"], "3600s")+";",
+			"        proxy_buffering off;",
+		)
+	}
 	lines = append(lines, extraIndentedLines(spec[extraLinesKey], "        ")...)
 	lines = append(lines, "    }")
 	return lines
@@ -1432,17 +1442,48 @@ func validateNginxServerName(serverName string) error {
 }
 
 func validateNginxFallbackSpec(spec map[string]any) error {
+	if err := validateNginxFallbackURL(firstString(spec["fallback_upstream_url"], spec["fallback_proxy_pass"])); err != nil {
+		return err
+	}
 	for _, item := range []struct {
 		name  string
 		value string
 	}{
-		{name: "fallback_upstream_url", value: firstString(spec["fallback_upstream_url"], spec["fallback_proxy_pass"])},
 		{name: "fallback_host_header", value: firstString(spec["fallback_host_header"], spec["fallback_host"])},
 		{name: "fallback_sni", value: firstString(spec["fallback_sni"])},
 	} {
 		if err := validateNginxDirectiveValue(item.name, item.value); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateNginxFallbackURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if err := validateNginxDirectiveValue("fallback_upstream_url", raw); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed == nil {
+		return fmt.Errorf("nginx fallback_upstream_url is invalid")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("nginx fallback_upstream_url must not contain credentials")
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("nginx fallback_upstream_url must be an absolute http or https URL")
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return fmt.Errorf("nginx fallback_upstream_url scheme must be http or https")
+	}
+	if parsed.Fragment != "" {
+		return fmt.Errorf("nginx fallback_upstream_url must not contain a fragment")
 	}
 	return nil
 }

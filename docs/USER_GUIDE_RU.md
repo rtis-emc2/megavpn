@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.0.1.6`
+**Релиз:** `7.0.1.7`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -459,6 +459,12 @@ backend на `127.0.0.1`. Nginx проксирует только скрытый
 а обычный web-трафик на `/` reverse-proxy направляет на fallback website. Это
 осознанная маскировка ingress-поведения, а не замена корректной TLS/SNI,
 сертификатной и DNS-настройки endpoint.
+Для repeatable smoke передавайте тот же fallback явно:
+`MEGAVPN_FALLBACK_UPSTREAM_URL=https://target.example.com
+scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
+[certificate-id]`. Matrix smoke пропускает camouflage packs, если значение не
+задано: использовать сам ingress host как fallback нельзя, это может создать
+proxy loop.
 
 ### 13.2 Manual instance
 

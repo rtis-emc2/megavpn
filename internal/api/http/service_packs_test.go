@@ -138,6 +138,12 @@ func TestDefaultWebSocketCamouflagePackUsesLoopbackBackendAndFallbackPlaceholder
 	if got := stringifyHTTP(nginxSpec["fallback_upstream_url"]); got != "{{fallback_upstream_url}}" {
 		t.Fatalf("nginx fallback upstream = %q, want fallback placeholder", got)
 	}
+	if enabled, _ := nginxSpec["websocket_upgrade"].(bool); !enabled {
+		t.Fatalf("nginx websocket_upgrade must be enabled for camouflage edge: %#v", nginxSpec)
+	}
+	if _, ok := nginxSpec["location_extra_lines"]; ok {
+		t.Fatalf("default camouflage pack must use structured websocket_upgrade instead of raw location_extra_lines: %#v", nginxSpec["location_extra_lines"])
+	}
 }
 
 func TestNormalizeServicePackCamouflageRequestDerivesFallbackHostAndSNI(t *testing.T) {

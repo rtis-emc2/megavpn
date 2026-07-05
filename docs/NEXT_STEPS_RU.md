@@ -1,6 +1,6 @@
 # Следующие шаги
 
-**Релиз:** `7.0.1.6`
+**Релиз:** `7.0.1.7`
 
 Актуальный baseline: [`ROADMAP_V1_AND_TZ_RU.md`](../ROADMAP_V1_AND_TZ_RU.md).
 Английская версия: [`NEXT_STEPS.md`](NEXT_STEPS.md).
@@ -11,7 +11,7 @@
 3. Проверить `/api/v1/service-drivers`, `/api/v1/instances/runtime-states`, `/api/v1/instances/{id}/runtime-state`, `/api/v1/instances/{id}/runtime-observations` и `/agent/runtime/instances` на тестовом control plane после реального `instance.apply`.
 4. Проверить node bootstrap console на удаленном control plane: top tabs, onboarding mode explanation, Agent channel next-step CTA, видимость `MEGAVPN_PUBLIC_BASE_URL` с кастомным HTTPS-портом, Settings -> Control Plane TLS profile + Apply edge, создание SSH access method, rotate enrollment token, queue bootstrap, кнопки Nodes -> Update / Update all agents с preflight по `node.bootstrap` и enabled SSH access method, автоматический переход setup method из SSH bootstrap в agent-managed после успешной установки агента, чтение bootstrap run details в одно-колоночном layout без горизонтальной прокрутки, а также переход `awaiting heartbeat -> online` после первого heartbeat агента.
 5. Довести удаленный deployment baseline на тестовом сервере: прогнать `scripts/control-plane-install.sh` на свежей машине, проверить generated env/master key/admin credentials/nginx self-signed edge, затем проверить `MEGAVPN_DEPLOY_SYNC_MODE=auto`, backup branch flow и повторный deploy после rewritten history.
-6. Проверить service-pack и runtime paths на тестовом сервере: IPsec+XL2TPD, Xray Reality, Xray+Nginx gRPC, Xray VLESS WebSocket Camouflage с fallback website, OpenVPN TCP/UDP, WireGuard, HTTP Proxy, MTProto, Shadowsocks. Для repeatable smoke использовать `scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain> [certificate-id]`; для полного operational-truth включать provisioning и artifact/share-link checks.
+6. Проверить service-pack и runtime paths на тестовом сервере: IPsec+XL2TPD, Xray Reality, Xray+Nginx gRPC, Xray VLESS WebSocket Camouflage с fallback website, OpenVPN TCP/UDP, WireGuard, HTTP Proxy, MTProto, Shadowsocks. Для repeatable smoke использовать `scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain> [certificate-id]`; для camouflage matrix обязательно задать `MEGAVPN_FALLBACK_UPSTREAM_URL` на реальный fallback website, иначе эти packs будут намеренно пропущены. Для полного operational-truth включать provisioning и artifact/share-link checks.
 7. Проверить и усилить topology workspace: локальная статичная world map, GeoIP node placement, node owner metadata, role/health badges, backhaul edges, operator-facing route-toggle UX на реальных nodes, failed-hop diagnostics и per-node workload drill-down. Backend schema для route-toggle, cleanup batch metadata и regression coverage route-policy refresh уже добавлены.
 8. Проверить VLESS access groups end to end: default route, local breakout, selected egress node, target-only access, blocked access, ad-block rule и выбор группы при provisioning.
 9. Проверить VLESS subscriptions end-to-end: rotate/revoke token, one-time URL display, public `Cache-Control: no-store` feed, фильтрация active access, QR/text export и visibility provisioning result.

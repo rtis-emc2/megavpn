@@ -1,6 +1,6 @@
 # Next Steps
 
-**Release:** `7.0.1.6`
+**Release:** `7.0.1.7`
 
 Current roadmap: [`ROADMAP_V1_AND_TZ.md`](../ROADMAP_V1_AND_TZ.md).
 Russian companion: [`NEXT_STEPS_RU.md`](NEXT_STEPS_RU.md).
@@ -30,7 +30,9 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
    admin credentials, Nginx edge and systemd units.
 6. Validate service-pack and runtime paths on a test server: IPsec/L2TP, Xray
    Reality, Xray+Nginx gRPC, Xray WebSocket camouflage, OpenVPN TCP/UDP,
-   WireGuard, HTTP Proxy, MTProto and Shadowsocks.
+   WireGuard, HTTP Proxy, MTProto and Shadowsocks. For camouflage matrix runs,
+   set `MEGAVPN_FALLBACK_UPSTREAM_URL` to the real fallback website; otherwise
+   those packs are intentionally skipped.
 7. Validate and harden the topology workspace: local static world map, GeoIP
    node placement, node owner metadata, role/health badges, backhaul edges,
    operator-facing route-toggle UX on real nodes, failed-hop diagnostics and

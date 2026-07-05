@@ -145,3 +145,59 @@ func TestBuildXrayArtifactsIncludesVLESSClientProfile(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildXrayArtifactsUsesCamouflagePublicEndpoint(t *testing.T) {
+	record := domain.ProvisioningAccess{
+		Access: domain.ServiceAccess{
+			ID: "access-xray-camouflage",
+			Metadata: map[string]any{
+				"xray_uuid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			},
+		},
+		Client: domain.Client{ID: "client-1", Username: "client-one"},
+		Instance: domain.Instance{
+			ID:           "instance-1",
+			Name:         "edge-xray-http-xray-ws",
+			Slug:         "edge-xray-http-xray-ws",
+			ServiceCode:  "xray-core",
+			EndpointHost: "enter.example.test",
+			EndpointPort: 7080,
+			Spec: map[string]any{
+				"security":           "none",
+				"network":            "ws",
+				"path":               "/assets/rtis-sync",
+				"public_security":    "tls",
+				"public_network":     "ws",
+				"public_path":        "/assets/rtis-sync",
+				"public_host_header": "enter.example.test",
+				"public_port":        443,
+			},
+		},
+	}
+
+	files, err := buildXrayArtifacts(record)
+	if err != nil {
+		t.Fatalf("build xray artifacts: %v", err)
+	}
+	if len(files) != 1 || files[0].ArtifactType != "vless_url" {
+		t.Fatalf("files = %#v, want one vless_url", files)
+	}
+	body := string(files[0].Content)
+	for _, want := range []string{
+		"vless://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@enter.example.test:443?",
+		"security=tls",
+		"type=ws",
+		"path=%2Fassets%2Frtis-sync",
+		"host=enter.example.test",
+		"Endpoint: enter.example.test:443",
+		`"path": "/assets/rtis-sync"`,
+		`"host_header": "enter.example.test"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("camouflage artifact body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "@enter.example.test:7080?") || strings.Contains(body, "Endpoint: enter.example.test:7080") {
+		t.Fatalf("camouflage artifact leaked backend endpoint:\n%s", body)
+	}
+}

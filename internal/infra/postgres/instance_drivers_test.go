@@ -209,7 +209,7 @@ func TestBuildNginxServerConfigReverseProxyWithWebsiteFallback(t *testing.T) {
 		"fallback_upstream_url": "https://example.com",
 		"fallback_host_header":  "example.com",
 		"fallback_sni":          "example.com",
-		"location_extra_lines":  "proxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"upgrade\";",
+		"websocket_upgrade":     true,
 	})
 	if err != nil {
 		t.Fatalf("buildNginxServerConfig returned error: %v", err)
@@ -220,6 +220,10 @@ func TestBuildNginxServerConfigReverseProxyWithWebsiteFallback(t *testing.T) {
 		"location /assets/rtis-sync {",
 		"proxy_pass http://127.0.0.1:7080;",
 		"proxy_set_header Upgrade $http_upgrade;",
+		"proxy_set_header Connection \"upgrade\";",
+		"proxy_read_timeout 3600s;",
+		"proxy_send_timeout 3600s;",
+		"proxy_buffering off;",
 		"location / {",
 		"proxy_pass https://example.com;",
 		"proxy_set_header Host example.com;",
@@ -278,6 +282,9 @@ func TestBuildNginxServerConfigRejectsUnsafeServerName(t *testing.T) {
 func TestBuildNginxServerConfigRejectsUnsafeFallbackDirectiveValues(t *testing.T) {
 	cases := []map[string]any{
 		{"fallback_upstream_url": "https://example.com/#fragment"},
+		{"fallback_upstream_url": "ftp://example.com/"},
+		{"fallback_upstream_url": "https://user:pass@example.com/"},
+		{"fallback_upstream_url": "/relative-site"},
 		{"fallback_host_header": "example.com\""},
 		{"fallback_sni": "example.com;"},
 	}

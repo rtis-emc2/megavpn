@@ -9,6 +9,10 @@ SMOKE_PROVISION="${MEGAVPN_SMOKE_PROVISION:-1}"
 SMOKE_SHARE_LINKS="${MEGAVPN_SMOKE_SHARE_LINKS:-0}"
 SMOKE_SHARE_LINK_TTL_HOURS="${MEGAVPN_SMOKE_SHARE_LINK_TTL_HOURS:-24}"
 CLIENT_EMAIL_DOMAIN="${MEGAVPN_CLIENT_EMAIL_DOMAIN:-example.invalid}"
+CAMOUFLAGE_PATH="${MEGAVPN_CAMOUFLAGE_PATH:-}"
+FALLBACK_UPSTREAM_URL="${MEGAVPN_FALLBACK_UPSTREAM_URL:-}"
+FALLBACK_HOST_HEADER="${MEGAVPN_FALLBACK_HOST_HEADER:-}"
+FALLBACK_SNI="${MEGAVPN_FALLBACK_SNI:-}"
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
 usage() {
@@ -27,10 +31,15 @@ Environment:
   MEGAVPN_SMOKE_SHARE_LINKS               Publish share links for ready artifacts (default: 0)
   MEGAVPN_SMOKE_SHARE_LINK_TTL_HOURS      Share-link TTL in hours (default: 24)
   MEGAVPN_CLIENT_EMAIL_DOMAIN             Synthetic email domain for smoke clients
+  MEGAVPN_CAMOUFLAGE_PATH                 Hidden VLESS path for configurable camouflage packs
+  MEGAVPN_FALLBACK_UPSTREAM_URL           Required fallback website URL for Nginx camouflage packs
+  MEGAVPN_FALLBACK_HOST_HEADER            Optional fallback Host header override
+  MEGAVPN_FALLBACK_SNI                    Optional fallback HTTPS SNI override
 
 Examples:
   scripts/service-pack-smoke.sh --list
   scripts/service-pack-smoke.sh node-uuid xray_vless_reality vpn.example.com edge-reality
+  MEGAVPN_FALLBACK_UPSTREAM_URL=https://target.example.com scripts/service-pack-smoke.sh node-uuid xray_nginx_http_edge enter.example.com edge-camouflage cert-uuid
   scripts/service-pack-smoke.sh --with-share-links node-uuid openvpn_tcp_11994 ovpn.example.com
   scripts/service-pack-smoke.sh --matrix node-uuid smoke.example.com cert-uuid
 EOF
@@ -165,6 +174,15 @@ pack_requires_certificate() {
   return 1
 }
 
+pack_requires_fallback() {
+  case "$1" in
+    xray_nginx_grpc_edge|xray_nginx_http_edge)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 is_provisionable_service() {
   case "$1" in
     openvpn|wireguard|mtproto|xray-core|ipsec|shadowsocks|http_proxy)
@@ -232,17 +250,36 @@ run_single_pack() {
   if [[ -n "$certificate_id" ]]; then
     echo "certificate_id: $certificate_id"
   fi
+  if pack_requires_fallback "$pack_key"; then
+    if [[ -z "$FALLBACK_UPSTREAM_URL" ]]; then
+      echo "pack $pack_key requires MEGAVPN_FALLBACK_UPSTREAM_URL for traffic camouflage smoke" >&2
+      return 1
+    fi
+    echo "fallback_upstream_url: $FALLBACK_UPSTREAM_URL"
+    if [[ -n "$CAMOUFLAGE_PATH" ]]; then
+      echo "camouflage_path: $CAMOUFLAGE_PATH"
+    fi
+  fi
 
   create_resp="$(request_json POST "/api/v1/service-packs/$pack_key/instances" "$(jq -n \
     --arg node_id "$node_id" \
     --arg base_name "$base_name" \
     --arg endpoint_host "$endpoint_host" \
     --arg certificate_id "$certificate_id" \
+    --arg camouflage_path "$CAMOUFLAGE_PATH" \
+    --arg fallback_upstream_url "$FALLBACK_UPSTREAM_URL" \
+    --arg fallback_host_header "$FALLBACK_HOST_HEADER" \
+    --arg fallback_sni "$FALLBACK_SNI" \
     '{
       node_id: $node_id,
       base_name: $base_name,
       endpoint_host: $endpoint_host
-    } + (if $certificate_id != "" then {certificate_id: $certificate_id} else {} end)')")"
+    }
+    + (if $certificate_id != "" then {certificate_id: $certificate_id} else {} end)
+    + (if $camouflage_path != "" then {camouflage_path: $camouflage_path} else {} end)
+    + (if $fallback_upstream_url != "" then {fallback_upstream_url: $fallback_upstream_url} else {} end)
+    + (if $fallback_host_header != "" then {fallback_host_header: $fallback_host_header} else {} end)
+    + (if $fallback_sni != "" then {fallback_sni: $fallback_sni} else {} end)')")"
   echo "$create_resp" | jq .
 
   instance_rows="$(echo "$create_resp" | jq -c '.created_instances[]')"
@@ -332,6 +369,12 @@ run_matrix() {
       skipped_count=$((skipped_count + 1))
       continue
     fi
+    if pack_requires_fallback "$pack_key" && [[ -z "$FALLBACK_UPSTREAM_URL" ]]; then
+      echo "[$pack_key] skipped: MEGAVPN_FALLBACK_UPSTREAM_URL is required for traffic camouflage smoke" >&2
+      printf 'SKIPPED\t%s\t-\t-\n' "$pack_key" >>"$summary_tmp"
+      skipped_count=$((skipped_count + 1))
+      continue
+    fi
     stamp="$(date +%H%M%S)"
     suffix="${pack_key//_/-}"
     base_name="smoke-${suffix}-${stamp}"
@@ -340,6 +383,10 @@ run_matrix() {
       MEGAVPN_SMOKE_SHARE_LINKS="$SMOKE_SHARE_LINKS" \
       MEGAVPN_SMOKE_SHARE_LINK_TTL_HOURS="$SMOKE_SHARE_LINK_TTL_HOURS" \
       MEGAVPN_CLIENT_EMAIL_DOMAIN="$CLIENT_EMAIL_DOMAIN" \
+      MEGAVPN_CAMOUFLAGE_PATH="$CAMOUFLAGE_PATH" \
+      MEGAVPN_FALLBACK_UPSTREAM_URL="$FALLBACK_UPSTREAM_URL" \
+      MEGAVPN_FALLBACK_HOST_HEADER="$FALLBACK_HOST_HEADER" \
+      MEGAVPN_FALLBACK_SNI="$FALLBACK_SNI" \
       "$SCRIPT_PATH" "$node_id" "$pack_key" "$host" "$base_name" "$certificate_id"; then
       status="OK"
       ok_count=$((ok_count + 1))

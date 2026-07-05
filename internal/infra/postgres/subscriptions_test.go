@@ -64,6 +64,60 @@ func TestClientVLESSSubscriptionProfileBuildsURI(t *testing.T) {
 	}
 }
 
+func TestClientVLESSSubscriptionProfileUsesCamouflagePublicEndpoint(t *testing.T) {
+	t.Parallel()
+
+	record := domain.ProvisioningAccess{
+		Access: domain.ServiceAccess{
+			ID:     "access-1",
+			Status: "active",
+			Metadata: map[string]any{
+				"xray_uuid": "22222222-2222-4222-8222-222222222222",
+			},
+		},
+		Client: domain.Client{Username: "bob"},
+		Instance: domain.Instance{
+			ID:           "instance-1",
+			Name:         "edge-xray-http-xray-ws",
+			Slug:         "edge-xray-http-xray-ws",
+			ServiceCode:  "xray-core",
+			Status:       "active",
+			Enabled:      true,
+			EndpointHost: "enter.example.com",
+			EndpointPort: 7080,
+			Spec: map[string]any{
+				"security":           "none",
+				"network":            "ws",
+				"path":               "/assets/rtis-sync",
+				"public_security":    "tls",
+				"public_network":     "ws",
+				"public_path":        "/assets/rtis-sync",
+				"public_host_header": "enter.example.com",
+				"public_port":        443,
+			},
+		},
+	}
+
+	profile, ok := clientVLESSSubscriptionProfile(record)
+	if !ok {
+		t.Fatal("expected active camouflage VLESS access to produce a subscription profile")
+	}
+	for _, fragment := range []string{
+		"vless://22222222-2222-4222-8222-222222222222@enter.example.com:443?",
+		"security=tls",
+		"type=ws",
+		"path=%2Fassets%2Frtis-sync",
+		"host=enter.example.com",
+	} {
+		if !strings.Contains(profile.URI, fragment) {
+			t.Fatalf("subscription URI %q does not contain %q", profile.URI, fragment)
+		}
+	}
+	if strings.Contains(profile.URI, "@enter.example.com:7080?") {
+		t.Fatalf("subscription URI leaked backend endpoint: %q", profile.URI)
+	}
+}
+
 func TestClientVLESSSubscriptionProfileRejectsUnprovisionedAccess(t *testing.T) {
 	t.Parallel()
 

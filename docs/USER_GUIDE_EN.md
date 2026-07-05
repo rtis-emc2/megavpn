@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.6`
+**Release:** `7.0.1.7`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -460,6 +460,11 @@ Xray backend bound to `127.0.0.1`. Nginx proxies only the hidden VLESS/gRPC path
 to Xray, while ordinary browser traffic on `/` is reverse-proxied to the
 fallback website. This masks ingress behavior deliberately, but it does not
 replace correct TLS/SNI, certificate and DNS configuration for the endpoint.
+For repeatable smoke tests, pass the same fallback explicitly:
+`MEGAVPN_FALLBACK_UPSTREAM_URL=https://target.example.com
+scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
+[certificate-id]`. Matrix smoke skips camouflage packs when this value is not
+set, because using the ingress host itself as fallback can create a proxy loop.
 
 ### 13.2 Manual Instance
 
