@@ -311,6 +311,24 @@ func TestPostgresIntegrationDefaultFirewallBaseline(t *testing.T) {
 		t.Fatalf("firewall seed is not idempotent: rules %d -> %d, entries %d -> %d",
 			len(inventory.Rules), len(secondInventory.Rules), len(inventory.Entries), len(secondInventory.Entries))
 	}
+
+	if _, err := store.UpdateFirewallAddressList(ctx, vpnListID, domain.FirewallAddressList{Status: "disabled"}); err != nil {
+		t.Fatalf("disable vpn_client_sources: %v", err)
+	}
+	disabledInventory, err := store.FirewallInventory(ctx)
+	if err != nil {
+		t.Fatalf("firewall inventory after disabled address list: %v", err)
+	}
+	preservedDisabled := false
+	for _, list := range disabledInventory.AddressLists {
+		if list.ID == vpnListID && list.Status == "disabled" {
+			preservedDisabled = true
+			break
+		}
+	}
+	if !preservedDisabled {
+		t.Fatal("firewall seed must preserve operator-disabled address-list status")
+	}
 }
 
 func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T) {

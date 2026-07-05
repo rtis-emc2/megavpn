@@ -29,7 +29,7 @@ values
 	($1,'trusted_control_plane','Trusted control plane','Control-plane hosts allowed to manage node agent and SSH access.','control_plane','active',now(),now()),
 	($2,'trusted_operators','Trusted operators','Operator source networks for privileged access.','global','active',now(),now()),
 	($3,'vpn_client_sources','VPN client source ranges','Default source ranges used by managed VPN clients and private overlay networks.','global','active',now(),now())
-on conflict(key) do update set label=excluded.label, description=excluded.description, scope=excluded.scope, status=case when firewall_address_lists.status='deleted' then firewall_address_lists.status else excluded.status end, updated_at=now()`,
+on conflict(key) do update set label=excluded.label, description=excluded.description, scope=excluded.scope, status=firewall_address_lists.status, updated_at=now()`,
 		id.New(), id.New(), id.New()); err != nil {
 		return err
 	}

@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.28`
+**Релиз:** `7.0.1.29`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.28
+Базовая версия кода: RTIS MegaVPN 7.0.1.29
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
