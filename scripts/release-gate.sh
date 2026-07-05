@@ -65,6 +65,10 @@ require_clean_static_scan() {
     log "unpinned curl pipe or apt key production pattern found"
     return 1
   fi
+  if rg -U -n ";[[:space:]]*\\n[[:space:]]*(insert|update|delete|create|alter|drop)\\b" cmd internal --glob '!**/*_test.go' --glob '!cmd/migrate/main.go'; then
+    log "multi-command SQL found in production Go runtime path"
+    return 1
+  fi
 }
 
 require_govulncheck() {

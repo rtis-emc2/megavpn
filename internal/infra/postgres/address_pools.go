@@ -35,10 +35,7 @@ func (s *Store) EnsureDefaultAddressPoolSpaces(ctx context.Context) error {
 		10,
 		now(),
 		now()
-	) on conflict(key) do nothing;
-	insert into address_pool_spaces(
-		key,label,description,family,base_cidr,start_cidr,allocation_prefix,service_scope,routing_enabled,status,display_order,created_at,updated_at
-	) values (
+	), (
 		'imported_remote_access_v4',
 		'Imported Remote Access IPv4',
 		'Observed pools imported from existing instance revisions. The allocator does not use this space for new automatic allocations.',

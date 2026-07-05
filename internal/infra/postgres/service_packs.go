@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
@@ -19,6 +20,9 @@ func (s *Store) EnsureDefaultServicePacks(ctx context.Context, packs []domain.Se
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := repairServicePackTemplateKeys(ctx, tx); err != nil {
+		return err
+	}
 	for idx, pack := range packs {
 		normalized, err := normalizeServicePackTemplate(pack, idx)
 		if err != nil {
@@ -69,9 +73,20 @@ func (s *Store) EnsureDefaultServicePacks(ctx context.Context, packs []domain.Se
 func (s *Store) ListServicePacks(ctx context.Context) ([]domain.ServicePackDefinition, error) {
 	rows, err := s.db.Query(ctx, `select key,label,description,base_name_template,endpoint_hint,requires_endpoint_host,
 		platform_notes_json,recommendations_json,components_json,status,source,version,display_order
+	from (
+		select distinct on (key)
+			key,label,description,base_name_template,endpoint_hint,requires_endpoint_host,
+			platform_notes_json,recommendations_json,components_json,status,source,version,display_order,updated_at
 		from service_pack_templates
 		where status='active'
-		order by display_order asc,label asc,key asc`)
+		order by key,
+			case when source='default' then 1 else 0 end,
+			version desc,
+			updated_at desc,
+			display_order asc,
+			label asc
+	) deduplicated
+	order by display_order asc,label asc,key asc`)
 	if err != nil {
 		return nil, err
 	}
@@ -90,8 +105,20 @@ func (s *Store) ListServicePacks(ctx context.Context) ([]domain.ServicePackDefin
 func (s *Store) ListServicePackCatalog(ctx context.Context) ([]domain.ServicePackDefinition, error) {
 	rows, err := s.db.Query(ctx, `select key,label,description,base_name_template,endpoint_hint,requires_endpoint_host,
 		platform_notes_json,recommendations_json,components_json,status,source,version,display_order
+	from (
+		select distinct on (key)
+			key,label,description,base_name_template,endpoint_hint,requires_endpoint_host,
+			platform_notes_json,recommendations_json,components_json,status,source,version,display_order,updated_at
 		from service_pack_templates
-		order by case status when 'active' then 0 when 'disabled' then 1 else 2 end, display_order asc,label asc,key asc`)
+		order by key,
+			case status when 'active' then 0 when 'disabled' then 1 else 2 end,
+			case when source='default' then 1 else 0 end,
+			version desc,
+			updated_at desc,
+			display_order asc,
+			label asc
+	) deduplicated
+	order by case status when 'active' then 0 when 'disabled' then 1 else 2 end, display_order asc,label asc,key asc`)
 	if err != nil {
 		return nil, err
 	}
@@ -190,6 +217,52 @@ func (s *Store) SetServicePackStatus(ctx context.Context, key string, status str
 		return domain.ServicePackDefinition{}, err
 	}
 	return pack, nil
+}
+
+type servicePackCatalogKeyExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func repairServicePackTemplateKeys(ctx context.Context, exec servicePackCatalogKeyExecutor) error {
+	if _, err := exec.Exec(ctx, `with ranked as (
+	select ctid,
+		row_number() over (
+			partition by key
+			order by
+				case status when 'active' then 0 when 'disabled' then 1 else 2 end,
+				case when source='default' then 1 else 0 end,
+				version desc,
+				updated_at desc,
+				display_order asc,
+				label asc
+		) as rn
+	from service_pack_templates
+)
+delete from service_pack_templates
+where ctid in (select ctid from ranked where rn > 1)`); err != nil {
+		return err
+	}
+	var hasUniqueKey bool
+	if err := exec.QueryRow(ctx, `select exists(
+	select 1
+	from pg_index idx
+	join pg_class tbl on tbl.oid = idx.indrelid
+	join pg_namespace ns on ns.oid = tbl.relnamespace
+	join pg_attribute attr on attr.attrelid = tbl.oid and attr.attnum = idx.indkey[0]
+	where tbl.relname = 'service_pack_templates'
+		and ns.nspname = current_schema()
+		and idx.indisunique
+		and idx.indnkeyatts = 1
+		and attr.attname = 'key'
+)`).Scan(&hasUniqueKey); err != nil {
+		return err
+	}
+	if hasUniqueKey {
+		return nil
+	}
+	_, err := exec.Exec(ctx, `create unique index if not exists idx_service_pack_templates_key_unique on service_pack_templates(key)`)
+	return err
 }
 
 type servicePackScanner interface {

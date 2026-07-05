@@ -68,8 +68,33 @@
       }
     }
 
+    function servicePackRank(pack) {
+      const status = String(pack?.status || 'active').toLowerCase();
+      const statusRank = status === 'active' ? 0 : status === 'disabled' ? 1 : 2;
+      const sourceRank = String(pack?.source || 'default').toLowerCase() === 'default' ? 1 : 0;
+      const version = Number(pack?.version || 0);
+      return { statusRank, sourceRank, version };
+    }
+
+    function preferServicePack(next, current) {
+      if (!current) return true;
+      const left = servicePackRank(next);
+      const right = servicePackRank(current);
+      if (left.statusRank !== right.statusRank) return left.statusRank < right.statusRank;
+      if (left.sourceRank !== right.sourceRank) return left.sourceRank < right.sourceRank;
+      return left.version > right.version;
+    }
+
     function normalizeServicePackList(value) {
-      return Array.isArray(value) ? value : [];
+      const items = Array.isArray(value) ? value : [];
+      const byKey = new Map();
+      for (const pack of items) {
+        const key = String(pack?.key || '').trim();
+        if (!key) continue;
+        const current = byKey.get(key);
+        if (preferServicePack(pack, current)) byKey.set(key, pack);
+      }
+      return Array.from(byKey.values());
     }
 
     function activeServicePacksFromCatalog(catalog) {

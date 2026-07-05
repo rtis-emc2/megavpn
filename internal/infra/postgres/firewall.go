@@ -19,17 +19,26 @@ import (
 var firewallKeyRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{1,62}$`)
 
 func (s *Store) EnsureDefaultFirewallPolicies(ctx context.Context) error {
-	_, err := s.db.Exec(ctx, `insert into firewall_address_lists(id,key,label,description,scope,status,created_at,updated_at)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `insert into firewall_address_lists(id,key,label,description,scope,status,created_at,updated_at)
 values
 	($1,'trusted_control_plane','Trusted control plane','Control-plane hosts allowed to manage node agent and SSH access.','control_plane','active',now(),now()),
 	($2,'trusted_operators','Trusted operators','Operator source networks for privileged access.','global','active',now(),now())
-on conflict(key) do nothing;
-insert into firewall_policies(id,key,label,description,scope,default_input_policy,default_forward_policy,default_output_policy,status,created_at,updated_at)
+on conflict(key) do nothing`, id.New(), id.New()); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `insert into firewall_policies(id,key,label,description,scope,default_input_policy,default_forward_policy,default_output_policy,status,created_at,updated_at)
 values
-	($3,'control_plane_default','Control plane baseline','Baseline policy for control-plane host exposure.','control_plane','accept','accept','accept','active',now(),now()),
-	($4,'node_base','Node baseline','Baseline node firewall policy. Default accept remains until explicit enforcement is enabled.','node','accept','accept','accept','active',now(),now())
-on conflict(key) do nothing`, id.New(), id.New(), id.New(), id.New())
-	return err
+	($1,'control_plane_default','Control plane baseline','Baseline policy for control-plane host exposure.','control_plane','accept','accept','accept','active',now(),now()),
+	($2,'node_base','Node baseline','Baseline node firewall policy. Default accept remains until explicit enforcement is enabled.','node','accept','accept','accept','active',now(),now())
+on conflict(key) do nothing`, id.New(), id.New()); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) FirewallInventory(ctx context.Context) (domain.FirewallInventory, error) {

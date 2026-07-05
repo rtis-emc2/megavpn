@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.14`
+**Release:** `7.0.1.15`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.14`
+**Code baseline:** RTIS MegaVPN `7.0.1.15`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,9 +23,9 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.14` continues the production-hardening line after the `7.0.1.13`
-operator-console typography release. The codebase already has a working
-control-plane foundation:
+`7.0.1.15` continues the production-hardening line after the `7.0.1.14`
+security hardening release. The codebase already has a working control-plane
+foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -226,7 +226,29 @@ Closed in this release:
 
 No database migration or VPN runtime behavior changed in this release.
 
-## 13. Immediate Next Actions
+## 13. Release 7.0.1.15 Closure
+
+The goal of `7.0.1.15` is to close the last visible UI/API regression in the
+operator console.
+
+Closed in this release:
+
+- Firewall default catalog seeding no longer sends multiple SQL commands through
+  one prepared statement.
+- Address-pool default seeding now uses a single multi-row statement instead of
+  multiple SQL commands in one runtime query.
+- Service-pack catalog reads deduplicate by `key` and prefer active, custom and
+  newer rows.
+- Service-pack default seeding repairs historical duplicate rows and ensures a
+  unique key index when older databases are missing it.
+- Web core loading deduplicates service packs by `key`, so Create from pack
+  cannot render repeated templates.
+- Release gate static scan now blocks multi-command SQL in production Go runtime
+  paths.
+
+No VPN runtime behavior changed in this release.
+
+## 14. Immediate Next Actions
 
 1. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
 2. Run disposable PostgreSQL migrations and integration tests.

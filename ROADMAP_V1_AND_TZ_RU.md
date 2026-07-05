@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.14`
+**Релиз:** `7.0.1.15`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.14
+Базовая версия кода: RTIS MegaVPN 7.0.1.15
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1036,7 +1036,29 @@ traffic-camouflage rendering.
 
 В релизе не менялись database migrations и VPN runtime behavior.
 
-## 14. Immediate Next Actions
+## 14. Release 7.0.1.15 Closure
+
+Цель релиза `7.0.1.15`: закрыть последний видимый UI/API regression в
+operator console.
+
+Зафиксировано в этом релизе:
+
+- Firewall default catalog seed больше не отправляет несколько SQL-команд через
+  один prepared statement.
+- Address-pool default seed использует один multi-row statement вместо
+  нескольких SQL-команд в одном runtime query.
+- Service-pack catalog reads дедуплицируются по `key` и предпочитают active,
+  custom и более новые строки.
+- Service-pack default seed чинит исторические duplicate rows и добавляет unique
+  key index, если он отсутствует в старой БД.
+- Web core loading дедуплицирует service packs по `key`, поэтому Create from
+  pack не рендерит повторяющиеся templates.
+- Release gate static scan теперь блокирует multi-command SQL в production Go
+  runtime paths.
+
+В релизе не менялся VPN runtime behavior.
+
+## 15. Immediate Next Actions
 
 1. Прогнать clean-install procedure на свежем Ubuntu host и записать evidence.
 2. Прогнать disposable PostgreSQL migrations и integration tests.
