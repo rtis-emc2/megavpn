@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.12`
+**Release:** `7.0.1.13`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.12`
+**Code baseline:** RTIS MegaVPN `7.0.1.13`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,8 +23,9 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.12` is the boundary between feature expansion and production hardening.
-The codebase already has a working control-plane foundation:
+`7.0.1.13` continues the production-hardening line after the `7.0.1.12`
+traffic-camouflage boundary release. The codebase already has a working
+control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -181,7 +182,29 @@ Required evidence:
    S3-compatible abstraction?
 6. Is MFA mandatory for admin/superadmin before stable?
 
-## 11. Immediate Next Actions
+## 11. Release 7.0.1.13 Closure
+
+The goal of `7.0.1.13` is Web UI typography/layout hardening across the
+operator console without changing backend behavior.
+
+Closed in this release:
+
+- The console now uses one UI font stack for visible product text.
+- Code, inline `code`, code blocks, textareas and web terminal output remain on
+  the monospace stack.
+- Legacy local `letter-spacing` overrides were normalized to `0`.
+- Buttons, tabs, tags, status pills, cards, modals and table cells now have
+  explicit `min-width: 0`, wrapping and overflow behavior.
+- Mobile page tabs now render as a responsive grid instead of an offscreen
+  horizontal strip.
+- Desktop and mobile browser smoke covered Dashboard, Nodes, Instances,
+  Firewall, Backhaul, Clients, Jobs, Services and Settings.
+
+No database migration, API contract, agent behavior, runtime apply behavior,
+VLESS routing, firewall enforcement or traffic-camouflage rendering changed in
+this release.
+
+## 12. Immediate Next Actions
 
 1. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
 2. Run disposable PostgreSQL migrations and integration tests.

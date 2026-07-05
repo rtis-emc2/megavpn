@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.12`
+**Релиз:** `7.0.1.13`
 
-Дата анализа: 2026-07-01
-Базовая версия кода: RTIS MegaVPN 7.0.1.12
+Дата анализа: 2026-07-05
+Базовая версия кода: RTIS MegaVPN 7.0.1.13
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -992,7 +992,29 @@ endpoint и создавать reverse-proxy loop.
 - Довести Nginx edge profile catalog до reusable profile definitions и
   operator-visible failed-apply evidence.
 
-## 12. Immediate Next Actions
+## 12. Release 7.0.1.13 Closure
+
+Цель релиза `7.0.1.13`: hardening типографики и layout во всех основных
+разделах operator console без изменения backend/API/agent behavior.
+
+Зафиксировано в этом релизе:
+
+- Для видимого UI-текста введен единый UI font stack.
+- Monospace сохранен только для `code`, code blocks, config textarea и web
+  terminal output.
+- Старые локальные `letter-spacing` overrides нормализованы в `0`.
+- Для buttons, tabs, tags, status pills, cards, modals и table cells добавлены
+  явные правила `min-width: 0`, wrapping и overflow behavior.
+- Мобильные page tabs теперь рендерятся responsive grid-сеткой, а не offscreen
+  горизонтальной лентой.
+- Desktop/mobile browser smoke проверил Dashboard, Nodes, Instances, Firewall,
+  Backhaul, Clients, Jobs, Services и Settings.
+
+В релизе не менялись database migrations, API contract, agent behavior,
+runtime apply behavior, VLESS routing, firewall enforcement и
+traffic-camouflage rendering.
+
+## 13. Immediate Next Actions
 
 1. Принять решения по open questions 1-4, потому что они влияют на scope, schema и frontend.
 2. Поднять Go toolchain/CI и зафиксировать build/test baseline.
