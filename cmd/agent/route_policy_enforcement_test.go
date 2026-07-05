@@ -35,12 +35,13 @@ func TestRenderRoutePolicyKernelScriptWithManagedBackhaul(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
 	}
-	if plan.RuleCount != 1 || plan.MarkedCount != 0 {
+	if plan.RuleCount != 1 || plan.MarkedCount != 1 {
 		t.Fatalf("unexpected plan counts: %#v", plan)
 	}
 	checks := []string{
 		"route_policy_replace_route '203.0.113.0/24' '21001' 70 'mgbh123' '' ''",
-		"ip rule add from '10.66.0.2/32' to '203.0.113.0/24' table '21001' priority 22000",
+		"nft add rule inet megavpn route_policy_prerouting ip saddr 10.66.0.2/32 ip daddr 203.0.113.0/24 meta mark set 0x4d560001",
+		"ip rule add fwmark 0x4d560001 table '21001' priority 22000",
 	}
 	for _, check := range checks {
 		if !strings.Contains(plan.Script, check) {
@@ -85,13 +86,14 @@ func TestRenderRoutePolicyKernelScriptWithManagedBackhaulCandidates(t *testing.T
 	if err != nil {
 		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
 	}
-	if plan.RuleCount != 1 || plan.MarkedCount != 0 {
+	if plan.RuleCount != 1 || plan.MarkedCount != 1 {
 		t.Fatalf("unexpected plan counts: %#v", plan)
 	}
 	checks := []string{
 		"route_policy_replace_route '203.0.113.0/24' '21001' 10 'mgbh-primary' '' '10.240.1.2'",
 		"route_policy_replace_route '203.0.113.0/24' '21001' 100 'mgbh-backup' '' '10.240.2.2'",
-		"ip rule add from '10.66.0.2/32' to '203.0.113.0/24' table '21001' priority 22000",
+		"nft add rule inet megavpn route_policy_prerouting ip saddr 10.66.0.2/32 ip daddr 203.0.113.0/24 meta mark set 0x4d560001",
+		"ip rule add fwmark 0x4d560001 table '21001' priority 22000",
 	}
 	for _, check := range checks {
 		if !strings.Contains(plan.Script, check) {
@@ -121,12 +123,13 @@ func TestRenderRoutePolicyKernelScriptWithXraySystemRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
 	}
-	if plan.SystemRuleCount != 1 || plan.RuleCount != 0 || plan.MarkedCount != 0 {
+	if plan.SystemRuleCount != 1 || plan.RuleCount != 0 || plan.MarkedCount != 1 {
 		t.Fatalf("unexpected plan counts: %#v", plan)
 	}
 	checks := []string{
 		"route_policy_replace_route '0.0.0.0/0' '21001' 70 'mgbh1234567890' '' '10.240.35.246'",
-		"ip rule add from '10.240.35.245/32' table '21001' priority 21900",
+		"nft add rule inet megavpn route_policy_output ip saddr 10.240.35.245/32 ip daddr 0.0.0.0/0 meta mark set 0x4d550001",
+		"ip rule add fwmark 0x4d550001 table '21001' priority 21900",
 	}
 	for _, check := range checks {
 		if !strings.Contains(plan.Script, check) {
@@ -169,6 +172,52 @@ func TestRenderRoutePolicyKernelScriptWithPortMark(t *testing.T) {
 	}
 }
 
+func TestRenderRoutePolicyKernelScriptWithProtocolOnlyMark(t *testing.T) {
+	t.Parallel()
+
+	plan, err := renderRoutePolicyKernelScript([]any{
+		map[string]any{
+			"route_id":         "route-tcp",
+			"status":           "active",
+			"action":           "allow",
+			"destination_type": "cidr",
+			"destination":      "198.51.100.0/24",
+			"protocol":         "tcp",
+			"source_identity":  map[string]any{"type": "openvpn_ip", "value": "10.8.0.10/32"},
+			"egress":           map[string]any{"status": "candidate", "mode": "remote_egress", "interface": "mgbh123", "table": "21001"},
+			"enforcement":      map[string]any{"mode": "l3_l4_candidate"},
+		},
+		map[string]any{
+			"route_id":         "route-icmp",
+			"status":           "active",
+			"action":           "allow",
+			"destination_type": "cidr",
+			"destination":      "203.0.113.0/24",
+			"protocol":         "icmp",
+			"source_identity":  map[string]any{"type": "openvpn_ip", "value": "10.8.0.10/32"},
+			"egress":           map[string]any{"status": "candidate", "mode": "remote_egress", "interface": "mgbh123", "table": "21001"},
+			"enforcement":      map[string]any{"mode": "l3_l4_candidate"},
+		},
+	}, nil, "rev-proto")
+	if err != nil {
+		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
+	}
+	if plan.RuleCount != 2 || plan.MarkedCount != 2 {
+		t.Fatalf("unexpected plan counts: %#v", plan)
+	}
+	checks := []string{
+		"nft add rule inet megavpn route_policy_prerouting ip saddr 10.8.0.10/32 ip daddr 198.51.100.0/24 ip protocol tcp meta mark set 0x4d560001",
+		"nft add rule inet megavpn route_policy_prerouting ip saddr 10.8.0.10/32 ip daddr 203.0.113.0/24 ip protocol icmp meta mark set 0x4d560002",
+		"ip rule add fwmark 0x4d560001 table '21001' priority 22000",
+		"ip rule add fwmark 0x4d560002 table '21001' priority 22001",
+	}
+	for _, check := range checks {
+		if !strings.Contains(plan.Script, check) {
+			t.Fatalf("expected script to contain %q, got:\n%s", check, plan.Script)
+		}
+	}
+}
+
 func TestRenderRoutePolicyKernelScriptSkipsMainTable(t *testing.T) {
 	t.Parallel()
 
@@ -190,5 +239,30 @@ func TestRenderRoutePolicyKernelScriptSkipsMainTable(t *testing.T) {
 	}
 	if plan.RuleCount != 0 || plan.SkippedCount != 1 {
 		t.Fatalf("unexpected plan counts: %#v", plan)
+	}
+}
+
+func TestRenderRoutePolicyKernelScriptWithoutRulesStillCleansKernelState(t *testing.T) {
+	t.Parallel()
+
+	plan, err := renderRoutePolicyKernelScript(nil, nil, "rev-empty")
+	if err != nil {
+		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
+	}
+	if plan.RuleCount != 0 || plan.SystemRuleCount != 0 || plan.MarkedCount != 0 {
+		t.Fatalf("unexpected plan counts: %#v", plan)
+	}
+	checks := []string{
+		"while ip rule delete priority \"$p\" >/dev/null 2>&1; do :; done",
+		"nft list chain inet megavpn route_policy_prerouting >/dev/null 2>&1 && nft flush chain inet megavpn route_policy_prerouting || true",
+		"nft list chain inet megavpn route_policy_output >/dev/null 2>&1 && nft flush chain inet megavpn route_policy_output || true",
+	}
+	for _, check := range checks {
+		if !strings.Contains(plan.Script, check) {
+			t.Fatalf("expected cleanup script to contain %q, got:\n%s", check, plan.Script)
+		}
+	}
+	if strings.Contains(plan.Script, "sysctl -w net.ipv4.ip_forward=1") {
+		t.Fatalf("empty cleanup should not enable forwarding, got:\n%s", plan.Script)
 	}
 }

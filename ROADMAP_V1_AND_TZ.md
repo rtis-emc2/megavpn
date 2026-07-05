@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.25`
+**Release:** `7.0.1.26`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.25`
+**Code baseline:** RTIS MegaVPN `7.0.1.26`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -128,6 +128,10 @@ controlled by route policy and managed backhaul:
 3. Instance route policy chooses local breakout or managed egress.
 4. Backhaul transport carries traffic to the egress node when required.
 5. Health and drift projections show whether the desired path is active.
+
+Node enforcement is managed by `node.route_policy.apply`: client ingress flows
+and local Xray/VLESS `sendThrough` flows are marked in nftables and selected by
+`ip rule fwmark` into non-main managed backhaul route tables.
 
 Node cleanup must be scoped to managed state. It must not remove unrelated
 interfaces, routes, firewall rules or backhaul state outside the managed

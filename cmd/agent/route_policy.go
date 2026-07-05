@@ -54,7 +54,7 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		"skipped_count":     kernelPlan.SkippedCount,
 		"skipped_reasons":   kernelPlan.Reasons,
 	}
-	if kernelPlan.RuleCount+kernelPlan.SystemRuleCount > 0 {
+	if strings.TrimSpace(kernelPlan.Script) != "" {
 		if !isSafeRoutePolicyManagedPath(routePolicyScriptPath) || !isSafeRoutePolicyManagedPath(routePolicyUnitPath) || !isSafeRoutePolicyManagedPath(routePolicyTimerPath) {
 			return "failed", map[string]any{"error": "route policy managed path is not allowed", "stage": "route_policy_enforcement_paths"}
 		}
@@ -113,6 +113,8 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 	message := "route policy snapshot applied"
 	if kernelPlan.RuleCount+kernelPlan.SystemRuleCount > 0 {
 		message = "route policy snapshot and kernel egress enforcement applied"
+	} else if kernelResult["enforced"] == true {
+		message = "route policy snapshot and kernel egress cleanup applied"
 	}
 	activeSystemRouteCount := 0
 	for _, item := range systemRoutes {

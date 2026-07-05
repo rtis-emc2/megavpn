@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.25`
+**Release:** `7.0.1.26`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -106,6 +106,10 @@ instances keep their own service drivers, client configs and route policies.
   non-main route table. Xray/VLESS system routes require a valid IPv4
   `sendThrough` source, explicit managed backhaul interface and explicit
   non-main route table.
+- Node-side route policy is kernel-enforced through managed nftables marks and
+  policy routing. The agent owns only `inet megavpn route_policy_prerouting`,
+  `inet megavpn route_policy_output` and reserved `ip rule` priorities
+  `21900..22099`; empty policy snapshots still clean these managed rules.
 - Xray/IPsec profiles are not auto-enabled until transport-specific safety gates are implemented.
 
 ## Deployment Model
@@ -129,8 +133,8 @@ Minimum production path for the first ingress/egress pair:
     `enforced=true`.
 12. For VLESS remote egress, verify the route-policy job result includes an
     active `xray_vless_remote_egress` system route and the ingress node has
-    `ip rule from <sendThrough>/32 table <backhaul_table>` in the kernel rule
-    set.
+    `nft` output-mark rules plus `ip rule fwmark <mark> table <backhaul_table>`
+    in the kernel rule set.
 13. When disabling a mapped backhaul route, the control plane marks the link and
     transports `disabled`, queues scoped cleanup jobs with
     `route_disable_batch_id`, and queues a mandatory ingress route-policy
@@ -152,9 +156,12 @@ Minimum production path for the first ingress/egress pair:
 - VLESS clients connect but traffic exits from ingress or does not leave the
   node: verify the rendered Xray outbound has `sendThrough`, then run
   `node.route_policy.apply` on the ingress node and confirm the job produced an
-  active `xray_vless_remote_egress` system route. If the route is blocked, fix
-  the selected managed backhaul table/interface before re-applying the Xray
-  instance.
+  active `xray_vless_remote_egress` system route. Then inspect
+  `nft list chain inet megavpn route_policy_output`, `ip rule show` and
+  `ip route show table <backhaul_table>`; the expected path is source match ->
+  `meta mark set <mark>` -> `ip rule fwmark <mark>` -> managed `mgbh*`
+  interface. If the route is blocked, fix the selected managed backhaul
+  table/interface before re-applying the Xray instance.
 - Cleanup failed: link remains `failed`; inspect the cleanup job result. Stale `running` cleanup jobs are recovered automatically after lease expiry, but real failed/cancelled jobs still require operator retry. The agent will not remove paths outside the managed backhaul directory or managed systemd unit prefix.
 - Cleanup succeeded and link disappeared from the active list: expected lifecycle behavior. The link is now `deleted`; use the `Recently Deleted Backhaul` table and Jobs/Audit views for cleanup confirmation.
 - Xray/IPsec selected: config is written and status becomes `materialized`, but it is not enabled automatically; manual transport activation is required until the driver-specific safety gate exists.

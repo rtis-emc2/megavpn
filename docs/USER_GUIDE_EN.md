@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.25`
+**Release:** `7.0.1.26`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -571,6 +571,12 @@ Where to configure it:
 - `Clients -> Access -> Add route`: for individual route-policy rules, select
   `Egress mode = egress node` and choose the egress node. After route-policy
   changes, run `Nodes -> Manage -> Sync route policy` on the ingress node.
+- `Nodes -> Manage -> Sync route policy`: the ingress agent writes the signed
+  snapshot and installs managed kernel rules. Client traffic is marked in
+  `inet megavpn route_policy_prerouting`; local Xray/VLESS `sendThrough`
+  traffic is marked in `inet megavpn route_policy_output`; `ip rule fwmark`
+  then sends the marked flow into the selected backhaul route table and
+  `mgbh*` interface.
 
 Minimal path for “enter through VLESS and exit through another node”:
 
@@ -587,6 +593,10 @@ Minimal path for “enter through VLESS and exit through another node”:
 6. Click `Apply` on the instance if you changed instance-level `Egress mode`.
    VLESS group changes themselves are propagated automatically by catalog sync.
 7. If client route rules are used, run `Sync route policy`.
+8. On the ingress node, verify `nft list chain inet megavpn
+   route_policy_output`, `nft list chain inet megavpn route_policy_prerouting`,
+   `ip rule show` and `ip route show table <backhaul_table>` when debugging a
+   remote-egress path.
 
 See [VLESS access groups](VLESS_GROUPS.md) for the detailed group model,
 runtime behavior and validation rules.
