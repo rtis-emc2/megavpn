@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.0.1.8`
+**Релиз:** `7.0.1.9`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -634,7 +634,8 @@ service access metadata.
 3. Откройте `Firewall -> Rules` и создайте ordered rules. Используйте presets
    для SSH, HTTPS, WireGuard, OpenVPN, IPsec/L2TP, Shadowsocks, HTTP proxy,
    MTProto, Nginx edge или invalid-packet случаев, затем уточните source lists
-   и ports.
+   и ports. Используйте filters правил, когда в catalog несколько policies или
+   chains.
 4. Откройте `Firewall -> Policies`, чтобы проверить defaults и количество rules.
 5. Откройте `Firewall -> Node state` или apply action в policy и поставьте apply
    на выбранную node.

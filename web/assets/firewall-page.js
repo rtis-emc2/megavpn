@@ -65,22 +65,86 @@
       return inventory().rules.filter((rule) => rule.policy_id === policyID);
     }
 
+    function ensureFirewallFilters() {
+      if (!state.firewallFilters || typeof state.firewallFilters !== 'object') {
+        state.firewallFilters = {};
+      }
+      const filters = state.firewallFilters;
+      if (!filters.ruleSearch) filters.ruleSearch = '';
+      if (!filters.rulePolicy) filters.rulePolicy = 'all';
+      if (!filters.ruleChain) filters.ruleChain = 'all';
+      if (!filters.ruleAction) filters.ruleAction = 'all';
+      if (!filters.addressSearch) filters.addressSearch = '';
+      return filters;
+    }
+
+    function policyDefaults(policy = {}) {
+      return {
+        input: String(policy.default_input_policy || 'accept').toLowerCase(),
+        forward: String(policy.default_forward_policy || 'accept').toLowerCase(),
+        output: String(policy.default_output_policy || 'accept').toLowerCase(),
+      };
+    }
+
+    function policyHasStrictDefaults(policy) {
+      const defaults = policyDefaults(policy);
+      return defaults.input !== 'accept' || defaults.forward !== 'accept' || defaults.output !== 'accept';
+    }
+
+    function policyPosture(policy, rules = []) {
+      const defaults = policyDefaults(policy);
+      const enabledRules = rules.filter((rule) => rule.enabled !== false && String(rule.status || 'active').toLowerCase() === 'active');
+      if (String(policy.status || 'active').toLowerCase() !== 'active') {
+        return { level: 'disabled', label: 'Disabled', detail: 'not selectable for normal rollout' };
+      }
+      if (!policyHasStrictDefaults(policy)) {
+        return { level: 'observe', label: 'Observe apply', detail: 'defaults stay accept unless strict mode is selected' };
+      }
+      if (!enabledRules.length) {
+        return { level: 'warn', label: 'Strict needs rules', detail: 'non-accept defaults with no active allow rules' };
+      }
+      if (defaults.output !== 'accept') {
+        return { level: 'warn', label: 'Output guard needed', detail: 'strict output requires control-plane egress' };
+      }
+      return { level: 'ready', label: 'Strict ready', detail: 'non-accept defaults with active catalog rules' };
+    }
+
+    function defaultPolicyPill(label, action) {
+      const normalized = String(action || 'accept').toLowerCase();
+      return `
+        <div class="firewall-default-pill ${escapeHTML(normalized)}">
+          <span>${escapeHTML(label)}</span>
+          <strong>${escapeHTML(normalized)}</strong>
+        </div>`;
+    }
+
+    function actionPill(action) {
+      const normalized = String(action || 'unknown').toLowerCase();
+      return `<span class="firewall-action-pill ${escapeHTML(normalized)}">${escapeHTML(normalized)}</span>`;
+    }
+
+    function chainChip(chain) {
+      return `<span class="firewall-chain-chip">${escapeHTML(chain || 'input')}</span>`;
+    }
+
     function renderSummary() {
       const inv = inventory();
       const activePolicies = inv.policies.filter((policy) => policy.status === 'active').length;
       const applied = inv.nodeStates.filter((item) => item.status === 'applied').length;
       const failed = inv.nodeStates.filter((item) => item.status === 'failed').length;
+      const strictPolicies = inv.policies.filter(policyHasStrictDefaults).length;
       return `
         <div class="firewall-summary-grid">
           <div class="pool-summary-card"><span>Policies</span><strong>${escapeHTML(String(inv.policies.length))}</strong><small>${escapeHTML(String(activePolicies))} active</small></div>
-          <div class="pool-summary-card"><span>Rules</span><strong>${escapeHTML(String(inv.rules.length))}</strong><small>ordered by priority</small></div>
+          <div class="pool-summary-card"><span>Rules</span><strong>${escapeHTML(String(inv.rules.length))}</strong><small>ordered by policy priority</small></div>
           <div class="pool-summary-card"><span>Address lists</span><strong>${escapeHTML(String(inv.lists.length))}</strong><small>${escapeHTML(String(inv.entries.length))} entries</small></div>
-          <div class="pool-summary-card"><span>Node state</span><strong>${escapeHTML(String(applied))}</strong><small>${escapeHTML(String(failed))} failed</small></div>
+          <div class="pool-summary-card"><span>Strict policies</span><strong>${escapeHTML(String(strictPolicies))}</strong><small>${escapeHTML(String(applied))} applied · ${escapeHTML(String(failed))} failed</small></div>
         </div>`;
     }
 
     function renderPolicyCard(policy) {
       const rules = rulesForPolicy(policy.id);
+      const posture = policyPosture(policy, rules);
       const canManage = hasPermission('firewall.manage');
       const canApply = hasPermission('firewall.apply');
       const protectedPolicy = policy.key === 'control_plane_default' || policy.key === 'node_base';
@@ -94,17 +158,21 @@
             ${statusTag(policy.status || 'unknown')}
           </div>
           ${policy.description ? `<p class="pool-description">${escapeHTML(policy.description)}</p>` : ''}
+          <div class="firewall-policy-posture ${escapeHTML(posture.level)}">
+            <strong>${escapeHTML(posture.label)}</strong>
+            <span>${escapeHTML(posture.detail)}</span>
+          </div>
           <div class="firewall-policy-facts">
-            <div><span>Input</span><strong>${escapeHTML(policy.default_input_policy || 'accept')}</strong></div>
-            <div><span>Forward</span><strong>${escapeHTML(policy.default_forward_policy || 'accept')}</strong></div>
-            <div><span>Output</span><strong>${escapeHTML(policy.default_output_policy || 'accept')}</strong></div>
+            ${defaultPolicyPill('Input', policy.default_input_policy || 'accept')}
+            ${defaultPolicyPill('Forward', policy.default_forward_policy || 'accept')}
+            ${defaultPolicyPill('Output', policy.default_output_policy || 'accept')}
             <div><span>Rules</span><strong>${escapeHTML(String(rules.length))}</strong></div>
           </div>
           <div class="firewall-rule-preview">
             ${rules.length ? rules.slice(0, 4).map((rule) => `
               <div>
                 <code>${escapeHTML(String(rule.priority || 1000))}</code>
-                ${statusTag(rule.action || 'unknown')}
+                ${actionPill(rule.action || 'unknown')}
                 <span>${escapeHTML(rule.chain || 'input')} · ${escapeHTML(rule.protocol || 'any')} · ${escapeHTML(firstText(rule.src_cidr, 'any'))} -> ${escapeHTML(firstText(rule.dst_cidr, 'any'))}</span>
               </div>`).join('') : '<div class="empty compact">No rules configured. Strict default policies are only enforced when enabled during apply.</div>'}
           </div>
@@ -117,12 +185,50 @@
         </article>`;
     }
 
-    function renderAddressLists() {
+    function entrySearchText(entry, list = {}) {
+      return [
+        entry.value,
+        entry.value_type,
+        entry.label,
+        entry.status,
+        entry.list_key,
+        list.key,
+        list.label,
+        list.scope,
+      ].map((value) => String(value || '').toLowerCase()).join(' ');
+    }
+
+    function listSearchText(list, entries = []) {
+      return [
+        list.key,
+        list.label,
+        list.description,
+        list.scope,
+        list.status,
+        ...entries.map((entry) => entrySearchText(entry, list)),
+      ].map((value) => String(value || '').toLowerCase()).join(' ');
+    }
+
+    function filteredAddressLists() {
       const inv = inventory();
-      if (!inv.lists.length) {
-        return `<tr><td colspan="5"><div class="empty">No address lists configured.${hasPermission('firewall.manage') ? ' Create a list before adding source or destination matchers.' : ''}</div></td></tr>`;
+      const query = String(ensureFirewallFilters().addressSearch || '').trim().toLowerCase();
+      if (!query) return inv.lists;
+      return inv.lists.filter((list) => listSearchText(list, inv.entries.filter((entry) => entry.list_id === list.id)).includes(query));
+    }
+
+    function filteredAddressEntries() {
+      const inv = inventory();
+      const query = String(ensureFirewallFilters().addressSearch || '').trim().toLowerCase();
+      if (!query) return inv.entries;
+      return inv.entries.filter((entry) => entrySearchText(entry, addressListByID(entry.list_id) || {}).includes(query));
+    }
+
+    function renderAddressLists(lists = filteredAddressLists()) {
+      if (!lists.length) {
+        const filtered = String(ensureFirewallFilters().addressSearch || '').trim() !== '';
+        return `<tr><td colspan="5"><div class="empty">${filtered ? 'No address lists match the current filter.' : `No address lists configured.${hasPermission('firewall.manage') ? ' Create a list before adding source or destination matchers.' : ''}`}</div></td></tr>`;
       }
-      return inv.lists.map((list) => `
+      return lists.map((list) => `
         <tr>
           <td><strong>${escapeHTML(list.label || list.key)}</strong><br><code>${escapeHTML(list.key || list.id)}</code></td>
           <td>${escapeHTML(list.scope || 'global')}</td>
@@ -138,12 +244,12 @@
         </tr>`).join('');
     }
 
-    function renderEntryRows() {
-      const inv = inventory();
-      if (!inv.entries.length) {
-        return `<tr><td colspan="6"><div class="empty">No address entries configured.${hasPermission('firewall.manage') ? ' Add entries to reusable address lists.' : ''}</div></td></tr>`;
+    function renderEntryRows(entries = filteredAddressEntries()) {
+      if (!entries.length) {
+        const filtered = String(ensureFirewallFilters().addressSearch || '').trim() !== '';
+        return `<tr><td colspan="6"><div class="empty">${filtered ? 'No address entries match the current filter.' : `No address entries configured.${hasPermission('firewall.manage') ? ' Add entries to reusable address lists.' : ''}`}</div></td></tr>`;
       }
-      return inv.entries.map((entry) => {
+      return entries.map((entry) => {
         const list = addressListByID(entry.list_id);
         return `
           <tr>
@@ -162,26 +268,63 @@
       }).join('');
     }
 
-    function renderRuleRows() {
+    function ruleSearchText(rule) {
+      const policy = policyByID(rule.policy_id) || {};
+      return [
+        rule.priority,
+        rule.chain,
+        rule.action,
+        rule.protocol,
+        rule.src_list_key,
+        rule.dst_list_key,
+        rule.src_cidr,
+        rule.dst_cidr,
+        rule.src_ports,
+        rule.dst_ports,
+        Array.isArray(rule.state_match) ? rule.state_match.join(',') : '',
+        rule.comment,
+        rule.status,
+        policy.label,
+        policy.key,
+      ].map((value) => String(value || '').toLowerCase()).join(' ');
+    }
+
+    function filteredRules() {
       const inv = inventory();
-      if (!inv.rules.length) {
-        return `<tr><td colspan="9"><div class="empty">No firewall rules configured.${hasPermission('firewall.manage') ? ' Create a policy rule or keep default accept.' : ''}</div></td></tr>`;
+      const filters = ensureFirewallFilters();
+      const query = String(filters.ruleSearch || '').trim().toLowerCase();
+      return inv.rules.filter((rule) => {
+        if (filters.rulePolicy !== 'all' && rule.policy_id !== filters.rulePolicy) return false;
+        if (filters.ruleChain !== 'all' && String(rule.chain || 'input') !== filters.ruleChain) return false;
+        if (filters.ruleAction !== 'all' && String(rule.action || 'accept') !== filters.ruleAction) return false;
+        if (query && !ruleSearchText(rule).includes(query)) return false;
+        return true;
+      });
+    }
+
+    function renderRuleRows(rows = filteredRules()) {
+      if (!rows.length) {
+        const filters = ensureFirewallFilters();
+        const filtered = String(filters.ruleSearch || '').trim() !== '' || filters.rulePolicy !== 'all' || filters.ruleChain !== 'all' || filters.ruleAction !== 'all';
+        return `<tr><td colspan="9"><div class="empty">${filtered ? 'No firewall rules match the current filters.' : `No firewall rules configured.${hasPermission('firewall.manage') ? ' Create a policy rule or keep default accept.' : ''}`}</div></td></tr>`;
       }
-      return inv.rules.map((rule) => {
+      return rows.map((rule) => {
         const policy = policyByID(rule.policy_id);
         const src = firstText(rule.src_list_key ? '@' + rule.src_list_key : '', rule.src_cidr, 'any');
         const dst = firstText(rule.dst_list_key ? '@' + rule.dst_list_key : '', rule.dst_cidr, 'any');
         const ports = firstText(rule.dst_ports, rule.src_ports, 'any');
+        const enabled = rule.enabled !== false && String(rule.status || 'active').toLowerCase() === 'active';
+        const states = Array.isArray(rule.state_match) && rule.state_match.length ? rule.state_match.join(', ') : 'any state';
         return `
           <tr>
             <td><code>${escapeHTML(String(rule.priority || 1000))}</code></td>
             <td>${escapeHTML(policy?.label || policy?.key || rule.policy_id || 'policy')}</td>
-            <td>${escapeHTML(rule.chain || 'input')}</td>
-            <td>${statusTag(rule.action || 'unknown')}</td>
+            <td>${chainChip(rule.chain || 'input')}</td>
+            <td>${actionPill(rule.action || 'unknown')}</td>
             <td>${escapeHTML(rule.protocol || 'any')}</td>
             <td><code>${escapeHTML(src)}</code></td>
-            <td><code>${escapeHTML(dst)}</code><br><span class="metric-caption">ports ${escapeHTML(ports)}</span></td>
-            <td>${escapeHTML(rule.comment || '')}</td>
+            <td><code>${escapeHTML(dst)}</code><br><span class="metric-caption">ports ${escapeHTML(ports)} · ${escapeHTML(states)}</span></td>
+            <td>${escapeHTML(rule.comment || '')}<br><span class="tag ${enabled ? 'ok' : 'stub'}">${enabled ? 'enabled' : 'disabled'}</span></td>
             <td>
               <div class="compact-action-grid">
                 <button class="secondary-btn firewall-edit-rule-btn" type="button" data-policy-id="${escapeHTML(rule.policy_id)}" data-rule-id="${escapeHTML(rule.id)}"${hasPermission('firewall.manage') ? '' : ' disabled'}>Edit</button>
@@ -196,10 +339,14 @@
       const inv = inventory();
       const rows = (state.nodes || []).map((node) => {
         const item = inv.nodeStates.find((row) => row.node_id === node.id);
+        const observed = item?.observed || {};
+        const enforcement = firstText(observed.default_policy_enforcement, 'not applied');
+        const ruleCount = observed.rule_count === undefined ? 'n/a' : String(observed.rule_count);
+        const systemRuleCount = observed.system_rule_count === undefined ? 'n/a' : String(observed.system_rule_count);
         return `
           <tr>
             <td><strong>${escapeHTML(node.name || node.id)}</strong><br><span class="metric-caption">${escapeHTML(node.role || 'node')} · ${escapeHTML(node.address || 'n/a')}</span></td>
-            <td>${escapeHTML(item?.policy_key || 'node_base')}</td>
+            <td>${escapeHTML(item?.policy_key || 'node_base')}<br><span class="metric-caption">${escapeHTML(enforcement)} · rules ${escapeHTML(ruleCount)} · system ${escapeHTML(systemRuleCount)}</span></td>
             <td>${statusTag(item?.status || 'unknown')}</td>
             <td>${escapeHTML(item?.updated_at ? formatDate(item.updated_at) : 'n/a')}</td>
             <td><button class="secondary-btn firewall-node-apply-btn" type="button" data-node-id="${escapeHTML(node.id)}"${hasPermission('firewall.apply') ? '' : ' disabled'}>Apply</button></td>
@@ -314,7 +461,35 @@
         </section>`;
     }
 
+    function renderRuleFilters(inv, rows) {
+      const filters = ensureFirewallFilters();
+      return `
+        <div class="firewall-filter-bar">
+          <input id="firewallRuleSearchInput" class="compact-search" value="${escapeHTML(filters.ruleSearch || '')}" placeholder="Search policy, CIDR, list, port, comment">
+          <select id="firewallRulePolicyFilter">
+            <option value="all"${filters.rulePolicy === 'all' ? ' selected' : ''}>All policies</option>
+            ${inv.policies.map((policy) => `<option value="${escapeHTML(policy.id)}"${filters.rulePolicy === policy.id ? ' selected' : ''}>${escapeHTML(policy.label || policy.key)}</option>`).join('')}
+          </select>
+          <select id="firewallRuleChainFilter">
+            ${selectOption('all', filters.ruleChain, 'All chains')}
+            ${selectOption('input', filters.ruleChain)}
+            ${selectOption('forward', filters.ruleChain)}
+            ${selectOption('output', filters.ruleChain)}
+          </select>
+          <select id="firewallRuleActionFilter">
+            ${selectOption('all', filters.ruleAction, 'All actions')}
+            ${selectOption('accept', filters.ruleAction)}
+            ${selectOption('drop', filters.ruleAction)}
+            ${selectOption('reject', filters.ruleAction)}
+          </select>
+          <button class="secondary-btn" id="applyFirewallRuleFiltersBtn" type="button">Apply filters</button>
+          <button class="secondary-btn" id="resetFirewallRuleFiltersBtn" type="button">Reset</button>
+          <span class="tag">${escapeHTML(String(rows.length))} shown</span>
+        </div>`;
+    }
+
     function renderRulesSection(inv) {
+      const rows = filteredRules();
       return `
         <section class="table-card">
           <div class="table-head">
@@ -326,13 +501,28 @@
               <span class="tag">${escapeHTML(String(inv.rules.length))} rules</span>
             </div>
           </div>
+          ${renderRuleFilters(inv, rows)}
           <div class="table-wrap">
-            <table class="firewall-rules-table"><thead><tr><th>Priority</th><th>Policy</th><th>Chain</th><th>Action</th><th>Proto</th><th>Source</th><th>Destination</th><th>Comment</th><th>Actions</th></tr></thead><tbody>${renderRuleRows()}</tbody></table>
+            <table class="firewall-rules-table"><thead><tr><th>Priority</th><th>Policy</th><th>Chain</th><th>Action</th><th>Proto</th><th>Source</th><th>Destination</th><th>Comment</th><th>Actions</th></tr></thead><tbody>${renderRuleRows(rows)}</tbody></table>
           </div>
         </section>`;
     }
 
+    function renderAddressFilters(listRows, entryRows) {
+      const filters = ensureFirewallFilters();
+      return `
+        <div class="firewall-filter-bar">
+          <input id="firewallAddressSearchInput" class="compact-search" value="${escapeHTML(filters.addressSearch || '')}" placeholder="Search list, CIDR, range, DNS, label">
+          <button class="secondary-btn" id="applyFirewallAddressFiltersBtn" type="button">Apply filters</button>
+          <button class="secondary-btn" id="resetFirewallAddressFiltersBtn" type="button">Reset</button>
+          <span class="tag">${escapeHTML(String(listRows.length))} lists</span>
+          <span class="tag">${escapeHTML(String(entryRows.length))} entries</span>
+        </div>`;
+    }
+
     function renderAddressListsSection(inv) {
+      const listRows = filteredAddressLists();
+      const entryRows = filteredAddressEntries();
       return `
         <section class="table-card">
           <div class="table-head">
@@ -344,11 +534,35 @@
               <span class="tag">${escapeHTML(String(inv.entries.length))} entries</span>
             </div>
           </div>
+          ${renderAddressFilters(listRows, entryRows)}
           <div class="table-wrap">
-            <table class="firewall-address-list-table"><thead><tr><th>List</th><th>Scope</th><th>Entries</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderAddressLists()}</tbody></table>
+            <table class="firewall-address-list-table"><thead><tr><th>List</th><th>Scope</th><th>Entries</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderAddressLists(listRows)}</tbody></table>
           </div>
           <div class="table-wrap firewall-entry-wrap">
-            <table class="firewall-address-entry-table"><thead><tr><th>List</th><th>Value</th><th>Type</th><th>Label</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderEntryRows()}</tbody></table>
+            <table class="firewall-address-entry-table"><thead><tr><th>List</th><th>Value</th><th>Type</th><th>Label</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderEntryRows(entryRows)}</tbody></table>
+          </div>
+        </section>`;
+    }
+
+    function renderFirewallPosturePanel(inv) {
+      const strictPolicies = inv.policies.filter(policyHasStrictDefaults);
+      const outputStrict = strictPolicies.filter((policy) => policyDefaults(policy).output !== 'accept').length;
+      const zeroRuleStrict = strictPolicies.filter((policy) => !rulesForPolicy(policy.id).filter((rule) => rule.enabled !== false && String(rule.status || 'active').toLowerCase() === 'active').length).length;
+      const activeAccept = inv.policies.filter((policy) => !policyHasStrictDefaults(policy) && String(policy.status || 'active').toLowerCase() === 'active').length;
+      return `
+        <section class="table-card firewall-posture-card">
+          <div class="table-head">
+            <div>
+              <h2>Enforcement posture</h2>
+              <div class="metric-caption">Default policies are opt-in at apply time; rules remain explicit catalog data.</div>
+            </div>
+            <div class="table-tools">${statusTag(zeroRuleStrict || outputStrict ? 'pending' : 'ready')}</div>
+          </div>
+          <div class="firewall-posture-grid">
+            <div><span>Default accept</span><strong>${escapeHTML(String(activeAccept))}</strong><small>active observe-mode baselines</small></div>
+            <div><span>Strict candidates</span><strong>${escapeHTML(String(strictPolicies.length))}</strong><small>policies with drop/reject defaults</small></div>
+            <div><span>Output guarded</span><strong>${escapeHTML(String(outputStrict))}</strong><small>requires control-plane egress</small></div>
+            <div><span>Needs allow rules</span><strong>${escapeHTML(String(zeroRuleStrict))}</strong><small>strict defaults with no active rules</small></div>
           </div>
         </section>`;
     }
@@ -374,7 +588,8 @@
             <div class="pool-summary-card"><span>Apply drift</span><strong>${escapeHTML(String(stale))}</strong><small>pending or stale node states</small></div>
             <div class="pool-summary-card"><span>Failures</span><strong>${escapeHTML(String(failed))}</strong><small>requires operator action</small></div>
           </div>
-        </section>`;
+        </section>
+        ${renderFirewallPosturePanel(inv)}`;
     }
 
     function render() {
@@ -393,6 +608,8 @@
         </div>`;
       bindTabs();
       bindActions();
+      bindRuleFilters();
+      bindAddressFilters();
     }
 
     function bindTabs() {
@@ -449,6 +666,54 @@
       });
       document.querySelectorAll('.firewall-apply-quick-btn').forEach((button) => {
         button.addEventListener('click', () => openApplyModal(button.dataset.policyId || '', button.dataset.nodeId || ''));
+      });
+    }
+
+    function bindRuleFilters() {
+      const filters = ensureFirewallFilters();
+      const search = document.getElementById('firewallRuleSearchInput');
+      const policy = document.getElementById('firewallRulePolicyFilter');
+      const chain = document.getElementById('firewallRuleChainFilter');
+      const action = document.getElementById('firewallRuleActionFilter');
+      const rerender = () => {
+        filters.ruleSearch = String(search?.value || '');
+        filters.rulePolicy = String(policy?.value || 'all');
+        filters.ruleChain = String(chain?.value || 'all');
+        filters.ruleAction = String(action?.value || 'all');
+        render();
+      };
+      search?.addEventListener('input', () => {
+        filters.ruleSearch = String(search.value || '');
+      });
+      search?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') rerender();
+      });
+      policy?.addEventListener('change', rerender);
+      chain?.addEventListener('change', rerender);
+      action?.addEventListener('change', rerender);
+      document.getElementById('applyFirewallRuleFiltersBtn')?.addEventListener('click', rerender);
+      document.getElementById('resetFirewallRuleFiltersBtn')?.addEventListener('click', () => {
+        filters.ruleSearch = '';
+        filters.rulePolicy = 'all';
+        filters.ruleChain = 'all';
+        filters.ruleAction = 'all';
+        render();
+      });
+    }
+
+    function bindAddressFilters() {
+      const filters = ensureFirewallFilters();
+      const search = document.getElementById('firewallAddressSearchInput');
+      search?.addEventListener('input', () => {
+        filters.addressSearch = String(search.value || '');
+      });
+      search?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') render();
+      });
+      document.getElementById('applyFirewallAddressFiltersBtn')?.addEventListener('click', () => render());
+      document.getElementById('resetFirewallAddressFiltersBtn')?.addEventListener('click', () => {
+        filters.addressSearch = '';
+        render();
       });
     }
 
@@ -552,6 +817,25 @@
       document.getElementById('firewallAddressEntryForm')?.addEventListener('submit', submitAddressEntry);
     }
 
+    function renderRulePresetGroups() {
+      const groups = [
+        { label: 'Management', items: [['ssh', 'SSH admin'], ['https', 'HTTPS control'], ['cp_egress', 'Control-plane egress']] },
+        { label: 'VPN', items: [['wireguard', 'WireGuard UDP'], ['openvpn_udp', 'OpenVPN UDP'], ['openvpn_tcp', 'OpenVPN TCP'], ['ipsec_ike', 'IPsec IKE'], ['l2tp', 'L2TP']] },
+        { label: 'Proxy / edge', items: [['shadowsocks_tcp', 'Shadowsocks TCP'], ['shadowsocks_udp', 'Shadowsocks UDP'], ['http_proxy', 'HTTP proxy'], ['mtproto', 'MTProto'], ['nginx_edge', 'Nginx edge']] },
+        { label: 'Hygiene', items: [['drop_invalid', 'Drop invalid']] },
+      ];
+      return `
+        <div class="firewall-rule-presets">
+          ${groups.map((group) => `
+            <div class="firewall-preset-group">
+              <strong>${escapeHTML(group.label)}</strong>
+              <div>
+                ${group.items.map(([key, label]) => `<button type="button" data-firewall-rule-preset="${escapeHTML(key)}">${escapeHTML(label)}</button>`).join('')}
+              </div>
+            </div>`).join('')}
+        </div>`;
+    }
+
     function openRuleModal(policyID, ruleID = '') {
       const inv = inventory();
       if (!inv.policies.length) {
@@ -569,21 +853,7 @@
       const editing = Boolean(rule.id);
       const selected = policyByID(policyID || rule.policy_id) || inv.policies[0] || {};
       openModal(editing ? `Edit firewall rule: ${rule.comment || rule.id}` : 'Add firewall rule', 'Firewall policy', `
-        <div class="firewall-rule-presets">
-          <button type="button" data-firewall-rule-preset="ssh">SSH admin</button>
-          <button type="button" data-firewall-rule-preset="https">HTTPS control</button>
-          <button type="button" data-firewall-rule-preset="wireguard">WireGuard UDP</button>
-          <button type="button" data-firewall-rule-preset="openvpn_udp">OpenVPN UDP</button>
-          <button type="button" data-firewall-rule-preset="openvpn_tcp">OpenVPN TCP</button>
-          <button type="button" data-firewall-rule-preset="ipsec_ike">IPsec IKE</button>
-          <button type="button" data-firewall-rule-preset="l2tp">L2TP</button>
-          <button type="button" data-firewall-rule-preset="shadowsocks_tcp">Shadowsocks TCP</button>
-          <button type="button" data-firewall-rule-preset="shadowsocks_udp">Shadowsocks UDP</button>
-          <button type="button" data-firewall-rule-preset="http_proxy">HTTP proxy</button>
-          <button type="button" data-firewall-rule-preset="mtproto">MTProto</button>
-          <button type="button" data-firewall-rule-preset="nginx_edge">Nginx edge</button>
-          <button type="button" data-firewall-rule-preset="drop_invalid">Drop invalid</button>
-        </div>
+        ${renderRulePresetGroups()}
         <form id="firewallRuleForm" class="form-grid" data-rule-id="${escapeHTML(rule.id || '')}" data-policy-id="${escapeHTML(selected.id || '')}">
           <div class="field"><label>Policy</label><select name="policy_id"${editing ? ' disabled' : ''} required>${inv.policies.map((policy) => `<option value="${escapeHTML(policy.id)}"${policy.id === selected.id ? ' selected' : ''}>${escapeHTML(policy.label || policy.key)}</option>`).join('')}</select>${editing ? `<input type="hidden" name="policy_id" value="${escapeHTML(selected.id || '')}" />` : ''}</div>
           <div class="field"><label>Priority</label><input name="priority" type="number" min="1" max="65000" value="${escapeHTML(String(rule.priority || 1000))}" required /></div>
@@ -610,23 +880,63 @@
       bindRulePresets(form);
     }
 
+    function renderApplyPolicyDetails(policy = {}) {
+      const defaults = policyDefaults(policy);
+      const rules = policy.id ? rulesForPolicy(policy.id) : [];
+      const posture = policyPosture(policy, rules);
+      const outputGuard = defaults.output === 'accept'
+        ? 'Output default accept'
+        : 'Strict output requires pinned control-plane egress or an explicit output allow rule';
+      return `
+        <div class="firewall-apply-summary">
+          <div class="firewall-apply-summary-head">
+            <div>
+              <strong>${escapeHTML(policy.label || policy.key || 'Policy')}</strong>
+              <span>${escapeHTML(policy.key || policy.id || 'not selected')} · ${escapeHTML(policy.scope || 'node')}</span>
+            </div>
+            <span class="firewall-policy-posture ${escapeHTML(posture.level)} compact">${escapeHTML(posture.label)}</span>
+          </div>
+          <div class="firewall-policy-facts">
+            ${defaultPolicyPill('Input', defaults.input)}
+            ${defaultPolicyPill('Forward', defaults.forward)}
+            ${defaultPolicyPill('Output', defaults.output)}
+            <div><span>Rules</span><strong>${escapeHTML(String(rules.length))}</strong></div>
+          </div>
+          <div class="notice ${defaults.output === 'accept' ? '' : 'warn'}">${escapeHTML(outputGuard)}</div>
+        </div>`;
+    }
+
     function openApplyModal(policyID, nodeID) {
       const inv = inventory();
       const selectedPolicy = policyByID(policyID) || inv.policies.find((policy) => policy.key === 'node_base') || inv.policies[0] || {};
       const selectedNode = (state.nodes || []).find((node) => node.id === nodeID) || (state.nodes || [])[0] || {};
-      const defaultPolicySummary = `${selectedPolicy.default_input_policy || 'accept'} / ${selectedPolicy.default_forward_policy || 'accept'} / ${selectedPolicy.default_output_policy || 'accept'}`;
       openModal('Apply firewall policy', 'Node firewall', `
         <form id="firewallApplyForm" class="form-grid">
           <div class="field"><label>Node</label><select name="node_id" required>${(state.nodes || []).map((node) => `<option value="${escapeHTML(node.id)}"${node.id === selectedNode.id ? ' selected' : ''}>${escapeHTML(node.name || node.id)} · ${escapeHTML(node.role || 'node')} · ${escapeHTML(node.address || 'n/a')}</option>`).join('')}</select></div>
-          <div class="field"><label>Policy</label><select name="policy_id" required>${inv.policies.map((policy) => `<option value="${escapeHTML(policy.id)}"${policy.id === selectedPolicy.id ? ' selected' : ''}>${escapeHTML(policy.label || policy.key)}</option>`).join('')}</select></div>
-          <div class="notice field full">Default policies for the selected policy are input / forward / output: <strong>${escapeHTML(defaultPolicySummary)}</strong>. Without strict mode, apply keeps managed base chains at accept and only installs explicit rules.</div>
-          <label class="field checkbox-line full"><input name="enforce_default_policy" type="checkbox" /> Enforce default chain policies on this apply</label>
-          <div class="notice warn field full">Strict mode rewrites managed nftables base chains. If output default is drop or reject, the agent must keep a pinned IP control-plane egress rule or the apply job will fail before touching the firewall.</div>
+          <div class="field"><label>Policy</label><select name="policy_id" id="firewallApplyPolicySelect" required>${inv.policies.map((policy) => `<option value="${escapeHTML(policy.id)}"${policy.id === selectedPolicy.id ? ' selected' : ''}>${escapeHTML(policy.label || policy.key)}</option>`).join('')}</select></div>
+          <div id="firewallApplyPolicyDetails" class="field full">${renderApplyPolicyDetails(selectedPolicy)}</div>
+          <div class="firewall-apply-mode-grid field full">
+            <label class="firewall-apply-mode-card">
+              <input name="apply_mode" type="radio" value="observe" checked />
+              <span>Rules only</span>
+              <small>Base chains stay accept; explicit catalog rules are installed.</small>
+            </label>
+            <label class="firewall-apply-mode-card">
+              <input name="apply_mode" type="radio" value="strict" />
+              <span>Strict defaults</span>
+              <small>Default input, forward and output policies are enforced.</small>
+            </label>
+          </div>
           <div class="field full inline-actions"><button class="primary-btn" type="submit">Queue apply</button><button class="secondary-btn" type="button" id="cancelFirewallApplyBtn">Cancel</button></div>
         </form>
         <div id="firewallApplyResult" class="form-result"></div>`, { wide: true });
       document.getElementById('cancelFirewallApplyBtn')?.addEventListener('click', closeModal);
       document.getElementById('firewallApplyForm')?.addEventListener('submit', submitApply);
+      document.getElementById('firewallApplyPolicySelect')?.addEventListener('change', (event) => {
+        const details = document.getElementById('firewallApplyPolicyDetails');
+        const policy = policyByID(String(event.currentTarget?.value || '')) || {};
+        if (details) details.innerHTML = renderApplyPolicyDetails(policy);
+      });
     }
 
     function openDeleteAddressListModal(listID, label) {
@@ -862,7 +1172,7 @@
       try {
         const job = await sendJSON(`/api/v1/nodes/${encodeURIComponent(nodeID)}/firewall/apply`, 'POST', {
           policy_id: policyID,
-          enforce_default_policy: Boolean(form.get('enforce_default_policy')),
+          enforce_default_policy: String(form.get('apply_mode') || 'observe') === 'strict',
         });
         if (result) result.innerHTML = `<span class="tag ok">queued</span> <code>${escapeHTML(job.id || '')}</code>`;
         if (typeof watchJob === 'function' && job?.id) {
@@ -929,6 +1239,15 @@
           dst_ports: '443',
           state_match: 'new,established',
           comment: 'allow HTTPS control channel',
+        },
+        cp_egress: {
+          priority: '90',
+          chain: 'output',
+          action: 'accept',
+          protocol: 'tcp',
+          dst_ports: '443',
+          state_match: 'new,established',
+          comment: 'allow control-plane API egress',
         },
         wireguard: {
           priority: '300',

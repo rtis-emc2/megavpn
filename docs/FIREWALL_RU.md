@@ -1,6 +1,6 @@
 # Каталог firewall-политик
 
-**Релиз:** `7.0.1.8`
+**Релиз:** `7.0.1.9`
 
 Firewall - это managed workspace для границ control-plane и node. Он специально
 сделан как каталог перед применением: оператор готовит address lists,
@@ -36,6 +36,21 @@ apply job не поставлен в очередь и не завершился
 presets для SSH management, HTTPS control, WireGuard, OpenVPN TCP/UDP, IPsec
 IKE/NAT-T, L2TP, Shadowsocks TCP/UDP, HTTP proxy, MTProto, Nginx edge HTTP(S)
 и drop invalid packets.
+
+Вкладка `Policies` показывает posture каждой policy, default
+input/forward/output actions и короткий preview правил. Вкладка `Rules`
+содержит локальные filters по policy, chain, action и текстовый поиск по
+CIDR/list/port/comment fields. Вкладка `Address lists` содержит локальный поиск
+по metadata list и values entries.
+
+Apply dialog разделен на два явных режима:
+
+- `Rules only`: base chains остаются в `accept`; устанавливаются explicit
+  catalog rules.
+- `Strict defaults`: agent применяет default input/forward/output policies.
+
+`Node state` показывает последний observed enforcement mode, число explicit
+rules и число system safety rules, которые вернул agent.
 
 ## Security model
 

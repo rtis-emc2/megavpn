@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.8`
+**Release:** `7.0.1.9`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -633,7 +633,8 @@ Recommended workflow:
    single IP, range or DNS.
 3. Open `Firewall -> Rules` and create ordered rules. Use presets for SSH,
    HTTPS, WireGuard, OpenVPN, IPsec/L2TP, Shadowsocks, HTTP proxy, MTProto,
-   Nginx edge or invalid-packet cases, then adjust source lists and ports.
+   Nginx edge or invalid-packet cases, then adjust source lists and ports. Use
+   the rule filters when the catalog has multiple policies or chains.
 4. Open `Firewall -> Policies` to review defaults and rule count.
 5. Open `Firewall -> Node state` or policy apply action and queue apply for the
    selected node.

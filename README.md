@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.8`
+**Release:** `7.0.1.9`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,7 +55,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.8` is a hardening baseline for release stabilization. The codebase has
+`7.0.1.9` is a hardening baseline for release stabilization. The codebase has
 moved from feature expansion to controlled production-readiness work. The
 current focus is:
 
@@ -70,6 +70,8 @@ current focus is:
   managed rollback on failed validation/apply;
 - managed firewall catalog with explicit protocol presets and controlled
   default-policy enforcement for nftables apply;
+- operator-grade Firewall UI with posture cards, rule filters, grouped
+  protocol presets and explicit apply modes;
 - OpenVPN full-tunnel defaults with managed forwarding and NAT policy;
 - OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, Nginx and Backhaul smoke matrix;
 - client provisioning and route-policy validation;

@@ -1,6 +1,6 @@
 # Firewall Policy Catalog
 
-**Release:** `7.0.1.8`
+**Release:** `7.0.1.9`
 
 Firewall is the managed policy workspace for node and control-plane boundaries.
 It is intentionally modeled as a catalog before apply: operators prepare address
@@ -36,6 +36,22 @@ The top workflow buttons jump directly to the required stage. The rule editor
 contains presets for SSH management, HTTPS control, WireGuard, OpenVPN
 TCP/UDP, IPsec IKE/NAT-T, L2TP, Shadowsocks TCP/UDP, HTTP proxy, MTProto,
 Nginx edge HTTP(S) and invalid-packet drop.
+
+The `Policies` view shows each policy posture, default input/forward/output
+actions and a short rule preview. The `Rules` view includes local filters for
+policy, chain, action and text search across CIDR/list/port/comment fields.
+The `Address lists` view includes local search across list metadata and entry
+values.
+
+The apply dialog is split into two explicit modes:
+
+- `Rules only`: base chains stay at `accept`; explicit catalog rules are
+  installed.
+- `Strict defaults`: default input/forward/output policies are enforced by the
+  agent.
+
+`Node state` shows the last observed enforcement mode, explicit rule count and
+system safety rule count returned by the agent.
 
 ## Security Model
 
