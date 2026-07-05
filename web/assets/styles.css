@@ -2592,10 +2592,17 @@ tr:hover td { background: #f8fafc; }
   min-width: 420px;
 }
 .revision-page-card {
-  overflow: visible;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 .revision-page-head {
   align-items: flex-start;
+  min-width: 0;
+}
+.revision-page-head > div,
+.revision-page-head .table-tools {
+  min-width: 0;
 }
 .revision-page-head p {
   margin: 5px 0 0;
@@ -2615,6 +2622,8 @@ tr:hover td { background: #f8fafc; }
   display: grid;
   grid-template-columns: minmax(220px, 1.1fr) minmax(0, 2fr);
   gap: 14px;
+  min-width: 0;
+  max-width: calc(100% - 44px);
   margin: 16px 22px 0;
   padding: 14px;
   border: 1px solid var(--line);
@@ -2640,6 +2649,7 @@ tr:hover td { background: #f8fafc; }
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+  min-width: 0;
 }
 .revision-fact {
   display: grid;
@@ -2662,6 +2672,7 @@ tr:hover td { background: #f8fafc; }
   overflow-wrap: anywhere;
 }
 .revision-result {
+  max-width: calc(100% - 44px);
   margin: 16px 22px 22px;
 }
 .revision-error {
@@ -2889,6 +2900,7 @@ tr:hover td { background: #f8fafc; }
 }
 .backhaul-list {
   display: grid;
+  min-width: 0;
 }
 .backhaul-empty {
   margin: 16px;
@@ -2896,6 +2908,8 @@ tr:hover td { background: #f8fafc; }
 .backhaul-row {
   display: grid;
   gap: 14px;
+  min-width: 0;
+  max-width: 100%;
   padding: 18px;
   border-bottom: 1px solid var(--line);
   background: #ffffff;
@@ -2936,15 +2950,17 @@ tr:hover td { background: #f8fafc; }
   gap: 6px;
   flex-wrap: wrap;
   min-width: 0;
+  max-width: 100%;
 }
 .backhaul-row-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 1.05fr) minmax(240px, 1.05fr) minmax(340px, 1.7fr) minmax(116px, 0.42fr);
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(240px, 1.45fr) minmax(96px, 0.45fr);
   gap: 12px;
   align-items: stretch;
+  min-width: 0;
 }
 .backhaul-row-grid.compact {
-  grid-template-columns: minmax(220px, 1fr) minmax(240px, 1fr) minmax(320px, 1.35fr) minmax(116px, 0.45fr);
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(220px, 1.3fr) minmax(96px, 0.45fr);
 }
 .backhaul-panel {
   display: grid;
@@ -3040,6 +3056,7 @@ tr:hover td { background: #f8fafc; }
 }
 .backhaul-actions-panel {
   align-content: start;
+  min-width: 0;
 }
 .backhaul-actions {
   display: grid;
@@ -3173,7 +3190,7 @@ tr:hover td { background: #f8fafc; }
 }
 .instance-list-toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1.35fr) minmax(150px, 0.75fr) minmax(170px, 0.9fr) minmax(170px, 0.9fr) minmax(260px, auto);
+  grid-template-columns: minmax(180px, 1.35fr) repeat(3, minmax(132px, 0.75fr)) minmax(0, max-content);
   gap: 10px;
   align-items: end;
   min-width: 0;
@@ -3300,10 +3317,13 @@ tr:hover td { background: #f8fafc; }
   justify-content: flex-end;
   gap: 8px;
   min-width: 0;
+  max-width: 100%;
   flex-wrap: wrap;
 }
 .instance-view-switch {
   display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
   min-height: 36px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -4519,7 +4539,7 @@ tr:hover td { background: #f8fafc; }
   cursor: pointer;
 }
 .node-map-pending-row {
-  grid-template-columns: minmax(180px, 1fr) minmax(110px, auto) minmax(220px, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
 }
 .node-map-location-row:hover,
 .node-map-pending-row:hover {
@@ -4539,6 +4559,9 @@ tr:hover td { background: #f8fafc; }
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.node-map-pending-row .tag {
+  max-width: 100%;
 }
 .node-map-location-row small,
 .node-map-pending-row small {
