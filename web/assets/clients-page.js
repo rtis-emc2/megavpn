@@ -221,9 +221,13 @@
 
     function vlessGroupsForInstance(instance) {
       const spec = instance?.spec && typeof instance.spec === 'object' ? instance.spec : {};
-      const rawGroups = Array.isArray(spec.vless_groups)
+      const instanceGroups = Array.isArray(spec.vless_groups)
         ? spec.vless_groups
         : (Array.isArray(spec.xray_groups) ? spec.xray_groups : (Array.isArray(spec.outbound_groups) ? spec.outbound_groups : []));
+      const catalogGroups = Array.isArray(state.vlessGroupTemplates) && state.vlessGroupTemplates.length
+        ? state.vlessGroupTemplates
+        : (Array.isArray(state.vlessGroupCatalog) ? state.vlessGroupCatalog.filter((group) => String(group.status || 'active').toLowerCase() === 'active') : []);
+      const rawGroups = [...catalogGroups, ...instanceGroups];
       const seen = new Set();
       const groups = rawGroups.map((group) => {
         const source = group && typeof group === 'object' ? group : {};

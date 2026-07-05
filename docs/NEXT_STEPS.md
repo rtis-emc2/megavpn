@@ -1,6 +1,6 @@
 # Next Steps
 
-**Release:** `7.0.1.2`
+**Release:** `7.0.1.3`
 
 Current roadmap: [`ROADMAP_V1_AND_TZ.md`](../ROADMAP_V1_AND_TZ.md).
 Russian companion: [`NEXT_STEPS_RU.md`](NEXT_STEPS_RU.md).
@@ -42,9 +42,9 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
 9. Validate VLESS subscriptions end to end: rotate/revoke token, one-time URL
    display, public `Cache-Control: no-store` feed, active-access filtering,
    QR/text export and provisioning-result visibility.
-10. Formalize traffic-camouflage profiles: Xray WebSocket/gRPC edge, hidden
-   path, fallback upstream, SNI/TLS binding, Nginx preview, validation and
-   rollback.
+10. Finish traffic-camouflage hardening: Nginx config preview, `nginx -t`
+   validation, rollback on failed apply, live fallback-site smoke and generated
+   VLESS subscription verification.
 11. Extract the Nginx edge profile catalog: reusable definitions, certificate
     binding, generated config diff, atomic apply and operator-visible failure.
 12. Keep ACME automation paused until a canonical challenge strategy is chosen:

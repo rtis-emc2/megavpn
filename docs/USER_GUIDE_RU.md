@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.0.1.2`
+**Релиз:** `7.0.1.3`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -428,18 +428,37 @@ Node Map - это визуальный topology view.
 5. Укажите base name и endpoint host.
 6. Выберите TLS edge certificate, если pack содержит Nginx/Xray TLS component.
 7. Выберите OpenVPN CA profile, если pack содержит OpenVPN.
-8. Если pack содержит VLESS, настройте instance-level `VLESS routing`:
+8. Если pack содержит traffic camouflage, настройте `Traffic camouflage`:
+   - `Fallback website` обязателен и должен быть абсолютным `http://` или
+     `https://` URL реального сайта;
+   - если показан `Hidden VLESS path`, он не должен быть `/`, не должен
+     содержать query/fragment и должен выглядеть как обычный asset/API path;
+   - `Fallback Host header` и `Fallback SNI` можно оставить пустыми: control
+     plane выведет их из fallback URL.
+9. Если pack содержит VLESS, настройте instance-level `VLESS routing`:
    - `Auto through managed backhaul` для одного однозначного active backhaul;
    - `Use selected egress node`, если весь VLESS instance должен выходить через
      конкретную удаленную egress node;
    - `Local breakout on ingress node` только если прямой выход с ingress node
      действительно нужен.
-9. Создайте instances.
-10. Нажмите `Apply` или `Install + apply`, если runtime отсутствует.
+10. Создайте instances.
+11. Нажмите `Apply` или `Install + apply`, если runtime отсутствует.
 
 Service pack не должен хранить runtime secrets. Пароли, private keys, UUID,
 Reality keys и похожие secrets должны генерироваться на этапе revision/apply и
 сохраняться как secret refs.
+
+OpenVPN packs по умолчанию являются full-tunnel baseline: они отправляют
+клиентам `redirect-gateway` и публичные DNS. Apply также материализует
+managed network policy на node: IP forwarding и nftables `postrouting`
+masquerade от OpenVPN client pool. Если нужен split-tunnel OpenVPN, удалите
+redirect push lines и явно проверьте `nat_rules` перед применением revision.
+
+Traffic camouflage packs создают два instances: Nginx public TLS edge и Xray
+backend на `127.0.0.1`. Nginx проксирует только скрытый VLESS/gRPC path в Xray,
+а обычный web-трафик на `/` reverse-proxy направляет на fallback website. Это
+осознанная маскировка ingress-поведения, а не замена корректной TLS/SNI,
+сертификатной и DNS-настройки endpoint.
 
 ### 13.2 Manual instance
 

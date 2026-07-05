@@ -296,9 +296,11 @@ func (s *Store) CreateBackhaulDeleteJobs(ctx context.Context, linkID string) (do
 			jobs = append(jobs, job)
 		}
 	}
-	_, _ = s.db.Exec(ctx, `update backhaul_links
+	if _, err := s.db.Exec(ctx, `update backhaul_links
 		set status='disabled', metadata_json=$2, updated_at=now()
-		where id=$1`, link.ID, mustJSON(link.Metadata))
+		where id=$1`, link.ID, mustJSON(link.Metadata)); err != nil {
+		return domain.BackhaulLink{}, jobs, err
+	}
 	_, _ = s.db.Exec(ctx, `update backhaul_transports
 		set status='disabled', last_error='', updated_at=now()
 		where link_id=$1`, link.ID)
@@ -319,6 +321,33 @@ func (s *Store) SetBackhaulRouteEnabled(ctx context.Context, linkID string, enab
 		if link.Status == "active" || link.Status == "pending_apply" {
 			return link, nil, nil
 		}
+		if link.Status == "deleted" {
+			return domain.BackhaulLink{}, nil, fmt.Errorf("cannot enable deleted backhaul route")
+		}
+		if transport := selectedBackhaulTransport(link); transport != nil && transport.Status == "active" {
+			if link.Metadata == nil {
+				link.Metadata = map[string]any{}
+			}
+			delete(link.Metadata, "route_disabled_at")
+			delete(link.Metadata, "route_disable_mode")
+			delete(link.Metadata, "route_disable_batch_id")
+			delete(link.Metadata, "route_disable_requested_at")
+			if _, err := s.db.Exec(ctx, `update backhaul_links
+				set status='active', metadata_json=$2, updated_at=now()
+				where id=$1 and status <> 'deleted'`, link.ID, mustJSON(link.Metadata)); err != nil {
+				return domain.BackhaulLink{}, nil, err
+			}
+			routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID)
+			if err != nil {
+				return domain.BackhaulLink{}, nil, fmt.Errorf("queue route policy refresh after backhaul route enable: %w", err)
+			}
+			link, err = s.GetBackhaulLink(ctx, link.ID)
+			if err != nil {
+				return domain.BackhaulLink{}, []domain.Job{routeJob}, err
+			}
+			_, _ = s.CreateAudit(ctx, "system", "backhaul.route.enable", "backhaul", &link.ID, "managed backhaul route enabled")
+			return link, []domain.Job{routeJob}, nil
+		}
 		jobs, err := s.CreateBackhaulApplyJobs(ctx, link.ID)
 		if err != nil {
 			return domain.BackhaulLink{}, jobs, err
@@ -333,55 +362,29 @@ func (s *Store) SetBackhaulRouteEnabled(ctx context.Context, linkID string, enab
 	if link.Status == "disabled" {
 		return link, nil, nil
 	}
-	if len(link.Transports) == 0 {
-		_, _ = s.db.Exec(ctx, `update backhaul_links set status='disabled', updated_at=now() where id=$1`, link.ID)
-		link.Status = "disabled"
-		_, _ = s.CreateAudit(ctx, "system", "backhaul.route.disable", "backhaul", &link.ID, "managed backhaul route disabled")
-		routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID)
-		if err != nil {
-			return domain.BackhaulLink{}, nil, fmt.Errorf("queue route policy refresh after backhaul route disable: %w", err)
-		}
-		return link, []domain.Job{routeJob}, nil
+	if link.Status == "deleted" {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("cannot disable deleted backhaul route")
 	}
-
-	batchID := id.New()
 	if link.Metadata == nil {
 		link.Metadata = map[string]any{}
 	}
-	link.Metadata["route_disable_batch_id"] = batchID
-	link.Metadata["route_disable_requested_at"] = time.Now().UTC().Format(time.RFC3339)
-	jobs := make([]domain.Job, 0, len(link.Transports)*2)
-	for _, transport := range link.Transports {
-		for _, role := range []string{"ingress", "egress"} {
-			nodeID := nodeIDForBackhaulRole(link, role)
-			job, err := s.CreateJob(ctx, domain.Job{
-				Type:      "node.backhaul.cleanup",
-				ScopeType: "backhaul",
-				ScopeID:   &link.ID,
-				NodeID:    &nodeID,
-				Priority:  90,
-				Payload:   buildBackhaulRouteDisablePayload(link, transport, role, batchID),
-			})
-			if err != nil {
-				return domain.BackhaulLink{}, jobs, err
-			}
-			jobs = append(jobs, job)
-		}
-	}
+	link.Metadata["route_disabled_at"] = time.Now().UTC().Format(time.RFC3339)
+	link.Metadata["route_disable_mode"] = "policy_only"
+	delete(link.Metadata, "route_disable_batch_id")
+	delete(link.Metadata, "route_disable_requested_at")
 	_, _ = s.db.Exec(ctx, `update backhaul_links
 		set status='disabled', metadata_json=$2, updated_at=now()
 		where id=$1`, link.ID, mustJSON(link.Metadata))
-	_, _ = s.db.Exec(ctx, `update backhaul_transports
-		set status='disabled', last_error='', updated_at=now()
-		where link_id=$1`, link.ID)
-	_, _ = s.CreateAudit(ctx, "system", "backhaul.route.disable", "backhaul", &link.ID, "managed backhaul route disable queued")
-	link.Status = "disabled"
 	routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID)
 	if err != nil {
-		return domain.BackhaulLink{}, jobs, fmt.Errorf("queue route policy refresh after backhaul route disable: %w", err)
+		return domain.BackhaulLink{}, nil, fmt.Errorf("queue route policy refresh after backhaul route disable: %w", err)
 	}
-	jobs = append(jobs, routeJob)
-	return link, jobs, nil
+	link, err = s.GetBackhaulLink(ctx, link.ID)
+	if err != nil {
+		return domain.BackhaulLink{}, []domain.Job{routeJob}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "backhaul.route.disable", "backhaul", &link.ID, "managed backhaul route disabled")
+	return link, []domain.Job{routeJob}, nil
 }
 
 func (s *Store) CreateBackhaulApplyJobs(ctx context.Context, linkID string) ([]domain.Job, error) {

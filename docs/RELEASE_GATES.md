@@ -1,10 +1,10 @@
 # Release Gates
 
-**Release:** `7.0.1.2`
+**Release:** `7.0.1.3`
 
 This file defines the minimum evidence required before tagging a production release.
 
-For `7.0.1.2`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
+For `7.0.1.3`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
 
 ## 1. Release Gate
 
@@ -137,6 +137,7 @@ Required evidence before promoting topology/access features beyond the hardening
   `Cache-Control: no-store`, active-access filtering and one-time plaintext URL
   display.
 - Traffic camouflage profiles validate Nginx and Xray config before apply and expose rollback on failed `nginx -t` or runtime validation.
+- Agent `instance.apply` snapshots managed files and restores/removes them on failed validation, network-policy or systemd apply.
 - Nginx edge profiles bind explicit certificate material and do not silently fall back to an unintended self-signed profile after a managed certificate exists.
 
 ## 6. Observability Gate

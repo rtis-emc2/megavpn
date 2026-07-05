@@ -56,6 +56,46 @@ func TestRenderNetworkPolicyScript(t *testing.T) {
 	}
 }
 
+func TestRenderNetworkPolicyScriptAddsNATRules(t *testing.T) {
+	t.Parallel()
+
+	script, counts, hasPolicy, err := renderNetworkPolicyScript(instanceJobPayload{
+		InstanceID:  "inst-openvpn",
+		Slug:        "edge-openvpn",
+		ServiceCode: "openvpn",
+		Spec: map[string]any{
+			"nat_rules": []any{
+				map[string]any{
+					"type":          "masquerade",
+					"family":        "ip",
+					"source":        "10.82.7.4/24",
+					"out_interface": "eth0",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderNetworkPolicyScript returned error: %v", err)
+	}
+	if !hasPolicy {
+		t.Fatal("expected network policy to be detected")
+	}
+	if counts["nat"] != 1 {
+		t.Fatalf("nat count = %d, want 1; all counts=%#v", counts["nat"], counts)
+	}
+	checks := []string{
+		"nft list table ip megavpn_nat >/dev/null 2>&1 || nft add table ip megavpn_nat",
+		"nft list chain ip megavpn_nat postrouting >/dev/null 2>&1 || nft add chain ip megavpn_nat postrouting '{ type nat hook postrouting priority srcnat; policy accept; }'",
+		"handles=$(nft -a list chain ip megavpn_nat postrouting 2>/dev/null | awk -v c='megavpn:edge-openvpn:nat:' 'index($0, c) > 0 {print $NF}')",
+		"nft add rule ip megavpn_nat postrouting oifname \"eth0\" ip saddr 10.82.7.0/24 masquerade comment 'megavpn:edge-openvpn:nat:masquerade:10.82.7.0_24:eth0'",
+	}
+	for _, check := range checks {
+		if !strings.Contains(script, check) {
+			t.Fatalf("expected script to contain %q, got:\n%s", check, script)
+		}
+	}
+}
+
 func TestRenderNetworkPolicyScriptRejectsInvalidFirewallRule(t *testing.T) {
 	t.Parallel()
 

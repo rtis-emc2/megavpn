@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -26,6 +27,14 @@ type routeSpec struct {
 	Source      string
 	Table       string
 	Metric      int
+}
+
+type natRuleSpec struct {
+	Type         string
+	Family       string
+	Source       string
+	OutInterface string
+	Comment      string
 }
 
 func applyNetworkPolicy(ctx context.Context, payload instanceJobPayload) (map[string]any, error) {
@@ -59,6 +68,7 @@ func applyNetworkPolicy(ctx context.Context, payload instanceJobPayload) (map[st
 		"script_path":    scriptPath,
 		"sysctl_count":   counts["sysctl"],
 		"firewall_count": counts["firewall"],
+		"nat_count":      counts["nat"],
 		"route_count":    counts["routes"],
 		"output":         truncate(out, 2000),
 	}
@@ -112,6 +122,20 @@ func cleanupNetworkPolicy(ctx context.Context, payload instanceJobPayload) map[s
 		}
 		result["removed_firewall_rules"] = removedRules
 	}
+	if natRules, err := parseNATRules(payload.Spec["nat_rules"]); err != nil {
+		warnings = append(warnings, "nat cleanup skipped: "+err.Error())
+	} else {
+		removedRules := 0
+		for _, rule := range natRules {
+			comment := natRuleComment(payload, rule)
+			count, warning := deleteNFTRulesByCommentIn(ctx, rule.Family, "megavpn_nat", "postrouting", comment)
+			removedRules += count
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
+		}
+		result["removed_nat_rules"] = removedRules
+	}
 	if routes, err := parseRoutes(payload.Spec["routes"]); err != nil {
 		warnings = append(warnings, "route cleanup skipped: "+err.Error())
 	} else {
@@ -152,10 +176,14 @@ func cleanupNetworkPolicy(ctx context.Context, payload instanceJobPayload) map[s
 }
 
 func deleteNFTRulesByComment(ctx context.Context, chain, comment string) (int, string) {
+	return deleteNFTRulesByCommentIn(ctx, "inet", "megavpn", chain, comment)
+}
+
+func deleteNFTRulesByCommentIn(ctx context.Context, family, table, chain, comment string) (int, string) {
 	if strings.TrimSpace(comment) == "" {
 		return 0, ""
 	}
-	code, out := runInstallCommand(ctx, "nft", "-a", "list", "chain", "inet", "megavpn", chain)
+	code, out := runInstallCommand(ctx, "nft", "-a", "list", "chain", family, table, chain)
 	if code != 0 {
 		text := strings.ToLower(out)
 		if strings.Contains(text, "no such file") || strings.Contains(text, "does not exist") || strings.Contains(text, "not found") {
@@ -165,7 +193,7 @@ func deleteNFTRulesByComment(ctx context.Context, chain, comment string) (int, s
 	}
 	removed := 0
 	for _, handle := range nftHandlesForComment(out, comment) {
-		code, deleteOut := runInstallCommand(ctx, "nft", "delete", "rule", "inet", "megavpn", chain, "handle", handle)
+		code, deleteOut := runInstallCommand(ctx, "nft", "delete", "rule", family, table, chain, "handle", handle)
 		if code != 0 {
 			return removed, "nft delete warning for " + chain + " handle " + handle + ": " + firstLine(deleteOut)
 		}
@@ -279,8 +307,12 @@ func renderNetworkPolicyScript(payload instanceJobPayload) (string, map[string]i
 	if err != nil {
 		return "", nil, false, err
 	}
-	counts := map[string]int{"sysctl": len(sysctlValues), "firewall": len(firewallRules), "routes": len(routes)}
-	if len(sysctlValues) == 0 && len(firewallRules) == 0 && len(routes) == 0 {
+	natRules, err := parseNATRules(payload.Spec["nat_rules"])
+	if err != nil {
+		return "", nil, false, err
+	}
+	counts := map[string]int{"sysctl": len(sysctlValues), "firewall": len(firewallRules), "nat": len(natRules), "routes": len(routes)}
+	if len(sysctlValues) == 0 && len(firewallRules) == 0 && len(natRules) == 0 && len(routes) == 0 {
 		return "", counts, false, nil
 	}
 
@@ -314,6 +346,24 @@ func renderNetworkPolicyScript(payload instanceJobPayload) (string, map[string]i
 			comment := firewallRuleComment(payload, rule)
 			expr := nftRuleExpression(rule, comment)
 			lines = append(lines, "if ! nft list chain inet megavpn "+rule.Direction+" | grep -Fq "+shellQuote(comment)+"; then "+expr+"; fi")
+		}
+	}
+	if len(natRules) > 0 {
+		lines = append(lines, "", "# nftables NAT policy")
+		lines = append(lines, "if ! command -v nft >/dev/null 2>&1; then echo 'nft is required for nat_rules' >&2; exit 1; fi")
+		for _, family := range requiredNATFamilies(natRules) {
+			lines = append(lines,
+				"nft list table "+family+" megavpn_nat >/dev/null 2>&1 || nft add table "+family+" megavpn_nat",
+				"nft list chain "+family+" megavpn_nat postrouting >/dev/null 2>&1 || nft add chain "+family+" megavpn_nat postrouting '{ type nat hook postrouting priority srcnat; policy accept; }'",
+			)
+		}
+		for _, family := range requiredNATFamilies(natRules) {
+			lines = append(lines, nftDeleteRulesByCommentPrefixLines(family, "megavpn_nat", "postrouting", natRuleCommentPrefix(payload))...)
+		}
+		for _, rule := range natRules {
+			comment := natRuleComment(payload, rule)
+			expr := nftNATRuleExpression(rule, comment)
+			lines = append(lines, expr)
 		}
 	}
 	if len(routes) > 0 {
@@ -388,6 +438,46 @@ func parseFirewallRules(raw any) ([]firewallRuleSpec, error) {
 	return out, nil
 }
 
+func parseNATRules(raw any) ([]natRuleSpec, error) {
+	items, err := objectList(raw, "spec.nat_rules")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]natRuleSpec, 0, len(items))
+	for idx, item := range items {
+		rule := natRuleSpec{
+			Type:         strings.ToLower(first(stringify(item["type"]), "masquerade")),
+			Family:       strings.ToLower(first(stringify(item["family"]), "ip")),
+			Source:       first(stringify(item["source"]), stringify(item["src"]), stringify(item["cidr"])),
+			OutInterface: stringify(firstAny(item["out_interface"], item["oifname"], item["interface"])),
+			Comment:      stringify(item["comment"]),
+		}
+		if rule.Type != "masquerade" {
+			return nil, fmt.Errorf("spec.nat_rules[%d].type must be masquerade", idx)
+		}
+		if rule.Family != "ip" && rule.Family != "ip6" {
+			return nil, fmt.Errorf("spec.nat_rules[%d].family must be ip or ip6", idx)
+		}
+		prefix, err := netip.ParsePrefix(rule.Source)
+		if err != nil {
+			return nil, fmt.Errorf("spec.nat_rules[%d].source must be a CIDR prefix", idx)
+		}
+		prefix = prefix.Masked()
+		if rule.Family == "ip" && !prefix.Addr().Is4() {
+			return nil, fmt.Errorf("spec.nat_rules[%d].source must be IPv4 for family ip", idx)
+		}
+		if rule.Family == "ip6" && !prefix.Addr().Is6() {
+			return nil, fmt.Errorf("spec.nat_rules[%d].source must be IPv6 for family ip6", idx)
+		}
+		rule.Source = prefix.String()
+		if rule.OutInterface != "" && !isSafeNetworkToken(rule.OutInterface) {
+			return nil, fmt.Errorf("spec.nat_rules[%d].out_interface is invalid", idx)
+		}
+		out = append(out, rule)
+	}
+	return out, nil
+}
+
 func parseRoutes(raw any) ([]routeSpec, error) {
 	items, err := objectList(raw, "spec.routes")
 	if err != nil {
@@ -435,6 +525,19 @@ func objectList(raw any, field string) ([]map[string]any, error) {
 	return out, nil
 }
 
+func requiredNATFamilies(rules []natRuleSpec) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, rule := range rules {
+		if !seen[rule.Family] {
+			seen[rule.Family] = true
+			out = append(out, rule.Family)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func requiredFirewallChains(rules []firewallRuleSpec) []string {
 	seen := map[string]bool{}
 	out := []string{}
@@ -460,6 +563,28 @@ func nftRuleExpression(rule firewallRuleSpec, comment string) string {
 	return strings.Join(parts, " ")
 }
 
+func nftNATRuleExpression(rule natRuleSpec, comment string) string {
+	parts := []string{"nft", "add", "rule", rule.Family, "megavpn_nat", "postrouting"}
+	if rule.OutInterface != "" {
+		parts = append(parts, "oifname", "\""+rule.OutInterface+"\"")
+	}
+	sourceExpr := "saddr"
+	if rule.Family == "ip6" {
+		parts = append(parts, "ip6", sourceExpr, rule.Source)
+	} else {
+		parts = append(parts, "ip", sourceExpr, rule.Source)
+	}
+	parts = append(parts, "masquerade", "comment", shellQuote(comment))
+	return strings.Join(parts, " ")
+}
+
+func nftDeleteRulesByCommentPrefixLines(family, table, chain, prefix string) []string {
+	return []string{
+		"handles=$(nft -a list chain " + family + " " + table + " " + chain + " 2>/dev/null | awk -v c=" + shellQuote(prefix) + " 'index($0, c) > 0 {print $NF}')",
+		"for handle in $handles; do nft delete rule " + family + " " + table + " " + chain + " handle \"$handle\" >/dev/null 2>&1 || true; done",
+	}
+}
+
 func nftVerdict(action string) string {
 	switch action {
 	case "allow":
@@ -472,6 +597,18 @@ func nftVerdict(action string) string {
 func firewallRuleComment(payload instanceJobPayload, rule firewallRuleSpec) string {
 	base := "megavpn:" + slugifyLocal(first(payload.Slug, payload.InstanceID, payload.Name, "instance"))
 	return base + ":" + rule.Direction + ":" + rule.Protocol + ":" + strconv.Itoa(rule.Port) + ":" + rule.Action
+}
+
+func natRuleComment(payload instanceJobPayload, rule natRuleSpec) string {
+	out := natRuleCommentPrefix(payload) + rule.Type + ":" + strings.ReplaceAll(rule.Source, "/", "_")
+	if rule.OutInterface != "" {
+		out += ":" + rule.OutInterface
+	}
+	return out
+}
+
+func natRuleCommentPrefix(payload instanceJobPayload) string {
+	return "megavpn:" + slugifyLocal(first(payload.Slug, payload.InstanceID, payload.Name, "instance")) + ":nat:"
 }
 
 func ipRouteReplaceCommand(route routeSpec) string {

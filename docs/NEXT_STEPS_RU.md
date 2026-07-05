@@ -1,6 +1,6 @@
 # Следующие шаги
 
-**Релиз:** `7.0.1.2`
+**Релиз:** `7.0.1.3`
 
 Актуальный baseline: [`ROADMAP_V1_AND_TZ_RU.md`](../ROADMAP_V1_AND_TZ_RU.md).
 Английская версия: [`NEXT_STEPS.md`](NEXT_STEPS.md).
@@ -15,7 +15,7 @@
 7. Проверить и усилить topology workspace: локальная статичная world map, GeoIP node placement, node owner metadata, role/health badges, backhaul edges, operator-facing route-toggle UX на реальных nodes, failed-hop diagnostics и per-node workload drill-down. Backend schema для route-toggle, cleanup batch metadata и regression coverage route-policy refresh уже добавлены.
 8. Проверить VLESS access groups end to end: default route, local breakout, selected egress node, target-only access, blocked access, ad-block rule и выбор группы при provisioning.
 9. Проверить VLESS subscriptions end-to-end: rotate/revoke token, one-time URL display, public `Cache-Control: no-store` feed, фильтрация active access, QR/text export и visibility provisioning result.
-10. Формализовать traffic camouflage profiles: Xray WebSocket/gRPC public edge, hidden path, fallback upstream, public SNI/TLS binding, nginx preview, `nginx -t` validation and rollback.
+10. Довести hardening traffic camouflage: Nginx config preview, `nginx -t` validation, rollback при failed apply, live smoke fallback site и проверка generated VLESS subscription.
 11. Выделить Nginx edge profile catalog: reusable profile definitions, certificate binding, generated config diff, atomic apply and operator-visible failure reason.
 12. `Paused`: ACME / Let's Encrypt automation пока сознательно не внедряем. Перед возобновлением нужно выбрать canonical challenge strategy: `HTTP-01`, `DNS-01` или delegated external ACME.
 13. Запускать API только с явно заданными bootstrap credentials:

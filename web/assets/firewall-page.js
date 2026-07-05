@@ -233,7 +233,7 @@
         </nav>`;
     }
 
-    function renderActionBoard(inv) {
+    function renderActionToolbar(inv, active) {
       const canManage = hasPermission('firewall.manage');
       const canApply = hasPermission('firewall.apply');
       const firstPolicy = inv.policies.find((policy) => policy.key === 'node_base') || inv.policies[0] || {};
@@ -241,33 +241,42 @@
       const applyDisabled = !firstPolicy.id || !firstNode.id;
       if (!canManage && !canApply) {
         return `
-          <section class="section-card firewall-action-board">
-            <div>
+          <section class="section-card firewall-toolbar readonly">
+            <div class="firewall-toolbar-copy">
               <h3>Read-only firewall catalog</h3>
               <p>Your current role can inspect policies, rules and node state, but cannot change or apply firewall configuration.</p>
             </div>
             <div class="tag">missing firewall.manage / firewall.apply</div>
           </section>`;
       }
+      const tabCopy = {
+        overview: ['Overview', 'Review policy posture before changing node firewall state.'],
+        policies: ['Policies', 'Create reusable node policy sets and attach ordered rules.'],
+        rules: ['Rules', 'Add or edit ordered match/action rows. Lower priority numbers run first.'],
+        addressLists: ['Address lists', 'Create MikroTik-style reusable source and destination matchers.'],
+        nodeState: ['Node state', 'Apply selected policy snapshots to managed nodes.'],
+      }[active] || ['Firewall', 'Manage catalog objects and apply them to nodes.'];
+      const actionHTML = [];
+      if (canManage && (active === 'overview' || active === 'policies')) {
+        actionHTML.push('<button class="secondary-btn" id="addFirewallPolicyBtnTop" type="button">New policy</button>');
+      }
+      if (canManage && (active === 'overview' || active === 'addressLists')) {
+        actionHTML.push('<button class="secondary-btn" id="addFirewallListBtnTop" type="button">New address list</button>');
+        actionHTML.push('<button class="secondary-btn" id="addFirewallEntryBtnTop" type="button">Add address</button>');
+      }
+      if (canManage && (active === 'overview' || active === 'policies' || active === 'rules')) {
+        actionHTML.push('<button class="primary-btn" id="addFirewallRuleBtnTop" type="button">New rule</button>');
+      }
+      if (canApply && (active === 'overview' || active === 'policies' || active === 'nodeState')) {
+        actionHTML.push(`<button class="secondary-btn firewall-apply-quick-btn" type="button" data-policy-id="${escapeHTML(firstPolicy.id || '')}" data-node-id="${escapeHTML(firstNode.id || '')}"${applyDisabled ? ' disabled' : ''}>Apply to node</button>`);
+      }
       return `
-        <section class="section-card firewall-action-board">
-          <div class="firewall-action-main">
-            <h3>Build firewall policy</h3>
-            <p>Create reusable address lists, attach entries, define ordered rules, then apply a policy to selected nodes.</p>
-            <div class="firewall-flow" aria-label="Firewall workflow">
-              <button type="button" data-firewall-jump="addressLists"><strong>1</strong><span>Address lists</span></button>
-              <button type="button" data-firewall-jump="rules"><strong>2</strong><span>Rules</span></button>
-              <button type="button" data-firewall-jump="policies"><strong>3</strong><span>Policies</span></button>
-              <button type="button" data-firewall-jump="nodeState"><strong>4</strong><span>Apply state</span></button>
-            </div>
+        <section class="section-card firewall-toolbar">
+          <div class="firewall-toolbar-copy">
+            <h3>${escapeHTML(tabCopy[0])}</h3>
+            <p>${escapeHTML(tabCopy[1])}</p>
           </div>
-          <div class="inline-actions">
-            ${canManage ? '<button class="primary-btn" id="addFirewallPolicyBtnTop" type="button">Create policy</button>' : ''}
-            ${canManage ? '<button class="secondary-btn" id="addFirewallListBtnTop" type="button">Create address list</button>' : ''}
-            ${canManage ? '<button class="secondary-btn" id="addFirewallEntryBtnTop" type="button">Add address entry</button>' : ''}
-            ${canManage ? '<button class="secondary-btn" id="addFirewallRuleBtnTop" type="button">Create rule</button>' : ''}
-            ${canApply ? `<button class="secondary-btn firewall-apply-quick-btn" type="button" data-policy-id="${escapeHTML(firstPolicy.id || '')}" data-node-id="${escapeHTML(firstNode.id || '')}"${applyDisabled ? ' disabled' : ''}>Apply to node</button>` : ''}
-          </div>
+          <div class="firewall-toolbar-actions">${actionHTML.join('')}</div>
         </section>`;
     }
 
@@ -281,7 +290,6 @@
             </div>
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(inv.policies.length))} policies</span>
-              ${hasPermission('firewall.manage') ? '<button class="secondary-btn" id="addFirewallPolicyBtn" type="button">Add policy</button><button class="secondary-btn" id="addFirewallListBtn" type="button">Add address list</button><button class="secondary-btn" id="addFirewallRuleBtn" type="button">Add rule</button>' : ''}
             </div>
           </div>
           <div class="firewall-policy-grid">
@@ -301,7 +309,7 @@
             <div class="table-tools"><span class="tag">${escapeHTML(String(inv.nodeStates.length))} observed</span></div>
           </div>
           <div class="table-wrap">
-            <table><thead><tr><th>Node</th><th>Policy</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead><tbody>${renderNodeStates()}</tbody></table>
+            <table class="firewall-node-state-table"><thead><tr><th>Node</th><th>Policy</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead><tbody>${renderNodeStates()}</tbody></table>
           </div>
         </section>`;
     }
@@ -316,11 +324,10 @@
             </div>
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(inv.rules.length))} rules</span>
-              ${hasPermission('firewall.manage') ? '<button class="secondary-btn" id="addFirewallRuleBtnRules" type="button">Add rule</button>' : ''}
             </div>
           </div>
           <div class="table-wrap">
-            <table><thead><tr><th>Priority</th><th>Policy</th><th>Chain</th><th>Action</th><th>Proto</th><th>Source</th><th>Destination</th><th>Comment</th><th>Actions</th></tr></thead><tbody>${renderRuleRows()}</tbody></table>
+            <table class="firewall-rules-table"><thead><tr><th>Priority</th><th>Policy</th><th>Chain</th><th>Action</th><th>Proto</th><th>Source</th><th>Destination</th><th>Comment</th><th>Actions</th></tr></thead><tbody>${renderRuleRows()}</tbody></table>
           </div>
         </section>`;
     }
@@ -335,14 +342,13 @@
             </div>
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(inv.entries.length))} entries</span>
-              ${hasPermission('firewall.manage') ? '<button class="secondary-btn" id="addFirewallEntryBtnAddress" type="button">Add entry</button><button class="secondary-btn" id="addFirewallListBtnAddress" type="button">Add address list</button>' : ''}
             </div>
           </div>
           <div class="table-wrap">
-            <table><thead><tr><th>List</th><th>Scope</th><th>Entries</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderAddressLists()}</tbody></table>
+            <table class="firewall-address-list-table"><thead><tr><th>List</th><th>Scope</th><th>Entries</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderAddressLists()}</tbody></table>
           </div>
           <div class="table-wrap firewall-entry-wrap">
-            <table><thead><tr><th>List</th><th>Value</th><th>Type</th><th>Label</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderEntryRows()}</tbody></table>
+            <table class="firewall-address-entry-table"><thead><tr><th>List</th><th>Value</th><th>Type</th><th>Label</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderEntryRows()}</tbody></table>
           </div>
         </section>`;
     }
@@ -376,20 +382,9 @@
       const inv = inventory();
       const active = selectedTab();
       el('content').innerHTML = `
-        <div class="control-page-shell">
-          <section class="section-card control-page-intro">
-            <div>
-              <h2>Firewall</h2>
-              <p>Managed firewall catalog for control-plane and node boundaries. Policies, ordered rules, address lists and node apply state are separated so changes are easier to review before rollout.</p>
-            </div>
-            <div class="control-page-actions">
-              ${statusTag(inv.nodeStates.some((item) => item.status === 'failed') ? 'degraded' : 'ready')}
-              <span class="tag">${escapeHTML(String(inv.rules.length))} rules</span>
-              <span class="tag">${escapeHTML(String(inv.entries.length))} address entries</span>
-            </div>
-          </section>
-          ${renderActionBoard(inv)}
+        <div class="control-page-shell firewall-page-shell">
           ${renderTabs(inv)}
+          ${renderActionToolbar(inv, active)}
           <div class="firewall-tab-panel bounded-stack" data-firewall-panel="overview"${active === 'overview' ? '' : ' hidden'}>${renderOverview(inv)}</div>
           <div class="firewall-tab-panel bounded-stack" data-firewall-panel="policies"${active === 'policies' ? '' : ' hidden'}>${renderPolicySection(inv)}</div>
           <div class="firewall-tab-panel bounded-stack" data-firewall-panel="rules"${active === 'rules' ? '' : ' hidden'}>${renderRulesSection(inv)}</div>
@@ -406,14 +401,7 @@
           const tab = button.dataset.firewallTab || 'overview';
           state.firewallTab = tab;
           localStorage.setItem('megavpn.firewallTab', tab);
-          document.querySelectorAll('[data-firewall-tab]').forEach((item) => {
-            const active = item.dataset.firewallTab === tab;
-            item.classList.toggle('is-active', active);
-            item.setAttribute('aria-selected', active ? 'true' : 'false');
-          });
-          document.querySelectorAll('[data-firewall-panel]').forEach((panel) => {
-            panel.hidden = panel.dataset.firewallPanel !== tab;
-          });
+          render();
         });
       });
     }
@@ -423,19 +411,6 @@
       document.getElementById('addFirewallListBtnTop')?.addEventListener('click', openAddressListModal);
       document.getElementById('addFirewallEntryBtnTop')?.addEventListener('click', () => openAddressEntryModal(''));
       document.getElementById('addFirewallRuleBtnTop')?.addEventListener('click', () => openRuleModal(''));
-      document.getElementById('addFirewallPolicyBtn')?.addEventListener('click', () => openPolicyModal(''));
-      document.getElementById('addFirewallListBtn')?.addEventListener('click', openAddressListModal);
-      document.getElementById('addFirewallRuleBtn')?.addEventListener('click', () => openRuleModal(''));
-      document.getElementById('addFirewallListBtnAddress')?.addEventListener('click', openAddressListModal);
-      document.getElementById('addFirewallEntryBtnAddress')?.addEventListener('click', () => openAddressEntryModal(''));
-      document.getElementById('addFirewallRuleBtnRules')?.addEventListener('click', () => openRuleModal(''));
-      document.querySelectorAll('[data-firewall-jump]').forEach((button) => {
-        button.addEventListener('click', () => {
-          state.firewallTab = button.dataset.firewallJump || 'overview';
-          localStorage.setItem('megavpn.firewallTab', state.firewallTab);
-          render();
-        });
-      });
       document.querySelectorAll('.firewall-add-rule-btn').forEach((button) => {
         button.addEventListener('click', () => openRuleModal(button.dataset.policyId || ''));
       });
@@ -483,8 +458,7 @@
       const selectedNodeID = policy.node_id || '';
       openModal(editing ? `Edit policy: ${policy.label || policy.key}` : 'Create firewall policy', 'Firewall policy', `
         <form id="firewallPolicyForm" class="form-grid" data-policy-id="${escapeHTML(policy.id || '')}">
-          <div class="field"><label>Name</label><input name="label" required placeholder="Production node baseline" value="${escapeHTML(policy.label || '')}" /></div>
-          <div class="field"><label>Key</label><input name="key" placeholder="production_node_baseline" value="${escapeHTML(policy.key || '')}" /><small>Leave empty to generate from name.</small></div>
+          <div class="field"><label>Name</label><input name="label" required placeholder="Production node baseline" value="${escapeHTML(policy.label || '')}" /><small>Internal key is generated from this name when left empty.</small></div>
           <div class="field"><label>Scope</label><select name="scope" id="firewallPolicyScope">
             ${selectOption('node', policy.scope || 'node', 'node')}
             ${selectOption('control_plane', policy.scope || 'node', 'control plane')}
@@ -499,6 +473,12 @@
           <div class="field"><label>Default output</label><select name="default_output_policy">${defaultPolicyOptions(policy.default_output_policy || 'accept')}</select></div>
           <div class="field"><label>Status</label><select name="status">${selectOption('active', policy.status || 'active')}${selectOption('disabled', policy.status || 'active')}</select></div>
           <div class="field full"><label>Description</label><textarea name="description" rows="3" placeholder="What this policy protects and where it should be applied">${escapeHTML(policy.description || '')}</textarea></div>
+          <details class="advanced-form-section full">
+            <summary>Advanced internal identity</summary>
+            <div class="form-grid compact-form-grid">
+              <div class="field"><label>Internal key</label><input name="key" placeholder="auto-generated from name" value="${escapeHTML(policy.key || '')}" /><small>Use only when integrating with external automation. Empty value is safer for manual work.</small></div>
+            </div>
+          </details>
           <div class="notice field full">Default chain policy is catalog metadata in this release. Explicit rules are applied to managed chains; strict default enforcement remains controlled by rollout policy.</div>
           <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save policy' : 'Create policy'}</button><button class="secondary-btn" type="button" id="cancelFirewallPolicyBtn">Cancel</button></div>
         </form>
@@ -519,8 +499,7 @@
       const editing = Boolean(list.id);
       openModal(editing ? `Edit address list: ${list.label || list.key}` : 'Add address list', 'Firewall', `
         <form id="firewallAddressListForm" class="form-grid" data-list-id="${escapeHTML(list.id || '')}">
-          <div class="field"><label>Name</label><input name="label" required placeholder="Trusted operators" value="${escapeHTML(list.label || '')}" /></div>
-          <div class="field"><label>Key</label><input name="key" placeholder="trusted_operators" value="${escapeHTML(list.key || '')}" /></div>
+          <div class="field"><label>Name</label><input name="label" required placeholder="Trusted operators" value="${escapeHTML(list.label || '')}" /><small>Internal key is generated from this name when left empty.</small></div>
           <div class="field"><label>Scope</label><select name="scope">
             ${selectOption('global', list.scope || 'global')}
             ${selectOption('control_plane', list.scope || 'global')}
@@ -530,6 +509,12 @@
           </select></div>
           <div class="field"><label>Status</label><select name="status">${selectOption('active', list.status || 'active')}${selectOption('disabled', list.status || 'active')}</select></div>
           <div class="field full"><label>Description</label><textarea name="description" rows="3">${escapeHTML(list.description || '')}</textarea></div>
+          <details class="advanced-form-section full">
+            <summary>Advanced internal identity</summary>
+            <div class="form-grid compact-form-grid">
+              <div class="field"><label>Internal key</label><input name="key" placeholder="auto-generated from name" value="${escapeHTML(list.key || '')}" /><small>Use only when integrating with external automation. Empty value is safer for manual work.</small></div>
+            </div>
+          </details>
           <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save list' : 'Create list'}</button><button class="secondary-btn" type="button" id="cancelFirewallListBtn">Cancel</button></div>
         </form>
         <div id="firewallListResult" class="form-result"></div>`, { wide: true });

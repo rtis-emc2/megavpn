@@ -42,7 +42,6 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 	if err != nil {
 		return "failed", map[string]any{"error": err.Error(), "instance_id": payload.InstanceID, "service_code": payload.ServiceCode, "action": payload.Action}
 	}
-	changed := make([]string, 0, len(files))
 	for _, file := range files {
 		if err := validateManagedFilePolicy(payload, file); err != nil {
 			return "failed", map[string]any{
@@ -52,12 +51,30 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 				"path":         file.Path,
 			}
 		}
+	}
+	backups, err := snapshotManagedFiles(files)
+	if err != nil {
+		return "failed", map[string]any{
+			"error":        err.Error(),
+			"instance_id":  payload.InstanceID,
+			"service_code": payload.ServiceCode,
+			"action":       payload.Action,
+		}
+	}
+	rollback := func() map[string]any {
+		result := rollbackManagedFiles(backups)
+		_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+		return result
+	}
+	changed := make([]string, 0, len(files))
+	for _, file := range files {
 		if err := writeManagedFile(file); err != nil {
 			return "failed", map[string]any{
 				"error":        err.Error(),
 				"instance_id":  payload.InstanceID,
 				"service_code": payload.ServiceCode,
 				"path":         file.Path,
+				"rollback":     rollback(),
 			}
 		}
 		changed = append(changed, file.Path)
@@ -69,6 +86,7 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 			"instance_id":   payload.InstanceID,
 			"service_code":  payload.ServiceCode,
 			"changed_files": changed,
+			"rollback":      rollback(),
 		}
 	}
 	networkPolicy, err := applyNetworkPolicy(ctx, payload)
@@ -79,6 +97,7 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 			"service_code":   payload.ServiceCode,
 			"changed_files":  changed,
 			"network_policy": networkPolicy,
+			"rollback":       rollback(),
 		}
 	}
 
@@ -107,6 +126,9 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 			result["config_applied"] = len(changed) > 0
 			result["duration_ms"] = time.Since(started).Milliseconds()
 			result["network_policy"] = networkPolicy
+			if status != "succeeded" {
+				result["rollback"] = rollback()
+			}
 			return status, result
 		}
 		_, _ = runInstallCommand(ctx, "systemctl", "disable", payload.SystemdUnit)

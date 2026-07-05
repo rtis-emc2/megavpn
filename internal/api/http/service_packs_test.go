@@ -90,6 +90,139 @@ func TestDefaultAccessSuiteHasExpectedComponentsWithoutInlineSecrets(t *testing.
 	}
 }
 
+func TestDefaultOpenVPNPacksUseFullTunnelServerPush(t *testing.T) {
+	for _, pack := range servicePackDefinitions() {
+		for _, component := range pack.Components {
+			if component.ServiceCode != "openvpn" {
+				continue
+			}
+			lines := stringSliceFromAny(component.Spec["server_extra_lines"])
+			for _, want := range openVPNFullTunnelServerExtraLines() {
+				if !containsString(lines, want) {
+					t.Fatalf("pack %s component %s server_extra_lines = %#v, missing %q", pack.Key, component.Label, lines, want)
+				}
+			}
+		}
+	}
+}
+
+func TestDefaultWebSocketCamouflagePackUsesLoopbackBackendAndFallbackPlaceholders(t *testing.T) {
+	pack, found := findServicePack("xray_nginx_http_edge")
+	if !found {
+		t.Fatal("xray_nginx_http_edge service pack is required")
+	}
+	if !servicePackUsesTrafficCamouflage(pack) {
+		t.Fatal("xray_nginx_http_edge must be detected as traffic camouflage pack")
+	}
+	var xraySpec, nginxSpec map[string]any
+	for _, component := range pack.Components {
+		switch strings.TrimSpace(stringifyHTTP(component.Spec["service_profile"])) {
+		case "nginx_ws_backend":
+			xraySpec = component.Spec
+		case "ws_camouflage_edge":
+			nginxSpec = component.Spec
+		}
+	}
+	if xraySpec == nil || nginxSpec == nil {
+		t.Fatalf("camouflage pack components missing: xray=%v nginx=%v", xraySpec != nil, nginxSpec != nil)
+	}
+	if got := stringifyHTTP(xraySpec["listen"]); got != "127.0.0.1" {
+		t.Fatalf("xray backend listen = %q, want loopback", got)
+	}
+	if got := stringifyHTTP(xraySpec["path"]); got != "{{camouflage_path}}" {
+		t.Fatalf("xray ws path = %q, want camouflage placeholder", got)
+	}
+	if got := stringifyHTTP(nginxSpec["location_path"]); got != "{{camouflage_path}}" {
+		t.Fatalf("nginx location_path = %q, want camouflage placeholder", got)
+	}
+	if got := stringifyHTTP(nginxSpec["fallback_upstream_url"]); got != "{{fallback_upstream_url}}" {
+		t.Fatalf("nginx fallback upstream = %q, want fallback placeholder", got)
+	}
+}
+
+func TestNormalizeServicePackCamouflageRequestDerivesFallbackHostAndSNI(t *testing.T) {
+	pack, found := findServicePack("xray_nginx_http_edge")
+	if !found {
+		t.Fatal("xray_nginx_http_edge service pack is required")
+	}
+	req := createServicePackRequest{FallbackUpstreamURL: "https://target.example.com/app"}
+	if err := normalizeServicePackCamouflageRequestHTTP(&req, pack); err != nil {
+		t.Fatalf("normalizeServicePackCamouflageRequestHTTP() error = %v", err)
+	}
+	if req.CamouflagePath != "/assets/rtis-sync" {
+		t.Fatalf("CamouflagePath = %q, want /assets/rtis-sync", req.CamouflagePath)
+	}
+	if req.FallbackHostHeader != "target.example.com" {
+		t.Fatalf("FallbackHostHeader = %q, want target.example.com", req.FallbackHostHeader)
+	}
+	if req.FallbackSNI != "target.example.com" {
+		t.Fatalf("FallbackSNI = %q, want target.example.com", req.FallbackSNI)
+	}
+}
+
+func TestNormalizeServicePackCamouflageRequestIgnoresPathWhenPackDoesNotTemplateIt(t *testing.T) {
+	pack, found := findServicePack("xray_nginx_grpc_edge")
+	if !found {
+		t.Fatal("xray_nginx_grpc_edge service pack is required")
+	}
+	if !servicePackUsesTrafficCamouflage(pack) {
+		t.Fatal("xray_nginx_grpc_edge must be detected as traffic camouflage pack")
+	}
+	if servicePackUsesConfigurableCamouflagePathHTTP(pack) {
+		t.Fatal("xray_nginx_grpc_edge should keep its fixed gRPC location path")
+	}
+	req := createServicePackRequest{
+		CamouflagePath:      "/ignored;unsafe",
+		FallbackUpstreamURL: "https://target.example.com",
+	}
+	if err := normalizeServicePackCamouflageRequestHTTP(&req, pack); err != nil {
+		t.Fatalf("normalizeServicePackCamouflageRequestHTTP() error = %v", err)
+	}
+	if req.CamouflagePath != "" {
+		t.Fatalf("CamouflagePath = %q, want empty because grpc pack does not template it", req.CamouflagePath)
+	}
+}
+
+func TestNormalizeServicePackCamouflageRequestRejectsUnsafeInputs(t *testing.T) {
+	pack, found := findServicePack("xray_nginx_http_edge")
+	if !found {
+		t.Fatal("xray_nginx_http_edge service pack is required")
+	}
+	cases := []createServicePackRequest{
+		{CamouflagePath: "/", FallbackUpstreamURL: "https://target.example.com"},
+		{CamouflagePath: "/assets/ws;return", FallbackUpstreamURL: "https://target.example.com"},
+		{CamouflagePath: "/assets/ws?token=1", FallbackUpstreamURL: "https://target.example.com"},
+		{CamouflagePath: "/assets/ws", FallbackUpstreamURL: "ftp://target.example.com"},
+		{CamouflagePath: "/assets/ws", FallbackUpstreamURL: "https://user:pass@target.example.com"},
+		{CamouflagePath: "/assets/ws", FallbackUpstreamURL: "https://target.example.com/#fragment"},
+	}
+	for _, req := range cases {
+		req := req
+		t.Run(req.CamouflagePath+" "+req.FallbackUpstreamURL, func(t *testing.T) {
+			if err := normalizeServicePackCamouflageRequestHTTP(&req, pack); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestServicePackInstanceIdentitySetAllocatesUniqueNameAndSlug(t *testing.T) {
+	set := newServicePackInstanceIdentitySet([]domain.Instance{
+		{NodeID: "node-1", Name: "edge-access-wireguard", Slug: "edge-access-wireguard", Status: "failed"},
+		{NodeID: "node-2", Name: "edge-access-wireguard 2", Slug: "edge-access-wireguard-2", Status: "active"},
+		{NodeID: "node-1", Name: "old-deleted", Slug: "old-deleted", Status: "deleted"},
+	})
+
+	name, slug := set.reserve("node-1", "edge-access-wireguard", "edge-access-wireguard")
+	if name != "edge-access-wireguard 3" || slug != "edge-access-wireguard-3" {
+		t.Fatalf("reserved identity = %q/%q, want suffix 3", name, slug)
+	}
+	name, slug = set.reserve("node-1", "edge-access-wireguard", "edge-access-wireguard")
+	if name != "edge-access-wireguard 4" || slug != "edge-access-wireguard-4" {
+		t.Fatalf("second reserved identity = %q/%q, want suffix 4", name, slug)
+	}
+}
+
 func TestMissingServicePackRuntimeCapabilitiesDeduplicatesRuntime(t *testing.T) {
 	components := []domain.ServicePackComponent{
 		{ServiceCode: "xray-core"},
@@ -286,6 +419,33 @@ func TestInterpolatePackSpecReplacesNestedPlaceholders(t *testing.T) {
 	if out["server_name"] != "edge.example.com" {
 		t.Fatalf("unexpected server_name %v", out["server_name"])
 	}
+}
+
+func stringSliceFromAny(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text := strings.TrimSpace(stringifyHTTP(item))
+			if text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func containsInterpolationToken(value any) bool {

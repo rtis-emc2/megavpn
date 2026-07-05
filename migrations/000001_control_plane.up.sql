@@ -1,5 +1,5 @@
 -- RTIS MegaVPN consolidated baseline migration.
--- Release: 7.0.1.2
+-- Release: 7.0.1.3
 -- This file squashes the historical migration chain into a single
 -- fresh-install baseline. Existing databases that already recorded
 -- 000001_control_plane in schema_migrations will skip this file.
@@ -1623,6 +1623,11 @@ insert into service_pack_templates(
         "proto": "tcp",
         "dev": "tun",
         "address_pool_mode": "auto",
+        "server_extra_lines": [
+          "push \"redirect-gateway def1 bypass-dhcp\"",
+          "push \"dhcp-option DNS 1.1.1.1\"",
+          "push \"dhcp-option DNS 1.0.0.1\""
+        ],
         "config_mode": "0644"
       }
     },
@@ -1661,6 +1666,11 @@ insert into service_pack_templates(
         "proto": "udp",
         "dev": "tun",
         "address_pool_mode": "auto",
+        "server_extra_lines": [
+          "push \"redirect-gateway def1 bypass-dhcp\"",
+          "push \"dhcp-option DNS 1.1.1.1\"",
+          "push \"dhcp-option DNS 1.0.0.1\""
+        ],
         "config_mode": "0644"
       }
     },

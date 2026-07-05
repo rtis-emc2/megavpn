@@ -6,7 +6,20 @@ cd "$ROOT_DIR"
 
 export GOCACHE="${GOCACHE:-/tmp/megavpn-go-cache}"
 export GOTMPDIR="${GOTMPDIR:-/tmp/megavpn-go-tmp}"
-export GOMODCACHE="${GOMODCACHE:-/tmp/megavpn-go-modcache}"
+SELF_TEST_TEMP_GOMODCACHE=""
+if [[ -n "${GOMODCACHE:-}" ]]; then
+  export GOMODCACHE
+else
+  SELF_TEST_TEMP_GOMODCACHE="$(mktemp -d "${TMPDIR:-/tmp}/megavpn-go-modcache.XXXXXX")"
+  export GOMODCACHE="$SELF_TEST_TEMP_GOMODCACHE"
+fi
+cleanup_self_test_tmp() {
+  if [[ -n "$SELF_TEST_TEMP_GOMODCACHE" && -d "$SELF_TEST_TEMP_GOMODCACHE" ]]; then
+    chmod -R u+w "$SELF_TEST_TEMP_GOMODCACHE" 2>/dev/null || true
+    rm -rf "$SELF_TEST_TEMP_GOMODCACHE"
+  fi
+}
+trap cleanup_self_test_tmp EXIT
 mkdir -p "$GOCACHE" "$GOTMPDIR" "$GOMODCACHE"
 
 REPORT_DIR="${MEGAVPN_SELF_TEST_REPORT_DIR:-tmp/self-test}"

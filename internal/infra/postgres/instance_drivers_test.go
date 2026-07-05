@@ -52,6 +52,32 @@ func TestBuildXrayServerConfigGRPCBackend(t *testing.T) {
 	}
 }
 
+func TestVLESSTemplateSpecGroupCarriesCatalogPolicy(t *testing.T) {
+	group := vlessTemplateSpecGroup(domain.VLESSGroupTemplate{
+		Key:          "ads_blocked",
+		Label:        "Ads blocked",
+		AccessMode:   "instance_default",
+		EgressMode:   "default",
+		OutboundTag:  "direct",
+		AdBlock:      true,
+		EgressNodeID: "00000000-0000-0000-0000-000000000001",
+		Rules: []map[string]any{
+			{"type": "field", "domain": []string{"geosite:category-ads-all"}, "outbound_tag": "block"},
+		},
+	})
+
+	specGroups := xrayVLESSGroups(map[string]any{"vless_groups": []any{group}})
+	if len(specGroups) != 1 {
+		t.Fatalf("spec groups = %#v, want one group", specGroups)
+	}
+	if specGroups[0].Key != "ads_blocked" || !specGroups[0].AdBlock {
+		t.Fatalf("group = %#v, want ads_blocked with ad block policy", specGroups[0])
+	}
+	if got := stringify(group["egress_node_id"]); got == "" {
+		t.Fatalf("template egress node id was not copied into spec group: %#v", group)
+	}
+}
+
 func TestAttachDefaultNetworkPolicyWireGuard(t *testing.T) {
 	t.Parallel()
 
@@ -77,6 +103,44 @@ func TestAttachDefaultNetworkPolicyWireGuard(t *testing.T) {
 	}
 	if got := firstIntValue(rule["port"]); got != 51820 {
 		t.Fatalf("port = %d, want 51820", got)
+	}
+}
+
+func TestAttachDefaultNetworkPolicyOpenVPNFullTunnelAddsNAT(t *testing.T) {
+	t.Parallel()
+
+	spec := attachDefaultNetworkPolicy(domain.Instance{
+		ServiceCode:  "openvpn",
+		EndpointPort: 1194,
+	}, map[string]any{
+		"proto":             "udp",
+		"address_pool_cidr": "10.82.7.0/24",
+		"server_extra_lines": []any{
+			`push "redirect-gateway def1 bypass-dhcp"`,
+		},
+	})
+
+	sysctl, ok := spec["sysctl"].(map[string]any)
+	if !ok || stringify(sysctl["net.ipv4.ip_forward"]) != "1" {
+		t.Fatalf("expected net.ipv4.ip_forward sysctl, got %#v", spec["sysctl"])
+	}
+	firewallRules, ok := spec["firewall_rules"].([]any)
+	if !ok || len(firewallRules) != 1 {
+		t.Fatalf("expected one firewall rule, got %#v", spec["firewall_rules"])
+	}
+	natRules, ok := spec["nat_rules"].([]any)
+	if !ok || len(natRules) != 1 {
+		t.Fatalf("expected one nat rule, got %#v", spec["nat_rules"])
+	}
+	rule, ok := natRules[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nat rule object, got %#v", natRules[0])
+	}
+	if got := stringify(rule["type"]); got != "masquerade" {
+		t.Fatalf("nat rule type = %q, want masquerade", got)
+	}
+	if got := stringify(rule["source"]); got != "10.82.7.0/24" {
+		t.Fatalf("nat rule source = %q, want 10.82.7.0/24", got)
 	}
 }
 
@@ -170,19 +234,26 @@ func TestBuildNginxServerConfigReverseProxyWithWebsiteFallback(t *testing.T) {
 }
 
 func TestBuildNginxServerConfigRejectsUnsafeLocationPath(t *testing.T) {
-	_, err := buildNginxServerConfig(domain.Instance{
-		Name:         "edge-nginx-ws",
-		Slug:         "edge-nginx-ws",
-		EndpointHost: "enter.example.com",
-		EndpointPort: 443,
-	}, map[string]any{
-		"mode":          "reverse_proxy",
-		"tls_enabled":   false,
-		"location_path": "/assets/rtis-sync; return 200",
-		"upstream_url":  "http://127.0.0.1:7080",
-	})
-	if err == nil {
-		t.Fatal("expected unsafe location_path to be rejected")
+	for _, path := range []string{
+		"/assets/rtis-sync; return 200",
+		"/assets/rtis-sync?token=1",
+		"/assets/rtis-sync#fragment",
+		"/assets/rtis-sync\"",
+	} {
+		_, err := buildNginxServerConfig(domain.Instance{
+			Name:         "edge-nginx-ws",
+			Slug:         "edge-nginx-ws",
+			EndpointHost: "enter.example.com",
+			EndpointPort: 443,
+		}, map[string]any{
+			"mode":          "reverse_proxy",
+			"tls_enabled":   false,
+			"location_path": path,
+			"upstream_url":  "http://127.0.0.1:7080",
+		})
+		if err == nil {
+			t.Fatalf("expected unsafe location_path %q to be rejected", path)
+		}
 	}
 }
 
@@ -201,6 +272,37 @@ func TestBuildNginxServerConfigRejectsUnsafeServerName(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected unsafe server_name to be rejected")
+	}
+}
+
+func TestBuildNginxServerConfigRejectsUnsafeFallbackDirectiveValues(t *testing.T) {
+	cases := []map[string]any{
+		{"fallback_upstream_url": "https://example.com/#fragment"},
+		{"fallback_host_header": "example.com\""},
+		{"fallback_sni": "example.com;"},
+	}
+	for _, overrides := range cases {
+		spec := map[string]any{
+			"mode":                  "reverse_proxy",
+			"tls_enabled":           false,
+			"location_path":         "/assets/rtis-sync",
+			"upstream_url":          "http://127.0.0.1:7080",
+			"fallback_upstream_url": "https://example.com",
+			"fallback_host_header":  "example.com",
+			"fallback_sni":          "example.com",
+		}
+		for key, value := range overrides {
+			spec[key] = value
+		}
+		_, err := buildNginxServerConfig(domain.Instance{
+			Name:         "edge-nginx-ws",
+			Slug:         "edge-nginx-ws",
+			EndpointHost: "enter.example.com",
+			EndpointPort: 443,
+		}, spec)
+		if err == nil {
+			t.Fatalf("expected unsafe fallback spec to be rejected: %#v", overrides)
+		}
 	}
 }
 

@@ -247,18 +247,21 @@ func decodeServicePackJSON(raw []byte, target any) error {
 }
 
 func normalizeServicePackTemplate(pack domain.ServicePackDefinition, idx int) (domain.ServicePackDefinition, error) {
-	pack.Key = strings.TrimSpace(pack.Key)
+	pack.Key = normalizeServicePackKey(pack.Key)
 	pack.Label = strings.TrimSpace(pack.Label)
 	pack.Description = strings.TrimSpace(pack.Description)
 	pack.BaseNameTemplate = strings.TrimSpace(pack.BaseNameTemplate)
 	pack.EndpointHint = strings.TrimSpace(pack.EndpointHint)
 	pack.Status = strings.TrimSpace(pack.Status)
 	pack.Source = strings.TrimSpace(pack.Source)
-	if pack.Key == "" {
-		return domain.ServicePackDefinition{}, fmt.Errorf("service pack key is required")
-	}
 	if pack.Label == "" {
 		return domain.ServicePackDefinition{}, fmt.Errorf("service pack %q label is required", pack.Key)
+	}
+	if pack.Key == "" {
+		pack.Key = normalizeServicePackKey(pack.Label)
+	}
+	if pack.Key == "" {
+		return domain.ServicePackDefinition{}, fmt.Errorf("service pack key is required")
 	}
 	if len(pack.Components) == 0 {
 		return domain.ServicePackDefinition{}, fmt.Errorf("service pack %q must define at least one component", pack.Key)
@@ -312,6 +315,31 @@ func normalizeServicePackTemplate(pack domain.ServicePackDefinition, idx int) (d
 		}
 	}
 	return pack, nil
+}
+
+func normalizeServicePackKey(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	var b strings.Builder
+	lastSeparator := false
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastSeparator = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastSeparator = false
+		default:
+			if !lastSeparator {
+				b.WriteByte('-')
+				lastSeparator = true
+			}
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func validServicePackStatus(status string) bool {

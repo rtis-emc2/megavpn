@@ -27,6 +27,7 @@
     const config = window.MegaVPNAppConfig?.nodeMap || {};
     const STATIC_MAP_URL = safeStaticMapURL(config.staticMapURL);
     const routeUpdates = new Set();
+    let activationRefreshInFlight = false;
 
     function safeStaticMapURL(value) {
       const fallback = './assets/world-map.svg';
@@ -522,16 +523,16 @@
                 <h3>${escapeHTML(link.name || 'managed link')}</h3>
                 <p>${escapeHTML(ingress?.name || 'ingress pending')} -> ${escapeHTML(egress?.name || 'egress pending')}</p>
               </div>
-              <div class="node-map-backhaul-tags">
+            </div>
+            ${issue ? `<div class="node-map-backhaul-issue">${escapeHTML(issue)}</div>` : ''}
+            <div class="node-map-backhaul-route-row">
+              <span class="muted-mono">${escapeHTML(endpoint || 'endpoint pending')}</span>
+              <div class="node-map-backhaul-inline-tags">
                 ${statusTag(status)}
                 ${statusTag(backhaulDriver(link))}
                 ${metric ? statusTag(`metric ${metric}`) : ''}
                 ${statusTag(drawable ? 'mapped' : 'waiting GeoIP')}
               </div>
-            </div>
-            ${issue ? `<div class="node-map-backhaul-issue">${escapeHTML(issue)}</div>` : ''}
-            <div class="node-map-backhaul-route-row">
-              <span class="muted-mono">${escapeHTML(endpoint || 'endpoint pending')}</span>
               <label class="node-map-route-switch ${routeEnabled ? 'enabled' : 'disabled'}${busy ? ' busy' : ''}">
                 <input class="node-map-route-input" type="checkbox" data-link-id="${escapeHTML(linkID)}" ${routeEnabled ? 'checked' : ''} ${busy || typeof sendJSON !== 'function' ? 'disabled' : ''}>
                 <span></span>
@@ -602,8 +603,9 @@
     }
 
     function selectNode(nodeID) {
-      if (!nodeID) return;
-      state.nodeMapSelectedNodeID = nodeID;
+      const id = String(nodeID || '').trim();
+      if (!id) return;
+      state.nodeMapSelectedNodeID = String(state.nodeMapSelectedNodeID || '') === id ? '' : id;
       render();
     }
 
@@ -730,7 +732,25 @@
       });
     }
 
-    return { render };
+    async function activate() {
+      if (activationRefreshInFlight || typeof loadCore !== 'function') return;
+      activationRefreshInFlight = true;
+      try {
+        await loadCore();
+      } catch (err) {
+        state.nodeMapRouteNotice = {
+          tone: 'danger',
+          text: 'Node map refresh failed.',
+          detail: err?.message || 'Unable to refresh topology data.',
+          jobs: [],
+        };
+      } finally {
+        activationRefreshInFlight = false;
+        if (state.page === 'nodeMap') render();
+      }
+    }
+
+    return { render, activate };
   }
 
   window.MegaVPNNodeMapPage = { create: createNodeMapPage };

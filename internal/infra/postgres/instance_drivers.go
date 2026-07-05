@@ -1398,7 +1398,7 @@ func validateNginxLocationPath(path string) error {
 	if path == "" || !strings.HasPrefix(path, "/") {
 		return fmt.Errorf("nginx location_path must start with /")
 	}
-	if strings.ContainsAny(path, "{};\r\n\t ") {
+	if strings.ContainsAny(path, "{};\"'`\\#?\r\n\t ") {
 		return fmt.Errorf("nginx location_path contains unsafe characters")
 	}
 	return nil
@@ -1452,7 +1452,7 @@ func validateNginxDirectiveValue(name, value string) error {
 	if value == "" {
 		return nil
 	}
-	if strings.ContainsAny(value, "{};\r\n\t ") {
+	if strings.ContainsAny(value, "{};\"'`\\#\r\n\t ") {
 		return fmt.Errorf("nginx %s contains unsafe characters", name)
 	}
 	return nil
@@ -1554,6 +1554,13 @@ func attachDefaultNetworkPolicy(instance domain.Instance, spec map[string]any) m
 	if len(rules) > 0 {
 		spec["firewall_rules"] = rules
 	}
+	natRules := sliceFromAny(spec["nat_rules"])
+	for _, rule := range defaultNATRulesForInstance(instance, spec) {
+		natRules = appendNATRuleIfMissing(natRules, rule)
+	}
+	if len(natRules) > 0 {
+		spec["nat_rules"] = natRules
+	}
 	return spec
 }
 
@@ -1623,6 +1630,51 @@ func defaultFirewallRulesForInstance(instance domain.Instance, spec map[string]a
 	return rules
 }
 
+func defaultNATRulesForInstance(instance domain.Instance, spec map[string]any) []map[string]any {
+	serviceCode := normalizeInstanceRuntimeCode(instance.ServiceCode)
+	if serviceCode != "openvpn" || explicitlyFalse(spec["nat_enabled"]) || !openVPNFullTunnelPushEnabled(spec) {
+		return nil
+	}
+	sourceCIDR := openVPNClientPoolCIDR(spec)
+	if sourceCIDR == "" {
+		return nil
+	}
+	return []map[string]any{{
+		"type":    "masquerade",
+		"family":  "ip",
+		"source":  sourceCIDR,
+		"comment": "default openvpn client egress masquerade",
+	}}
+}
+
+func openVPNFullTunnelPushEnabled(spec map[string]any) bool {
+	for _, line := range extraServerLines(spec["server_extra_lines"]) {
+		if strings.Contains(strings.ToLower(line), "redirect-gateway") {
+			return true
+		}
+	}
+	return false
+}
+
+func openVPNClientPoolCIDR(spec map[string]any) string {
+	cidr := strings.TrimSpace(firstString(spec["address_pool_cidr"]))
+	if prefix, err := netip.ParsePrefix(cidr); err == nil && prefix.Addr().Is4() {
+		return prefix.Masked().String()
+	}
+	cidr, err := cidrFromIPv4NetworkAndNetmask(
+		firstString(spec["server_network"], "10.8.0.0"),
+		firstString(spec["server_netmask"], "255.255.255.0"),
+	)
+	if err != nil {
+		return ""
+	}
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil || !prefix.Addr().Is4() {
+		return ""
+	}
+	return prefix.Masked().String()
+}
+
 func appendFirewallRuleIfMissing(rules []any, rule map[string]any) []any {
 	for _, item := range rules {
 		existing, _ := item.(map[string]any)
@@ -1630,6 +1682,19 @@ func appendFirewallRuleIfMissing(rules []any, rule map[string]any) []any {
 			continue
 		}
 		if firewallRuleKey(existing) == firewallRuleKey(rule) {
+			return rules
+		}
+	}
+	return append(rules, rule)
+}
+
+func appendNATRuleIfMissing(rules []any, rule map[string]any) []any {
+	for _, item := range rules {
+		existing, _ := item.(map[string]any)
+		if existing == nil {
+			continue
+		}
+		if natRuleKey(existing) == natRuleKey(rule) {
 			return rules
 		}
 	}
@@ -1644,6 +1709,15 @@ func firewallRuleKey(rule map[string]any) string {
 		strconv.Itoa(firstIntValue(rule["port"], rule["dport"], rule["listen_port"])),
 		firstString(rule["source"], rule["src"]),
 		firstString(rule["interface"], rule["iifname"], rule["dev"]),
+	}, "|")
+}
+
+func natRuleKey(rule map[string]any) string {
+	return strings.Join([]string{
+		strings.ToLower(firstString(rule["type"], "masquerade")),
+		strings.ToLower(firstString(rule["family"], "ip")),
+		firstString(rule["source"], rule["src"], rule["cidr"]),
+		firstString(rule["out_interface"], rule["oifname"], rule["interface"]),
 	}, "|")
 }
 

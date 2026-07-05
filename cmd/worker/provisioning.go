@@ -1081,10 +1081,13 @@ func normalizePEMBlock(tag, content string) string {
 	if content == "" {
 		return ""
 	}
-	if strings.Contains(content, "-----BEGIN ") {
+	openTag := "<" + tag + ">"
+	closeTag := "</" + tag + ">"
+	lowerContent := strings.ToLower(content)
+	if strings.Contains(lowerContent, strings.ToLower(openTag)) && strings.Contains(lowerContent, strings.ToLower(closeTag)) {
 		return content + "\n"
 	}
-	return "<" + tag + ">\n" + content + "\n</" + tag + ">\n"
+	return openTag + "\n" + content + "\n" + closeTag + "\n"
 }
 
 func renderTemplateVariables(template string, record domain.ProvisioningAccess) string {

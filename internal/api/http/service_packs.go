@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -34,14 +35,18 @@ type servicePackCatalogManageStore interface {
 }
 
 type createServicePackRequest struct {
-	NodeID             string `json:"node_id"`
-	BaseName           string `json:"base_name"`
-	EndpointHost       string `json:"endpoint_host"`
-	CertificateID      string `json:"certificate_id"`
-	OpenVPNPKIProfile  string `json:"openvpn_pki_profile"`
-	XrayEgressMode     string `json:"xray_egress_mode"`
-	XrayEgressNodeID   string `json:"xray_egress_node_id"`
-	AutoInstallRuntime *bool  `json:"auto_install_runtime"`
+	NodeID              string `json:"node_id"`
+	BaseName            string `json:"base_name"`
+	EndpointHost        string `json:"endpoint_host"`
+	CertificateID       string `json:"certificate_id"`
+	OpenVPNPKIProfile   string `json:"openvpn_pki_profile"`
+	XrayEgressMode      string `json:"xray_egress_mode"`
+	XrayEgressNodeID    string `json:"xray_egress_node_id"`
+	CamouflagePath      string `json:"camouflage_path"`
+	FallbackUpstreamURL string `json:"fallback_upstream_url"`
+	FallbackHostHeader  string `json:"fallback_host_header"`
+	FallbackSNI         string `json:"fallback_sni"`
+	AutoInstallRuntime  *bool  `json:"auto_install_runtime"`
 }
 
 func defaultVLESSOutboundGroups() []any {
@@ -53,6 +58,14 @@ func defaultVLESSOutboundGroups() []any {
 			"egress_mode":  "default",
 			"outbound_tag": "direct",
 		},
+	}
+}
+
+func openVPNFullTunnelServerExtraLines() []string {
+	return []string{
+		`push "redirect-gateway def1 bypass-dhcp"`,
+		`push "dhcp-option DNS 1.1.1.1"`,
+		`push "dhcp-option DNS 1.0.0.1"`,
 	}
 }
 
@@ -77,9 +90,9 @@ func servicePackDefinitions() []servicePackDefinition {
 			},
 			Components: []servicePackComponent{
 				{Label: "VLESS TCP Edge", Description: "VLESS/Reality component для пары VLESS + OpenVPN TCP.", ServiceCode: "xray-core", PresetKey: "reality_tcp", NameSuffix: "vless-tcp-edge", SlugSuffix: "vless-tcp-edge", EndpointPort: 443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "reality_tcp", "security": "reality", "network": "tcp", "dest": "www.cloudflare.com:443", "fingerprint": "chrome", "auto_generate_reality_keys": true, "egress_mode": "auto", "default_vless_group": "default", "vless_groups": defaultVLESSOutboundGroups(), "config_mode": "0640"}},
-				{Label: "OpenVPN TCP Companion", Description: "OpenVPN TCP component для пары VLESS + OpenVPN TCP.", ServiceCode: "openvpn", PresetKey: "tcp_11994", NameSuffix: "openvpn-tcp", SlugSuffix: "openvpn-tcp", EndpointPort: 11994, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "tcp_11994", "pki_scope": "platform", "pki_profile": "default", "proto": "tcp", "dev": "tun", "address_pool_mode": "auto", "config_mode": "0644"}},
+				{Label: "OpenVPN TCP Companion", Description: "OpenVPN TCP component для пары VLESS + OpenVPN TCP.", ServiceCode: "openvpn", PresetKey: "tcp_11994", NameSuffix: "openvpn-tcp", SlugSuffix: "openvpn-tcp", EndpointPort: 11994, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "tcp_11994", "pki_scope": "platform", "pki_profile": "default", "proto": "tcp", "dev": "tun", "address_pool_mode": "auto", "server_extra_lines": openVPNFullTunnelServerExtraLines(), "config_mode": "0644"}},
 				{Label: "VLESS Standalone", Description: "Отдельный VLESS/Reality instance на альтернативном TCP-порту.", ServiceCode: "xray-core", PresetKey: "reality_tcp", NameSuffix: "vless", SlugSuffix: "vless", EndpointPort: 8443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "reality_tcp", "security": "reality", "network": "tcp", "dest": "www.cloudflare.com:443", "fingerprint": "chrome", "auto_generate_reality_keys": true, "egress_mode": "auto", "default_vless_group": "default", "vless_groups": defaultVLESSOutboundGroups(), "config_mode": "0640"}},
-				{Label: "OpenVPN UDP", Description: "Классический OpenVPN UDP baseline.", ServiceCode: "openvpn", PresetKey: "udp_1194", NameSuffix: "openvpn-udp", SlugSuffix: "openvpn-udp", EndpointPort: 1194, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "udp_1194", "pki_scope": "platform", "pki_profile": "default", "proto": "udp", "dev": "tun", "address_pool_mode": "auto", "config_mode": "0644"}},
+				{Label: "OpenVPN UDP", Description: "Классический OpenVPN UDP baseline.", ServiceCode: "openvpn", PresetKey: "udp_1194", NameSuffix: "openvpn-udp", SlugSuffix: "openvpn-udp", EndpointPort: 1194, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "udp_1194", "pki_scope": "platform", "pki_profile": "default", "proto": "udp", "dev": "tun", "address_pool_mode": "auto", "server_extra_lines": openVPNFullTunnelServerExtraLines(), "config_mode": "0644"}},
 				{Label: "Shadowsocks", Description: "Standalone Shadowsocks chacha20-ietf-poly1305 baseline.", ServiceCode: "shadowsocks", PresetKey: "chacha_full", NameSuffix: "shadowsocks", SlugSuffix: "shadowsocks", EndpointPort: 8388, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "chacha_full", "method": "chacha20-ietf-poly1305", "mode": "tcp_and_udp", "timeout": 300, "auto_generate_server_password": true, "config_mode": "0640"}},
 				{Label: "WireGuard", Description: "Standalone WireGuard road-warrior baseline.", ServiceCode: "wireguard", PresetKey: "roadwarrior", NameSuffix: "wireguard", SlugSuffix: "wireguard", EndpointPort: 51820, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "roadwarrior", "address_pool_mode": "auto", "client_allowed_ips": "0.0.0.0/0, ::/0", "client_dns": "1.1.1.1, 1.0.0.1", "persistent_keepalive": 25, "auto_generate_server_key": true, "config_mode": "0600"}},
 			},
@@ -132,8 +145,8 @@ func servicePackDefinitions() []servicePackDefinition {
 				"Не смешивай этот пакет с direct-Reality на том же 443 без явного ingress-плана.",
 			},
 			Components: []servicePackComponent{
-				{Label: "Xray gRPC Backend", Description: "Runtime backend для Nginx gRPC edge.", ServiceCode: "xray-core", PresetKey: "nginx_grpc_backend", NameSuffix: "xray-grpc", SlugSuffix: "xray-grpc", EndpointPort: 7443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "nginx_grpc_backend", "security": "none", "network": "grpc", "service_name": "vless-grpc", "public_security": "tls", "public_network": "grpc", "public_service_name": "vless-grpc", "public_port": 443, "egress_mode": "auto", "default_vless_group": "default", "vless_groups": defaultVLESSOutboundGroups(), "config_mode": "0640"}},
-				{Label: "Nginx gRPC Edge", Description: "Публичный TLS ingress для backend Xray gRPC с fallback на реальный сайт.", ServiceCode: "nginx", PresetKey: "grpc_edge", NameSuffix: "nginx-grpc-edge", SlugSuffix: "nginx-grpc-edge", EndpointPort: 443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "grpc_edge", "mode": "grpc_proxy", "location_path": "/vless-grpc", "server_name": "{{endpoint_host}}", "upstream_url": "grpc://127.0.0.1:7443", "fallback_upstream_url": "https://example.com", "fallback_host_header": "example.com", "fallback_sni": "example.com", "tls_enabled": true, "tls_cert_path": "/etc/letsencrypt/live/{{endpoint_host}}/fullchain.pem", "tls_key_path": "/etc/letsencrypt/live/{{endpoint_host}}/privkey.pem", "config_mode": "0644"}},
+				{Label: "Xray gRPC Backend", Description: "Runtime backend для Nginx gRPC edge.", ServiceCode: "xray-core", PresetKey: "nginx_grpc_backend", NameSuffix: "xray-grpc", SlugSuffix: "xray-grpc", EndpointPort: 7443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "nginx_grpc_backend", "listen": "127.0.0.1", "security": "none", "network": "grpc", "service_name": "vless-grpc", "public_security": "tls", "public_network": "grpc", "public_service_name": "vless-grpc", "public_port": 443, "egress_mode": "auto", "default_vless_group": "default", "vless_groups": defaultVLESSOutboundGroups(), "config_mode": "0640"}},
+				{Label: "Nginx gRPC Edge", Description: "Публичный TLS ingress для backend Xray gRPC с fallback на реальный сайт.", ServiceCode: "nginx", PresetKey: "grpc_edge", NameSuffix: "nginx-grpc-edge", SlugSuffix: "nginx-grpc-edge", EndpointPort: 443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "grpc_edge", "mode": "grpc_proxy", "location_path": "/vless-grpc", "server_name": "{{endpoint_host}}", "upstream_url": "grpc://127.0.0.1:7443", "fallback_upstream_url": "{{fallback_upstream_url}}", "fallback_host_header": "{{fallback_host_header}}", "fallback_sni": "{{fallback_sni}}", "tls_enabled": true, "tls_cert_path": "/etc/letsencrypt/live/{{endpoint_host}}/fullchain.pem", "tls_key_path": "/etc/letsencrypt/live/{{endpoint_host}}/privkey.pem", "config_mode": "0644"}},
 			},
 		},
 		{
@@ -152,8 +165,8 @@ func servicePackDefinitions() []servicePackDefinition {
 				"При необходимости path можно потом поменять в revision/spec и на Xray, и на Nginx edge. Не используй очевидный `/ws` в production.",
 			},
 			Components: []servicePackComponent{
-				{Label: "Xray VLESS/WebSocket Backend", Description: "Runtime backend для Nginx WebSocket edge.", ServiceCode: "xray-core", PresetKey: "nginx_ws_backend", NameSuffix: "xray-ws", SlugSuffix: "xray-ws", EndpointPort: 7080, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "nginx_ws_backend", "security": "none", "network": "ws", "path": "/assets/rtis-sync", "public_security": "tls", "public_network": "ws", "public_path": "/assets/rtis-sync", "public_host_header": "{{endpoint_host}}", "public_port": 443, "egress_mode": "auto", "default_vless_group": "default", "vless_groups": defaultVLESSOutboundGroups(), "config_mode": "0640"}},
-				{Label: "Nginx WebSocket Camouflage Edge", Description: "Публичный TLS reverse-proxy для Xray ws path и fallback website для обычного web-трафика.", ServiceCode: "nginx", PresetKey: "ws_camouflage_edge", NameSuffix: "nginx-camouflage-edge", SlugSuffix: "nginx-camouflage-edge", EndpointPort: 443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "ws_camouflage_edge", "mode": "reverse_proxy", "location_path": "/assets/rtis-sync", "server_name": "{{endpoint_host}}", "upstream_url": "http://127.0.0.1:7080", "fallback_upstream_url": "https://example.com", "fallback_host_header": "example.com", "fallback_sni": "example.com", "tls_enabled": true, "tls_cert_path": "/etc/letsencrypt/live/{{endpoint_host}}/fullchain.pem", "tls_key_path": "/etc/letsencrypt/live/{{endpoint_host}}/privkey.pem", "location_extra_lines": "proxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"upgrade\";", "config_mode": "0644"}},
+				{Label: "Xray VLESS/WebSocket Backend", Description: "Runtime backend для Nginx WebSocket edge.", ServiceCode: "xray-core", PresetKey: "nginx_ws_backend", NameSuffix: "xray-ws", SlugSuffix: "xray-ws", EndpointPort: 7080, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "nginx_ws_backend", "listen": "127.0.0.1", "security": "none", "network": "ws", "path": "{{camouflage_path}}", "public_security": "tls", "public_network": "ws", "public_path": "{{camouflage_path}}", "public_host_header": "{{endpoint_host}}", "public_port": 443, "egress_mode": "auto", "default_vless_group": "default", "vless_groups": defaultVLESSOutboundGroups(), "config_mode": "0640"}},
+				{Label: "Nginx WebSocket Camouflage Edge", Description: "Публичный TLS reverse-proxy для Xray ws path и fallback website для обычного web-трафика.", ServiceCode: "nginx", PresetKey: "ws_camouflage_edge", NameSuffix: "nginx-camouflage-edge", SlugSuffix: "nginx-camouflage-edge", EndpointPort: 443, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "ws_camouflage_edge", "mode": "reverse_proxy", "location_path": "{{camouflage_path}}", "server_name": "{{endpoint_host}}", "upstream_url": "http://127.0.0.1:7080", "fallback_upstream_url": "{{fallback_upstream_url}}", "fallback_host_header": "{{fallback_host_header}}", "fallback_sni": "{{fallback_sni}}", "tls_enabled": true, "tls_cert_path": "/etc/letsencrypt/live/{{endpoint_host}}/fullchain.pem", "tls_key_path": "/etc/letsencrypt/live/{{endpoint_host}}/privkey.pem", "location_extra_lines": "proxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"upgrade\";", "config_mode": "0644"}},
 			},
 		},
 		{
@@ -170,7 +183,7 @@ func servicePackDefinitions() []servicePackDefinition {
 				"Рекомендуемый baseline, если нужен более совместимый TCP transport.",
 			},
 			Components: []servicePackComponent{
-				{Label: "OpenVPN TCP", Description: "OpenVPN instance с platform-managed PKI.", ServiceCode: "openvpn", PresetKey: "tcp_11994", NameSuffix: "openvpn-tcp", SlugSuffix: "openvpn-tcp", EndpointPort: 11994, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "tcp_11994", "pki_scope": "platform", "pki_profile": "default", "proto": "tcp", "dev": "tun", "address_pool_mode": "auto", "config_mode": "0644"}},
+				{Label: "OpenVPN TCP", Description: "OpenVPN instance с platform-managed PKI.", ServiceCode: "openvpn", PresetKey: "tcp_11994", NameSuffix: "openvpn-tcp", SlugSuffix: "openvpn-tcp", EndpointPort: 11994, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "tcp_11994", "pki_scope": "platform", "pki_profile": "default", "proto": "tcp", "dev": "tun", "address_pool_mode": "auto", "server_extra_lines": openVPNFullTunnelServerExtraLines(), "config_mode": "0644"}},
 			},
 		},
 		{
@@ -187,7 +200,7 @@ func servicePackDefinitions() []servicePackDefinition {
 				"Подходит там, где throughput важнее camouflage и firewall-path стабильнее.",
 			},
 			Components: []servicePackComponent{
-				{Label: "OpenVPN UDP", Description: "OpenVPN instance с platform-managed PKI.", ServiceCode: "openvpn", PresetKey: "udp_1194", NameSuffix: "openvpn-udp", SlugSuffix: "openvpn-udp", EndpointPort: 1194, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "udp_1194", "pki_scope": "platform", "pki_profile": "default", "proto": "udp", "dev": "tun", "address_pool_mode": "auto", "config_mode": "0644"}},
+				{Label: "OpenVPN UDP", Description: "OpenVPN instance с platform-managed PKI.", ServiceCode: "openvpn", PresetKey: "udp_1194", NameSuffix: "openvpn-udp", SlugSuffix: "openvpn-udp", EndpointPort: 1194, RequiresEndpointHost: true, Spec: map[string]any{"service_profile": "udp_1194", "pki_scope": "platform", "pki_profile": "default", "proto": "udp", "dev": "tun", "address_pool_mode": "auto", "server_extra_lines": openVPNFullTunnelServerExtraLines(), "config_mode": "0644"}},
 			},
 		},
 		{
@@ -397,10 +410,20 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 	req.CertificateID = strings.TrimSpace(req.CertificateID)
 	req.OpenVPNPKIProfile = strings.TrimSpace(req.OpenVPNPKIProfile)
 	req.XrayEgressNodeID = strings.TrimSpace(req.XrayEgressNodeID)
+	req.CamouflagePath = strings.TrimSpace(req.CamouflagePath)
+	req.FallbackUpstreamURL = strings.TrimSpace(req.FallbackUpstreamURL)
+	req.FallbackHostHeader = strings.TrimSpace(req.FallbackHostHeader)
+	req.FallbackSNI = strings.TrimSpace(req.FallbackSNI)
 	req.XrayEgressMode, err = normalizeXrayEgressModeHTTP(req.XrayEgressMode, req.XrayEgressNodeID)
 	if err != nil {
 		writeErr(w, 400, "invalid service pack payload: "+err.Error())
 		return
+	}
+	if servicePackUsesTrafficCamouflage(pack) {
+		if err := normalizeServicePackCamouflageRequestHTTP(&req, pack); err != nil {
+			writeErr(w, 400, "invalid service pack payload: "+err.Error())
+			return
+		}
 	}
 	if req.BaseName == "" {
 		req.BaseName = pack.BaseNameTemplate
@@ -435,52 +458,73 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 	created := make([]domain.Instance, 0, len(pack.Components))
 	applyNowInstanceIDs := []string{}
 	dependentInstanceIDsByRuntime := map[string][]string{}
+	existingInstances, err := s.store.ListInstances(r.Context())
+	if err != nil {
+		writeErr(w, 409, "instance identity preflight failed: "+err.Error())
+		return
+	}
+	identitySet := newServicePackInstanceIdentitySet(existingInstances)
 	for _, component := range pack.Components {
-		name := req.BaseName
+		baseName := req.BaseName
 		if suffix := strings.TrimSpace(component.NameSuffix); suffix != "" {
-			name += "-" + suffix
+			baseName += "-" + suffix
 		}
-		slug := slugifyHTTP(req.BaseName)
+		baseSlug := slugifyHTTP(req.BaseName)
 		if suffix := strings.TrimSpace(component.SlugSuffix); suffix != "" {
-			slug += "-" + slugifyHTTP(suffix)
+			baseSlug += "-" + slugifyHTTP(suffix)
 		}
-		spec := interpolatePackSpec(cloneMapHTTP(component.Spec), map[string]string{
-			"endpoint_host":  req.EndpointHost,
-			"base_name":      req.BaseName,
-			"component_slug": slug,
-		})
-		if req.CertificateID != "" && servicePackComponentUsesTLSEdgeCertificate(component) {
-			spec["certificate_id"] = req.CertificateID
-		}
-		if component.ServiceCode == "openvpn" && req.OpenVPNPKIProfile != "" {
-			spec["pki_scope"] = "platform"
-			spec["pki_profile"] = req.OpenVPNPKIProfile
-		}
-		applyXrayEgressOverrideHTTP(component, spec, req.XrayEgressMode, req.XrayEgressNodeID)
-		componentService := strings.TrimSpace(component.ServiceCode)
-		if strings.EqualFold(componentService, driver.XrayCore) || strings.EqualFold(componentService, "xray") {
-			vlessGroups, err := s.availableVLESSGroupTemplates(r.Context())
-			if err != nil {
-				writeErr(w, 409, "vless group catalog preflight failed: "+err.Error())
-				return
+		var createdInstance domain.Instance
+		var createErr error
+		for attempt := 0; attempt < 16; attempt++ {
+			name, slug := identitySet.reserve(req.NodeID, baseName, baseSlug)
+			spec := interpolatePackSpec(cloneMapHTTP(component.Spec), map[string]string{
+				"endpoint_host":         req.EndpointHost,
+				"base_name":             req.BaseName,
+				"component_slug":        slug,
+				"camouflage_path":       req.CamouflagePath,
+				"fallback_upstream_url": req.FallbackUpstreamURL,
+				"fallback_host_header":  req.FallbackHostHeader,
+				"fallback_sni":          req.FallbackSNI,
+			})
+			if req.CertificateID != "" && servicePackComponentUsesTLSEdgeCertificate(component) {
+				spec["certificate_id"] = req.CertificateID
 			}
-			ensureVLESSDefaultGroup(spec, vlessGroups)
+			if component.ServiceCode == "openvpn" && req.OpenVPNPKIProfile != "" {
+				spec["pki_scope"] = "platform"
+				spec["pki_profile"] = req.OpenVPNPKIProfile
+			}
+			applyXrayEgressOverrideHTTP(component, spec, req.XrayEgressMode, req.XrayEgressNodeID)
+			componentService := strings.TrimSpace(component.ServiceCode)
+			if strings.EqualFold(componentService, driver.XrayCore) || strings.EqualFold(componentService, "xray") {
+				vlessGroups, err := s.availableVLESSGroupTemplates(r.Context())
+				if err != nil {
+					writeErr(w, 409, "vless group catalog preflight failed: "+err.Error())
+					return
+				}
+				ensureVLESSDefaultGroup(spec, vlessGroups)
+			}
+			instance := domain.Instance{
+				NodeID:       req.NodeID,
+				ServiceCode:  component.ServiceCode,
+				Name:         name,
+				Slug:         slug,
+				EndpointHost: req.EndpointHost,
+				EndpointPort: component.EndpointPort,
+				Spec:         spec,
+			}
+			createdInstance, createErr = s.store.CreateInstanceValidatedDraft(r.Context(), instance)
+			if createErr == nil {
+				break
+			}
+			if !isInstanceIdentityUniqueViolation(createErr) {
+				break
+			}
 		}
-		instance := domain.Instance{
-			NodeID:       req.NodeID,
-			ServiceCode:  component.ServiceCode,
-			Name:         name,
-			Slug:         slug,
-			EndpointHost: req.EndpointHost,
-			EndpointPort: component.EndpointPort,
-			Spec:         spec,
-		}
-		createdInstance, err := s.store.CreateInstanceValidatedDraft(r.Context(), instance)
-		if err != nil {
+		if createErr != nil {
 			discarded := discardCreatedServicePackInstances(r.Context(), s.store, created)
 			writeJSON(w, 409, response{
 				"status":            "partial_failure",
-				"error":             fmt.Sprintf("service pack component %q is not apply-ready: %v", servicePackComponentLabel(component), err),
+				"error":             fmt.Sprintf("service pack component %q is not apply-ready: %v", servicePackComponentLabel(component), createErr),
 				"component":         servicePackComponentLabel(component),
 				"service_pack_key":  pack.Key,
 				"created_instances": created,
@@ -593,6 +637,163 @@ func normalizeXrayEgressModeHTTP(mode string, egressNodeID string) (string, erro
 	default:
 		return "", fmt.Errorf("unsupported xray_egress_mode %q", mode)
 	}
+}
+
+func normalizeServicePackCamouflageRequestHTTP(req *createServicePackRequest, pack domain.ServicePackDefinition) error {
+	if req == nil {
+		return fmt.Errorf("camouflage request is required")
+	}
+	if servicePackUsesConfigurableCamouflagePathHTTP(pack) {
+		if req.CamouflagePath == "" {
+			req.CamouflagePath = defaultServicePackCamouflagePathHTTP(pack)
+		}
+		if err := validateServicePackCamouflagePathHTTP(req.CamouflagePath); err != nil {
+			return err
+		}
+	} else {
+		req.CamouflagePath = ""
+	}
+	if req.FallbackUpstreamURL == "" {
+		return fmt.Errorf("fallback_upstream_url is required for traffic camouflage packs")
+	}
+	parsed, err := validateServicePackFallbackURLHTTP(req.FallbackUpstreamURL)
+	if err != nil {
+		return err
+	}
+	if req.FallbackHostHeader == "" {
+		req.FallbackHostHeader = parsed.Host
+	}
+	if req.FallbackSNI == "" && strings.EqualFold(parsed.Scheme, "https") {
+		req.FallbackSNI = parsed.Hostname()
+	}
+	for _, item := range []struct {
+		name  string
+		value string
+	}{
+		{name: "fallback_host_header", value: req.FallbackHostHeader},
+		{name: "fallback_sni", value: req.FallbackSNI},
+	} {
+		if err := validateServicePackNginxDirectiveValueHTTP(item.name, item.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateServicePackCamouflagePathHTTP(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" || !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("camouflage_path must start with /")
+	}
+	if path == "/" {
+		return fmt.Errorf("camouflage_path must not be /; fallback website needs the root location")
+	}
+	if strings.ContainsAny(path, "{};\"'`\\#?\r\n\t ") {
+		return fmt.Errorf("camouflage_path contains unsafe characters")
+	}
+	return nil
+}
+
+func validateServicePackFallbackURLHTTP(raw string) (*url.URL, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("fallback_upstream_url is required")
+	}
+	if err := validateServicePackNginxDirectiveValueHTTP("fallback_upstream_url", raw); err != nil {
+		return nil, err
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed == nil {
+		return nil, fmt.Errorf("fallback_upstream_url is invalid")
+	}
+	if parsed.User != nil {
+		return nil, fmt.Errorf("fallback_upstream_url must not contain credentials")
+	}
+	if parsed.Host == "" || parsed.Scheme == "" {
+		return nil, fmt.Errorf("fallback_upstream_url must be an absolute http or https URL")
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return nil, fmt.Errorf("fallback_upstream_url scheme must be http or https")
+	}
+	return parsed, nil
+}
+
+func validateServicePackNginxDirectiveValueHTTP(name, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if strings.ContainsAny(value, "{};\"'`\\#\r\n\t ") {
+		return fmt.Errorf("%s contains unsafe characters", name)
+	}
+	return nil
+}
+
+func servicePackUsesTrafficCamouflage(pack domain.ServicePackDefinition) bool {
+	for _, component := range pack.Components {
+		if servicePackComponentUsesTrafficCamouflage(component) {
+			return true
+		}
+	}
+	return false
+}
+
+func servicePackComponentUsesTrafficCamouflage(component domain.ServicePackComponent) bool {
+	profile := strings.ToLower(strings.TrimSpace(stringifyHTTP(component.Spec["service_profile"])))
+	switch profile {
+	case "ws_camouflage_edge", "nginx_ws_backend", "grpc_edge", "nginx_grpc_backend":
+		return true
+	}
+	return specValueContainsTemplateHTTP(component.Spec, "camouflage_path") ||
+		specValueContainsTemplateHTTP(component.Spec, "fallback_upstream_url")
+}
+
+func servicePackUsesConfigurableCamouflagePathHTTP(pack domain.ServicePackDefinition) bool {
+	for _, component := range pack.Components {
+		if specValueContainsTemplateHTTP(component.Spec, "camouflage_path") {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultServicePackCamouflagePathHTTP(pack domain.ServicePackDefinition) string {
+	for _, component := range pack.Components {
+		for _, key := range []string{"location_path", "public_path", "path"} {
+			value := strings.TrimSpace(stringifyHTTP(component.Spec[key]))
+			if value == "" || strings.Contains(value, "{{") {
+				continue
+			}
+			if strings.HasPrefix(value, "/") && value != "/" {
+				return value
+			}
+		}
+	}
+	if strings.Contains(strings.ToLower(pack.Key), "grpc") {
+		return "/vless-grpc"
+	}
+	return "/assets/rtis-sync"
+}
+
+func specValueContainsTemplateHTTP(value any, name string) bool {
+	token := "{{" + name + "}}"
+	switch typed := value.(type) {
+	case string:
+		return strings.Contains(typed, token)
+	case map[string]any:
+		for _, item := range typed {
+			if specValueContainsTemplateHTTP(item, name) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if specValueContainsTemplateHTTP(item, name) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func applyXrayEgressOverrideHTTP(component domain.ServicePackComponent, spec map[string]any, mode string, egressNodeID string) {
@@ -771,6 +972,88 @@ func isServicePackCatalogUnavailable(err error) bool {
 	}
 	text := strings.ToLower(err.Error())
 	return strings.Contains(text, "service_pack_templates") && (strings.Contains(text, "does not exist") || strings.Contains(text, "undefined"))
+}
+
+type servicePackInstanceIdentitySet struct {
+	slugs     map[string]struct{}
+	nodeNames map[string]struct{}
+}
+
+func newServicePackInstanceIdentitySet(instances []domain.Instance) *servicePackInstanceIdentitySet {
+	set := &servicePackInstanceIdentitySet{
+		slugs:     map[string]struct{}{},
+		nodeNames: map[string]struct{}{},
+	}
+	for _, instance := range instances {
+		if strings.EqualFold(strings.TrimSpace(instance.Status), "deleted") {
+			continue
+		}
+		if slug := strings.ToLower(strings.TrimSpace(instance.Slug)); slug != "" {
+			set.slugs[slug] = struct{}{}
+		}
+		if name := strings.ToLower(strings.TrimSpace(instance.Name)); name != "" {
+			set.nodeNames[servicePackNodeNameKey(instance.NodeID, name)] = struct{}{}
+		}
+	}
+	return set
+}
+
+func (set *servicePackInstanceIdentitySet) reserve(nodeID, baseName, baseSlug string) (string, string) {
+	if set == nil {
+		set = newServicePackInstanceIdentitySet(nil)
+	}
+	baseName = strings.TrimSpace(baseName)
+	if baseName == "" {
+		baseName = "instance"
+	}
+	baseSlug = slugifyHTTP(baseSlug)
+	for ordinal := 1; ordinal < 1000; ordinal++ {
+		name := servicePackOrdinalName(baseName, ordinal)
+		slug := servicePackOrdinalSlug(baseSlug, ordinal)
+		_, slugTaken := set.slugs[strings.ToLower(slug)]
+		_, nameTaken := set.nodeNames[servicePackNodeNameKey(nodeID, strings.ToLower(name))]
+		if slugTaken || nameTaken {
+			continue
+		}
+		set.slugs[strings.ToLower(slug)] = struct{}{}
+		set.nodeNames[servicePackNodeNameKey(nodeID, strings.ToLower(name))] = struct{}{}
+		return name, slug
+	}
+	fallback := fmt.Sprintf("%s-%d", baseSlug, time.Now().UnixNano())
+	return servicePackOrdinalName(baseName, 1000), fallback
+}
+
+func servicePackNodeNameKey(nodeID, name string) string {
+	return strings.TrimSpace(nodeID) + "\x00" + strings.ToLower(strings.TrimSpace(name))
+}
+
+func servicePackOrdinalName(baseName string, ordinal int) string {
+	if ordinal <= 1 {
+		return baseName
+	}
+	return fmt.Sprintf("%s %d", baseName, ordinal)
+}
+
+func servicePackOrdinalSlug(baseSlug string, ordinal int) string {
+	if ordinal <= 1 {
+		return baseSlug
+	}
+	return fmt.Sprintf("%s-%d", baseSlug, ordinal)
+}
+
+func isInstanceIdentityUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return false
+	}
+	name := strings.ToLower(strings.TrimSpace(pgErr.ConstraintName))
+	return strings.Contains(name, "instances_active_slug") ||
+		strings.Contains(name, "instances_active_node_name") ||
+		strings.Contains(name, "instances_slug_key") ||
+		strings.Contains(name, "instances_node_id_name_key")
 }
 
 func slugifyHTTP(value string) string {

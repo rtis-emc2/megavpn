@@ -87,7 +87,9 @@
     }
 
     function hasRole(code) {
-      return Array.isArray(state.authRoles) && state.authRoles.includes(code);
+      const expected = String(code || '').trim().toLowerCase();
+      return Boolean(expected) && Array.isArray(state.authRoles) && state.authRoles
+        .some((role) => String(role || '').trim().toLowerCase() === expected);
     }
 
     function platformPublicBaseURL() {

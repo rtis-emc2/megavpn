@@ -157,6 +157,9 @@
       }
       state.page = page;
       render();
+      if (page === 'nodeMap' && state.authUser) {
+        void nodeMapPage.activate?.();
+      }
       if (page === 'services' && state.authUser) {
         void servicesPage.loadData();
       }

@@ -353,25 +353,18 @@ func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T
 	if disabledLink.Status != "disabled" {
 		t.Fatalf("disabled link status = %q, want disabled", disabledLink.Status)
 	}
-	var cleanupJobs int
 	var refreshJob *domain.Job
 	for idx := range disableJobs {
 		job := disableJobs[idx]
 		switch job.Type {
 		case "node.backhaul.cleanup":
-			cleanupJobs++
-			if got := strings.TrimSpace(stringify(job.Payload["route_disable_batch_id"])); got == "" {
-				t.Fatalf("cleanup job payload missing route_disable_batch_id: %#v", job.Payload)
-			}
-			if got := strings.TrimSpace(stringify(job.Payload["route_action"])); got != "disable" {
-				t.Fatalf("cleanup job route_action = %q, want disable", got)
-			}
+			t.Fatalf("disable route queued cleanup job: %#v", job)
 		case "node.route_policy.apply":
 			refreshJob = &disableJobs[idx]
 		}
 	}
-	if cleanupJobs != 2 || refreshJob == nil {
-		t.Fatalf("disable jobs = %#v, want two cleanup jobs and one route policy refresh", disableJobs)
+	if len(disableJobs) != 1 || refreshJob == nil {
+		t.Fatalf("disable jobs = %#v, want one route policy refresh and no cleanup jobs", disableJobs)
 	}
 	disabledRoute := routePolicyPayloadRoute(t, refreshJob.Payload, route.ID)
 	disabledEgress := routePolicyPayloadEgress(t, disabledRoute)
@@ -386,8 +379,38 @@ func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T
 	if err != nil {
 		t.Fatalf("reload disabled backhaul: %v", err)
 	}
-	if reloaded.Status != "disabled" || len(reloaded.Transports) != 1 || reloaded.Transports[0].Status != "disabled" {
-		t.Fatalf("reloaded disabled backhaul = link:%s transports:%#v, want disabled", reloaded.Status, reloaded.Transports)
+	if reloaded.Status != "disabled" || len(reloaded.Transports) != 1 || reloaded.Transports[0].Status != "active" {
+		t.Fatalf("reloaded disabled backhaul = link:%s transports:%#v, want disabled link with active transport", reloaded.Status, reloaded.Transports)
+	}
+
+	enabledLink, enableJobs, err := store.SetBackhaulRouteEnabled(ctx, link.ID, true)
+	if err != nil {
+		t.Fatalf("enable backhaul route: %v", err)
+	}
+	if enabledLink.Status != "active" {
+		t.Fatalf("enabled link status = %q, want active", enabledLink.Status)
+	}
+	var enableRefreshJob *domain.Job
+	for idx := range enableJobs {
+		job := enableJobs[idx]
+		switch job.Type {
+		case "node.backhaul.cleanup", "node.backhaul.apply":
+			t.Fatalf("enable route queued transport job: %#v", job)
+		case "node.route_policy.apply":
+			enableRefreshJob = &enableJobs[idx]
+		}
+	}
+	if len(enableJobs) != 1 || enableRefreshJob == nil {
+		t.Fatalf("enable jobs = %#v, want one route policy refresh", enableJobs)
+	}
+	enabledRoute := routePolicyPayloadRoute(t, enableRefreshJob.Payload, route.ID)
+	enabledEgress := routePolicyPayloadEgress(t, enabledRoute)
+	if got := strings.TrimSpace(stringify(enabledEgress["status"])); got != "candidate" {
+		t.Fatalf("re-enabled route egress status = %q, want candidate; egress=%#v", got, enabledEgress)
+	}
+	enabledManagedBackhaul, _ := enabledEgress["managed_backhaul"].(map[string]any)
+	if enabledManagedBackhaul["link_id"] != link.ID || enabledManagedBackhaul["transport_id"] != link.Transports[0].ID {
+		t.Fatalf("re-enabled managed backhaul = %#v, want active link %s transport %s", enabledManagedBackhaul, link.ID, link.Transports[0].ID)
 	}
 }
 

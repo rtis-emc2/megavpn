@@ -12,6 +12,13 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
+type managedFileBackup struct {
+	Path    string
+	Existed bool
+	Content []byte
+	Mode    os.FileMode
+}
+
 func materializeInstanceSpec(payload instanceJobPayload) ([]managedFileSpec, error) {
 	spec := payload.Spec
 	if spec == nil {
@@ -157,6 +164,91 @@ func writeManagedFile(file managedFileSpec) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func snapshotManagedFiles(files []managedFileSpec) ([]managedFileBackup, error) {
+	backups := make([]managedFileBackup, 0, len(files))
+	seen := map[string]struct{}{}
+	for _, file := range files {
+		path := cleanAbsPath(file.Path)
+		if path == "" {
+			return nil, fmt.Errorf("managed file path is empty")
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		if hasUnsafePathToken(path) {
+			return nil, fmt.Errorf("managed file path contains unsafe characters: %s", file.Path)
+		}
+		if err := rejectSymlinkPath(path); err != nil {
+			return nil, err
+		}
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			backups = append(backups, managedFileBackup{Path: path})
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("managed file path is a directory: %s", path)
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		backups = append(backups, managedFileBackup{
+			Path:    path,
+			Existed: true,
+			Content: content,
+			Mode:    info.Mode().Perm(),
+		})
+	}
+	return backups, nil
+}
+
+func rollbackManagedFiles(backups []managedFileBackup) map[string]any {
+	restored := []string{}
+	removed := []string{}
+	errorsOut := []string{}
+	for i := len(backups) - 1; i >= 0; i-- {
+		backup := backups[i]
+		path := cleanAbsPath(backup.Path)
+		if path == "" {
+			errorsOut = append(errorsOut, "backup path is empty")
+			continue
+		}
+		if backup.Existed {
+			mode := fmt.Sprintf("%04o", backup.Mode.Perm())
+			if err := writeManagedFile(managedFileSpec{Path: path, Content: string(backup.Content), Mode: mode}); err != nil {
+				errorsOut = append(errorsOut, path+": "+err.Error())
+				continue
+			}
+			restored = append(restored, path)
+			continue
+		}
+		if err := rejectSymlinkPath(path); err != nil {
+			errorsOut = append(errorsOut, path+": "+err.Error())
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			errorsOut = append(errorsOut, path+": "+err.Error())
+			continue
+		}
+		removed = append(removed, path)
+	}
+	return map[string]any{
+		"attempted": len(backups) > 0,
+		"restored":  restored,
+		"removed":   removed,
+		"errors":    errorsOut,
+		"ok":        len(errorsOut) == 0,
+	}
 }
 
 func rejectSymlinkPath(path string) error {

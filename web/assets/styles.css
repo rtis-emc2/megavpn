@@ -3277,6 +3277,10 @@ tr:hover td { background: #f8fafc; }
   border-radius: 10px;
   background: #ffffff;
 }
+.advanced-form-section .compact-form-grid {
+  margin-top: 10px;
+  grid-template-columns: minmax(260px, 520px);
+}
 .advanced-form-section summary {
   cursor: pointer;
   color: var(--text);
@@ -3646,6 +3650,9 @@ tr:hover td { background: #f8fafc; }
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
+.firewall-page-shell {
+  max-width: 1560px;
+}
 .firewall-policy-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3658,41 +3665,53 @@ tr:hover td { background: #f8fafc; }
   gap: 12px;
   padding: 18px;
 }
-.firewall-action-board {
+.firewall-toolbar {
   display: grid;
   grid-template-columns: minmax(280px, 1fr) auto;
   align-items: center;
-  gap: 14px;
-  max-width: 1320px;
+  gap: 16px;
+  padding: 14px 16px;
 }
-.firewall-action-main {
+.firewall-toolbar.readonly {
+  border-color: rgba(148, 163, 184, 0.28);
+}
+.firewall-toolbar-copy {
   display: grid;
-  gap: 12px;
+  gap: 4px;
   min-width: 0;
 }
-.firewall-action-board h3 {
+.firewall-toolbar h3 {
   margin: 0 0 5px;
   color: var(--text);
   font-size: 17px;
   line-height: 1.25;
 }
-.firewall-action-board p {
+.firewall-toolbar p {
   max-width: 720px;
   margin: 0;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
 }
-.firewall-action-board .inline-actions {
+.firewall-toolbar-actions {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: min(520px, 100%);
 }
-.firewall-flow,
+.firewall-toolbar-actions button {
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+}
 .firewall-rule-presets {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
-.firewall-flow button,
 .firewall-rule-presets button {
   display: inline-flex;
   align-items: center;
@@ -3707,24 +3726,9 @@ tr:hover td { background: #f8fafc; }
   font-weight: 800;
   cursor: pointer;
 }
-.firewall-flow button:hover,
 .firewall-rule-presets button:hover {
   border-color: rgba(185, 28, 28, 0.28);
   background: #fff7f7;
-}
-.firewall-flow strong {
-  display: inline-grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: #fee2e2;
-  color: #991b1b;
-  font-family: var(--mono);
-  font-size: 11px;
-}
-.firewall-flow span {
-  white-space: nowrap;
 }
 .firewall-rule-presets {
   margin-bottom: 14px;
@@ -3805,6 +3809,55 @@ tr:hover td { background: #f8fafc; }
 }
 .firewall-entry-wrap {
   border-top: 1px solid var(--line);
+}
+.firewall-rules-table,
+.firewall-address-list-table,
+.firewall-address-entry-table,
+.firewall-node-state-table {
+  table-layout: fixed;
+}
+.firewall-rules-table {
+  min-width: 1280px;
+}
+.firewall-rules-table th:nth-child(1) { width: 90px; }
+.firewall-rules-table th:nth-child(2) { width: 180px; }
+.firewall-rules-table th:nth-child(3) { width: 95px; }
+.firewall-rules-table th:nth-child(4) { width: 105px; }
+.firewall-rules-table th:nth-child(5) { width: 90px; }
+.firewall-rules-table th:nth-child(6) { width: 190px; }
+.firewall-rules-table th:nth-child(7) { width: 230px; }
+.firewall-rules-table th:nth-child(9) { width: 190px; }
+.firewall-address-list-table {
+  min-width: 880px;
+}
+.firewall-address-list-table th:nth-child(1) { width: 280px; }
+.firewall-address-list-table th:nth-child(2) { width: 140px; }
+.firewall-address-list-table th:nth-child(3) { width: 110px; }
+.firewall-address-list-table th:nth-child(4) { width: 130px; }
+.firewall-address-list-table th:nth-child(5) { width: 210px; }
+.firewall-address-entry-table {
+  min-width: 1040px;
+}
+.firewall-address-entry-table th:nth-child(1) { width: 260px; }
+.firewall-address-entry-table th:nth-child(2) { width: 260px; }
+.firewall-address-entry-table th:nth-child(3) { width: 120px; }
+.firewall-address-entry-table th:nth-child(5) { width: 130px; }
+.firewall-address-entry-table th:nth-child(6) { width: 170px; }
+.firewall-node-state-table {
+  min-width: 920px;
+}
+.firewall-node-state-table th:nth-child(1) { width: 320px; }
+.firewall-node-state-table th:nth-child(2) { width: 210px; }
+.firewall-node-state-table th:nth-child(3) { width: 140px; }
+.firewall-node-state-table th:nth-child(4) { width: 190px; }
+.firewall-node-state-table th:nth-child(5) { width: 120px; }
+.firewall-rules-table td,
+.firewall-address-list-table td,
+.firewall-address-entry-table td,
+.firewall-node-state-table td {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  vertical-align: top;
 }
 .compact-action-grid {
   display: grid;
@@ -4369,6 +4422,8 @@ tr:hover td { background: #f8fafc; }
   min-width: 0;
 }
 .node-map-backhaul-route-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) auto auto;
   align-items: center;
   padding-top: 8px;
   border-top: 1px solid var(--line);
@@ -4377,6 +4432,14 @@ tr:hover td { background: #f8fafc; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.node-map-backhaul-inline-tags {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 .node-map-backhaul-card h3 {
   margin: 0 0 4px;
@@ -4901,11 +4964,12 @@ tr:hover td { background: #f8fafc; }
   .vless-group-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .firewall-action-board {
+  .firewall-toolbar {
     grid-template-columns: 1fr;
   }
-  .firewall-action-board .inline-actions {
+  .firewall-toolbar-actions {
     justify-content: flex-start;
+    min-width: 0;
   }
   .node-map-inspector {
     width: min(390px, calc(100% - 420px));
@@ -4999,6 +5063,13 @@ tr:hover td { background: #f8fafc; }
   .node-map-inspector-actions {
     align-items: end;
   }
+  .node-map-backhaul-route-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+  .node-map-backhaul-inline-tags {
+    justify-content: flex-start;
+  }
   .node-map-inspector-facts,
   .node-map-detail-grid,
   .node-map-backhaul-grid {
@@ -5053,11 +5124,12 @@ tr:hover td { background: #f8fafc; }
   .firewall-rule-preview div:not(.empty) {
     grid-template-columns: 1fr;
   }
-  .firewall-action-board {
+  .firewall-toolbar {
     grid-template-columns: 1fr;
   }
-  .firewall-action-board .inline-actions {
+  .firewall-toolbar-actions {
     justify-content: flex-start;
+    min-width: 0;
   }
   .node-detail-list > div { grid-template-columns: 1fr; gap: 5px; }
   .instance-manage-summary { grid-template-columns: 1fr; }

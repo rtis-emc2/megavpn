@@ -3,7 +3,10 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
+
+	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
 func (s *Store) clientInboundServiceMetadata(ctx context.Context, instanceID string) (map[string]any, error) {
@@ -111,6 +114,10 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, instanceI
 	if err != nil {
 		return nil, err
 	}
+	spec, err = s.ensureXrayProvisioningGroups(ctx, instanceID, spec)
+	if err != nil {
+		return nil, err
+	}
 	groups := xrayVLESSGroups(spec)
 	defaultGroup := xrayDefaultVLESSGroupKey(spec, groups)
 	group := normalizeXrayVLESSGroupKey(firstNonEmptyRouteValue(
@@ -136,6 +143,141 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, instanceI
 	inbound["outbound_group"] = group
 	metadata["inbound_service"] = inbound
 	return metadata, nil
+}
+
+func (s *Store) ensureXrayProvisioningGroups(ctx context.Context, instanceID string, spec map[string]any) (map[string]any, error) {
+	enriched, changed, err := s.specWithVLESSGroupCatalog(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return enriched, nil
+	}
+	revision, err := s.ReplaceInstanceSpec(ctx, instanceID, "system:vless-groups", enriched)
+	if err != nil {
+		return nil, fmt.Errorf("sync vless group catalog into service instance: %w", err)
+	}
+	if !in(strings.TrimSpace(revision.Status), "validated", "applied") {
+		return nil, fmt.Errorf("vless group catalog revision is not apply-ready; status=%s", strings.TrimSpace(revision.Status))
+	}
+	return enriched, nil
+}
+
+func (s *Store) specWithVLESSGroupCatalog(ctx context.Context, spec map[string]any) (map[string]any, bool, error) {
+	templates, err := s.ListVLESSGroupTemplates(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(templates) == 0 {
+		return spec, false, nil
+	}
+	enriched := cloneMap(spec)
+	merged := make([]any, 0, len(templates)+len(xraySpecGroupItems(spec)))
+	seen := map[string]struct{}{}
+	add := func(raw any) {
+		group, _ := cloneAny(raw).(map[string]any)
+		if group == nil {
+			return
+		}
+		key := normalizeXrayVLESSGroupKey(firstString(group["key"], group["name"], group["id"]))
+		if key == "" {
+			return
+		}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		group["key"] = key
+		merged = append(merged, group)
+		seen[key] = struct{}{}
+	}
+	for _, template := range templates {
+		add(vlessTemplateSpecGroup(template))
+	}
+	for _, raw := range xraySpecGroupItems(spec) {
+		add(raw)
+	}
+	if len(merged) == 0 {
+		return spec, false, nil
+	}
+	defaultGroup := normalizeXrayVLESSGroupKey(firstString(spec["default_vless_group"], spec["default_xray_group"], spec["default_outbound_group"]))
+	if _, ok := seen[defaultGroup]; defaultGroup == "" || !ok {
+		if first, _ := merged[0].(map[string]any); first != nil {
+			defaultGroup = normalizeXrayVLESSGroupKey(firstString(first["key"]))
+		}
+	}
+	previousGroups := firstNonNil(spec["vless_groups"], spec["xray_groups"], spec["outbound_groups"])
+	changed := !reflect.DeepEqual(previousGroups, merged)
+	if normalizeXrayVLESSGroupKey(firstString(spec["default_vless_group"])) != defaultGroup {
+		changed = true
+	}
+	enriched["vless_groups"] = merged
+	enriched["default_vless_group"] = defaultGroup
+	return enriched, changed, nil
+}
+
+func xraySpecGroupItems(spec map[string]any) []any {
+	if spec == nil {
+		return nil
+	}
+	if items := sliceRuleItemsFromAny(spec["vless_groups"]); len(items) > 0 {
+		return items
+	}
+	if items := sliceRuleItemsFromAny(spec["xray_groups"]); len(items) > 0 {
+		return items
+	}
+	return sliceRuleItemsFromAny(spec["outbound_groups"])
+}
+
+func vlessTemplateSpecGroup(template domain.VLESSGroupTemplate) map[string]any {
+	group := map[string]any{
+		"key":          normalizeXrayVLESSGroupKey(template.Key),
+		"label":        strings.TrimSpace(template.Label),
+		"access_mode":  strings.TrimSpace(template.AccessMode),
+		"egress_mode":  strings.TrimSpace(template.EgressMode),
+		"outbound_tag": strings.TrimSpace(template.OutboundTag),
+	}
+	if group["label"] == "" {
+		group["label"] = group["key"]
+	}
+	if group["outbound_tag"] == "" {
+		group["outbound_tag"] = "direct"
+	}
+	if description := strings.TrimSpace(template.Description); description != "" {
+		group["description"] = description
+	}
+	if egressNodeID := strings.TrimSpace(template.EgressNodeID); egressNodeID != "" {
+		group["egress_node_id"] = egressNodeID
+	}
+	if targetInstanceID := strings.TrimSpace(template.TargetInstanceID); targetInstanceID != "" {
+		group["target_instance_id"] = targetInstanceID
+	}
+	if template.AdBlock {
+		group["ad_block"] = true
+	}
+	if len(template.Rules) > 0 {
+		group["rules"] = cloneVLESSGroupTemplateRules(template.Rules)
+	}
+	if len(template.ExtraRules) > 0 {
+		group["extra_rules"] = cloneVLESSGroupTemplateRules(template.ExtraRules)
+	}
+	return group
+}
+
+func cloneVLESSGroupTemplateRules(rules []map[string]any) []any {
+	out := make([]any, 0, len(rules))
+	for _, rule := range rules {
+		out = append(out, cloneMap(rule))
+	}
+	return out
+}
+
+func firstNonNil(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 func routeSourceTypeForService(serviceCode string) string {

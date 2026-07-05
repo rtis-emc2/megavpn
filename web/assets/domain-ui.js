@@ -258,6 +258,14 @@
       return '';
     }
 
+    function openVPNFullTunnelServerExtraLines() {
+      return [
+        'push "redirect-gateway def1 bypass-dhcp"',
+        'push "dhcp-option DNS 1.1.1.1"',
+        'push "dhcp-option DNS 1.0.0.1"',
+      ].join('\n');
+    }
+
     function numberValue(...values) {
       for (const value of values) {
         const num = Number(value);
@@ -708,6 +716,7 @@
           }, presetKey);
         case 'openvpn':
           const ovpnSlug = slugPathPart(instance?.slug, 'server');
+          const ovpnDefaultServerExtraLines = instance ? '' : openVPNFullTunnelServerExtraLines();
           return finalizeInstanceDraft(normalized, instance, spec, {
             endpoint_port: numberValue(instance?.endpoint_port, spec.server_port, 1194),
             config_path: stringValue(spec.config_path, `/etc/openvpn/server/${ovpnSlug}.conf`),
@@ -723,7 +732,7 @@
             ovpn_client_proxy_mode: stringValue(spec.client_proxy_mode, spec.proxy_mode, 'direct'),
             ovpn_proxy_host: stringValue(spec.socks_proxy_host, spec.http_proxy_host, spec.proxy_host, '127.0.0.1'),
             ovpn_proxy_port: numberValue(spec.socks_proxy_port, spec.http_proxy_port, spec.proxy_port, 1080),
-            ovpn_server_extra_lines: Array.isArray(spec.server_extra_lines) ? spec.server_extra_lines.join('\n') : stringValue(spec.server_extra_lines),
+            ovpn_server_extra_lines: Array.isArray(spec.server_extra_lines) ? spec.server_extra_lines.join('\n') : stringValue(spec.server_extra_lines, ovpnDefaultServerExtraLines),
             ovpn_client_extra_lines: Array.isArray(spec.client_extra_lines) ? spec.client_extra_lines.join('\n') : stringValue(spec.client_extra_lines),
             ovpn_client_template: stringValue(spec.ovpn_inline, spec.client_ovpn_inline),
             config_body: stringValue(spec.config_content),
@@ -919,7 +928,7 @@
             <div class="field"><label>Client proxy port</label><input name="ovpn_proxy_port" type="number" min="1" max="65535" value="${escapeHTML(draft.ovpn_proxy_port || 1080)}" /></div>
             <div class="field"><label>Config path</label><input name="config_path" value="${escapeHTML(draft.config_path || '/etc/openvpn/server/server.conf')}" /></div>
             <div class="field"><label>Config mode</label><input name="config_mode" value="${escapeHTML(draft.config_mode || '0644')}" /></div>
-            <div class="field full"><label>Server extra lines</label><textarea name="ovpn_server_extra_lines" rows="5" placeholder="push &quot;redirect-gateway def1&quot;&#10;push &quot;dhcp-option DNS 1.1.1.1&quot;">${escapeHTML(draft.ovpn_server_extra_lines || '')}</textarea></div>
+            <div class="field full"><label>Server extra lines</label><textarea name="ovpn_server_extra_lines" rows="5" placeholder="push &quot;redirect-gateway def1 bypass-dhcp&quot;&#10;push &quot;dhcp-option DNS 1.1.1.1&quot;&#10;push &quot;dhcp-option DNS 1.0.0.1&quot;">${escapeHTML(draft.ovpn_server_extra_lines || '')}</textarea></div>
             <div class="field full">
               <label>Client config extra lines</label>
               <textarea name="ovpn_client_extra_lines" rows="6" placeholder="# Operator notes for generated client configs&#10;# socks-proxy 127.0.0.1 1080">${escapeHTML(draft.ovpn_client_extra_lines || '')}</textarea>

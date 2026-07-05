@@ -249,10 +249,13 @@ func normalizeVLESSGroupTemplate(template domain.VLESSGroupTemplate, idx int) (d
 		template.OutboundTag = "block"
 	}
 	if template.Key == "" {
-		return domain.VLESSGroupTemplate{}, fmt.Errorf("vless group key is required")
+		template.Key = normalizeVLESSGroupTemplateKey(template.Label)
 	}
 	if template.Label == "" {
 		return domain.VLESSGroupTemplate{}, fmt.Errorf("vless group %q label is required", template.Key)
+	}
+	if template.Key == "" {
+		return domain.VLESSGroupTemplate{}, fmt.Errorf("vless group key is required")
 	}
 	if template.Status == "" {
 		template.Status = "active"

@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.2`
+**Release:** `7.0.1.3`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -429,18 +429,37 @@ Use this for standard production baselines.
 5. Set base name and endpoint host.
 6. Select a TLS edge certificate if the pack contains Nginx/Xray TLS.
 7. Select an OpenVPN CA profile if the pack contains OpenVPN.
-8. If the pack contains VLESS, select instance-level `VLESS routing`:
+8. If the pack contains traffic camouflage, configure `Traffic camouflage`:
+   - `Fallback website` is required and must be an absolute `http://` or
+     `https://` URL for the real site;
+   - when `Hidden VLESS path` is shown, it must not be `/`, must not contain a
+     query/fragment and should look like an ordinary asset/API path;
+   - `Fallback Host header` and `Fallback SNI` can be left empty: the control
+     plane derives them from the fallback URL.
+9. If the pack contains VLESS, select instance-level `VLESS routing`:
    - `Auto through managed backhaul` for a single unambiguous active backhaul;
    - `Use selected egress node` when the VLESS instance must exit through a
      specific remote egress node;
    - `Local breakout on ingress node` only when direct exit from the ingress
      node is intended.
-9. Create the instances.
-10. Select `Apply` or `Install + apply` if runtime is missing.
+10. Create the instances.
+11. Select `Apply` or `Install + apply` if runtime is missing.
 
 Service packs must not store runtime secrets. Passwords, private keys, UUIDs,
 Reality keys and similar secrets should be generated during revision/apply and
 stored as secret refs.
+
+Default OpenVPN packs are full-tunnel baselines: they push `redirect-gateway`
+and public DNS to clients. Apply also materializes managed node network policy
+for IP forwarding and nftables `postrouting` masquerade from the OpenVPN client
+pool. If a site needs split-tunnel OpenVPN, remove the redirect push lines and
+explicitly review `nat_rules` before applying the revision.
+
+Traffic camouflage packs create two instances: an Nginx public TLS edge and an
+Xray backend bound to `127.0.0.1`. Nginx proxies only the hidden VLESS/gRPC path
+to Xray, while ordinary browser traffic on `/` is reverse-proxied to the
+fallback website. This masks ingress behavior deliberately, but it does not
+replace correct TLS/SNI, certificate and DNS configuration for the endpoint.
 
 ### 13.2 Manual Instance
 

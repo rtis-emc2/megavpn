@@ -31,6 +31,29 @@ func TestSelectArtifactFilesForZipBundleReturnsBaseFilesForArchiveBuild(t *testi
 	}
 }
 
+func TestNormalizePEMBlockWrapsPEMForInlineOpenVPN(t *testing.T) {
+	pem := "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+	got := normalizePEMBlock("ca", pem)
+	for _, want := range []string{
+		"<ca>\n",
+		"-----BEGIN CERTIFICATE-----",
+		"-----END CERTIFICATE-----",
+		"\n</ca>\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("normalized PEM missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNormalizePEMBlockPreservesExistingInlineBlock(t *testing.T) {
+	inline := "<cert>\n-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n</cert>"
+	got := normalizePEMBlock("cert", inline)
+	if got != inline+"\n" {
+		t.Fatalf("inline block = %q, want preserved with trailing newline", got)
+	}
+}
+
 func TestBuildShadowsocksArtifactsUsesManagedAccountFallback(t *testing.T) {
 	record := domain.ProvisioningAccess{
 		Access: domain.ServiceAccess{ID: "access-1", Metadata: map[string]any{}},

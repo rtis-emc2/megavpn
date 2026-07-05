@@ -39,3 +39,19 @@ func TestNormalizeServicePackTemplateUsesJSONArrayDefaults(t *testing.T) {
 		t.Fatal("Components JSON must not be null")
 	}
 }
+
+func TestNormalizeServicePackTemplateGeneratesKeyFromLabel(t *testing.T) {
+	pack, err := normalizeServicePackTemplate(domain.ServicePackDefinition{
+		Label:            "Premium Access Suite",
+		BaseNameTemplate: "premium-access",
+		Components: []domain.ServicePackComponent{
+			{Label: "WireGuard", ServiceCode: "wireguard"},
+		},
+	}, 0)
+	if err != nil {
+		t.Fatalf("normalizeServicePackTemplate() error = %v", err)
+	}
+	if pack.Key != "premium-access-suite" {
+		t.Fatalf("Key = %q, want premium-access-suite", pack.Key)
+	}
+}

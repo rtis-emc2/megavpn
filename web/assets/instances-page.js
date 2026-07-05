@@ -187,6 +187,26 @@
       return Array.from(counts.entries()).map(([label, count]) => count > 1 ? `${label} x${count}` : label).join(', ');
     }
 
+    function technicalKeyFromLabel(value, fallback = 'item') {
+      const raw = String(value || '').toLowerCase().trim();
+      let out = '';
+      let lastSeparator = false;
+      for (const ch of raw) {
+        const code = ch.charCodeAt(0);
+        const alnum = (code >= 97 && code <= 122) || (code >= 48 && code <= 57);
+        if (alnum) {
+          out += ch;
+          lastSeparator = false;
+        } else if (!lastSeparator) {
+          out += '_';
+          lastSeparator = true;
+        }
+        if (out.length >= 64) break;
+      }
+      out = out.replace(/^_+|_+$/g, '');
+      return out || fallback;
+    }
+
     function primaryReason(values, fallback) {
       const list = Array.isArray(values) ? values : [];
       const first = list.map((item) => String(item || '').trim()).find(Boolean);
@@ -788,6 +808,38 @@
       return servicePackComponents(pack).some((component) => normalizeInstanceServiceCode(component?.service_code) === expected);
     }
 
+    function servicePackSpecProfile(component) {
+      const spec = component?.spec && typeof component.spec === 'object' ? component.spec : {};
+      return String(spec.service_profile || '').trim().toLowerCase();
+    }
+
+    function packUsesTrafficCamouflage(pack) {
+      return servicePackComponents(pack).some((component) => {
+        const profile = servicePackSpecProfile(component);
+        if (['ws_camouflage_edge', 'nginx_ws_backend', 'grpc_edge', 'nginx_grpc_backend'].includes(profile)) return true;
+        const spec = component?.spec && typeof component.spec === 'object' ? component.spec : {};
+        return JSON.stringify(spec).includes('{{camouflage_path}}') || JSON.stringify(spec).includes('{{fallback_upstream_url}}');
+      });
+    }
+
+    function packUsesConfigurableCamouflagePath(pack) {
+      return servicePackComponents(pack).some((component) => {
+        const spec = component?.spec && typeof component.spec === 'object' ? component.spec : {};
+        return JSON.stringify(spec).includes('{{camouflage_path}}');
+      });
+    }
+
+    function defaultCamouflagePath(pack) {
+      for (const component of servicePackComponents(pack)) {
+        const spec = component?.spec && typeof component.spec === 'object' ? component.spec : {};
+        for (const key of ['location_path', 'public_path', 'path']) {
+          const value = String(spec[key] || '').trim();
+          if (value && value.startsWith('/') && value !== '/' && !value.includes('{{')) return value;
+        }
+      }
+      return String(pack?.key || '').includes('grpc') ? '/vless-grpc' : '/assets/rtis-sync';
+    }
+
     function renderXrayEgressPackFields(pack) {
       if (!packUsesService(pack, 'xray-core')) return '';
       const egressNodes = nodeOptions('', { roles: ['egress'], includeEmpty: true, emptyLabel: 'Select egress node' });
@@ -810,6 +862,36 @@
                 ${egressNodes || '<option value="">No egress nodes available</option>'}
               </select>
               <div class="field-hint">Required only when a concrete egress node is selected.</div>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function renderTrafficCamouflagePackFields(pack) {
+      if (!packUsesTrafficCamouflage(pack)) return '';
+      const usesConfigurablePath = packUsesConfigurableCamouflagePath(pack);
+      return `
+        <div class="field full pack-camouflage-control">
+          <div class="instance-panel-label">Traffic camouflage</div>
+          <div class="pack-create-form-grid compact">
+            ${usesConfigurablePath ? `
+            <div class="field">
+              <label>Hidden VLESS path</label>
+              <input name="camouflage_path" value="${escapeHTML(defaultCamouflagePath(pack))}" placeholder="/assets/site-sync" required>
+              <div class="field-hint">Nginx routes only this path to Xray; root traffic goes to the fallback website.</div>
+            </div>` : ''}
+            <div class="field">
+              <label>Fallback website</label>
+              <input name="fallback_upstream_url" placeholder="https://target.example.com" required>
+              <div class="field-hint">Ordinary browser requests are reverse-proxied to this upstream.</div>
+            </div>
+            <div class="field">
+              <label>Fallback Host header</label>
+              <input name="fallback_host_header" placeholder="auto from fallback URL">
+            </div>
+            <div class="field">
+              <label>Fallback SNI</label>
+              <input name="fallback_sni" placeholder="auto for HTTPS upstream">
             </div>
           </div>
         </div>`;
@@ -954,6 +1036,7 @@
       const usesOpenVPN = packUsesService(selectedPack, 'openvpn');
       const usesXray = packUsesService(selectedPack, 'xray-core');
       const usesTLSEdgeCertificate = servicePackUsesTLSEdgeCertificate(selectedPack);
+      const usesTrafficCamouflage = packUsesTrafficCamouflage(selectedPack);
       const certificateSelect = certificateOptions(defaultLeafCertificateID(), true);
       const baseName = selectedPack?.base_name_template || 'edge-service-pack';
       const endpointHint = selectedPack?.endpoint_hint || 'edge.example.com';
@@ -1009,6 +1092,7 @@
                       <select name="openvpn_pki_profile">${servicePKIProfileOptions('openvpn', 'default')}</select>
                       <div class="field-hint">OpenVPN instances created with this profile trust the same service CA root, which is required for a shared endpoint fleet.</div>
                     </div>` : ''}
+                  ${usesTrafficCamouflage ? renderTrafficCamouflagePackFields(selectedPack) : ''}
                   ${usesXray ? renderXrayEgressPackFields(selectedPack) : ''}
                 </div>
                 <div class="pack-create-actions">
@@ -1078,6 +1162,10 @@
         openvpn_pki_profile: String(data.get('openvpn_pki_profile') || '').trim(),
         xray_egress_mode: String(data.get('xray_egress_mode') || '').trim(),
         xray_egress_node_id: String(data.get('xray_egress_node_id') || '').trim(),
+        camouflage_path: String(data.get('camouflage_path') || '').trim(),
+        fallback_upstream_url: String(data.get('fallback_upstream_url') || '').trim(),
+        fallback_host_header: String(data.get('fallback_host_header') || '').trim(),
+        fallback_sni: String(data.get('fallback_sni') || '').trim(),
         auto_install_runtime: true,
       };
       if (!packKey) {
@@ -1415,11 +1503,6 @@
       openModal(groupKey ? `Edit VLESS group: ${model.label || groupKey}` : 'Add VLESS group', 'Global client routing template', `
         <form id="vlessGroupEditorForm" class="form-grid vless-group-editor-form">
           <div class="field">
-            <label>Key</label>
-            <input name="key" value="${escapeHTML(model.key || '')}" placeholder="remote_egress" required${groupKey ? ' readonly' : ''}>
-            <div class="field-hint">Stable identifier used by client provisioning.</div>
-          </div>
-          <div class="field">
             <label>Label</label>
             <input name="label" value="${escapeHTML(model.label || '')}" placeholder="Remote egress" required>
           </div>
@@ -1450,6 +1533,16 @@
               <span>Block managed ad domains</span>
             </label>
           </div>
+          <details class="field full advanced-form-section">
+            <summary>Advanced internal identity</summary>
+            <div class="compact-form-grid">
+              <div class="field">
+                <label>Internal key</label>
+                <input name="key" value="${escapeHTML(model.key || '')}" placeholder="auto from label"${groupKey ? ' readonly' : ''}>
+                <div class="field-hint">Generated from the label when empty. Keep it stable after clients start using this group.</div>
+              </div>
+            </div>
+          </details>
           <details class="field full advanced-form-section">
             <summary>Advanced route rules JSON</summary>
             <textarea name="rules_json" rows="5" spellcheck="false" placeholder='[{"domain":["example.com"],"outbound_tag":"direct"}]'>${escapeHTML(rules.length ? JSON.stringify(rules, null, 2) : '')}</textarea>
@@ -1513,7 +1606,7 @@
         }
       }
       const payload = {
-        key: String(data.get('key') || '').trim(),
+        key: '',
         label: String(data.get('label') || '').trim(),
         description: String(data.get('description') || '').trim(),
         access_mode: mode,
@@ -1528,6 +1621,7 @@
         source: 'operator',
         display_order: Number(data.get('display_order') || 100) || 100,
       };
+      payload.key = String(data.get('key') || '').trim() || technicalKeyFromLabel(payload.label, 'vless_group');
       if (result) result.innerHTML = '<span class="tag warn">saving</span>';
       try {
         const saved = await sendJSON(`/api/v1/vless-groups/${encodeURIComponent(payload.key)}`, 'PUT', payload);
@@ -1737,15 +1831,13 @@
         return;
       }
       const key = String(payload?.key || '').trim();
-      if (!key) {
-        if (result) result.innerHTML = '<span class="tag danger">key is required</span>';
-        return;
-      }
+      const effectiveKey = key || technicalKeyFromLabel(payload?.label || payload?.base_name_template, 'service_pack');
+      payload.key = effectiveKey;
       if (result) result.innerHTML = '<span class="tag warn">saving</span>';
       try {
-        const saved = await sendJSON(`/api/v1/service-packs/${encodeURIComponent(key)}`, 'PUT', payload);
+        const saved = await sendJSON(`/api/v1/service-packs/${encodeURIComponent(effectiveKey)}`, 'PUT', payload);
         if (textarea) textarea.value = JSON.stringify(saved, null, 2);
-        if (result) result.innerHTML = `<span class="tag ok">saved</span> <code>${escapeHTML(saved.key || key)}</code>`;
+        if (result) result.innerHTML = `<span class="tag ok">saved</span> <code>${escapeHTML(saved.key || effectiveKey)}</code>`;
         await refresh();
       } catch (err) {
         if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
