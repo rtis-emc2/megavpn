@@ -106,7 +106,7 @@
                 <code>${escapeHTML(String(rule.priority || 1000))}</code>
                 ${statusTag(rule.action || 'unknown')}
                 <span>${escapeHTML(rule.chain || 'input')} · ${escapeHTML(rule.protocol || 'any')} · ${escapeHTML(firstText(rule.src_cidr, 'any'))} -> ${escapeHTML(firstText(rule.dst_cidr, 'any'))}</span>
-              </div>`).join('') : '<div class="empty compact">No rules configured. Default accept remains active.</div>'}
+              </div>`).join('') : '<div class="empty compact">No rules configured. Strict default policies are only enforced when enabled during apply.</div>'}
           </div>
           <div class="pool-actions">
             <button class="secondary-btn firewall-edit-policy-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canManage ? '' : ' disabled'}>Edit policy</button>
@@ -479,7 +479,7 @@
               <div class="field"><label>Internal key</label><input name="key" placeholder="auto-generated from name" value="${escapeHTML(policy.key || '')}" /><small>Use only when integrating with external automation. Empty value is safer for manual work.</small></div>
             </div>
           </details>
-          <div class="notice field full">Default chain policy is catalog metadata in this release. Explicit rules are applied to managed chains; strict default enforcement remains controlled by rollout policy.</div>
+          <div class="notice field full">Default policies are enforced only when strict mode is selected during policy apply. Keep explicit management and protocol allow rules in place before enabling drop or reject defaults.</div>
           <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save policy' : 'Create policy'}</button><button class="secondary-btn" type="button" id="cancelFirewallPolicyBtn">Cancel</button></div>
         </form>
         <div id="firewallPolicyResult" class="form-result"></div>`, { wide: true });
@@ -573,6 +573,15 @@
           <button type="button" data-firewall-rule-preset="ssh">SSH admin</button>
           <button type="button" data-firewall-rule-preset="https">HTTPS control</button>
           <button type="button" data-firewall-rule-preset="wireguard">WireGuard UDP</button>
+          <button type="button" data-firewall-rule-preset="openvpn_udp">OpenVPN UDP</button>
+          <button type="button" data-firewall-rule-preset="openvpn_tcp">OpenVPN TCP</button>
+          <button type="button" data-firewall-rule-preset="ipsec_ike">IPsec IKE</button>
+          <button type="button" data-firewall-rule-preset="l2tp">L2TP</button>
+          <button type="button" data-firewall-rule-preset="shadowsocks_tcp">Shadowsocks TCP</button>
+          <button type="button" data-firewall-rule-preset="shadowsocks_udp">Shadowsocks UDP</button>
+          <button type="button" data-firewall-rule-preset="http_proxy">HTTP proxy</button>
+          <button type="button" data-firewall-rule-preset="mtproto">MTProto</button>
+          <button type="button" data-firewall-rule-preset="nginx_edge">Nginx edge</button>
           <button type="button" data-firewall-rule-preset="drop_invalid">Drop invalid</button>
         </div>
         <form id="firewallRuleForm" class="form-grid" data-rule-id="${escapeHTML(rule.id || '')}" data-policy-id="${escapeHTML(selected.id || '')}">
@@ -605,11 +614,14 @@
       const inv = inventory();
       const selectedPolicy = policyByID(policyID) || inv.policies.find((policy) => policy.key === 'node_base') || inv.policies[0] || {};
       const selectedNode = (state.nodes || []).find((node) => node.id === nodeID) || (state.nodes || [])[0] || {};
+      const defaultPolicySummary = `${selectedPolicy.default_input_policy || 'accept'} / ${selectedPolicy.default_forward_policy || 'accept'} / ${selectedPolicy.default_output_policy || 'accept'}`;
       openModal('Apply firewall policy', 'Node firewall', `
         <form id="firewallApplyForm" class="form-grid">
           <div class="field"><label>Node</label><select name="node_id" required>${(state.nodes || []).map((node) => `<option value="${escapeHTML(node.id)}"${node.id === selectedNode.id ? ' selected' : ''}>${escapeHTML(node.name || node.id)} · ${escapeHTML(node.role || 'node')} · ${escapeHTML(node.address || 'n/a')}</option>`).join('')}</select></div>
           <div class="field"><label>Policy</label><select name="policy_id" required>${inv.policies.map((policy) => `<option value="${escapeHTML(policy.id)}"${policy.id === selectedPolicy.id ? ' selected' : ''}>${escapeHTML(policy.label || policy.key)}</option>`).join('')}</select></div>
-          <div class="notice field full">This release applies explicit allow/drop/reject rules into managed nftables chains. Default chain policy remains accept until strict enforcement is enabled in a later rollout.</div>
+          <div class="notice field full">Default policies for the selected policy are input / forward / output: <strong>${escapeHTML(defaultPolicySummary)}</strong>. Without strict mode, apply keeps managed base chains at accept and only installs explicit rules.</div>
+          <label class="field checkbox-line full"><input name="enforce_default_policy" type="checkbox" /> Enforce default chain policies on this apply</label>
+          <div class="notice warn field full">Strict mode rewrites managed nftables base chains. If output default is drop or reject, the agent must keep a pinned IP control-plane egress rule or the apply job will fail before touching the firewall.</div>
           <div class="field full inline-actions"><button class="primary-btn" type="submit">Queue apply</button><button class="secondary-btn" type="button" id="cancelFirewallApplyBtn">Cancel</button></div>
         </form>
         <div id="firewallApplyResult" class="form-result"></div>`, { wide: true });
@@ -848,7 +860,10 @@
       const result = document.getElementById('firewallApplyResult');
       if (result) result.innerHTML = '<span class="tag warn">queueing</span>';
       try {
-        const job = await sendJSON(`/api/v1/nodes/${encodeURIComponent(nodeID)}/firewall/apply`, 'POST', { policy_id: policyID });
+        const job = await sendJSON(`/api/v1/nodes/${encodeURIComponent(nodeID)}/firewall/apply`, 'POST', {
+          policy_id: policyID,
+          enforce_default_policy: Boolean(form.get('enforce_default_policy')),
+        });
         if (result) result.innerHTML = `<span class="tag ok">queued</span> <code>${escapeHTML(job.id || '')}</code>`;
         if (typeof watchJob === 'function' && job?.id) {
           await watchJob(job.id, result);
@@ -923,6 +938,87 @@
           dst_ports: '51820',
           state_match: 'new,established',
           comment: 'allow WireGuard listener',
+        },
+        openvpn_udp: {
+          priority: '310',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'udp',
+          dst_ports: '1194',
+          state_match: 'new,established',
+          comment: 'allow OpenVPN UDP listener',
+        },
+        openvpn_tcp: {
+          priority: '311',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'tcp',
+          dst_ports: '11994',
+          state_match: 'new,established',
+          comment: 'allow OpenVPN TCP listener',
+        },
+        ipsec_ike: {
+          priority: '320',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'udp',
+          dst_ports: '500,4500',
+          state_match: 'new,established',
+          comment: 'allow IPsec IKE and NAT-T',
+        },
+        l2tp: {
+          priority: '321',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'udp',
+          dst_ports: '1701',
+          state_match: 'new,established',
+          comment: 'allow L2TP control channel',
+        },
+        shadowsocks_tcp: {
+          priority: '330',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'tcp',
+          dst_ports: '8388',
+          state_match: 'new,established',
+          comment: 'allow Shadowsocks TCP listener',
+        },
+        shadowsocks_udp: {
+          priority: '331',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'udp',
+          dst_ports: '8388',
+          state_match: 'new,established',
+          comment: 'allow Shadowsocks UDP relay',
+        },
+        http_proxy: {
+          priority: '340',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'tcp',
+          dst_ports: '3128',
+          state_match: 'new,established',
+          comment: 'allow HTTP proxy listener',
+        },
+        mtproto: {
+          priority: '350',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'tcp',
+          dst_ports: '443',
+          state_match: 'new,established',
+          comment: 'allow MTProto TLS listener',
+        },
+        nginx_edge: {
+          priority: '120',
+          chain: 'input',
+          action: 'accept',
+          protocol: 'tcp',
+          dst_ports: '80,443',
+          state_match: 'new,established',
+          comment: 'allow edge HTTP and HTTPS',
         },
         drop_invalid: {
           priority: '50',

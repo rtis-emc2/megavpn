@@ -1,6 +1,6 @@
 # Каталог firewall-политик
 
-**Релиз:** `7.0.1.7`
+**Релиз:** `7.0.1.8`
 
 Firewall - это managed workspace для границ control-plane и node. Он специально
 сделан как каталог перед применением: оператор готовит address lists,
@@ -33,8 +33,9 @@ apply job не поставлен в очередь и не завершился
 - `Node state`: последнее состояние apply по каждой node.
 
 Верхние workflow-кнопки переключают на нужный этап. В редакторе правил есть
-presets для типовых случаев: SSH management, HTTPS control, WireGuard UDP и
-drop invalid packets.
+presets для SSH management, HTTPS control, WireGuard, OpenVPN TCP/UDP, IPsec
+IKE/NAT-T, L2TP, Shadowsocks TCP/UDP, HTTP proxy, MTProto, Nginx edge HTTP(S)
+и drop invalid packets.
 
 ## Security model
 
@@ -45,16 +46,40 @@ drop invalid packets.
 - Rules хранятся как catalog data и рендерятся worker-ом в managed firewall
   payload для node.
 
-## Граница enforcement в текущем релизе
+## Граница enforcement
 
-Текущий релиз применяет explicit allow/drop/reject rules в managed nftables
-chains. Поля default chain policy пока хранятся как rollout metadata; strict
-default-policy enforcement надо включать только после controlled migration plan,
-иначе оператор может заблокировать себе доступ.
+По умолчанию apply job устанавливает explicit allow/drop/reject rules в managed
+nftables chains, но оставляет base chain policy в `accept`. Это безопасный
+staging mode для первого rollout и проверки каталога.
+
+Strict default-policy enforcement доступен на каждый apply job через флаг
+`enforce_default_policy` в API/UI. В strict mode agent атомарно заменяет
+managed table `inet megavpn` через `nft -f`, пересоздает input, forward и
+output base chains и применяет default policies:
+
+- `accept` рендерится как base chain policy `accept`.
+- `drop` рендерится как base chain policy `drop`.
+- `reject` рендерится как base chain policy `drop` плюс terminal `reject`
+  rule, потому что nftables base chain policy не поддерживает `reject`.
+
+Agent также добавляет system safety rules для established/related traffic и
+loopback перед catalog rules. Если output default policy равен `drop` или
+`reject`, agent должен сохранить control-plane egress. Для этого он:
+
+- генерирует TCP egress allow rule, если host control-plane URL у agent задан
+  IP-адресом; или
+- принимает explicit active catalog rule `output accept` для TCP-порта
+  control-plane, если host control-plane URL задан DNS-именем.
+
+Если ни одно условие не выполнено, render завершается ошибкой до изменения
+nftables. Это защищает strict output rollout от тихой изоляции node.
 
 DNS entries в address lists в этом релизе хранятся только как catalog context.
 Node-side nftables apply рендерит CIDR, одиночные IP-адреса и IP ranges;
 DNS-only list нельзя использовать как active matcher в rule.
+
+Managed table принадлежит MegaVPN. Не размещайте hand-written rules в
+`inet megavpn`; strict apply заменяет эту table как единый managed unit.
 
 ## Обработка ошибок
 

@@ -118,7 +118,7 @@ type Store interface {
 	CreateFirewallRule(context.Context, string, domain.FirewallRule) (domain.FirewallRule, error)
 	UpdateFirewallRule(context.Context, string, string, domain.FirewallRule) (domain.FirewallRule, error)
 	DeleteFirewallRule(context.Context, string, string) (domain.FirewallRule, error)
-	CreateFirewallApplyJob(context.Context, string, string) (domain.Job, error)
+	CreateFirewallApplyJob(context.Context, string, string, bool) (domain.Job, error)
 	ListInstanceRuntimeStates(context.Context) ([]domain.InstanceRuntimeState, error)
 	GetInstanceRuntimeState(context.Context, string) (domain.InstanceRuntimeState, error)
 	ListInstanceRuntimeObservations(context.Context, string, int) ([]domain.InstanceRuntimeObservation, error)

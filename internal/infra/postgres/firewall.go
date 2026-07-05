@@ -422,7 +422,7 @@ left join firewall_address_lists dl on dl.id=r.dst_list_id`, policyID, ruleID)
 	return deleted, nil
 }
 
-func (s *Store) CreateFirewallApplyJob(ctx context.Context, nodeID, policyID string) (domain.Job, error) {
+func (s *Store) CreateFirewallApplyJob(ctx context.Context, nodeID, policyID string, enforceDefaultPolicy bool) (domain.Job, error) {
 	nodeID = strings.TrimSpace(nodeID)
 	policyID = strings.TrimSpace(policyID)
 	if nodeID == "" {
@@ -467,7 +467,7 @@ values($1,$2,$3,'',$4,'active',now())`, revisionID, policy.ID, revisionNo, mustJ
 		"default_input_policy":   policy.DefaultInputPolicy,
 		"default_forward_policy": policy.DefaultForwardPolicy,
 		"default_output_policy":  policy.DefaultOutputPolicy,
-		"enforce_default_policy": false,
+		"enforce_default_policy": enforceDefaultPolicy,
 		"rules":                  rulePayload,
 		"address_lists":          addressListPayload,
 	}

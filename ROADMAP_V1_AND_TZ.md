@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.7`
+**Release:** `7.0.1.8`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.7`
+**Code baseline:** RTIS MegaVPN `7.0.1.8`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.7` is the boundary between feature expansion and production hardening.
+`7.0.1.8` is the boundary between feature expansion and production hardening.
 The codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
@@ -37,6 +37,8 @@ The codebase already has a working control-plane foundation:
 - OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, HTTP Proxy, MTProto, IPsec/L2TP
   and Nginx service-driver foundation.
 - Managed ingress-to-egress backhaul.
+- Managed firewall catalog with explicit protocol presets and controlled
+  nftables default-policy enforcement.
 - Client provisioning, artifacts, share links, VLESS subscriptions and email
   delivery.
 - Backup/restore, deployment scripts, self-test and release gates.

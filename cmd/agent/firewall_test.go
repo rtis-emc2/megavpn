@@ -33,7 +33,8 @@ func TestRenderNodeFirewallPlan(t *testing.T) {
 		t.Fatalf("rule count = %d, want 1", plan.Count)
 	}
 	checks := []string{
-		"flush chain inet megavpn firewall_input",
+		"delete table inet megavpn",
+		"add table inet megavpn",
 		"add rule inet megavpn firewall_input",
 		"ct state { established, related }",
 		"ip saddr 10.0.0.0/8",
@@ -196,15 +197,16 @@ func TestRenderNodeFirewallPlanRendersDualStackAddressListRules(t *testing.T) {
 	}
 }
 
-func TestRenderNodeFirewallPlanWarnsForDefaultPolicyEnforcement(t *testing.T) {
+func TestRenderNodeFirewallPlanEnforcesDefaultPolicies(t *testing.T) {
 	t.Parallel()
 
 	plan, err := renderNodeFirewallPlan(map[string]any{
 		"node_id":                 "node-1",
 		"enforce_default_policy":  true,
 		"default_input_policy":    "drop",
-		"default_forward_policy":  "drop",
-		"default_output_policy":   "accept",
+		"default_forward_policy":  "reject",
+		"default_output_policy":   "drop",
+		"agent_control_plane_url": "https://198.51.100.10:8443",
 		"rules":                   []any{},
 		"address_lists":           []any{},
 		"firewall_policy_version": 1,
@@ -212,7 +214,108 @@ func TestRenderNodeFirewallPlanWarnsForDefaultPolicyEnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderNodeFirewallPlan returned error: %v", err)
 	}
+	if plan.DefaultPolicyEnforcement != "enforced" {
+		t.Fatalf("default policy enforcement = %q, want enforced", plan.DefaultPolicyEnforcement)
+	}
+	for _, check := range []string{
+		"add chain inet megavpn firewall_input { type filter hook input priority filter; policy drop; }",
+		"add chain inet megavpn firewall_forward { type filter hook forward priority filter; policy drop; }",
+		"add chain inet megavpn firewall_output { type filter hook output priority filter; policy drop; }",
+		`ct state { established, related } accept comment "megavpn:firewall:system-established-input"`,
+		`iifname "lo" accept comment "megavpn:firewall:system-loopback-input"`,
+		`ip daddr 198.51.100.10/32 tcp dport 8443 accept comment "megavpn:firewall:system-control-plane-output"`,
+		`reject comment "megavpn:firewall:default-reject-forward"`,
+	} {
+		if !strings.Contains(plan.Script, check) {
+			t.Fatalf("expected script to contain %q, got:\n%s", check, plan.Script)
+		}
+	}
+	if plan.SystemRuleCount != 7 {
+		t.Fatalf("system rule count = %d, want 7", plan.SystemRuleCount)
+	}
+}
+
+func TestRenderNodeFirewallPlanRejectsStrictOutputWithoutPinnedControlPlane(t *testing.T) {
+	t.Parallel()
+
+	_, err := renderNodeFirewallPlan(map[string]any{
+		"node_id":                 "node-1",
+		"enforce_default_policy":  true,
+		"default_output_policy":   "drop",
+		"agent_control_plane_url": "https://control.example.test",
+		"rules":                   []any{},
+		"address_lists":           []any{},
+	})
+	if err == nil {
+		t.Fatal("expected strict output policy to require an IP-pinned control-plane URL")
+	}
+}
+
+func TestRenderNodeFirewallPlanAllowsStrictOutputWithExplicitControlPlaneRule(t *testing.T) {
+	t.Parallel()
+
+	plan, err := renderNodeFirewallPlan(map[string]any{
+		"node_id":                 "node-1",
+		"enforce_default_policy":  true,
+		"default_output_policy":   "drop",
+		"agent_control_plane_url": "https://control.example.test:8443",
+		"rules": []any{
+			map[string]any{
+				"id":          "allow-control-plane-egress",
+				"priority":    100,
+				"chain":       "output",
+				"action":      "accept",
+				"protocol":    "tcp",
+				"dst_ports":   "8443",
+				"state_match": []any{"new", "established"},
+				"enabled":     true,
+				"status":      "active",
+			},
+		},
+		"address_lists": []any{},
+	})
+	if err != nil {
+		t.Fatalf("renderNodeFirewallPlan returned error: %v", err)
+	}
+	if !strings.Contains(plan.Script, `accept comment "megavpn:firewall:allow-control-plane-egress"`) {
+		t.Fatalf("expected explicit output allow rule, got:\n%s", plan.Script)
+	}
+	if strings.Contains(plan.Script, "system-control-plane-output") {
+		t.Fatalf("expected no generated control-plane output rule for DNS host with explicit allow, got:\n%s", plan.Script)
+	}
 	if len(plan.Warnings) == 0 {
-		t.Fatal("expected default policy warning")
+		t.Fatal("expected DNS control-plane warning")
+	}
+}
+
+func TestRenderNodeFirewallPlanObserveModeKeepsBasePoliciesAccept(t *testing.T) {
+	t.Parallel()
+
+	plan, err := renderNodeFirewallPlan(map[string]any{
+		"node_id":                "node-1",
+		"enforce_default_policy": false,
+		"default_input_policy":   "drop",
+		"default_forward_policy": "reject",
+		"default_output_policy":  "drop",
+		"rules":                  []any{},
+		"address_lists":          []any{},
+	})
+	if err != nil {
+		t.Fatalf("renderNodeFirewallPlan returned error: %v", err)
+	}
+	if plan.DefaultPolicyEnforcement != "observe_only" {
+		t.Fatalf("default policy enforcement = %q, want observe_only", plan.DefaultPolicyEnforcement)
+	}
+	for _, check := range []string{
+		"add chain inet megavpn firewall_input { type filter hook input priority filter; policy accept; }",
+		"add chain inet megavpn firewall_forward { type filter hook forward priority filter; policy accept; }",
+		"add chain inet megavpn firewall_output { type filter hook output priority filter; policy accept; }",
+	} {
+		if !strings.Contains(plan.Script, check) {
+			t.Fatalf("expected script to contain %q, got:\n%s", check, plan.Script)
+		}
+	}
+	if len(plan.Warnings) == 0 {
+		t.Fatal("expected observe-mode default policy warning")
 	}
 }

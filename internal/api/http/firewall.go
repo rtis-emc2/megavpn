@@ -25,11 +25,12 @@ type firewallStore interface {
 	CreateFirewallRule(context.Context, string, domain.FirewallRule) (domain.FirewallRule, error)
 	UpdateFirewallRule(context.Context, string, string, domain.FirewallRule) (domain.FirewallRule, error)
 	DeleteFirewallRule(context.Context, string, string) (domain.FirewallRule, error)
-	CreateFirewallApplyJob(context.Context, string, string) (domain.Job, error)
+	CreateFirewallApplyJob(context.Context, string, string, bool) (domain.Job, error)
 }
 
 type firewallApplyRequest struct {
-	PolicyID string `json:"policy_id"`
+	PolicyID             string `json:"policy_id"`
+	EnforceDefaultPolicy bool   `json:"enforce_default_policy"`
 }
 
 func (s *Server) listFirewallInventory(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -328,7 +329,7 @@ func (s *Server) applyNodeFirewallPolicy(w nethttp.ResponseWriter, r *nethttp.Re
 			return
 		}
 	}
-	job, err := store.CreateFirewallApplyJob(r.Context(), nodeID, req.PolicyID)
+	job, err := store.CreateFirewallApplyJob(r.Context(), nodeID, req.PolicyID, req.EnforceDefaultPolicy)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return

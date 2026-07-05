@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.0.1.7`
+**Релиз:** `7.0.1.8`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -632,16 +632,27 @@ service access metadata.
 2. Добавьте entries. Тип можно оставить auto-detect, если не нужно явно
    выбрать CIDR, single IP, range или DNS.
 3. Откройте `Firewall -> Rules` и создайте ordered rules. Используйте presets
-   для типовых SSH, HTTPS, WireGuard или invalid-packet случаев, затем уточните
-   source lists и ports.
+   для SSH, HTTPS, WireGuard, OpenVPN, IPsec/L2TP, Shadowsocks, HTTP proxy,
+   MTProto, Nginx edge или invalid-packet случаев, затем уточните source lists
+   и ports.
 4. Откройте `Firewall -> Policies`, чтобы проверить defaults и количество rules.
 5. Откройте `Firewall -> Node state` или apply action в policy и поставьте apply
    на выбранную node.
 
 Изменения catalog вступают в силу только после завершения `node.firewall.apply`.
-Default chain policies в этом релизе хранятся как rollout metadata; strict
-default enforcement нужно включать отдельным controlled rollout, чтобы не
-заблокировать operator access.
+В apply dialog есть два режима:
+
+- Default mode устанавливает explicit catalog rules и оставляет managed base
+  chains в `accept`.
+- Strict mode включает `enforce_default_policy` и применяет default
+  input/forward/output actions из policy. Используйте его только после того,
+  как добавлены management access rules и allow rules для нужных protocol
+  listeners.
+
+Если strict output default равен `drop` или `reject`, agent требует либо
+IP-pinned control-plane URL, либо explicit active output accept rule для
+TCP-порта control-plane. Если guard отсутствует, job падает на render stage до
+изменения nftables.
 
 ## 19. Jobs, Audit и troubleshooting
 

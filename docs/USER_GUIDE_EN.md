@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.7`
+**Release:** `7.0.1.8`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -631,16 +631,26 @@ Recommended workflow:
    lists.
 2. Add entries. Leave entry type on auto-detect unless you need to force CIDR,
    single IP, range or DNS.
-3. Open `Firewall -> Rules` and create ordered rules. Use presets for common
-   SSH, HTTPS, WireGuard or invalid-packet cases, then adjust source lists and
-   ports.
+3. Open `Firewall -> Rules` and create ordered rules. Use presets for SSH,
+   HTTPS, WireGuard, OpenVPN, IPsec/L2TP, Shadowsocks, HTTP proxy, MTProto,
+   Nginx edge or invalid-packet cases, then adjust source lists and ports.
 4. Open `Firewall -> Policies` to review defaults and rule count.
 5. Open `Firewall -> Node state` or policy apply action and queue apply for the
    selected node.
 
 Catalog changes become effective only after `node.firewall.apply` completes.
-Default chain policies are stored as rollout metadata in this release; strict
-default enforcement must be rolled out deliberately to avoid operator lockout.
+The apply dialog has two modes:
+
+- Default mode installs explicit catalog rules and keeps managed base chains at
+  `accept`.
+- Strict mode enables `enforce_default_policy` and applies the policy default
+  input/forward/output actions. Use it only after management access and
+  required protocol listener rules are present.
+
+When strict output default is `drop` or `reject`, the agent requires either an
+IP-pinned control-plane URL or an explicit active output accept rule for the
+control-plane TCP port. If that guard is missing, the job fails during render
+before changing nftables.
 
 ## 19. Jobs, Audit And Troubleshooting
 

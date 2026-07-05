@@ -1,6 +1,6 @@
 # Firewall Policy Catalog
 
-**Release:** `7.0.1.7`
+**Release:** `7.0.1.8`
 
 Firewall is the managed policy workspace for node and control-plane boundaries.
 It is intentionally modeled as a catalog before apply: operators prepare address
@@ -33,8 +33,9 @@ Open `Firewall` from the control menu.
 - `Node state`: last apply state per node.
 
 The top workflow buttons jump directly to the required stage. The rule editor
-contains presets for common cases such as SSH management, HTTPS control,
-WireGuard UDP and invalid-packet drop.
+contains presets for SSH management, HTTPS control, WireGuard, OpenVPN
+TCP/UDP, IPsec IKE/NAT-T, L2TP, Shadowsocks TCP/UDP, HTTP proxy, MTProto,
+Nginx edge HTTP(S) and invalid-packet drop.
 
 ## Security Model
 
@@ -45,16 +46,40 @@ WireGuard UDP and invalid-packet drop.
 - Rules are stored as catalog data and rendered by the worker into managed node
   firewall payloads.
 
-## Current Enforcement Boundary
+## Enforcement Boundary
 
-This release applies explicit allow/drop/reject rules into managed nftables
-chains. Default chain policy fields are stored as rollout metadata; strict
-default-policy enforcement must be enabled only after a controlled migration
-plan exists, otherwise operators can lock themselves out.
+By default, apply jobs install explicit allow/drop/reject rules into managed
+nftables chains while keeping base chain policy at `accept`. This is the safe
+staging mode for first rollout and catalog validation.
+
+Strict default-policy enforcement is now available per apply job through the
+`enforce_default_policy` flag in the API/UI. In strict mode the agent replaces
+the managed `inet megavpn` table atomically with `nft -f`, recreates input,
+forward and output base chains and applies the policy defaults:
+
+- `accept` is rendered as base chain policy `accept`.
+- `drop` is rendered as base chain policy `drop`.
+- `reject` is rendered as base chain policy `drop` plus a terminal `reject`
+  rule, because nftables base chain policy does not support `reject`.
+
+The agent also adds system safety rules for established/related traffic and
+loopback before catalog rules. If output default policy is `drop` or `reject`,
+the agent must preserve control-plane egress. It does this by either:
+
+- generating a TCP egress allow rule when the agent control-plane URL host is
+  an IP address; or
+- accepting an explicit active catalog `output accept` rule for the
+  control-plane TCP port when the control-plane URL host is DNS.
+
+If neither condition is true, render fails before touching nftables. This keeps
+strict output rollout from silently isolating a node.
 
 Address-list entries with DNS type are stored for catalog context only in this
 release. Node-side nftables apply renders CIDR, single IP address and IP range
 entries; a DNS-only list cannot be used as an active rule matcher.
+
+The managed table is owned by MegaVPN. Do not place hand-written rules in
+`inet megavpn`; strict apply replaces that table as a single managed unit.
 
 ## Failure Handling
 
