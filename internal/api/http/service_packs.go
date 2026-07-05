@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"sort"
 	"strings"
@@ -666,6 +667,9 @@ func normalizeServicePackCamouflageRequestHTTP(req *createServicePackRequest, pa
 	if req.FallbackSNI == "" && strings.EqualFold(parsed.Scheme, "https") {
 		req.FallbackSNI = parsed.Hostname()
 	}
+	if err := validateServicePackFallbackLoopGuardHTTP(req, parsed); err != nil {
+		return err
+	}
 	for _, item := range []struct {
 		name  string
 		value string
@@ -678,6 +682,44 @@ func normalizeServicePackCamouflageRequestHTTP(req *createServicePackRequest, pa
 		}
 	}
 	return nil
+}
+
+func validateServicePackFallbackLoopGuardHTTP(req *createServicePackRequest, parsed *url.URL) error {
+	endpointHost := normalizeServicePackHostHTTP(req.EndpointHost)
+	if endpointHost == "" || parsed == nil {
+		return nil
+	}
+	for _, item := range []struct {
+		name  string
+		value string
+	}{
+		{name: "fallback_upstream_url", value: parsed.Hostname()},
+		{name: "fallback_host_header", value: req.FallbackHostHeader},
+		{name: "fallback_sni", value: req.FallbackSNI},
+	} {
+		if normalizeServicePackHostHTTP(item.value) == endpointHost {
+			return fmt.Errorf("%s must not target the public ingress endpoint; choose a separate fallback website", item.name)
+		}
+	}
+	return nil
+}
+
+func normalizeServicePackHostHTTP(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.Contains(value, "://") {
+		if parsed, err := url.Parse(value); err == nil && parsed != nil {
+			value = parsed.Hostname()
+		}
+	}
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	value = strings.TrimPrefix(strings.TrimSuffix(value, "]"), "[")
+	value = strings.TrimSuffix(value, ".")
+	return strings.ToLower(value)
 }
 
 func validateServicePackCamouflagePathHTTP(path string) error {

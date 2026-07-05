@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.11`
+**Release:** `7.0.1.12`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -435,11 +435,13 @@ Use this for standard production baselines.
 7. Select an OpenVPN CA profile if the pack contains OpenVPN.
 8. If the pack contains traffic camouflage, configure `Traffic camouflage`:
    - `Fallback website` is required and must be an absolute `http://` or
-     `https://` URL for the real site;
+     `https://` URL for the real site. Its host must not be the same as the
+     public ingress endpoint;
    - when `Hidden VLESS path` is shown, it must not be `/`, must not contain a
      query/fragment and should look like an ordinary asset/API path;
    - `Fallback Host header` and `Fallback SNI` can be left empty: the control
-     plane derives them from the fallback URL.
+     plane derives them from the fallback URL. If they are set explicitly, they
+     must not point back to the ingress endpoint.
 9. If the pack contains VLESS, select instance-level `VLESS routing`:
    - `Auto through managed backhaul` for a single unambiguous active backhaul;
    - `Use selected egress node` when the VLESS instance must exit through a
@@ -469,6 +471,8 @@ For repeatable smoke tests, pass the same fallback explicitly:
 scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
 [certificate-id]`. Matrix smoke skips camouflage packs when this value is not
 set, because using the ingress host itself as fallback can create a proxy loop.
+The API, Web UI, Nginx renderer and smoke script reject fallback URL/Host/SNI
+values that target the same public ingress host.
 
 ### 13.2 Manual Instance
 

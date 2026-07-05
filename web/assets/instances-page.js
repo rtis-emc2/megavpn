@@ -840,6 +840,33 @@
       return String(pack?.key || '').includes('grpc') ? '/vless-grpc' : '/assets/rtis-sync';
     }
 
+    function normalizedHostForLoopGuard(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      try {
+        const parsed = new URL(raw.includes('://') ? raw : `https://${raw}`);
+        return String(parsed.hostname || '').replace(/\.$/, '').toLowerCase();
+      } catch (_) {
+        return raw.replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, '').toLowerCase();
+      }
+    }
+
+    function camouflageFallbackLoopError(payload) {
+      const endpointHost = normalizedHostForLoopGuard(payload?.endpoint_host);
+      if (!endpointHost) return '';
+      const candidates = [
+        ['Fallback website', payload?.fallback_upstream_url],
+        ['Fallback Host header', payload?.fallback_host_header],
+        ['Fallback SNI', payload?.fallback_sni],
+      ];
+      for (const [label, value] of candidates) {
+        if (normalizedHostForLoopGuard(value) === endpointHost) {
+          return `${label} must not point back to the public ingress endpoint. Use a separate fallback website.`;
+        }
+      }
+      return '';
+    }
+
     function renderXrayEgressPackFields(pack) {
       if (!packUsesService(pack, 'xray-core')) return '';
       const egressNodes = nodeOptions('', { roles: ['egress'], includeEmpty: true, emptyLabel: 'Select egress node' });
@@ -883,7 +910,7 @@
             <div class="field">
               <label>Fallback website</label>
               <input name="fallback_upstream_url" placeholder="https://target.example.com" required>
-              <div class="field-hint">Ordinary browser requests are reverse-proxied to this upstream.</div>
+              <div class="field-hint">Ordinary browser requests are reverse-proxied to this upstream. It must be a separate website, not this ingress endpoint.</div>
             </div>
             <div class="field">
               <label>Fallback Host header</label>
@@ -1172,6 +1199,15 @@
         state.instancesCreateResult = { status: 'failed', message: 'service pack is required' };
         renderCreateFromPackPage();
         return;
+      }
+      const pack = servicePackCatalogItems().find((item) => item.key === packKey);
+      if (packUsesTrafficCamouflage(pack)) {
+        const loopError = camouflageFallbackLoopError(payload);
+        if (loopError) {
+          state.instancesCreateResult = { status: 'failed', message: loopError };
+          renderCreateFromPackPage();
+          return;
+        }
       }
       if (button) {
         button.disabled = true;

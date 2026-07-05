@@ -183,6 +183,39 @@ pack_requires_fallback() {
   return 1
 }
 
+smoke_host_from_value() {
+  local value="$1"
+  value="${value#*://}"
+  value="${value%%/*}"
+  value="${value#*@}"
+  value="${value#[}"
+  value="${value%]}"
+  value="${value%%:*}"
+  value="${value%.}"
+  printf '%s' "$value" | tr '[:upper:]' '[:lower:]'
+}
+
+guard_camouflage_fallback_loop() {
+  local endpoint_host="$1"
+  local endpoint fallback header sni
+  endpoint="$(smoke_host_from_value "$endpoint_host")"
+  fallback="$(smoke_host_from_value "$FALLBACK_UPSTREAM_URL")"
+  header="$(smoke_host_from_value "$FALLBACK_HOST_HEADER")"
+  sni="$(smoke_host_from_value "$FALLBACK_SNI")"
+  if [[ -n "$endpoint" && -n "$fallback" && "$fallback" == "$endpoint" ]]; then
+    echo "fallback_upstream_url must not point back to endpoint_host; choose a separate fallback website" >&2
+    return 1
+  fi
+  if [[ -n "$endpoint" && -n "$header" && "$header" == "$endpoint" ]]; then
+    echo "fallback_host_header must not point back to endpoint_host; choose a separate fallback website" >&2
+    return 1
+  fi
+  if [[ -n "$endpoint" && -n "$sni" && "$sni" == "$endpoint" ]]; then
+    echo "fallback_sni must not point back to endpoint_host; choose a separate fallback website" >&2
+    return 1
+  fi
+}
+
 is_provisionable_service() {
   case "$1" in
     openvpn|wireguard|mtproto|xray-core|ipsec|shadowsocks|http_proxy)
@@ -255,6 +288,7 @@ run_single_pack() {
       echo "pack $pack_key requires MEGAVPN_FALLBACK_UPSTREAM_URL for traffic camouflage smoke" >&2
       return 1
     fi
+    guard_camouflage_fallback_loop "$endpoint_host"
     echo "fallback_upstream_url: $FALLBACK_UPSTREAM_URL"
     if [[ -n "$CAMOUFLAGE_PATH" ]]; then
       echo "camouflage_path: $CAMOUFLAGE_PATH"

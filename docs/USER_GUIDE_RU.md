@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.0.1.11`
+**Релиз:** `7.0.1.12`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -434,11 +434,13 @@ Node Map - это визуальный topology view.
 7. Выберите OpenVPN CA profile, если pack содержит OpenVPN.
 8. Если pack содержит traffic camouflage, настройте `Traffic camouflage`:
    - `Fallback website` обязателен и должен быть абсолютным `http://` или
-     `https://` URL реального сайта;
+     `https://` URL реального сайта. Его host не должен совпадать с публичным
+     ingress endpoint;
    - если показан `Hidden VLESS path`, он не должен быть `/`, не должен
      содержать query/fragment и должен выглядеть как обычный asset/API path;
    - `Fallback Host header` и `Fallback SNI` можно оставить пустыми: control
-     plane выведет их из fallback URL.
+     plane выведет их из fallback URL. Если они заданы явно, они не должны
+     указывать обратно на ingress endpoint.
 9. Если pack содержит VLESS, настройте instance-level `VLESS routing`:
    - `Auto through managed backhaul` для одного однозначного active backhaul;
    - `Use selected egress node`, если весь VLESS instance должен выходить через
@@ -469,6 +471,8 @@ scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
 [certificate-id]`. Matrix smoke пропускает camouflage packs, если значение не
 задано: использовать сам ingress host как fallback нельзя, это может создать
 proxy loop.
+API, Web UI, Nginx renderer и smoke script отклоняют fallback URL/Host/SNI,
+которые указывают на тот же публичный ingress host.
 
 ### 13.2 Manual instance
 

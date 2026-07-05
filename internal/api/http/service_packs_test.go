@@ -212,6 +212,28 @@ func TestNormalizeServicePackCamouflageRequestRejectsUnsafeInputs(t *testing.T) 
 	}
 }
 
+func TestNormalizeServicePackCamouflageRequestRejectsFallbackLoopToEndpoint(t *testing.T) {
+	pack, found := findServicePack("xray_nginx_http_edge")
+	if !found {
+		t.Fatal("xray_nginx_http_edge service pack is required")
+	}
+	cases := []createServicePackRequest{
+		{EndpointHost: "enter.example.com", FallbackUpstreamURL: "https://enter.example.com"},
+		{EndpointHost: "enter.example.com:443", FallbackUpstreamURL: "https://enter.example.com/site"},
+		{EndpointHost: "enter.example.com.", FallbackUpstreamURL: "https://ENTER.EXAMPLE.COM"},
+		{EndpointHost: "enter.example.com", FallbackUpstreamURL: "https://target.example.com", FallbackHostHeader: "enter.example.com"},
+		{EndpointHost: "enter.example.com", FallbackUpstreamURL: "https://target.example.com", FallbackSNI: "enter.example.com"},
+	}
+	for _, req := range cases {
+		req := req
+		t.Run(req.FallbackUpstreamURL, func(t *testing.T) {
+			if err := normalizeServicePackCamouflageRequestHTTP(&req, pack); err == nil {
+				t.Fatal("expected fallback loop validation error")
+			}
+		})
+	}
+}
+
 func TestServicePackInstanceIdentitySetAllocatesUniqueNameAndSlug(t *testing.T) {
 	set := newServicePackInstanceIdentitySet([]domain.Instance{
 		{NodeID: "node-1", Name: "edge-access-wireguard", Slug: "edge-access-wireguard", Status: "failed"},

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"regexp"
@@ -1285,7 +1286,7 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 		if err := validateNginxLocationPath(locationPath); err != nil {
 			return "", err
 		}
-		if err := validateNginxFallbackSpec(spec); err != nil {
+		if err := validateNginxFallbackSpec(spec, instance, serverName); err != nil {
 			return "", err
 		}
 		lines = appendNginxReverseProxyLocation(lines, locationPath, upstreamURL, spec, "location_extra_lines")
@@ -1302,7 +1303,7 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 		if err := validateNginxLocationPath(locationPath); err != nil {
 			return "", err
 		}
-		if err := validateNginxFallbackSpec(spec); err != nil {
+		if err := validateNginxFallbackSpec(spec, instance, serverName); err != nil {
 			return "", err
 		}
 		lines = append(lines, "    location "+locationPath+" {")
@@ -1441,8 +1442,9 @@ func validateNginxServerName(serverName string) error {
 	return nil
 }
 
-func validateNginxFallbackSpec(spec map[string]any) error {
-	if err := validateNginxFallbackURL(firstString(spec["fallback_upstream_url"], spec["fallback_proxy_pass"])); err != nil {
+func validateNginxFallbackSpec(spec map[string]any, instance domain.Instance, serverName string) error {
+	fallbackURL := firstString(spec["fallback_upstream_url"], spec["fallback_proxy_pass"])
+	if err := validateNginxFallbackURL(fallbackURL); err != nil {
 		return err
 	}
 	for _, item := range []struct {
@@ -1456,7 +1458,86 @@ func validateNginxFallbackSpec(spec map[string]any) error {
 			return err
 		}
 	}
+	if nginxFallbackLoopGuardEnabled(spec) {
+		if err := validateNginxFallbackLoopGuard(spec, fallbackURL, instance, serverName); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func nginxFallbackLoopGuardEnabled(spec map[string]any) bool {
+	profile := strings.ToLower(strings.TrimSpace(firstString(spec["service_profile"], spec["edge_profile"], spec["profile"])))
+	switch profile {
+	case "ws_camouflage_edge", "grpc_edge":
+		return true
+	}
+	return truthy(spec["traffic_camouflage"]) || truthy(spec["fallback_loop_guard"])
+}
+
+func validateNginxFallbackLoopGuard(spec map[string]any, fallbackURL string, instance domain.Instance, serverName string) error {
+	edgeHosts := []string{serverName, instance.EndpointHost}
+	if fallbackURL != "" {
+		if parsed, err := url.Parse(strings.TrimSpace(fallbackURL)); err == nil && parsed != nil {
+			if nginxHostMatchesEdge(parsed.Hostname(), edgeHosts...) {
+				return fmt.Errorf("nginx fallback_upstream_url must not target the public edge host; choose a separate fallback website")
+			}
+		}
+	}
+	for _, item := range []struct {
+		name  string
+		value string
+	}{
+		{name: "fallback_host_header", value: firstString(spec["fallback_host_header"], spec["fallback_host"])},
+		{name: "fallback_sni", value: firstString(spec["fallback_sni"])},
+	} {
+		if nginxHostMatchesEdge(item.value, edgeHosts...) {
+			return fmt.Errorf("nginx %s must not target the public edge host", item.name)
+		}
+	}
+	return nil
+}
+
+func nginxHostMatchesEdge(candidate string, edgeHosts ...string) bool {
+	normalizedCandidate := normalizeNginxHost(candidate)
+	if normalizedCandidate == "" {
+		return false
+	}
+	for _, edgeHost := range edgeHosts {
+		normalizedEdge := normalizeNginxHost(edgeHost)
+		if normalizedEdge == "" || normalizedEdge == "_" {
+			continue
+		}
+		if strings.HasPrefix(normalizedEdge, "*.") {
+			suffix := strings.TrimPrefix(normalizedEdge, "*.")
+			if normalizedCandidate == suffix || strings.HasSuffix(normalizedCandidate, "."+suffix) {
+				return true
+			}
+			continue
+		}
+		if normalizedCandidate == normalizedEdge {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeNginxHost(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.Contains(value, "://") {
+		if parsed, err := url.Parse(value); err == nil && parsed != nil {
+			value = parsed.Hostname()
+		}
+	}
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	value = strings.TrimPrefix(strings.TrimSuffix(value, "]"), "[")
+	value = strings.TrimSuffix(value, ".")
+	return strings.ToLower(value)
 }
 
 func validateNginxFallbackURL(raw string) error {

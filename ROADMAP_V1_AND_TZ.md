@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.11`
+**Release:** `7.0.1.12`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.11`
+**Code baseline:** RTIS MegaVPN `7.0.1.12`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.11` is the boundary between feature expansion and production hardening.
+`7.0.1.12` is the boundary between feature expansion and production hardening.
 The codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.

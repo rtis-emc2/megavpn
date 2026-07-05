@@ -313,6 +313,44 @@ func TestBuildNginxServerConfigRejectsUnsafeFallbackDirectiveValues(t *testing.T
 	}
 }
 
+func TestBuildNginxServerConfigRejectsCamouflageFallbackLoop(t *testing.T) {
+	cases := []map[string]any{
+		{"fallback_upstream_url": "https://enter.example.com/site"},
+		{"fallback_upstream_url": "https://target.example.com", "fallback_host_header": "enter.example.com"},
+		{"fallback_upstream_url": "https://target.example.com", "fallback_sni": "enter.example.com"},
+		{"server_name": "*.example.com", "fallback_upstream_url": "https://enter.example.com"},
+	}
+	for _, overrides := range cases {
+		spec := map[string]any{
+			"service_profile":        "ws_camouflage_edge",
+			"mode":                   "reverse_proxy",
+			"tls_enabled":            false,
+			"location_path":          "/assets/rtis-sync",
+			"upstream_url":           "http://127.0.0.1:7080",
+			"fallback_upstream_url":  "https://target.example.com",
+			"fallback_host_header":   "target.example.com",
+			"fallback_sni":           "target.example.com",
+			"websocket_upgrade":      true,
+			"fallback_loop_guard":    true,
+			"traffic_camouflage":     true,
+			"proxy_headers_enabled":  true,
+			"fallback_proxy_headers": true,
+		}
+		for key, value := range overrides {
+			spec[key] = value
+		}
+		_, err := buildNginxServerConfig(domain.Instance{
+			Name:         "edge-nginx-ws",
+			Slug:         "edge-nginx-ws",
+			EndpointHost: "enter.example.com",
+			EndpointPort: 443,
+		}, spec)
+		if err == nil {
+			t.Fatalf("expected fallback loop rejection for overrides %#v", overrides)
+		}
+	}
+}
+
 func TestValidateNginxServerNameAllowsDNSWildcardAndIP(t *testing.T) {
 	for _, name := range []string{"edge.example.com", "*.edge.example.com", "127.0.0.1", "[2001:db8::1]", "_"} {
 		if err := validateNginxServerName(name); err != nil {
