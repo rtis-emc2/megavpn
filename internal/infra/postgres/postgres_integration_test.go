@@ -1143,6 +1143,136 @@ func TestPostgresIntegrationAgentVersionProjection(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationDeleteClientRemovesProvisioningRows(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	store.SetArtifactRoot(t.TempDir())
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-client-cleanup-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "203.0.113.25",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	instance, err := store.CreateInstance(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-cleanup-xray-" + suffix,
+		Slug:         "it-cleanup-xray-" + suffix,
+		EndpointHost: "portal.example.invalid",
+		EndpointPort: 7080,
+		Spec: map[string]any{
+			"security":            "none",
+			"network":             "ws",
+			"path":                "/assets/rtis-sync",
+			"public_security":     "tls",
+			"public_network":      "ws",
+			"public_path":         "/assets/rtis-sync",
+			"public_host_header":  "portal.example.invalid",
+			"public_port":         443,
+			"default_vless_group": "default",
+			"vless_groups": []any{
+				map[string]any{"key": "default", "name": "Default", "egress_mode": "auto"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+
+	client, err := store.CreateClient(ctx, domain.Client{
+		Username:    "it-cleanup-client-" + suffix,
+		DisplayName: "Integration Cleanup Client",
+		Email:       "it-cleanup-client-" + suffix + "@example.invalid",
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if _, err := store.ProvisionClientWithOptions(ctx, client.ID, []string{instance.ID}, map[string]map[string]any{
+		instance.ID: {"vless_group": "default"},
+	}); err != nil {
+		t.Fatalf("provision client: %v", err)
+	}
+	accesses, err := store.ListServiceAccesses(ctx, client.ID)
+	if err != nil {
+		t.Fatalf("list service accesses: %v", err)
+	}
+	if len(accesses) != 1 {
+		t.Fatalf("service access count = %d, want 1", len(accesses))
+	}
+	accessID := accesses[0].ID
+	artifact, err := store.SaveArtifactContent(ctx, client.ID, &accessID, "vless_url", "client.txt", []byte("vless://integration-test"))
+	if err != nil {
+		t.Fatalf("save artifact: %v", err)
+	}
+	if _, err := os.Stat(artifact.StoragePath); err != nil {
+		t.Fatalf("artifact file before delete: %v", err)
+	}
+	share, err := store.PublishShareLink(ctx, client.ID, artifact.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("publish share link: %v", err)
+	}
+	sub, err := store.RotateClientSubscription(ctx, client.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("rotate subscription: %v", err)
+	}
+	createdBy := "integration-test"
+	if _, err := store.CreateClientEmailDelivery(ctx, domain.ClientEmailDelivery{
+		ClientAccountID: client.ID,
+		Email:           client.Email,
+		Subject:         "Integration cleanup",
+		Status:          "queued",
+		ArtifactIDs:     []string{artifact.ID},
+		ShareLinkIDs:    []string{share.ID},
+		CreatedBy:       &createdBy,
+	}); err != nil {
+		t.Fatalf("create email delivery: %v", err)
+	}
+	secret, err := store.CreateSecretRef(ctx, "uuid", []byte("integration-secret"), map[string]any{
+		"scope":             "service_access",
+		"service_access_id": accessID,
+	})
+	if err != nil {
+		t.Fatalf("create service access secret: %v", err)
+	}
+
+	result, err := store.DeleteClient(ctx, client.ID)
+	if err != nil {
+		t.Fatalf("delete client: %v", err)
+	}
+	if !result.Deleted {
+		t.Fatalf("delete result did not mark client deleted: %#v", result)
+	}
+	if result.ConfigCleanup.ArtifactsDeleted != 1 || result.ConfigCleanup.ShareLinksDeleted != 1 || result.ConfigCleanup.SubscriptionsDeleted != 1 {
+		t.Fatalf("config cleanup result = %#v, want one artifact/share/subscription", result.ConfigCleanup)
+	}
+	if result.ServiceAccessesDeleted != 1 || result.AccessRoutesDeleted != 1 || result.EmailDeliveriesDeleted != 1 || result.SecretRefsDeleted != 1 {
+		t.Fatalf("delete result = %#v, want one access/route/email/secret", result)
+	}
+
+	assertPostgresCount(t, ctx, store, `select count(*) from client_accounts where id=$1`, 0, client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where client_account_id=$1`, 0, client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from client_access_routes where client_account_id=$1`, 0, client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from artifacts where client_account_id=$1`, 0, client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from share_links where id=$1`, 0, share.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from client_subscriptions where id=$1`, 0, sub.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from client_email_deliveries where client_account_id=$1`, 0, client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, secret.ID)
+	if _, err := os.Stat(artifact.StoragePath); !os.IsNotExist(err) {
+		t.Fatalf("artifact file after delete error = %v, want not exist", err)
+	}
+}
+
 func routePolicyPayloadRoute(t *testing.T, payload map[string]any, routeID string) map[string]any {
 	t.Helper()
 
@@ -1264,6 +1394,18 @@ func assertResourceLockCount(t *testing.T, ctx context.Context, store *Store, jo
 	}
 	if got != want {
 		t.Fatalf("resource lock count for job=%s resource=%s kind=%s = %d, want %d", jobID, resourceType, lockKind, got, want)
+	}
+}
+
+func assertPostgresCount(t *testing.T, ctx context.Context, store *Store, query string, want int, args ...any) {
+	t.Helper()
+
+	var got int
+	if err := store.db.QueryRow(ctx, query, args...).Scan(&got); err != nil {
+		t.Fatalf("count query %q: %v", query, err)
+	}
+	if got != want {
+		t.Fatalf("count query %q = %d, want %d", query, got, want)
 	}
 }
 

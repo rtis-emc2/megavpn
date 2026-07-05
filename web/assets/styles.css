@@ -2402,6 +2402,13 @@ tr:hover td { background: #f8fafc; }
   border-radius: 14px;
   background: #f0fdf4;
 }
+.client-provision-queued-head > div {
+  min-width: 0;
+}
+.client-provision-queued-head > .tag {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .client-provision-queued-head h3 {
   margin: 2px 0 4px;
   font-size: 22px;
@@ -2414,7 +2421,7 @@ tr:hover td { background: #f8fafc; }
 }
 .client-provision-result-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
 }
 .client-provision-result-grid > div,
@@ -2445,12 +2452,12 @@ tr:hover td { background: #f8fafc; }
 }
 .client-provision-service-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 10px;
 }
 .client-provision-next {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
 }
 .client-provision-next div {

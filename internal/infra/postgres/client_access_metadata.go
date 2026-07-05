@@ -119,6 +119,7 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, instanceI
 	if err != nil {
 		return nil, err
 	}
+	applyXrayPublicClientEndpointMetadata(metadata, inbound, spec)
 	groups := xrayVLESSGroups(spec)
 	defaultGroup := xrayDefaultVLESSGroupKey(spec, groups)
 	group := normalizeXrayVLESSGroupKey(firstNonEmptyRouteValue(
@@ -144,6 +145,76 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, instanceI
 	inbound["outbound_group"] = group
 	metadata["inbound_service"] = inbound
 	return metadata, nil
+}
+
+func applyXrayPublicClientEndpointMetadata(metadata, inbound, spec map[string]any) {
+	if metadata == nil || inbound == nil || spec == nil {
+		return
+	}
+	hasPublicProfile := firstString(
+		spec["public_host"],
+		spec["public_security"],
+		spec["public_network"],
+		spec["public_path"],
+		spec["public_host_header"],
+		spec["public_sni"],
+		spec["public_server_name"],
+	) != "" || firstIntValue(spec["public_port"]) > 0
+	if !hasPublicProfile {
+		return
+	}
+
+	host := firstString(
+		spec["public_host"],
+		spec["server_host"],
+		inbound["endpoint_host"],
+		spec["public_host_header"],
+	)
+	port := firstIntValue(spec["public_port"], spec["server_port"], inbound["endpoint_port"])
+	if host == "" || port <= 0 {
+		return
+	}
+
+	endpoint := clientEndpointString(host, port)
+	backendEndpoint := firstString(inbound["backend_endpoint"], inbound["endpoint"])
+	inbound["client_endpoint_host"] = host
+	inbound["client_endpoint_port"] = port
+	inbound["client_endpoint"] = endpoint
+	inbound["endpoint_kind"] = "public"
+	if backendEndpoint != "" && backendEndpoint != endpoint {
+		inbound["backend_endpoint"] = backendEndpoint
+	}
+	inbound["endpoint"] = endpoint
+
+	metadata["public_host"] = host
+	metadata["public_port"] = port
+	for _, key := range []string{
+		"public_security",
+		"public_network",
+		"public_path",
+		"public_host_header",
+		"public_sni",
+		"public_server_name",
+		"public_service_name",
+		"public_fingerprint",
+		"public_alpn",
+		"public_flow",
+	} {
+		if value := firstString(spec[key]); value != "" {
+			metadata[key] = value
+		}
+	}
+}
+
+func clientEndpointString(host string, port int) string {
+	host = strings.TrimSpace(host)
+	if port > 0 {
+		if host != "" {
+			return fmt.Sprintf("%s:%d", host, port)
+		}
+		return fmt.Sprintf(":%d", port)
+	}
+	return host
 }
 
 func (s *Store) ensureXrayProvisioningGroups(ctx context.Context, instanceID string, spec map[string]any) (map[string]any, error) {

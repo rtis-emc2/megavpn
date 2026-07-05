@@ -384,7 +384,12 @@ func (s *Store) ensureBaselineClientAccessRoute(ctx context.Context, clientID, a
 	if err != nil {
 		return err
 	}
-	destination := strings.TrimSpace(instance.EndpointHost)
+	accessMeta, err := s.clientProvisioningServiceMetadata(ctx, instanceID, nil)
+	if err != nil {
+		return err
+	}
+	inbound, _ := accessMeta["inbound_service"].(map[string]any)
+	destination := strings.TrimSpace(firstString(inbound["client_endpoint_host"], inbound["endpoint_host"], instance.EndpointHost))
 	if destination == "" {
 		destination = strings.TrimSpace(instance.Name)
 	}
@@ -393,16 +398,11 @@ func (s *Store) ensureBaselineClientAccessRoute(ctx context.Context, clientID, a
 	}
 	destinationType := "endpoint"
 	portText := "*"
-	if instance.EndpointPort > 0 {
-		portText = strconv.Itoa(instance.EndpointPort)
+	if port := firstIntValue(inbound["client_endpoint_port"], inbound["endpoint_port"], instance.EndpointPort); port > 0 {
+		portText = strconv.Itoa(port)
 	}
 	nodeID := strings.TrimSpace(instance.NodeID)
 	now := time.Now().UTC()
-	accessMeta, err := s.clientInboundServiceMetadata(ctx, instanceID)
-	if err != nil {
-		return err
-	}
-	inbound, _ := accessMeta["inbound_service"].(map[string]any)
 	meta := mustJSON(map[string]any{
 		"baseline":     true,
 		"route_type":   "service_inbound_baseline",

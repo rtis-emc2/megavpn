@@ -62,9 +62,99 @@
       return options.join('');
     }
 
+    function textValue(value) {
+      return String(value ?? '').trim();
+    }
+
+    function firstTextValue(...values) {
+      for (const value of values) {
+        const text = textValue(value);
+        if (text) return text;
+      }
+      return '';
+    }
+
+    function positiveNumber(...values) {
+      for (const value of values) {
+        const number = Number(value);
+        if (Number.isFinite(number) && number > 0) return number;
+      }
+      return 0;
+    }
+
+    function endpointText(host, port) {
+      const cleanHost = textValue(host);
+      const cleanPort = positiveNumber(port);
+      if (!cleanHost) return cleanPort ? `:${cleanPort}` : 'n/a';
+      return cleanPort ? `${cleanHost}:${cleanPort}` : cleanHost;
+    }
+
     function endpointLabel(instance) {
-      if (!instance?.endpoint_host) return 'n/a';
-      return `${instance.endpoint_host}:${instance.endpoint_port || 0}`;
+      return endpointText(instance?.endpoint_host, instance?.endpoint_port);
+    }
+
+    function instanceSpec(instance) {
+      return instance?.spec && typeof instance.spec === 'object' ? instance.spec : {};
+    }
+
+    function servicePublicEndpointInfo(instance, metadata = {}, inbound = {}) {
+      const spec = instanceSpec(instance);
+      const serviceCode = firstTextValue(inbound.service_code, instance?.service_code).toLowerCase();
+      const backendEndpoint = firstTextValue(inbound.backend_endpoint) || endpointLabel(instance);
+      const hasPublicProfile = serviceCode === 'xray-core' && Boolean(
+        firstTextValue(
+          metadata.public_host,
+          spec.public_host,
+          metadata.public_security,
+          spec.public_security,
+          metadata.public_network,
+          spec.public_network,
+          metadata.public_path,
+          spec.public_path,
+          metadata.public_host_header,
+          spec.public_host_header,
+        ) || positiveNumber(metadata.public_port, spec.public_port),
+      );
+
+      if (!hasPublicProfile) {
+        return {
+          endpoint: firstTextValue(inbound.endpoint) || backendEndpoint,
+          backendEndpoint: '',
+          endpointKind: 'service',
+          transportLabel: '',
+        };
+      }
+
+      const host = firstTextValue(
+        inbound.client_endpoint_host,
+        metadata.public_host,
+        metadata.server_host,
+        spec.public_host,
+        spec.server_host,
+        inbound.endpoint_host,
+        instance?.endpoint_host,
+        metadata.public_host_header,
+        spec.public_host_header,
+      );
+      const port = positiveNumber(
+        inbound.client_endpoint_port,
+        metadata.public_port,
+        metadata.server_port,
+        spec.public_port,
+        spec.server_port,
+        instance?.endpoint_port,
+      );
+      const endpoint = firstTextValue(inbound.client_endpoint) || endpointText(host, port);
+      const security = firstTextValue(metadata.public_security, spec.public_security, metadata.security, spec.security);
+      const network = firstTextValue(metadata.public_network, spec.public_network, metadata.type, spec.type, metadata.network, spec.network);
+      const path = firstTextValue(metadata.public_path, spec.public_path, metadata.path, spec.path);
+      const transportParts = [security, network].filter(Boolean);
+      return {
+        endpoint,
+        backendEndpoint: backendEndpoint && backendEndpoint !== endpoint ? backendEndpoint : '',
+        endpointKind: 'public',
+        transportLabel: `${transportParts.join(' / ')}${path ? ` ${path}` : ''}`.trim(),
+      };
     }
 
     function serviceAccessInboundInfo(access) {
@@ -73,7 +163,7 @@
       const instance = findInstance(access?.instance_id);
       const node = findNode(inbound.node_id || instance?.node_id);
       const serviceCode = inbound.service_code || instance?.service_code || 'unknown';
-      const endpoint = inbound.endpoint || endpointLabel(instance);
+      const endpointInfo = servicePublicEndpointInfo(instance, metadata, inbound);
       return {
         serviceCode,
         serviceLabel: inbound.service_label || compactServiceLabel(serviceCode),
@@ -81,7 +171,10 @@
         nodeName: inbound.node_name || node?.name || instance?.node_id || 'node',
         nodeRole: inbound.node_role || node?.role || 'role n/a',
         nodeAddress: inbound.node_address || node?.address || '',
-        endpoint,
+        endpoint: endpointInfo.endpoint,
+        backendEndpoint: endpointInfo.backendEndpoint,
+        endpointKind: endpointInfo.endpointKind,
+        transportLabel: endpointInfo.transportLabel,
         outboundGroup: metadata.vless_group || metadata.xray_group || metadata.outbound_group || inbound.vless_group || inbound.xray_group || inbound.outbound_group || '',
         availability: inbound.availability || (metadata.available_inbound === false ? 'disabled' : 'available'),
         available: inbound.available !== false && metadata.available_inbound !== false,
@@ -541,7 +634,7 @@
             <button class="secondary-btn" id="cancelProvisionBtn" type="button">Cancel</button>
           </div>
         </form>
-        <div id="clientProvisionResult" class="form-result"></div>`);
+        <div id="clientProvisionResult" class="form-result"></div>`, { size: 'full', bodyClass: 'client-provision-modal' });
       document.getElementById('cancelProvisionBtn')?.addEventListener('click', closeModal);
       document.getElementById('clientProvisionForm')?.addEventListener('submit', (event) => submitClientProvision(event, clientID));
       document.querySelectorAll('.client-vless-group-select').forEach((select) => {
@@ -616,10 +709,16 @@
         const data = await sendJSON(`/api/v1/clients/${clientID}/provision`, 'POST', payload);
         if (target) target.innerHTML = '';
         const client = findClient(clientID);
-        formEl.innerHTML = renderProvisionQueuedState(client, selectedIDs, payload, data);
+        const modalBody = el('modalBody');
+        if (modalBody) {
+          modalBody.className = 'modal-body client-provision-modal';
+          modalBody.innerHTML = renderProvisionQueuedState(client, selectedIDs, payload, data);
+          window.MegaVPNFormEnhancer?.enhance?.(modalBody);
+        }
         document.getElementById('clientProvisionCloseBtn')?.addEventListener('click', closeModal);
-        document.getElementById('clientProvisionRefreshBtn')?.addEventListener('click', () => {
-          void refresh();
+        document.getElementById('clientProvisionAccessBtn')?.addEventListener('click', async () => {
+          await refresh();
+          await openClientAccessesModal(clientID);
         });
         document.getElementById('clientProvisionJobsBtn')?.addEventListener('click', async () => {
           closeModal();
@@ -645,11 +744,13 @@
       const serviceRows = selected.map((instance) => {
         const node = findNode(instance.node_id);
         const group = payload?.service_options?.[instance.id]?.vless_group || '';
+        const endpointInfo = servicePublicEndpointInfo(instance, payload?.service_options?.[instance.id] || {}, {});
         return `
           <div class="client-provision-result-service">
             <strong>${escapeHTML(instance.name || instance.slug || instance.id)}</strong>
             <span>${escapeHTML(compactServiceLabel(instance.service_code))} · ${escapeHTML(node?.name || instance.node_id || 'node')} · ${escapeHTML(node?.role || 'role n/a')}</span>
-            <code>${escapeHTML(endpointLabel(instance))}</code>
+            <code>${escapeHTML(endpointInfo.endpoint)}</code>
+            ${endpointInfo.backendEndpoint ? `<em>backend: ${escapeHTML(endpointInfo.backendEndpoint)}</em>` : ''}
             ${group ? `<em>VLESS group: ${escapeHTML(group)}</em>` : ''}
           </div>`;
       }).join('');
@@ -660,7 +761,7 @@
             <div>
               <span class="mini-label">Provisioning queued</span>
               <h3>${escapeHTML(clientDisplayName(client || {}))}</h3>
-              <p>Service access is stored. A worker job will generate secrets, refresh instance state and build client artifacts.</p>
+              <p>Service access is stored. A worker job will generate secrets, apply affected instances and publish client artifacts.</p>
             </div>
             ${statusTag(job?.status || 'queued')}
           </div>
@@ -671,14 +772,14 @@
           </div>
           <div class="client-provision-service-list">${serviceRows || '<div class="empty compact-empty">Selected instances will appear after refresh.</div>'}</div>
           <div class="client-provision-next">
-            <div><span>1</span><strong>Worker claim</strong><small>The provisioning job moves from queued to running.</small></div>
-            <div><span>2</span><strong>Driver state</strong><small>Keys, certificates and protocol metadata are generated.</small></div>
-            <div><span>3</span><strong>Instance apply</strong><small>Affected service instances are queued for agent apply when needed.</small></div>
-            <div><span>4</span><strong>Artifacts</strong><small>Client configs become visible in Build/Email workflows.</small></div>
+            <div><span>1</span><strong>Worker</strong><small>Job moves from queued to running.</small></div>
+            <div><span>2</span><strong>Secrets</strong><small>UUIDs, keys and certificates are generated.</small></div>
+            <div><span>3</span><strong>Apply</strong><small>Affected instances are queued for agent apply.</small></div>
+            <div><span>4</span><strong>Configs</strong><small>Artifacts appear after the worker succeeds.</small></div>
           </div>
           <div class="field full inline-actions">
             <button class="primary-btn" type="button" id="clientProvisionJobsBtn">Open jobs</button>
-            <button class="secondary-btn" type="button" id="clientProvisionRefreshBtn">Refresh status</button>
+            <button class="secondary-btn" type="button" id="clientProvisionAccessBtn">Open client access</button>
             <button class="secondary-btn" type="button" id="clientProvisionCloseBtn">Close</button>
           </div>
         </section>`;
@@ -699,7 +800,12 @@
               <strong>${escapeHTML(inbound.nodeName)}</strong>
               <div class="timeline-meta">${escapeHTML(inbound.nodeRole)}${inbound.nodeAddress ? ` · ${escapeHTML(inbound.nodeAddress)}` : ''}</div>
             </td>
-            <td><code>${escapeHTML(inbound.endpoint)}</code></td>
+            <td>
+              <code>${escapeHTML(inbound.endpoint)}</code>
+              ${inbound.endpointKind === 'public' ? '<div class="timeline-meta">public client endpoint</div>' : ''}
+              ${inbound.backendEndpoint ? `<div class="timeline-meta">backend ${escapeHTML(inbound.backendEndpoint)}</div>` : ''}
+              ${inbound.transportLabel ? `<div class="timeline-meta">${escapeHTML(inbound.transportLabel)}</div>` : ''}
+            </td>
             <td><div class="client-status-cluster">${statusTag(access.status || 'unknown')}${statusTag(inbound.availability || 'available')}</div></td>
             <td>${renderRotateButtons(clientID, access.id, inbound.serviceCode)}</td>
           </tr>`;
@@ -751,6 +857,9 @@
     }
 
     function renderRouteEgress(route) {
+      if (route?.metadata?.baseline === true || route?.metadata?.baseline === 'true') {
+        return '<span class="tag">service default</span>';
+      }
       const policy = route?.policy || {};
       const egress = policy.egress || {};
       const mode = String(egress.mode || policy.egress_mode || policy.mode || 'auto').trim() || 'auto';
@@ -766,7 +875,7 @@
       if (mode === 'local_breakout' || mode === 'local' || mode === 'direct') {
         return '<span class="tag ok">local breakout</span>';
       }
-      return '<span class="tag warn">auto / requires explicit ingress output</span>';
+      return '<span class="tag warn">egress not selected</span>';
     }
 
     function renderClientArtifactRows(artifactList, accessList, clientID) {
@@ -891,6 +1000,8 @@
                 <div class="client-inbound-meta">
                   <span>${escapeHTML(inbound.nodeName)} · ${escapeHTML(inbound.nodeRole)}</span>
                   <code>${escapeHTML(inbound.endpoint)}</code>
+                  ${inbound.backendEndpoint ? `<span>backend ${escapeHTML(inbound.backendEndpoint)}</span>` : ''}
+                  ${inbound.transportLabel ? `<span>${escapeHTML(inbound.transportLabel)}</span>` : ''}
                 </div>
                 <div class="client-status-cluster">
                   ${statusTag(access.status || 'unknown')}
