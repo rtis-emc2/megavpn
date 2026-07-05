@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.18`
+**Релиз:** `7.0.1.19`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.18
+Базовая версия кода: RTIS MegaVPN 7.0.1.19
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1036,9 +1036,9 @@ traffic-camouflage rendering.
 
 В релизе не менялись database migrations и VPN runtime behavior.
 
-## 14. Release 7.0.1.18 Closure
+## 14. Release 7.0.1.19 Closure
 
-Цель релиза `7.0.1.18`: закрыть последний видимый UI/API regression в
+Цель релиза `7.0.1.19`: закрыть последний видимый UI/API regression в
 operator console.
 
 Зафиксировано в этом релизе:
@@ -1063,9 +1063,14 @@ operator console.
   identity controls в ручном operator workflow.
 - Текст address lists теперь описывает reusable source/destination address
   groups без vendor-specific терминологии.
+- Service-pack catalog list paths теперь дедуплицируют semantic clones, поэтому
+  Create from pack показывает один effective active template даже при разных
+  historical keys.
+- `000010_service_pack_semantic_dedup` архивирует duplicate default
+  service-pack rows, оставшиеся на старых инсталляциях.
 
-В релизе не менялся VPN runtime behavior. Единственное database-изменение -
-additive/idempotent repair migration для firewall catalog.
+В релизе не менялся VPN runtime behavior. Database-изменения ограничены
+additive/idempotent catalog repair migrations.
 
 ## 15. Immediate Next Actions
 

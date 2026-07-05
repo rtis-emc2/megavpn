@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.18`
+**Release:** `7.0.1.19`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.18`
+**Code baseline:** RTIS MegaVPN `7.0.1.19`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.18` continues the production-hardening line after the `7.0.1.14`
+`7.0.1.19` continues the production-hardening line after the `7.0.1.14`
 security hardening release. The codebase already has a working control-plane
 foundation:
 
@@ -226,9 +226,9 @@ Closed in this release:
 
 No database migration or VPN runtime behavior changed in this release.
 
-## 13. Release 7.0.1.18 Closure
+## 13. Release 7.0.1.19 Closure
 
-The goal of `7.0.1.18` is to close the last visible UI/API regression in the
+The goal of `7.0.1.19` is to close the last visible UI/API regression in the
 operator console.
 
 Closed in this release:
@@ -253,9 +253,14 @@ Closed in this release:
   controls in the manual operator workflow.
 - Address-list copy now describes reusable source and destination address
   groups without vendor-specific terminology.
+- Service-pack catalog list paths now deduplicate semantic clones, so Create
+  from pack renders one effective active template even when historical rows have
+  different keys.
+- `000010_service_pack_semantic_dedup` archives duplicate default service-pack
+  rows left by older installations.
 
-No VPN runtime behavior changed in this release. The only database change is an
-additive, idempotent firewall catalog repair migration.
+No VPN runtime behavior changed in this release. Database changes are limited to
+additive/idempotent catalog repair migrations.
 
 ## 14. Immediate Next Actions
 

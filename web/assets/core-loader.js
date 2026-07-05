@@ -85,14 +85,48 @@
       return left.version > right.version;
     }
 
+    function servicePackFingerprint(pack) {
+      const components = Array.isArray(pack?.components) ? pack.components : [];
+      if (!String(pack?.label || '').trim() || !components.length) return '';
+      const clean = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const parts = [
+        clean(pack.label),
+        clean(pack.base_name_template),
+        clean(pack.endpoint_hint),
+        String(Boolean(pack.requires_endpoint_host)),
+      ];
+      components.forEach((component) => {
+        const spec = component?.spec && typeof component.spec === 'object' ? component.spec : {};
+        parts.push(
+          clean(component?.service_code),
+          clean(component?.preset_key),
+          clean(component?.name_suffix),
+          clean(component?.slug_suffix),
+          String(Number(component?.endpoint_port || 0)),
+          String(Boolean(component?.requires_endpoint_host)),
+          clean(spec.service_profile),
+        );
+      });
+      return parts.join('\u001f');
+    }
+
     function normalizeServicePackList(value) {
       const items = Array.isArray(value) ? value : [];
       const byKey = new Map();
+      const byFingerprint = new Map();
       for (const pack of items) {
         const key = String(pack?.key || '').trim();
         if (!key) continue;
-        const current = byKey.get(key);
-        if (preferServicePack(pack, current)) byKey.set(key, pack);
+        const fingerprint = servicePackFingerprint(pack);
+        const current = byKey.get(key) || (fingerprint ? byFingerprint.get(fingerprint) : null);
+        if (!preferServicePack(pack, current)) continue;
+        if (current?.key) {
+          byKey.delete(String(current.key).trim());
+          const currentFingerprint = servicePackFingerprint(current);
+          if (currentFingerprint) byFingerprint.delete(currentFingerprint);
+        }
+        byKey.set(key, pack);
+        if (fingerprint) byFingerprint.set(fingerprint, pack);
       }
       return Array.from(byKey.values());
     }

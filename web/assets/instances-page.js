@@ -164,11 +164,82 @@
       return hasPermission('settings.manage');
     }
 
+    function servicePackChoiceRank(pack) {
+      const status = String(pack?.status || 'active').toLowerCase();
+      const statusRank = status === 'active' ? 0 : status === 'disabled' ? 1 : 2;
+      const sourceRank = String(pack?.source || 'default').toLowerCase() === 'default' ? 1 : 0;
+      return { statusRank, sourceRank, version: Number(pack?.version || 0), order: Number(pack?.display_order || 1000) };
+    }
+
+    function preferServicePackChoice(next, current) {
+      if (!current) return true;
+      const left = servicePackChoiceRank(next);
+      const right = servicePackChoiceRank(current);
+      if (left.statusRank !== right.statusRank) return left.statusRank < right.statusRank;
+      if (left.sourceRank !== right.sourceRank) return left.sourceRank < right.sourceRank;
+      if (left.version !== right.version) return left.version > right.version;
+      if (left.order !== right.order) return left.order < right.order;
+      return String(next?.key || '') < String(current?.key || '');
+    }
+
+    function servicePackChoiceFingerprint(pack) {
+      const components = Array.isArray(pack?.components) ? pack.components : [];
+      if (!String(pack?.label || '').trim() || !components.length) return '';
+      const clean = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const parts = [
+        clean(pack.label),
+        clean(pack.base_name_template),
+        clean(pack.endpoint_hint),
+        String(Boolean(pack.requires_endpoint_host)),
+      ];
+      components.forEach((component) => {
+        const spec = component?.spec && typeof component.spec === 'object' ? component.spec : {};
+        parts.push(
+          clean(component?.service_code),
+          clean(component?.preset_key),
+          clean(component?.name_suffix),
+          clean(component?.slug_suffix),
+          String(Number(component?.endpoint_port || 0)),
+          String(Boolean(component?.requires_endpoint_host)),
+          clean(spec.service_profile),
+        );
+      });
+      return parts.join('\u001f');
+    }
+
+    function dedupeServicePackChoices(items) {
+      const out = [];
+      const byKey = new Map();
+      const byFingerprint = new Map();
+      (Array.isArray(items) ? items : []).forEach((pack) => {
+        if (!pack || !pack.key) return;
+        const key = String(pack.key).trim();
+        const fingerprint = servicePackChoiceFingerprint(pack);
+        const existingIndex = byKey.has(key) ? byKey.get(key) : (fingerprint ? byFingerprint.get(fingerprint) : undefined);
+        if (Number.isInteger(existingIndex)) {
+          if (preferServicePackChoice(pack, out[existingIndex])) {
+            const oldFingerprint = servicePackChoiceFingerprint(out[existingIndex]);
+            byKey.delete(String(out[existingIndex]?.key || '').trim());
+            if (oldFingerprint) byFingerprint.delete(oldFingerprint);
+            out[existingIndex] = pack;
+            byKey.set(key, existingIndex);
+            if (fingerprint) byFingerprint.set(fingerprint, existingIndex);
+          }
+          return;
+        }
+        const index = out.length;
+        out.push(pack);
+        byKey.set(key, index);
+        if (fingerprint) byFingerprint.set(fingerprint, index);
+      });
+      return out;
+    }
+
     function servicePackCatalogItems() {
       const source = canManageServicePacks()
         ? (state.servicePackCatalog || state.servicePacks || [])
         : (state.servicePacks || []);
-      return (Array.isArray(source) ? source : [])
+      return dedupeServicePackChoices(source)
         .filter((pack) => pack && pack.key)
         .filter((pack) => String(pack.status || 'active').toLowerCase() === 'active')
         .slice()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -99,7 +100,10 @@ func (s *Store) ListServicePacks(ctx context.Context) ([]domain.ServicePackDefin
 		}
 		out = append(out, pack)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return dedupeServicePackDefinitions(out), nil
 }
 
 func (s *Store) ListServicePackCatalog(ctx context.Context) ([]domain.ServicePackDefinition, error) {
@@ -131,7 +135,10 @@ func (s *Store) ListServicePackCatalog(ctx context.Context) ([]domain.ServicePac
 		}
 		out = append(out, pack)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return dedupeServicePackDefinitions(out), nil
 }
 
 func (s *Store) GetServicePack(ctx context.Context, key string) (domain.ServicePackDefinition, error) {
@@ -422,4 +429,134 @@ func validServicePackStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func dedupeServicePackDefinitions(packs []domain.ServicePackDefinition) []domain.ServicePackDefinition {
+	if len(packs) < 2 {
+		return packs
+	}
+	out := make([]domain.ServicePackDefinition, 0, len(packs))
+	byKey := map[string]int{}
+	byFingerprint := map[string]int{}
+	for _, pack := range packs {
+		key := strings.TrimSpace(pack.Key)
+		if key != "" {
+			if idx, ok := byKey[key]; ok {
+				if preferServicePackDefinition(pack, out[idx]) {
+					oldFingerprint := servicePackSemanticFingerprint(out[idx])
+					if oldFingerprint != "" {
+						delete(byFingerprint, oldFingerprint)
+					}
+					out[idx] = pack
+					fingerprint := servicePackSemanticFingerprint(pack)
+					if fingerprint != "" {
+						byFingerprint[fingerprint] = idx
+					}
+				}
+				continue
+			}
+		}
+		fingerprint := servicePackSemanticFingerprint(pack)
+		if fingerprint != "" {
+			if idx, ok := byFingerprint[fingerprint]; ok {
+				if preferServicePackDefinition(pack, out[idx]) {
+					if oldKey := strings.TrimSpace(out[idx].Key); oldKey != "" {
+						delete(byKey, oldKey)
+					}
+					oldFingerprint := servicePackSemanticFingerprint(out[idx])
+					if oldFingerprint != "" {
+						delete(byFingerprint, oldFingerprint)
+					}
+					out[idx] = pack
+					if key != "" {
+						byKey[key] = idx
+					}
+					byFingerprint[fingerprint] = idx
+				}
+				continue
+			}
+		}
+		idx := len(out)
+		out = append(out, pack)
+		if key != "" {
+			byKey[key] = idx
+		}
+		if fingerprint != "" {
+			byFingerprint[fingerprint] = idx
+		}
+	}
+	return out
+}
+
+func preferServicePackDefinition(candidate, current domain.ServicePackDefinition) bool {
+	candidateStatusRank := servicePackStatusRank(candidate.Status)
+	currentStatusRank := servicePackStatusRank(current.Status)
+	if candidateStatusRank != currentStatusRank {
+		return candidateStatusRank < currentStatusRank
+	}
+	candidateSourceRank := servicePackSourceRank(candidate.Source)
+	currentSourceRank := servicePackSourceRank(current.Source)
+	if candidateSourceRank != currentSourceRank {
+		return candidateSourceRank < currentSourceRank
+	}
+	if candidate.Version != current.Version {
+		return candidate.Version > current.Version
+	}
+	if candidate.DisplayOrder != current.DisplayOrder {
+		return candidate.DisplayOrder < current.DisplayOrder
+	}
+	return strings.TrimSpace(candidate.Key) < strings.TrimSpace(current.Key)
+}
+
+func servicePackStatusRank(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "active":
+		return 0
+	case "disabled":
+		return 1
+	case "deleted":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func servicePackSourceRank(source string) int {
+	if strings.EqualFold(strings.TrimSpace(source), "default") {
+		return 1
+	}
+	return 0
+}
+
+func servicePackSemanticFingerprint(pack domain.ServicePackDefinition) string {
+	if strings.TrimSpace(pack.Label) == "" || len(pack.Components) == 0 {
+		return ""
+	}
+	parts := []string{
+		servicePackFingerprintText(pack.Label),
+		servicePackFingerprintText(pack.BaseNameTemplate),
+		servicePackFingerprintText(pack.EndpointHint),
+		strconv.FormatBool(pack.RequiresEndpointHost),
+	}
+	for _, component := range pack.Components {
+		spec := component.Spec
+		profile := ""
+		if spec != nil {
+			profile = servicePackFingerprintText(fmt.Sprint(spec["service_profile"]))
+		}
+		parts = append(parts,
+			servicePackFingerprintText(component.ServiceCode),
+			servicePackFingerprintText(component.PresetKey),
+			servicePackFingerprintText(component.NameSuffix),
+			servicePackFingerprintText(component.SlugSuffix),
+			strconv.Itoa(component.EndpointPort),
+			strconv.FormatBool(component.RequiresEndpointHost),
+			profile,
+		)
+	}
+	return strings.Join(parts, "\x1f")
+}
+
+func servicePackFingerprintText(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
 }
