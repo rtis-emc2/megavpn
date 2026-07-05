@@ -884,13 +884,15 @@
       return String(spec.service_profile || '').trim().toLowerCase();
     }
 
+    function servicePackComponentUsesTrafficCamouflage(component) {
+      const profile = servicePackSpecProfile(component);
+      if (['ws_camouflage_edge', 'nginx_ws_backend', 'grpc_edge', 'nginx_grpc_backend'].includes(profile)) return true;
+      const spec = component?.spec && typeof component.spec === 'object' ? component.spec : {};
+      return JSON.stringify(spec).includes('{{camouflage_path}}') || JSON.stringify(spec).includes('{{fallback_upstream_url}}');
+    }
+
     function packUsesTrafficCamouflage(pack) {
-      return servicePackComponents(pack).some((component) => {
-        const profile = servicePackSpecProfile(component);
-        if (['ws_camouflage_edge', 'nginx_ws_backend', 'grpc_edge', 'nginx_grpc_backend'].includes(profile)) return true;
-        const spec = component?.spec && typeof component.spec === 'object' ? component.spec : {};
-        return JSON.stringify(spec).includes('{{camouflage_path}}') || JSON.stringify(spec).includes('{{fallback_upstream_url}}');
-      });
+      return servicePackComponents(pack).some(servicePackComponentUsesTrafficCamouflage);
     }
 
     function packUsesConfigurableCamouflagePath(pack) {
@@ -942,7 +944,7 @@
       if (!packUsesService(pack, 'xray-core')) return '';
       const egressNodes = nodeOptions('', { roles: ['egress'], includeEmpty: true, emptyLabel: 'Select egress node' });
       return `
-        <div class="field full pack-egress-control">
+        <div class="field full pack-egress-control" data-pack-feature="xray-egress">
           <div class="instance-panel-label">VLESS routing</div>
           <div class="pack-create-form-grid compact">
             <div class="field">
@@ -969,18 +971,18 @@
       if (!packUsesTrafficCamouflage(pack)) return '';
       const usesConfigurablePath = packUsesConfigurableCamouflagePath(pack);
       return `
-        <div class="field full pack-camouflage-control">
+        <div class="field full pack-camouflage-control" data-pack-feature="camouflage">
           <div class="instance-panel-label">Traffic camouflage</div>
           <div class="pack-create-form-grid compact">
             ${usesConfigurablePath ? `
             <div class="field">
               <label>Hidden VLESS path</label>
-              <input name="camouflage_path" value="${escapeHTML(defaultCamouflagePath(pack))}" placeholder="/assets/site-sync" required>
+              <input name="camouflage_path" value="${escapeHTML(defaultCamouflagePath(pack))}" placeholder="/assets/site-sync" data-pack-required="true" required>
               <div class="field-hint">Nginx routes only this path to Xray; root traffic goes to the fallback website.</div>
             </div>` : ''}
             <div class="field">
               <label>Fallback website</label>
-              <input name="fallback_upstream_url" placeholder="https://target.example.com" required>
+              <input name="fallback_upstream_url" placeholder="https://target.example.com" data-pack-required="true" required>
               <div class="field-hint">Ordinary browser requests are reverse-proxied to this upstream. It must be a separate website, not this ingress endpoint.</div>
             </div>
             <div class="field">
@@ -1022,21 +1024,71 @@
         </div>`;
     }
 
+    function openVPNComponentPKIProfileOptions(selectedProfile = '') {
+      const selected = String(selectedProfile || '').trim();
+      const profiles = new Map();
+      for (const root of state.platformPKIRoots || []) {
+        if (String(root.status || 'active').toLowerCase() !== 'active') continue;
+        if (normalizeInstanceServiceCode(root.service_code) !== 'openvpn') continue;
+        const profile = String(root.pki_profile || 'default').trim() || 'default';
+        if (!profiles.has(profile)) profiles.set(profile, root);
+      }
+      if (!profiles.has('default')) {
+        profiles.set('default', { pki_profile: 'default', common_name: 'default profile' });
+      }
+      const parts = [`<option value=""${selected ? '' : ' selected'}>Use pack OpenVPN CA profile</option>`];
+      Array.from(profiles.entries())
+        .sort(([left], [right]) => left.localeCompare(right, 'en'))
+        .forEach(([profile, root]) => {
+          const label = `${profile} · ${root.common_name || 'service CA root'}`;
+          parts.push(`<option value="${escapeHTML(profile)}"${profile === selected ? ' selected' : ''}>${escapeHTML(label)}</option>`);
+        });
+      return parts.join('');
+    }
+
+    function renderPackComponentSettings(component, index) {
+      const port = Number(component?.endpoint_port || 0);
+      const serviceCode = normalizeInstanceServiceCode(component?.service_code);
+      const openVPNSettings = serviceCode === 'openvpn'
+        ? `<label class="pack-component-setting">
+            <span>OpenVPN CA</span>
+            <select name="component_${index}_openvpn_pki_profile" data-pack-component-setting="${index}">
+              ${openVPNComponentPKIProfileOptions('')}
+            </select>
+          </label>`
+        : '';
+      return `
+        <div class="pack-component-settings">
+          <label class="pack-component-setting">
+            <span>Listen port</span>
+            <input name="component_${index}_endpoint_port" type="number" min="1" max="65535" step="1" value="${port || ''}" data-pack-component-setting="${index}">
+          </label>
+          ${openVPNSettings}
+        </div>`;
+    }
+
     function renderPackComponent(component, index) {
       const port = Number(component?.endpoint_port || 0);
+      const serviceCode = normalizeInstanceServiceCode(component?.service_code);
+      const usesCamouflage = servicePackComponentUsesTrafficCamouflage(component);
+      const usesTLSEdge = servicePackUsesTLSEdgeCertificate({ components: [component] });
       const meta = [
         component?.service_code || 'service',
         component?.preset_key || 'default',
         port ? `port ${port}` : '',
       ].filter(Boolean).join(' · ');
       return `
-        <article class="pack-component-card">
-          <div class="pack-component-index">${escapeHTML(String(index + 1))}</div>
-          <div>
-            <strong>${escapeHTML(component?.label || component?.service_code || `Component ${index + 1}`)}</strong>
-            <span>${escapeHTML(meta)}</span>
-            <p>${escapeHTML(component?.description || 'Instance component generated from the selected pack template.')}</p>
-          </div>
+        <article class="pack-component-card selectable is-selected" data-pack-component-card="${escapeHTML(String(index))}" data-pack-component-service="${escapeHTML(serviceCode)}" data-pack-component-camouflage="${usesCamouflage ? 'true' : 'false'}" data-pack-component-tls-edge="${usesTLSEdge ? 'true' : 'false'}">
+          <label class="pack-component-toggle-row">
+            <input class="pack-component-toggle" type="checkbox" name="pack_component_indexes" value="${escapeHTML(String(index))}" data-pack-component-index="${escapeHTML(String(index))}" checked>
+            <span class="pack-component-index">${escapeHTML(String(index + 1))}</span>
+            <span class="pack-component-copy">
+              <strong>${escapeHTML(component?.label || component?.service_code || `Component ${index + 1}`)}</strong>
+              <span>${escapeHTML(meta)}</span>
+              <small class="pack-component-description">${escapeHTML(component?.description || 'Instance component generated from the selected pack template.')}</small>
+            </span>
+          </label>
+          ${renderPackComponentSettings(component, index)}
         </article>`;
     }
 
@@ -1058,6 +1110,16 @@
             <span class="tag">${escapeHTML(String(components.length))} components</span>
           </div>
           ${renderPackSummary(pack)}
+          <div class="pack-component-toolbar">
+            <div>
+              <strong>Services to create</strong>
+              <span id="packComponentCountTag">${escapeHTML(String(components.length))} selected / ${escapeHTML(String(components.length))}</span>
+            </div>
+            <div class="inline-actions">
+              <button class="secondary-btn" id="selectAllPackComponentsBtn" type="button">Select all</button>
+              <button class="secondary-btn" id="clearPackComponentsBtn" type="button">Clear</button>
+            </div>
+          </div>
           <div class="pack-component-grid">
             ${components.length ? components.map(renderPackComponent).join('') : '<div class="empty">No components in this pack.</div>'}
           </div>
@@ -1067,6 +1129,61 @@
               ${notes.map((item) => `<span>${escapeHTML(item)}</span>`).join('')}
             </div>` : ''}
         </section>`;
+    }
+
+    function updatePackComponentSelectionState() {
+      const form = document.getElementById('createServicePackPageForm');
+      if (!form) return;
+      const toggles = Array.from(form.querySelectorAll('.pack-component-toggle'));
+      let selected = 0;
+      const selectedFeatures = {
+        camouflage: false,
+        openvpn: false,
+        tlsEdge: false,
+        xray: false,
+      };
+      toggles.forEach((toggle) => {
+        const index = String(toggle.dataset.packComponentIndex || toggle.value || '');
+        const selectorIndex = window.CSS && typeof window.CSS.escape === 'function'
+          ? window.CSS.escape(index)
+          : index.replace(/["\\]/g, '\\$&');
+        const checked = Boolean(toggle.checked);
+        const card = form.querySelector(`[data-pack-component-card="${selectorIndex}"]`);
+        if (checked) selected += 1;
+        card?.classList.toggle('is-selected', checked);
+        if (checked && card) {
+          const serviceCode = normalizeInstanceServiceCode(card.dataset.packComponentService);
+          if (serviceCode === 'openvpn') selectedFeatures.openvpn = true;
+          if (serviceCode === 'xray-core') selectedFeatures.xray = true;
+          if (card.dataset.packComponentCamouflage === 'true') selectedFeatures.camouflage = true;
+          if (card.dataset.packComponentTlsEdge === 'true') selectedFeatures.tlsEdge = true;
+        }
+        form.querySelectorAll(`[data-pack-component-setting="${selectorIndex}"]`).forEach((input) => {
+          input.disabled = !checked;
+        });
+      });
+      updatePackFeatureControls(form, 'camouflage', selectedFeatures.camouflage);
+      updatePackFeatureControls(form, 'openvpn', selectedFeatures.openvpn);
+      updatePackFeatureControls(form, 'tls-edge', selectedFeatures.tlsEdge);
+      updatePackFeatureControls(form, 'xray-egress', selectedFeatures.xray);
+      syncPackEgressControlState(form);
+      const countTag = document.getElementById('packComponentCountTag');
+      if (countTag) countTag.textContent = `${selected} selected / ${toggles.length}`;
+      const submit = form.querySelector('button[type="submit"]');
+      const nodeSelect = form.querySelector('select[name="node_id"]');
+      if (submit) submit.disabled = !selected || !nodeSelect || nodeSelect.disabled;
+    }
+
+    function updatePackFeatureControls(form, feature, enabled) {
+      form.querySelectorAll(`[data-pack-feature="${feature}"]`).forEach((section) => {
+        section.classList.toggle('is-disabled', !enabled);
+        section.querySelectorAll('input, select, textarea').forEach((input) => {
+          input.disabled = !enabled;
+          if (input.dataset.packRequired === 'true') {
+            input.required = enabled;
+          }
+        });
+      });
     }
 
     function renderCreatePackResult() {
@@ -1160,9 +1277,9 @@
               </div>
             </aside>
             <div class="pack-create-main">
-              ${renderPackDetails(selectedPack)}
               <form id="createServicePackPageForm" class="pack-create-form">
                 <input type="hidden" name="service_pack_key" value="${escapeHTML(selectedPack?.key || '')}">
+                ${renderPackDetails(selectedPack)}
                 <div class="pack-create-form-grid stable">
                   <div class="field">
                     <label>Node</label>
@@ -1179,13 +1296,13 @@
                     <input name="endpoint_host" placeholder="${escapeHTML(endpointHint)}"${endpointRequired ? ' required' : ''}>
                   </div>
                   ${usesTLSEdgeCertificate ? `
-                    <div class="field full">
+                    <div class="field full" data-pack-feature="tls-edge">
                       <label>TLS edge certificate</label>
                       <select name="certificate_id">${certificateSelect}</select>
                       <div class="field-hint">Optional override for TLS-facing Nginx or Xray TLS components. The platform default certificate is selected automatically.</div>
                     </div>` : ''}
                   ${usesOpenVPN ? `
-                    <div class="field full">
+                    <div class="field full" data-pack-feature="openvpn">
                       <label>OpenVPN CA profile</label>
                       <select name="openvpn_pki_profile">${servicePKIProfileOptions('openvpn', 'default')}</select>
                       <div class="field-hint">OpenVPN instances created with this profile trust the same service CA root, which is required for a shared endpoint fleet.</div>
@@ -1220,8 +1337,20 @@
           renderCreateFromPackPage();
         });
       });
+      document.querySelectorAll('.pack-component-toggle').forEach((input) => {
+        input.addEventListener('change', updatePackComponentSelectionState);
+      });
+      document.getElementById('selectAllPackComponentsBtn')?.addEventListener('click', () => {
+        document.querySelectorAll('.pack-component-toggle').forEach((input) => { input.checked = true; });
+        updatePackComponentSelectionState();
+      });
+      document.getElementById('clearPackComponentsBtn')?.addEventListener('click', () => {
+        document.querySelectorAll('.pack-component-toggle').forEach((input) => { input.checked = false; });
+        updatePackComponentSelectionState();
+      });
       document.getElementById('createServicePackPageForm')?.addEventListener('submit', submitCreateFromPackPage);
       bindPackEgressControls();
+      updatePackComponentSelectionState();
       document.getElementById('openInstancesAfterPackCreateBtn')?.addEventListener('click', openInstancesListPage);
       document.getElementById('createAnotherFromPackBtn')?.addEventListener('click', () => {
         state.instancesCreateResult = null;
@@ -1233,17 +1362,23 @@
       const form = document.getElementById('createServicePackPageForm');
       if (!form) return;
       const modeSelect = form.querySelector('[data-pack-egress-mode]');
-      const nodeSelect = form.querySelector('[data-pack-egress-node]');
+      if (!modeSelect) return;
+      modeSelect.addEventListener('change', () => syncPackEgressControlState(form));
+      syncPackEgressControlState(form);
+    }
+
+    function syncPackEgressControlState(form) {
+      const modeSelect = form?.querySelector('[data-pack-egress-mode]');
+      const nodeSelect = form?.querySelector('[data-pack-egress-node]');
       if (!modeSelect || !nodeSelect) return;
-      const sync = () => {
-        const mode = String(modeSelect.value || 'auto');
-        const needsNode = mode === 'egress_node';
-        nodeSelect.disabled = !needsNode;
-        nodeSelect.required = needsNode;
-        if (!needsNode) nodeSelect.value = '';
-      };
-      modeSelect.addEventListener('change', sync);
-      sync();
+      const section = modeSelect.closest('[data-pack-feature="xray-egress"]');
+      const featureEnabled = !section || !section.classList.contains('is-disabled');
+      const mode = String(modeSelect.value || 'auto');
+      const needsNode = featureEnabled && mode === 'egress_node';
+      modeSelect.disabled = !featureEnabled;
+      nodeSelect.disabled = !needsNode;
+      nodeSelect.required = needsNode;
+      if (!needsNode) nodeSelect.value = '';
     }
 
     async function submitCreateFromPackPage(event) {
@@ -1266,6 +1401,22 @@
         fallback_sni: String(data.get('fallback_sni') || '').trim(),
         auto_install_runtime: true,
       };
+      const componentIndexes = data.getAll('pack_component_indexes')
+        .map((value) => Number.parseInt(String(value), 10))
+        .filter((value) => Number.isInteger(value) && value >= 0);
+      if (!componentIndexes.length) {
+        state.instancesCreateResult = { status: 'failed', message: 'select at least one service to create' };
+        renderCreateFromPackPage();
+        return;
+      }
+      payload.components = componentIndexes.map((index) => {
+        const component = { index };
+        const port = Number.parseInt(String(data.get(`component_${index}_endpoint_port`) || ''), 10);
+        const pkiProfile = String(data.get(`component_${index}_openvpn_pki_profile`) || '').trim();
+        if (Number.isInteger(port) && port > 0) component.endpoint_port = port;
+        if (pkiProfile) component.openvpn_pki_profile = pkiProfile;
+        return component;
+      });
       if (!packKey) {
         state.instancesCreateResult = { status: 'failed', message: 'service pack is required' };
         renderCreateFromPackPage();

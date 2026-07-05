@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.24`
+**Release:** `7.0.1.25`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -431,11 +431,19 @@ Use this for standard production baselines.
 1. Open `Instances`.
 2. Select `Create from pack`.
 3. Select a service pack.
-4. Select a node.
-5. Set base name and endpoint host.
-6. Select a TLS edge certificate if the pack contains Nginx/Xray TLS.
-7. Select an OpenVPN CA profile if the pack contains OpenVPN.
-8. If the pack contains traffic camouflage, configure `Traffic camouflage`:
+4. In `Services to create`, keep only the components that must be created.
+   Each selected component becomes one instance; unchecked components are not
+   created, do not require runtime preflight and do not submit their per-service
+   overrides. Use the per-component `Listen port` field when the pack default
+   port would conflict on the selected node. For OpenVPN components, either use
+   the pack-level OpenVPN CA profile or override it on the selected component.
+5. Select a node.
+6. Set base name and endpoint host.
+7. Select a TLS edge certificate if the selected components include Nginx/Xray
+   TLS.
+8. Select an OpenVPN CA profile if the selected components include OpenVPN.
+9. If the selected components include traffic camouflage, configure
+   `Traffic camouflage`:
    - `Fallback website` is required and must be an absolute `http://` or
      `https://` URL for the real site. Its host must not be the same as the
      public ingress endpoint;
@@ -444,14 +452,15 @@ Use this for standard production baselines.
    - `Fallback Host header` and `Fallback SNI` can be left empty: the control
      plane derives them from the fallback URL. If they are set explicitly, they
      must not point back to the ingress endpoint.
-9. If the pack contains VLESS, select instance-level `VLESS routing`:
+10. If the selected components include VLESS, select instance-level
+    `VLESS routing`:
    - `Auto through managed backhaul` for a single unambiguous active backhaul;
    - `Use selected egress node` when the VLESS instance must exit through a
      specific remote egress node;
    - `Local breakout on ingress node` only when direct exit from the ingress
      node is intended.
-10. Create the instances.
-11. Select `Apply` or `Install + apply` if runtime is missing.
+11. Create the instances.
+12. Select `Apply` or `Install + apply` if runtime is missing.
 
 Service packs must not store runtime secrets. Passwords, private keys, UUIDs,
 Reality keys and similar secrets should be generated during revision/apply and

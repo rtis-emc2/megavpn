@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.0.1.24`
+**Релиз:** `7.0.1.25`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -430,11 +430,20 @@ Node Map - это визуальный topology view.
 1. Откройте `Instances`.
 2. Нажмите `Create from pack`.
 3. Выберите service pack.
-4. Выберите node.
-5. Укажите base name и endpoint host.
-6. Выберите TLS edge certificate, если pack содержит Nginx/Xray TLS component.
-7. Выберите OpenVPN CA profile, если pack содержит OpenVPN.
-8. Если pack содержит traffic camouflage, настройте `Traffic camouflage`:
+4. В `Services to create` оставьте отмеченными только те компоненты, которые
+   нужно создать. Каждый выбранный компонент станет отдельным instance;
+   снятые компоненты не создаются, не требуют runtime preflight и не отправляют
+   свои per-service overrides. Используйте `Listen port` на карточке
+   компонента, если default port конфликтует на выбранной node. Для OpenVPN
+   можно использовать общий OpenVPN CA profile pack-а или задать override на
+   конкретном выбранном компоненте.
+5. Выберите node.
+6. Укажите base name и endpoint host.
+7. Выберите TLS edge certificate, если выбранные компоненты содержат
+   Nginx/Xray TLS component.
+8. Выберите OpenVPN CA profile, если выбранные компоненты содержат OpenVPN.
+9. Если выбранные компоненты содержат traffic camouflage, настройте
+   `Traffic camouflage`:
    - `Fallback website` обязателен и должен быть абсолютным `http://` или
      `https://` URL реального сайта. Его host не должен совпадать с публичным
      ingress endpoint;
@@ -443,14 +452,15 @@ Node Map - это визуальный topology view.
    - `Fallback Host header` и `Fallback SNI` можно оставить пустыми: control
      plane выведет их из fallback URL. Если они заданы явно, они не должны
      указывать обратно на ingress endpoint.
-9. Если pack содержит VLESS, настройте instance-level `VLESS routing`:
+10. Если выбранные компоненты содержат VLESS, настройте instance-level
+    `VLESS routing`:
    - `Auto through managed backhaul` для одного однозначного active backhaul;
    - `Use selected egress node`, если весь VLESS instance должен выходить через
      конкретную удаленную egress node;
    - `Local breakout on ingress node` только если прямой выход с ingress node
      действительно нужен.
-10. Создайте instances.
-11. Нажмите `Apply` или `Install + apply`, если runtime отсутствует.
+11. Создайте instances.
+12. Нажмите `Apply` или `Install + apply`, если runtime отсутствует.
 
 Service pack не должен хранить runtime secrets. Пароли, private keys, UUID,
 Reality keys и похожие secrets должны генерироваться на этапе revision/apply и

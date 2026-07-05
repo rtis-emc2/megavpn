@@ -90,6 +90,96 @@ func TestDefaultAccessSuiteHasExpectedComponentsWithoutInlineSecrets(t *testing.
 	}
 }
 
+func TestSelectServicePackComponentsHTTPDefaultsToFullPack(t *testing.T) {
+	pack, found := findServicePack("default_access_suite")
+	if !found {
+		t.Fatal("default_access_suite service pack is required")
+	}
+	selected, err := selectServicePackComponentsHTTP(pack, createServicePackRequest{})
+	if err != nil {
+		t.Fatalf("selectServicePackComponentsHTTP() error = %v", err)
+	}
+	components := servicePackSelectedComponentListHTTP(selected)
+	if len(components) != len(pack.Components) {
+		t.Fatalf("selected component count = %d, want %d", len(components), len(pack.Components))
+	}
+	components[0].Spec["service_profile"] = "mutated"
+	if pack.Components[0].Spec["service_profile"] == "mutated" {
+		t.Fatal("selected components must not mutate the service pack template")
+	}
+}
+
+func TestSelectServicePackComponentsHTTPFiltersAndOverrides(t *testing.T) {
+	pack, found := findServicePack("default_access_suite")
+	if !found {
+		t.Fatal("default_access_suite service pack is required")
+	}
+	first := 0
+	openVPN := 3
+	selected, err := selectServicePackComponentsHTTP(pack, createServicePackRequest{
+		Components: []createServicePackComponentRequest{
+			{Index: &first, EndpointPort: 7443},
+			{Index: &openVPN, EndpointPort: 11950, OpenVPNPKIProfile: "edge-ca"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("selectServicePackComponentsHTTP() error = %v", err)
+	}
+	components := servicePackSelectedComponentListHTTP(selected)
+	if len(components) != 2 {
+		t.Fatalf("selected component count = %d, want 2", len(components))
+	}
+	if components[0].Label != "VLESS TCP Edge" || components[0].EndpointPort != 7443 {
+		t.Fatalf("first selected component = %#v", components[0])
+	}
+	if components[1].Label != "OpenVPN UDP" || components[1].EndpointPort != 11950 {
+		t.Fatalf("second selected component = %#v", components[1])
+	}
+	if selected[1].OpenVPNPKIProfile != "edge-ca" {
+		t.Fatalf("OpenVPNPKIProfile = %q, want edge-ca", selected[1].OpenVPNPKIProfile)
+	}
+	missing := missingServicePackRuntimeCapabilities(components, []domain.NodeCapability{})
+	if len(missing) != 2 || missing[0] != "xray-core" || missing[1] != "openvpn" {
+		t.Fatalf("missing runtime capabilities = %#v, want selected runtimes only", missing)
+	}
+}
+
+func TestSelectServicePackComponentsHTTPRejectsInvalidSelections(t *testing.T) {
+	pack, found := findServicePack("default_access_suite")
+	if !found {
+		t.Fatal("default_access_suite service pack is required")
+	}
+	zero := 0
+	one := 1
+	tooHigh := len(pack.Components)
+	cases := []struct {
+		name string
+		req  createServicePackRequest
+	}{
+		{name: "empty explicit selection", req: createServicePackRequest{Components: []createServicePackComponentRequest{}}},
+		{name: "missing index", req: createServicePackRequest{Components: []createServicePackComponentRequest{{EndpointPort: 443}}}},
+		{name: "out of range", req: createServicePackRequest{Components: []createServicePackComponentRequest{{Index: &tooHigh}}}},
+		{name: "duplicate index", req: createServicePackRequest{Components: []createServicePackComponentRequest{{Index: &zero}, {Index: &zero}}}},
+		{name: "bad port", req: createServicePackRequest{Components: []createServicePackComponentRequest{{Index: &zero, EndpointPort: 70000}}}},
+		{name: "openvpn profile on xray", req: createServicePackRequest{Components: []createServicePackComponentRequest{{Index: &zero, OpenVPNPKIProfile: "edge-ca"}}}},
+		{name: "openvpn profile on openvpn companion accepted", req: createServicePackRequest{Components: []createServicePackComponentRequest{{Index: &one, OpenVPNPKIProfile: "edge-ca"}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := selectServicePackComponentsHTTP(pack, tc.req)
+			if tc.name == "openvpn profile on openvpn companion accepted" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
 func TestDefaultOpenVPNPacksUseFullTunnelServerPush(t *testing.T) {
 	for _, pack := range servicePackDefinitions() {
 		for _, component := range pack.Components {

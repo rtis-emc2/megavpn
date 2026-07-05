@@ -36,18 +36,30 @@ type servicePackCatalogManageStore interface {
 }
 
 type createServicePackRequest struct {
-	NodeID              string `json:"node_id"`
-	BaseName            string `json:"base_name"`
-	EndpointHost        string `json:"endpoint_host"`
-	CertificateID       string `json:"certificate_id"`
-	OpenVPNPKIProfile   string `json:"openvpn_pki_profile"`
-	XrayEgressMode      string `json:"xray_egress_mode"`
-	XrayEgressNodeID    string `json:"xray_egress_node_id"`
-	CamouflagePath      string `json:"camouflage_path"`
-	FallbackUpstreamURL string `json:"fallback_upstream_url"`
-	FallbackHostHeader  string `json:"fallback_host_header"`
-	FallbackSNI         string `json:"fallback_sni"`
-	AutoInstallRuntime  *bool  `json:"auto_install_runtime"`
+	NodeID              string                              `json:"node_id"`
+	BaseName            string                              `json:"base_name"`
+	EndpointHost        string                              `json:"endpoint_host"`
+	CertificateID       string                              `json:"certificate_id"`
+	OpenVPNPKIProfile   string                              `json:"openvpn_pki_profile"`
+	XrayEgressMode      string                              `json:"xray_egress_mode"`
+	XrayEgressNodeID    string                              `json:"xray_egress_node_id"`
+	CamouflagePath      string                              `json:"camouflage_path"`
+	FallbackUpstreamURL string                              `json:"fallback_upstream_url"`
+	FallbackHostHeader  string                              `json:"fallback_host_header"`
+	FallbackSNI         string                              `json:"fallback_sni"`
+	Components          []createServicePackComponentRequest `json:"components"`
+	AutoInstallRuntime  *bool                               `json:"auto_install_runtime"`
+}
+
+type createServicePackComponentRequest struct {
+	Index             *int   `json:"index"`
+	EndpointPort      int    `json:"endpoint_port"`
+	OpenVPNPKIProfile string `json:"openvpn_pki_profile"`
+}
+
+type selectedServicePackComponentHTTP struct {
+	Component         domain.ServicePackComponent
+	OpenVPNPKIProfile string
 }
 
 func defaultVLESSOutboundGroups() []any {
@@ -420,8 +432,16 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 		writeErr(w, 400, "invalid service pack payload: "+err.Error())
 		return
 	}
-	if servicePackUsesTrafficCamouflage(pack) {
-		if err := normalizeServicePackCamouflageRequestHTTP(&req, pack); err != nil {
+	selectedComponents, err := selectServicePackComponentsHTTP(pack, req)
+	if err != nil {
+		writeErr(w, 400, "invalid service pack payload: "+err.Error())
+		return
+	}
+	componentList := servicePackSelectedComponentListHTTP(selectedComponents)
+	selectedPack := pack
+	selectedPack.Components = componentList
+	if servicePackUsesTrafficCamouflage(selectedPack) {
+		if err := normalizeServicePackCamouflageRequestHTTP(&req, selectedPack); err != nil {
 			writeErr(w, 400, "invalid service pack payload: "+err.Error())
 			return
 		}
@@ -429,7 +449,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 	if req.BaseName == "" {
 		req.BaseName = pack.BaseNameTemplate
 	}
-	if pack.RequiresEndpointHost && req.EndpointHost == "" {
+	if servicePackComponentsRequireEndpointHost(componentList) && req.EndpointHost == "" {
 		writeErr(w, 400, "invalid service pack payload: endpoint_host is required")
 		return
 	}
@@ -444,11 +464,11 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			writeErr(w, 409, "node runtime capability preflight failed: "+err.Error())
 			return
 		}
-		for _, serviceCode := range missingServicePackRuntimeCapabilities(pack.Components, capabilities) {
+		for _, serviceCode := range missingServicePackRuntimeCapabilities(componentList, capabilities) {
 			missingRuntimes[serviceCode] = true
 		}
 	}
-	if req.CertificateID == "" && servicePackUsesTLSEdgeCertificate(pack) {
+	if req.CertificateID == "" && servicePackComponentsUseTLSEdgeCertificate(componentList) {
 		certificateID, err := s.defaultPlatformLeafCertificateID(r.Context())
 		if err != nil && !errors.Is(err, errDefaultPlatformLeafCertificateNotFound) {
 			writeErr(w, 409, "default TLS edge certificate preflight failed: "+err.Error())
@@ -456,7 +476,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 		}
 		req.CertificateID = certificateID
 	}
-	created := make([]domain.Instance, 0, len(pack.Components))
+	created := make([]domain.Instance, 0, len(componentList))
 	applyNowInstanceIDs := []string{}
 	dependentInstanceIDsByRuntime := map[string][]string{}
 	existingInstances, err := s.store.ListInstances(r.Context())
@@ -465,7 +485,8 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 		return
 	}
 	identitySet := newServicePackInstanceIdentitySet(existingInstances)
-	for _, component := range pack.Components {
+	for _, selected := range selectedComponents {
+		component := selected.Component
 		baseName := req.BaseName
 		if suffix := strings.TrimSpace(component.NameSuffix); suffix != "" {
 			baseName += "-" + suffix
@@ -490,9 +511,13 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 			if req.CertificateID != "" && servicePackComponentUsesTLSEdgeCertificate(component) {
 				spec["certificate_id"] = req.CertificateID
 			}
-			if component.ServiceCode == "openvpn" && req.OpenVPNPKIProfile != "" {
+			openVPNPKIProfile := req.OpenVPNPKIProfile
+			if selected.OpenVPNPKIProfile != "" {
+				openVPNPKIProfile = selected.OpenVPNPKIProfile
+			}
+			if driver.NormalizeCode(component.ServiceCode) == driver.OpenVPN && openVPNPKIProfile != "" {
 				spec["pki_scope"] = "platform"
-				spec["pki_profile"] = req.OpenVPNPKIProfile
+				spec["pki_profile"] = openVPNPKIProfile
 			}
 			applyXrayEgressOverrideHTTP(component, spec, req.XrayEgressMode, req.XrayEgressNodeID)
 			componentService := strings.TrimSpace(component.ServiceCode)
@@ -614,6 +639,75 @@ func servicePackComponentLabel(component domain.ServicePackComponent) string {
 		}
 	}
 	return "component"
+}
+
+func selectServicePackComponentsHTTP(pack domain.ServicePackDefinition, req createServicePackRequest) ([]selectedServicePackComponentHTTP, error) {
+	if len(pack.Components) == 0 {
+		return nil, fmt.Errorf("service pack has no components")
+	}
+	if req.Components == nil {
+		out := make([]selectedServicePackComponentHTTP, 0, len(pack.Components))
+		for _, component := range pack.Components {
+			out = append(out, selectedServicePackComponentHTTP{Component: cloneServicePackComponentHTTP(component)})
+		}
+		return out, nil
+	}
+	if len(req.Components) == 0 {
+		return nil, fmt.Errorf("select at least one service pack component")
+	}
+	seen := map[int]bool{}
+	out := make([]selectedServicePackComponentHTTP, 0, len(req.Components))
+	for _, selection := range req.Components {
+		if selection.Index == nil {
+			return nil, fmt.Errorf("component index is required")
+		}
+		index := *selection.Index
+		if index < 0 || index >= len(pack.Components) {
+			return nil, fmt.Errorf("component index %d is out of range", index)
+		}
+		if seen[index] {
+			return nil, fmt.Errorf("component index %d is duplicated", index)
+		}
+		seen[index] = true
+		component := cloneServicePackComponentHTTP(pack.Components[index])
+		if selection.EndpointPort != 0 {
+			if selection.EndpointPort < 1 || selection.EndpointPort > 65535 {
+				return nil, fmt.Errorf("component %d endpoint_port must be between 1 and 65535", index)
+			}
+			component.EndpointPort = selection.EndpointPort
+		}
+		openVPNPKIProfile := strings.TrimSpace(selection.OpenVPNPKIProfile)
+		if openVPNPKIProfile != "" && driver.NormalizeCode(component.ServiceCode) != driver.OpenVPN {
+			return nil, fmt.Errorf("component %d openvpn_pki_profile can only be used with OpenVPN", index)
+		}
+		out = append(out, selectedServicePackComponentHTTP{
+			Component:         component,
+			OpenVPNPKIProfile: openVPNPKIProfile,
+		})
+	}
+	return out, nil
+}
+
+func cloneServicePackComponentHTTP(component domain.ServicePackComponent) domain.ServicePackComponent {
+	component.Spec = cloneMapHTTP(component.Spec)
+	return component
+}
+
+func servicePackSelectedComponentListHTTP(selected []selectedServicePackComponentHTTP) []domain.ServicePackComponent {
+	out := make([]domain.ServicePackComponent, 0, len(selected))
+	for _, item := range selected {
+		out = append(out, item.Component)
+	}
+	return out
+}
+
+func servicePackComponentsRequireEndpointHost(components []domain.ServicePackComponent) bool {
+	for _, component := range components {
+		if component.RequiresEndpointHost {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeXrayEgressModeHTTP(mode string, egressNodeID string) (string, error) {
@@ -860,7 +954,11 @@ func applyXrayEgressOverrideHTTP(component domain.ServicePackComponent, spec map
 }
 
 func servicePackUsesTLSEdgeCertificate(pack domain.ServicePackDefinition) bool {
-	for _, component := range pack.Components {
+	return servicePackComponentsUseTLSEdgeCertificate(pack.Components)
+}
+
+func servicePackComponentsUseTLSEdgeCertificate(components []domain.ServicePackComponent) bool {
+	for _, component := range components {
 		if servicePackComponentUsesTLSEdgeCertificate(component) {
 			return true
 		}

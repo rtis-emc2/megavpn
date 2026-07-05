@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.24`
+**Release:** `7.0.1.25`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,7 +55,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.24` is a hardening baseline for release stabilization. The codebase has
+`7.0.1.25` is a hardening baseline for release stabilization. The codebase has
 moved from feature expansion to controlled production-readiness work. The
 current focus is:
 
@@ -81,6 +81,9 @@ current focus is:
   Ubuntu repository fallback on repository/package-stage failures;
 - safer Ubuntu Nginx fallback that preserves existing packages until a distro
   candidate is confirmed and reports precise apt failure commands;
+- selective service-pack creation: operators can create only chosen components,
+  override per-component listen ports and choose OpenVPN CA material without
+  installing every service in a template;
 - client VLESS camouflage UX that separates public client endpoints from local
   Xray backend endpoints and makes pending provisioning state actionable;
 - hard client deletion with PostgreSQL cleanup coverage for service access,
