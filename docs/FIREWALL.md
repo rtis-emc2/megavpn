@@ -1,6 +1,6 @@
 # Firewall Policy Catalog
 
-**Release:** `7.0.1.17`
+**Release:** `7.0.1.18`
 
 Firewall is the managed policy workspace for node and control-plane boundaries.
 It is intentionally modeled as a catalog before apply: operators prepare address
@@ -21,6 +21,11 @@ The workflow is:
 
 This keeps editing separate from rollout. A catalog change does not alter a node
 until an apply job is queued and completed.
+
+Existing installations upgraded from an earlier `7.0.1` build must run database
+migrations through `000009_firewall_schema_repair` before creating address
+lists. If migrations are behind, the API can return
+`relation "firewall_address_lists" does not exist`.
 
 ## UI Workflow
 

@@ -1,6 +1,6 @@
 # Каталог firewall-политик
 
-**Релиз:** `7.0.1.17`
+**Релиз:** `7.0.1.18`
 
 Firewall - это managed workspace для границ control-plane и node. Он специально
 сделан как каталог перед применением: оператор готовит address lists,
@@ -21,6 +21,11 @@ English companion: [FIREWALL.md](FIREWALL.md).
 
 Так редактирование отделено от rollout. Изменение каталога не меняет node, пока
 apply job не поставлен в очередь и не завершился.
+
+Инсталляции, обновленные с более раннего `7.0.1`, должны выполнить database
+migrations до `000009_firewall_schema_repair` перед созданием address lists.
+Если миграции не применены, API может вернуть
+`relation "firewall_address_lists" does not exist`.
 
 ## Workflow в UI
 

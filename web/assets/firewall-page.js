@@ -366,7 +366,7 @@
         { key: 'overview', label: 'Overview', count: String(inv.policies.length), hint: 'Posture and counters' },
         { key: 'policies', label: 'Policies', count: String(inv.policies.length), hint: 'Node policy sets' },
         { key: 'rules', label: 'Rules', count: String(inv.rules.length), hint: 'Ordered firewall rules' },
-        { key: 'addressLists', label: 'Address lists', count: String(inv.entries.length), hint: 'Reusable sources and targets' },
+        { key: 'addressLists', label: 'Address lists', count: String(inv.entries.length), hint: 'Reusable address groups' },
         { key: 'nodeState', label: 'Node state', count: failed ? `${failed} failed` : String(inv.nodeStates.length), hint: 'Apply status by node' },
       ];
       const active = selectedTab();
@@ -400,7 +400,7 @@
         overview: ['Overview', 'Review policy posture before changing node firewall state.'],
         policies: ['Policies', 'Create reusable node policy sets and attach ordered rules.'],
         rules: ['Rules', 'Add or edit ordered match/action rows. Lower priority numbers run first.'],
-        addressLists: ['Address lists', 'Create MikroTik-style reusable source and destination matchers.'],
+        addressLists: ['Address lists', 'Manage reusable source and destination address groups.'],
         nodeState: ['Node state', 'Apply selected policy snapshots to managed nodes.'],
       }[active] || ['Firewall', 'Manage catalog objects and apply them to nodes.'];
       const actionHTML = [];
@@ -723,7 +723,7 @@
       const selectedNodeID = policy.node_id || '';
       openModal(editing ? `Edit policy: ${policy.label || policy.key}` : 'Create firewall policy', 'Firewall policy', `
         <form id="firewallPolicyForm" class="form-grid" data-policy-id="${escapeHTML(policy.id || '')}">
-          <div class="field"><label>Name</label><input name="label" required placeholder="Production node baseline" value="${escapeHTML(policy.label || '')}" /><small>Internal key is generated from this name when left empty.</small></div>
+          <div class="field"><label>Name</label><input name="label" required placeholder="Production node baseline" value="${escapeHTML(policy.label || '')}" /></div>
           <div class="field"><label>Scope</label><select name="scope" id="firewallPolicyScope">
             ${selectOption('node', policy.scope || 'node', 'node')}
             ${selectOption('control_plane', policy.scope || 'node', 'control plane')}
@@ -738,12 +738,6 @@
           <div class="field"><label>Default output</label><select name="default_output_policy">${defaultPolicyOptions(policy.default_output_policy || 'accept')}</select></div>
           <div class="field"><label>Status</label><select name="status">${selectOption('active', policy.status || 'active')}${selectOption('disabled', policy.status || 'active')}</select></div>
           <div class="field full"><label>Description</label><textarea name="description" rows="3" placeholder="What this policy protects and where it should be applied">${escapeHTML(policy.description || '')}</textarea></div>
-          <details class="advanced-form-section full">
-            <summary>Advanced internal identity</summary>
-            <div class="form-grid compact-form-grid">
-              <div class="field"><label>Internal key</label><input name="key" placeholder="auto-generated from name" value="${escapeHTML(policy.key || '')}" /><small>Use only when integrating with external automation. Empty value is safer for manual work.</small></div>
-            </div>
-          </details>
           <div class="notice field full">Default policies are enforced only when strict mode is selected during policy apply. Keep explicit management and protocol allow rules in place before enabling drop or reject defaults.</div>
           <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save policy' : 'Create policy'}</button><button class="secondary-btn" type="button" id="cancelFirewallPolicyBtn">Cancel</button></div>
         </form>
@@ -764,7 +758,7 @@
       const editing = Boolean(list.id);
       openModal(editing ? `Edit address list: ${list.label || list.key}` : 'Add address list', 'Firewall', `
         <form id="firewallAddressListForm" class="form-grid" data-list-id="${escapeHTML(list.id || '')}">
-          <div class="field"><label>Name</label><input name="label" required placeholder="Trusted operators" value="${escapeHTML(list.label || '')}" /><small>Internal key is generated from this name when left empty.</small></div>
+          <div class="field"><label>Name</label><input name="label" required placeholder="Trusted operators" value="${escapeHTML(list.label || '')}" /></div>
           <div class="field"><label>Scope</label><select name="scope">
             ${selectOption('global', list.scope || 'global')}
             ${selectOption('control_plane', list.scope || 'global')}
@@ -774,12 +768,6 @@
           </select></div>
           <div class="field"><label>Status</label><select name="status">${selectOption('active', list.status || 'active')}${selectOption('disabled', list.status || 'active')}</select></div>
           <div class="field full"><label>Description</label><textarea name="description" rows="3">${escapeHTML(list.description || '')}</textarea></div>
-          <details class="advanced-form-section full">
-            <summary>Advanced internal identity</summary>
-            <div class="form-grid compact-form-grid">
-              <div class="field"><label>Internal key</label><input name="key" placeholder="auto-generated from name" value="${escapeHTML(list.key || '')}" /><small>Use only when integrating with external automation. Empty value is safer for manual work.</small></div>
-            </div>
-          </details>
           <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save list' : 'Create list'}</button><button class="secondary-btn" type="button" id="cancelFirewallListBtn">Cancel</button></div>
         </form>
         <div id="firewallListResult" class="form-result"></div>`, { wide: true });
@@ -1046,7 +1034,6 @@
         const scope = String(form.get('scope') || 'node').trim();
         const nodeID = scope === 'node' ? String(form.get('node_id') || '').trim() : '';
         const payload = {
-          key: String(form.get('key') || '').trim(),
           label: String(form.get('label') || '').trim(),
           description: String(form.get('description') || '').trim(),
           scope,
@@ -1077,7 +1064,6 @@
       if (result) result.innerHTML = `<span class="tag warn">${listID ? 'saving' : 'creating'}</span>`;
       try {
         const payload = {
-          key: String(form.get('key') || '').trim(),
           label: String(form.get('label') || '').trim(),
           description: String(form.get('description') || '').trim(),
           scope: String(form.get('scope') || 'global').trim(),

@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.15`
+**Release:** `7.0.1.18`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.15`
+**Code baseline:** RTIS MegaVPN `7.0.1.18`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.15` continues the production-hardening line after the `7.0.1.14`
+`7.0.1.18` continues the production-hardening line after the `7.0.1.14`
 security hardening release. The codebase already has a working control-plane
 foundation:
 
@@ -226,9 +226,9 @@ Closed in this release:
 
 No database migration or VPN runtime behavior changed in this release.
 
-## 13. Release 7.0.1.15 Closure
+## 13. Release 7.0.1.18 Closure
 
-The goal of `7.0.1.15` is to close the last visible UI/API regression in the
+The goal of `7.0.1.18` is to close the last visible UI/API regression in the
 operator console.
 
 Closed in this release:
@@ -245,8 +245,17 @@ Closed in this release:
   cannot render repeated templates.
 - Release gate static scan now blocks multi-command SQL in production Go runtime
   paths.
+- Firewall catalog schema drift is repaired by
+  `000009_firewall_schema_repair`, covering existing installations where the
+  consolidated baseline was already marked as applied before firewall tables
+  existed.
+- Firewall address-list and policy dialogs no longer expose internal identity
+  controls in the manual operator workflow.
+- Address-list copy now describes reusable source and destination address
+  groups without vendor-specific terminology.
 
-No VPN runtime behavior changed in this release.
+No VPN runtime behavior changed in this release. The only database change is an
+additive, idempotent firewall catalog repair migration.
 
 ## 14. Immediate Next Actions
 
