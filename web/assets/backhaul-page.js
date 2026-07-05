@@ -520,25 +520,21 @@
         <span class="tag ${routeCapable ? 'ok' : 'stub'}">${routeCapable ? 'L3 route capable' : 'no kernel routes'}</span>`;
     }
 
-    function defaultBackhaulDriverChecked(driver) {
-      return ['wireguard', 'openvpn_udp'].includes(driver.code);
-    }
-
     function driverCheckboxes(primaryDriver = '') {
       return (state.backhaulDrivers || []).map((driver, index) => {
         const isPrimary = driver.code === primaryDriver;
-        const isChecked = isPrimary || defaultBackhaulDriverChecked(driver) || (!primaryDriver && index === 0);
+        const isChecked = isPrimary || (!primaryDriver && index === 0);
         return `
         <label class="check-row backhaul-driver-choice${driver.code === primaryDriver ? ' is-primary' : ''}">
-          <input type="checkbox" name="drivers" value="${escapeHTML(driver.code)}" data-backhaul-driver-option${isChecked ? ' checked' : ''} />
+          <input type="checkbox" name="drivers" value="${escapeHTML(driver.code)}" data-backhaul-driver-option${isChecked ? ' checked' : ''}${isPrimary ? ' disabled aria-label="Active backhaul transport is always included"' : ''} />
           <span class="backhaul-driver-choice-body">
             <span class="backhaul-driver-choice-head">
               <strong>${escapeHTML(driver.label || driver.code)}</strong>
-              <span class="tag ok" data-primary-driver-badge${isPrimary ? '' : ' hidden'}>primary</span>
-              <span class="tag stub" data-standby-driver-badge${isPrimary || !isChecked ? ' hidden' : ''}>standby</span>
-              <span class="tag stub" data-optional-driver-badge${isPrimary || isChecked ? ' hidden' : ''}>available</span>
+              <span class="tag ok" data-primary-driver-badge${isPrimary ? '' : ' hidden'}>active</span>
+              <span class="tag warn" data-standby-driver-badge${isPrimary || !isChecked ? ' hidden' : ''}>standby selected</span>
+              <span class="tag stub" data-optional-driver-badge${isPrimary || isChecked ? ' hidden' : ''}>not created</span>
             </span>
-            <small>${escapeHTML(driver.layer || 'transport')} · ${escapeHTML(driver.default_protocol || '')}/${escapeHTML(driver.default_port || '')}</small>
+            <small>internal backhaul · ${escapeHTML(driver.layer || 'transport')} · ${escapeHTML(driver.default_protocol || '')}/${escapeHTML(driver.default_port || '')}</small>
             <span class="inline-actions compact-inline profile-mode-tags">${driverModeTag(driver)}</span>
           </span>
         </label>`;
@@ -563,9 +559,9 @@
             <input name="name" value="${escapeHTML(`${defaultIngress.name || 'ingress'}-to-${defaultEgress.name || 'egress'}`)}" required />
           </div>
           <div class="field">
-            <label>Primary transport driver</label>
+            <label>Active backhaul transport</label>
             <select name="desired_driver" id="backhaulDesiredDriver" required>${driverOptions(defaultDriver)}</select>
-            <div class="field-hint">Active driver for apply/probe, route projection and the selected ingress-to-egress path.</div>
+            <div class="field-hint">This is the single transport used now for apply, probe, route projection and ingress-to-egress traffic.</div>
           </div>
           <div class="field">
             <label>Ingress node</label>
@@ -592,12 +588,12 @@
             <input name="route_metric" type="number" min="1" max="4096" value="50" />
           </div>
           <div class="field full">
-            <label>Transport profiles to create</label>
-            <div class="field-hint">These are internal node-to-node backhaul profiles, not client VPN configs. The primary driver is always included; additional checked profiles are standby alternatives for controlled fallback and diagnostics.</div>
+            <label>Optional standby transports</label>
+            <div class="field-hint">These are internal node-to-node backhaul transports, not client VPN profiles. Leave them unchecked unless you want fallback configs generated for later promotion.</div>
             <div class="backhaul-driver-help">
-              <div><strong>Primary</strong><span>Selected active path for health, apply and routing decisions.</span></div>
-              <div><strong>Standby profiles</strong><span>Generated with the link so operators can apply or promote a fallback later.</span></div>
-              <div><strong>Activation</strong><span>Auto-start drivers run systemd services; profile-only drivers stay materialized.</span></div>
+              <div><strong>Active transport</strong><span>Always included. Only this path is used by routing decisions after create.</span></div>
+              <div><strong>Standby transport</strong><span>Optional backup profile generated with the link; it is not active until promoted.</span></div>
+              <div><strong>Client access</strong><span>This screen does not create client subscriptions, users or public VPN access packs.</span></div>
             </div>
             <div class="choice-list backhaul-driver-list">${driverCheckboxes(defaultDriver)}</div>
           </div>
@@ -616,10 +612,13 @@
       const select = document.getElementById('backhaulDesiredDriver');
       const options = Array.from(document.querySelectorAll('[data-backhaul-driver-option]'));
       if (!select || !options.length) return;
+      let lastPrimaryDriver = '';
       const sync = () => {
         const primaryDriver = String(select.value || '').trim();
         options.forEach((input) => {
           const isPrimary = input.value === primaryDriver;
+          if (!isPrimary && input.value === lastPrimaryDriver) input.checked = false;
+          input.disabled = isPrimary;
           if (isPrimary) input.checked = true;
           const row = input.closest('.backhaul-driver-choice');
           row?.classList.toggle('is-primary', isPrimary);
@@ -627,6 +626,7 @@
           row?.querySelector('[data-standby-driver-badge]')?.toggleAttribute('hidden', isPrimary || !input.checked);
           row?.querySelector('[data-optional-driver-badge]')?.toggleAttribute('hidden', isPrimary || input.checked);
         });
+        lastPrimaryDriver = primaryDriver;
       };
       select.addEventListener('change', sync);
       options.forEach((input) => {
@@ -665,7 +665,7 @@
         await refresh();
         openModal('Backhaul created', 'Profiles are ready to apply', `
           ${renderActionResponse(data, 'Backhaul profile created')}
-          <div class="empty">Primary and standby backhaul profiles were created in the control plane. Use Apply profiles to write configs on both nodes. Auto-start profiles will also start their services and run agent health checks.</div>
+          <div class="empty">The active backhaul profile and any selected standby profiles were created in the control plane. Use Apply profiles to write configs on both nodes. Auto-start profiles will also start their services and run agent health checks.</div>
           <div class="modal-actions">
             <button class="primary-btn" type="button" id="closeBackhaulCreateResultBtn">Close</button>
           </div>`, { wide: true });
@@ -687,7 +687,7 @@
         <div class="grid cols-4">
           <div class="card"><div class="mini-label">Ingress</div><div class="metric-caption">${escapeHTML(ingress?.name || link.ingress_node_id)}</div></div>
           <div class="card"><div class="mini-label">Egress</div><div class="metric-caption">${escapeHTML(egress?.name || link.egress_node_id)}</div></div>
-          <div class="card"><div class="mini-label">Primary transport</div><div class="metric-caption">${escapeHTML(driverLabel(link.desired_driver))}</div></div>
+          <div class="card"><div class="mini-label">Active transport</div><div class="metric-caption">${escapeHTML(driverLabel(link.desired_driver))}</div></div>
           <div class="card"><div class="mini-label">Status</div><div class="metric-caption">${statusTag(link.status || 'unknown')}</div></div>
         </div>
         <div class="backhaul-profile-list">

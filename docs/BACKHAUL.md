@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.15`
+**Release:** `7.0.1.16`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -53,8 +53,8 @@ The Backhaul create form has two related controls:
 
 | Control | Meaning | Operational effect |
 | --- | --- | --- |
-| `Primary transport driver` | The selected driver for the active ingress-to-egress path. | Stored as `desired_driver`, rendered as the selected transport, used by apply/probe gating and route-policy projection. |
-| `Transport profiles to create` | Driver profiles generated for this backhaul link. | Stored as `drivers` during create. The primary driver is always included first; additional checked profiles are standby alternatives for controlled fallback, diagnostics or later promotion. |
+| `Active backhaul transport` | The single active ingress-to-egress transport path. | Stored as `desired_driver`, rendered as the selected transport, used by apply/probe gating and route-policy projection. It is always included and cannot be unchecked in the create form. |
+| `Optional standby transports` | Extra internal profiles generated for this backhaul link. | Stored as `drivers` during create only when explicitly checked. They are generated backup profiles for controlled fallback, diagnostics or later promotion, but they are not active after create. |
 
 These controls do not select client-facing VPN protocols. They define the
 internal node-to-node transport between ingress and egress. Client access
@@ -62,7 +62,7 @@ instances keep their own service drivers, client configs and route policies.
 
 ## Data Flow
 
-1. Operator creates a backhaul link and selects ingress node, egress node, primary transport driver and internal transport profiles.
+1. Operator creates a backhaul link and selects ingress node, egress node, active backhaul transport and any optional standby transports.
 2. Control Plane validates node roles and driver support.
 3. Control Plane generates driver material and stores secrets as encrypted secret refs.
 4. Operator applies the backhaul link.

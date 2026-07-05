@@ -571,6 +571,16 @@ tr:hover td { background: rgba(148,163,184,0.04); }
   background: #f5fff8;
   box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.08);
 }
+.backhaul-driver-choice:has(input:checked):not(.is-primary) {
+  border-color: rgba(180, 83, 9, 0.36);
+  background: #fffbeb;
+  box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.08);
+}
+.backhaul-driver-choice.is-primary input {
+  accent-color: var(--ok);
+  cursor: default;
+  opacity: 1;
+}
 .backhaul-driver-choice-body {
   display: grid;
   gap: 6px;

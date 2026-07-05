@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.15`
+**Release:** `7.0.1.16`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -371,11 +371,11 @@ Workflow:
 
 1. Open `Backhaul`.
 2. Create a link: ingress node -> egress node.
-3. Select `Primary transport driver`: this is the active node-to-node transport
+3. Select `Active backhaul transport`: this is the active node-to-node transport
    used for apply, health checks and route projection. It is not a client VPN
    protocol selector.
-4. Select `Transport profiles to create`: keep the primary driver checked and
-   optionally add standby profiles such as OpenVPN for controlled fallback or
+4. In `Optional standby transports`, leave extra transports unchecked unless you
+   want generated fallback profiles such as OpenVPN for later promotion or
    diagnostics.
 5. Select `Apply`.
 6. Wait for successful apply on both sides.
