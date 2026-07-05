@@ -1,6 +1,6 @@
 # VLESS Subscriptions
 
-**Release:** `7.0.1.30`
+**Release:** `7.0.1.31`
 
 VLESS subscriptions provide a live per-client profile feed for compatible
 client applications. They are an operator delivery mechanism for already

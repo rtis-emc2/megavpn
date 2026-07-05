@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const defaultRoutePolicyPath = "/etc/megavpn/client-access-routes.json"
@@ -78,12 +79,15 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		kernelResult["enforced"] = code == 0 && timerCode == 0
 		if timerCode != 0 {
 			kernelResult["error"] = "route policy refresh timer failed"
+			kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx)
 			return "failed", map[string]any{"error": "route policy refresh timer failed", "kernel": kernelResult}
 		}
 		if code != 0 {
 			kernelResult["error"] = "route policy kernel enforcement failed"
+			kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx)
 			return "failed", map[string]any{"error": "route policy kernel enforcement failed", "kernel": kernelResult}
 		}
+		kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx)
 	}
 	activeCount := 0
 	enforceableCount := 0
@@ -139,6 +143,28 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		"active_route_count":        activeCount,
 		"system_route_count":        len(systemRoutes),
 		"active_system_route_count": activeSystemRouteCount,
+	}
+}
+
+func collectRoutePolicyKernelTelemetry(ctx context.Context) map[string]any {
+	steps := make([]any, 0, 5)
+	add := func(label, name string, args ...string) {
+		code, out := runInstallCommand(ctx, name, args...)
+		steps = append(steps, map[string]any{
+			"label":     label,
+			"command":   append([]string{name}, args...),
+			"exit_code": code,
+			"output":    truncate(strings.TrimSpace(out), 4000),
+		})
+	}
+	add("route_policy_unit_active", "systemctl", "is-active", routePolicyUnitName)
+	add("route_policy_timer_active", "systemctl", "is-active", routePolicyTimerName)
+	add("ip_rule_show", "ip", "rule", "show")
+	add("nft_route_policy_output", "nft", "list", "chain", "inet", "megavpn", "route_policy_output")
+	add("nft_route_policy_prerouting", "nft", "list", "chain", "inet", "megavpn", "route_policy_prerouting")
+	return map[string]any{
+		"collected_at": time.Now().UTC().Format(time.RFC3339),
+		"steps":        steps,
 	}
 }
 

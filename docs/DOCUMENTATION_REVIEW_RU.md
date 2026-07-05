@@ -1,6 +1,6 @@
 # Ревью документации
 
-**Релиз:** `7.0.1.30`
+**Релиз:** `7.0.1.31`
 
 **Дата:** 2026-07-02
 
@@ -20,7 +20,7 @@ English review: [DOCUMENTATION_REVIEW.md](DOCUMENTATION_REVIEW.md).
 | Operator guide не покрывал установку на чистый host | Оператору приходилось восстанавливать installer/env/migration/systemd/nginx шаги из scripts | EN/RU guides расширены от установки до первичной настройки и runtime validation |
 | Release gate не требовал новые user-facing docs | Документация могла регрессировать незаметно | Обновлены `docs/RELEASE_GATES.md` и `scripts/self-test.sh` |
 | Roadmap, release evidence и operational procedures были плохо разделены | Был риск stale operational instructions в overview docs | README теперь ссылается на source-of-truth docs, а не дублирует runbooks |
-| Текущий релиз не был виден в каждом основном документе | Оператор мог спутать текущий release baseline с историческими roadmap notes | Добавлен release banner `7.0.1.30` в поддерживаемые docs |
+| Текущий релиз не был виден в каждом основном документе | Оператор мог спутать текущий release baseline с историческими roadmap notes | Добавлен release banner `7.0.1.31` в поддерживаемые docs |
 | Roadmap и next-step notes смешивали языки под базовыми именами файлов | Ownership документации был неочевиден для русской и английской аудитории | Roadmap и next-step notes разделены на английские defaults и `_RU` пары |
 | VLESS access groups вынесены из instance manage, но docs описывали старый workflow | Оператор мог искать группы не в той вкладке или забыть re-apply VLESS instance | Добавлены парные документы по VLESS access groups и обновлен operator guide под `Instances -> VLESS groups` |
 

@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.29`
+**Release:** `7.0.1.31`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.29`
+**Code baseline:** RTIS MegaVPN `7.0.1.31`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,9 +23,9 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.21` continues the production-hardening line after the `7.0.1.14`
-security hardening release. The codebase already has a working control-plane
-foundation:
+`7.0.1.31` continues the production-hardening line after the firewall,
+backhaul, VLESS routing, route-policy preview and documentation-gate releases.
+The codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -38,11 +38,15 @@ foundation:
 - OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, HTTP Proxy, MTProto, IPsec/L2TP
   and Nginx service-driver foundation.
 - Managed ingress-to-egress backhaul.
+- Route-policy preview and agent-side route-policy apply telemetry for managed
+  VLESS/backhaul troubleshooting.
 - Managed firewall catalog with explicit protocol presets and controlled
   nftables default-policy enforcement.
 - Client provisioning, artifacts, share links, VLESS subscriptions and email
   delivery.
 - Backup/restore, deployment scripts, self-test and release gates.
+- Shared documentation consistency gate for maintained docs, roadmap, release
+  review links, production env templates and Web UI asset cache keys.
 
 This is not a stable production release yet. It is a hardening baseline that
 must produce repeatable evidence for install, migration, agent transport,
@@ -273,14 +277,35 @@ Closed in this release:
 No VPN runtime behavior changed in this release. Database changes are limited to
 additive/idempotent catalog repair migrations.
 
-## 14. Immediate Next Actions
+## 14. Release 7.0.1.31 Closure
+
+The goal of `7.0.1.31` is to make route-policy diagnostics and documentation
+release hygiene enforceable.
+
+Closed in this release:
+
+- Maintained documentation, roadmap files and production env templates now share
+  the current release baseline.
+- `scripts/docs-consistency.sh` validates required docs, current security review
+  links, Web UI asset cache keys and generic firewall wording.
+- `scripts/release-gate.sh` runs `docs-consistency` as a fail-fast release gate.
+- `scripts/self-test.sh` delegates its documentation gate to the same script.
+- `node.route_policy.apply` job results include route-policy telemetry for
+  `systemctl is-active`, `ip rule show` and managed nftables route-policy
+  chains.
+
+No database migration or route-policy rendering behavior changed in this
+release. The telemetry is read-only evidence collected after managed apply.
+
+## 15. Immediate Next Actions
 
 1. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
 2. Run disposable PostgreSQL migrations and integration tests.
 3. Verify runtime artifact upload/fetch/install for Xray and Shadowsocks.
 4. Validate service-pack creation, apply, runtime logs and cleanup on real nodes.
 5. Validate OpenVPN client config generation and customizable templates.
-6. Validate VLESS ingress with managed egress route policy.
+6. Validate VLESS ingress with managed egress route policy, route-policy preview
+   and route-policy telemetry on real ingress/egress nodes.
 7. Validate VLESS subscription rotation, public feed import and revocation on a
    real client profile.
 8. Complete topology-map and node-link design before implementing the UI.

@@ -1,6 +1,6 @@
 # Self-Testing
 
-**Release:** `7.0.1.30`
+**Release:** `7.0.1.31`
 
 `scripts/self-test.sh` is the broad diagnostic entrypoint for release readiness. It differs from `scripts/release-gate.sh`: the release gate is fail-fast, while self-test keeps running independent gates and writes a report that separates working, failing and not-tested areas.
 
@@ -26,20 +26,21 @@ Local gates:
 - `go-build`
 - `binary-version-commands`
 - `shell-syntax`
+- `docs-consistency`
 - `control-plane-install-validation`
 - `frontend-js-syntax`, when `node` is installed
 - `static-security-patterns`
 - `smoke-auth-coverage`
 - `migration-sequence`
-- `release-docs`
 
-The `release-docs` gate verifies that the corporate documentation baseline is
-present: English and Russian README files, documentation indexes, documentation
-reviews, user guides, threat model, RBAC matrix, operations runbook, release
-gates, self-testing guide, roadmap/next-step pairs and production environment
-templates.
-Each required artifact must declare the current code release near the top of the
-file, using `internal/platform/version.Version` as the source of truth.
+The `docs-consistency` gate delegates to `scripts/docs-consistency.sh`. It
+verifies that the corporate documentation baseline is present: English and
+Russian README files, documentation indexes, documentation reviews, user
+guides, threat model, RBAC matrix, operations runbook, release gates,
+self-testing guide, roadmap/next-step pairs, current security review, Web UI
+asset cache keys and production environment templates. Each required artifact
+must declare the current code release near the top of the file, using
+`internal/platform/version.Version` as the source of truth.
 
 The `control-plane-install-validation` gate runs the Control Plane installer in
 validate-only mode with non-interactive clean-install inputs. It verifies that

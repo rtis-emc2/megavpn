@@ -131,6 +131,10 @@ require_binary_version_commands() {
 	done
 }
 
+require_docs_consistency() {
+  scripts/docs-consistency.sh
+}
+
 require_control_plane_install_validation() {
   MEGAVPN_CP_VALIDATE_ONLY=1 \
     MEGAVPN_CP_ASSUME_YES=1 \
@@ -207,6 +211,7 @@ fi
 run_gate "go-build" go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin
 run_gate "binary-version-commands" require_binary_version_commands
 run_gate "shell-syntax" require_shell_syntax
+run_gate "docs-consistency" require_docs_consistency
 run_gate "control-plane-install-validation" require_control_plane_install_validation
 run_gate "smoke-auth-coverage" require_smoke_auth_coverage
 run_gate "static-security-patterns" require_clean_static_scan

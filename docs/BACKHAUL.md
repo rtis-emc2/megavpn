@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.30`
+**Release:** `7.0.1.31`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -118,6 +118,11 @@ instances keep their own service drivers, client configs and route policies.
   enforceable routes, observe-only routes, VLESS/Xray system egress routes,
   blocked reasons, selected managed backhaul table/interface and managed
   nft/ip-rule primitives.
+- Successful and failed `node.route_policy.apply` job results include
+  telemetry for the managed route-policy unit/timer, `ip rule show` and
+  `inet megavpn route_policy_output` / `route_policy_prerouting` chains. Use it
+  before SSH inspection when VLESS traffic connects but does not leave through
+  the expected egress node.
 - Xray/IPsec profiles are not auto-enabled until transport-specific safety gates are implemented.
 
 ## Deployment Model
@@ -167,7 +172,9 @@ Minimum production path for the first ingress/egress pair:
 - VLESS clients connect but traffic exits from ingress or does not leave the
   node: verify the rendered Xray outbound has `sendThrough`, then run
   `node.route_policy.apply` on the ingress node and confirm the job produced an
-  active `xray_vless_remote_egress` system route. Then inspect
+  active `xray_vless_remote_egress` system route. First inspect the route-policy
+  job result telemetry for `route_policy_output`, `ip rule show` and unit/timer
+  state. If telemetry is missing or inconclusive, inspect the node manually with
   `nft list chain inet megavpn route_policy_output`, `ip rule show` and
   `ip route show table <backhaul_table>`; the expected path is source match ->
   `meta mark set <mark>` -> `ip rule fwmark <mark>` -> managed `mgbh*`

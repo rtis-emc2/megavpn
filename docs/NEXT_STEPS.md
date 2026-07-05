@@ -1,6 +1,6 @@
 # Next Steps
 
-**Release:** `7.0.1.30`
+**Release:** `7.0.1.31`
 
 Current roadmap: [`ROADMAP_V1_AND_TZ.md`](../ROADMAP_V1_AND_TZ.md).
 Russian companion: [`NEXT_STEPS_RU.md`](NEXT_STEPS_RU.md).
@@ -62,9 +62,9 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
     workload views out of `app.js`.
 18. Complete revision workflow: candidate, validated, applied, rollback, apply
     history and safe rollback engine.
-19. Continue routing hardening after the node route-policy preview baseline:
-    rollback/remove stage for retired policies, conntrack visibility, MTU/MSS
-    clamp and route-policy unit telemetry from real nodes.
+19. Continue routing hardening after the node route-policy preview and apply
+    telemetry baseline: rollback/remove stage for retired policies, conntrack
+    visibility, MTU/MSS clamp and live telemetry validation on real nodes.
 20. Complete managed backhaul multi-driver enforcement: controlled Xray TUN,
     strongSwan/IKEv2, OpenVPN certificate-mode P2P and health probes.
 21. When the maintenance window is approved, rewrite Git history for sensitive

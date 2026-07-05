@@ -1,10 +1,10 @@
 # Release Gates
 
-**Release:** `7.0.1.30`
+**Release:** `7.0.1.31`
 
 This file defines the minimum evidence required before tagging a production release.
 
-For `7.0.1.30`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
+For `7.0.1.31`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
 
 ## 1. Release Gate
 
@@ -35,6 +35,9 @@ The baseline gate must pass:
 - `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` passes.
 - Operational binaries print the same release through `--version`.
 - Shell scripts under `scripts/` pass `bash -n`.
+- `scripts/docs-consistency.sh` passes: maintained docs, roadmap files,
+  production env templates, current security review links and Web UI asset
+  cache keys match the code release.
 - The Control Plane installer accepts non-interactive clean-install inputs in validate-only mode.
 - Smoke scripts that call `/api/v1` support `MEGAVPN_AUTH_TOKEN`.
 - Static production scan finds no `/bin/sh -c`, `StrictHostKeyChecking=accept-new`, curl-to-shell, curl-to-gpg or apt-key trust bootstrap pattern outside tests.

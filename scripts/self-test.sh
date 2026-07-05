@@ -288,41 +288,7 @@ require_migration_sequence() {
 }
 
 require_release_docs() {
-  local file code_version
-  code_version="$(sed -nE 's/^const Version = "([^"]+)"/\1/p' internal/platform/version/version.go)"
-  if [[ -z "$code_version" ]]; then
-    printf 'unable to read internal/platform/version.Version\n' >&2
-    return 1
-  fi
-  for file in \
-    README.md \
-    README_RU.md \
-    docs/DOCUMENTATION.md \
-    docs/DOCUMENTATION_RU.md \
-    docs/DOCUMENTATION_REVIEW.md \
-    docs/DOCUMENTATION_REVIEW_RU.md \
-    docs/USER_GUIDE_RU.md \
-    docs/USER_GUIDE_EN.md \
-    ROADMAP_V1_AND_TZ.md \
-    ROADMAP_V1_AND_TZ_RU.md \
-    docs/NEXT_STEPS.md \
-    docs/NEXT_STEPS_RU.md \
-    docs/RELEASE_GATES.md \
-    docs/SELF_TESTING.md \
-    docs/THREAT_MODEL.md \
-    docs/RBAC_MATRIX.md \
-    docs/OPERATIONS_RUNBOOK.md \
-    deploy/env/megavpn.production.env.example \
-    deploy/env/megavpn-agent.production.env.example; do
-    if [[ ! -s "$file" ]]; then
-      printf 'missing or empty required release artifact: %s\n' "$file" >&2
-      return 1
-    fi
-    if ! head -n 8 "$file" | grep -Fq "$code_version"; then
-      printf 'required release artifact does not declare release %s near top: %s\n' "$code_version" "$file" >&2
-      return 1
-    fi
-  done
+  scripts/docs-consistency.sh
 }
 
 require_postgres_migrations_and_integration() {
@@ -447,7 +413,7 @@ run_check "frontend-page-module-exports" "Static Web UI page modules export the 
 run_check "static-security-patterns" "No banned production command patterns are present" require_static_security_patterns
 run_check "smoke-auth-coverage" "Smoke scripts that call protected API endpoints support bearer auth" require_smoke_auth_coverage
 run_check "migration-sequence" "SQL migration numbers are unique and gap-free" require_migration_sequence
-run_check "release-docs" "Release, security, RBAC, operations and env-template documents exist" require_release_docs
+run_check "docs-consistency" "Release, security, RBAC, operations and env-template documents are synchronized" require_release_docs
 run_check "postgres-migrations-and-integration" "Migrations and PostgreSQL integration tests pass on disposable DB" require_postgres_migrations_and_integration
 run_check "backup-restore-drill" "Backup archive restores into a separate disposable DB" require_backup_restore_drill
 run_check "systemd-verify" "Systemd unit files verify on a systemd host" require_systemd_verify
