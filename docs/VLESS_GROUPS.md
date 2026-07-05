@@ -1,6 +1,6 @@
 # VLESS Access Groups
 
-**Release:** `7.0.1.26`
+**Release:** `7.0.1.27`
 
 Russian companion: [VLESS_GROUPS_RU.md](VLESS_GROUPS_RU.md).
 
@@ -125,5 +125,5 @@ Operators should be able to answer:
 | Group is not visible during provisioning | Confirm it is active and refresh core data. |
 | Changed group has no runtime effect | Check the group mutation response for sync failures, then inspect the queued `instance.apply` job for that instance. |
 | Target-only group fails validation | Verify the target instance endpoint host and port. |
-| Remote egress is not used | Verify instance egress mode, selected egress node, active backhaul and route-policy sync. The ingress node should have a `node.route_policy.apply` result with an active `xray_vless_remote_egress` system route and an `ip rule from <sendThrough>/32 table <backhaul_table>` kernel rule. |
+| Remote egress is not used | Verify instance egress mode, selected egress node, active backhaul and route-policy sync. The ingress node should have a `node.route_policy.apply` result with an active `xray_vless_remote_egress` system route, an `inet megavpn route_policy_output` mark rule and an `ip rule fwmark <mark> table <backhaul_table>` kernel rule. |
 | Ad blocking has no effect | Verify Xray geosite data and generated routing rules. |

@@ -1080,7 +1080,7 @@ func routePolicyEnforcementSummary(routes []map[string]any, systemRoutes ...[]ma
 		"notes": []string{
 			"agent materializes a signed route-policy snapshot",
 			"agent applies kernel policy routing only for L3/L4 allow candidates with explicit egress output",
-			"agent applies system source routes for Xray/VLESS remote egress outbounds",
+			"agent applies managed system egress rules for Xray/VLESS remote egress outbounds",
 		},
 	}
 	for _, route := range routes {

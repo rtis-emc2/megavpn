@@ -272,16 +272,22 @@ func TestBackhaulCleanupUnitsIncludeLegacyCommonUnit(t *testing.T) {
 func TestRenderBackhaulIngressStartScriptAddsOutboundSNAT(t *testing.T) {
 	t.Parallel()
 
-	script := renderBackhaulIngressStartScript("link-wireguard-abcd", "mgbh1234567890", "/usr/bin/wg-quick up '/etc/megavpn/backhaul/link/wg.conf'", "10.240.35.245", "21001", 70)
+	script := renderBackhaulIngressStartScript("link-wireguard-abcd", "mgbh1234567890", "/usr/bin/wg-quick up '/etc/megavpn/backhaul/link/wg.conf'")
 	for _, want := range []string{
 		"sysctl -w net.ipv4.ip_forward=1",
 		"megavpn:backhaul:link-wireguard-abcd:ingress-snat",
 		"nft add rule ip megavpn_backhaul postrouting oifname 'mgbh1234567890' masquerade comment '\"megavpn:backhaul:link-wireguard-abcd:ingress-snat\"'",
-		"ip route replace default dev 'mgbh1234567890' table '21001' metric 70",
-		"ip rule add from '10.240.35.245/32' table '21001' priority 21950",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("ingress start script missing %q:\n%s", want, script)
+		}
+	}
+	for _, blocked := range []string{
+		"ip route replace default dev",
+		"ip rule add from",
+	} {
+		if strings.Contains(script, blocked) {
+			t.Fatalf("ingress start script should not create legacy source-policy rule %q:\n%s", blocked, script)
 		}
 	}
 }

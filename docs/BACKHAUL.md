@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.26`
+**Release:** `7.0.1.27`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -79,10 +79,10 @@ instances keep their own service drivers, client configs and route policies.
     on both sides, the operator can promote the standby transport. Promotion is
     explicit: the system does not silently move production traffic to a standby
     path without operator intent.
-13. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow`
-    candidates and Xray/VLESS system source-routes. For VLESS remote egress,
-    the source route is derived from Xray `sendThrough` and points
-    `from <ingress_backhaul_ip>/32` to the selected backhaul routing table.
+13. `node.route_policy.apply` installs mark-based policy routing for IPv4 L3/L4
+    `allow` candidates and Xray/VLESS system egress routes. For VLESS remote
+    egress, the nft output mark is derived from Xray `sendThrough`; `ip rule
+    fwmark` then selects the managed backhaul routing table.
 14. Operator can run `probe` from the Backhaul UI after the selected transport is `active` and both ingress/egress sides have applied timestamps. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
 15. Each probe waits for systemd active state, local interface presence, route lookup to the peer tunnel address through the expected backhaul interface and ICMP reachability with retries.
 16. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer route lookup, peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
