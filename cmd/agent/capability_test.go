@@ -148,6 +148,51 @@ func TestAptInstallCommandRetryClassification(t *testing.T) {
 	}
 }
 
+func TestNginxOrgFallbackReason(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		res  map[string]any
+		want string
+	}{
+		{
+			name: "apt update falls back to ubuntu repo",
+			res:  map[string]any{"ok": false, "message": "apt update failed before nginx install"},
+			want: "nginx.org repository install failed: apt update failed before nginx install",
+		},
+		{
+			name: "repo setup failure falls back",
+			res:  map[string]any{"ok": false, "message": "apt update failed after nginx repo setup"},
+			want: "nginx.org repository install failed: apt update failed after nginx repo setup",
+		},
+		{
+			name: "isa failure falls back",
+			res:  map[string]any{"ok": false, "verify_output": "Fatal glibc error: CPU does not support x86-64-v2 ISA level"},
+			want: "nginx.org binary failed with CPU ISA compatibility error",
+		},
+		{
+			name: "root failure does not fall back",
+			res:  map[string]any{"ok": false, "message": "nginx install requires root"},
+			want: "",
+		},
+		{
+			name: "runtime verify failure does not hide as repo fallback",
+			res:  map[string]any{"ok": false, "message": "nginx service is not active"},
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nginxOrgFallbackReason(tc.res)
+			if got != tc.want {
+				t.Fatalf("nginxOrgFallbackReason() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAptFailureSuggestsRepair(t *testing.T) {
 	t.Parallel()
 

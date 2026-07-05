@@ -762,7 +762,7 @@ func (s *Server) listServiceDrivers(w nethttp.ResponseWriter, r *nethttp.Request
 
 func (s *Server) listServiceInstallers(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, 200, []response{
-		{"service_code": "nginx", "strategy": "nginx_org_repo", "channel": "stable", "description": "Install nginx from the official nginx.org Ubuntu repository; falls back to ubuntu_repo when CPU ISA is incompatible."},
+		{"service_code": "nginx", "strategy": "nginx_org_repo", "channel": "stable", "description": "Install nginx from the official nginx.org Ubuntu repository; falls back to ubuntu_repo when the nginx.org repository, package or CPU compatibility check fails."},
 		{"service_code": "nginx", "strategy": "ubuntu_repo", "channel": "stable", "description": "Install nginx from the Ubuntu repository."},
 		{"service_code": "nginx", "strategy": "manual_present", "channel": "none", "description": "Verify and register an already installed nginx."},
 		{"service_code": "xray-core", "strategy": "binary_repository", "channel": "stable", "description": "Install Xray-core from a pinned control-plane binary repository artifact."},

@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.19`
+**Релиз:** `7.0.1.20`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.19
+Базовая версия кода: RTIS MegaVPN 7.0.1.20
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1036,9 +1036,9 @@ traffic-camouflage rendering.
 
 В релизе не менялись database migrations и VPN runtime behavior.
 
-## 14. Release 7.0.1.19 Closure
+## 14. Release 7.0.1.20 Closure
 
-Цель релиза `7.0.1.19`: закрыть последний видимый UI/API regression в
+Цель релиза `7.0.1.20`: закрыть последний видимый UI/API regression в
 operator console.
 
 Зафиксировано в этом релизе:
@@ -1068,6 +1068,10 @@ operator console.
   historical keys.
 - `000010_service_pack_semantic_dedup` архивирует duplicate default
   service-pack rows, оставшиеся на старых инсталляциях.
+- Nginx capability install теперь делает fallback с nginx.org repository install
+  на Ubuntu distro package, если nginx.org apt path падает до runtime
+  verification. Это не блокирует rollout VLESS WebSocket camouflage edge из-за
+  stale или недоступного nginx.org repository metadata.
 
 В релизе не менялся VPN runtime behavior. Database-изменения ограничены
 additive/idempotent catalog repair migrations.

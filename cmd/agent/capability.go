@@ -416,15 +416,52 @@ func installNginx(ctx context.Context, strategy, channel string) map[string]any 
 	res := installNginxOrg(ctx, channel)
 	res["requested_strategy"] = "nginx_org_repo"
 	res["effective_strategy"] = "nginx_org_repo"
-	if res["ok"] == false && strings.Contains(strings.ToLower(stringify(res["verify_output"])+" "+stringify(res["message"])+" "+stringify(res["version"])), "isa level") {
-		fallback := installNginxUbuntuRepo(ctx, "nginx.org binary failed with CPU ISA compatibility error")
+	if res["ok"] == false {
+		fallbackReason := nginxOrgFallbackReason(res)
+		if fallbackReason == "" {
+			return res
+		}
+		fallback := installNginxUbuntuRepo(ctx, fallbackReason)
 		fallback["requested_strategy"] = "nginx_org_repo"
 		fallback["effective_strategy"] = "ubuntu_repo"
-		fallback["fallback_reason"] = "nginx.org binary failed with CPU ISA compatibility error"
+		fallback["fallback_reason"] = fallbackReason
 		fallback["primary_result"] = res
 		return fallback
 	}
 	return res
+}
+
+func nginxOrgFallbackReason(res map[string]any) string {
+	if res == nil || res["ok"] == true {
+		return ""
+	}
+	text := strings.ToLower(stringify(res["message"]) + " " + stringify(res["verify_output"]) + " " + stringify(res["version"]))
+	if strings.Contains(text, "requires root") {
+		return ""
+	}
+	if strings.Contains(text, "isa level") {
+		return "nginx.org binary failed with CPU ISA compatibility error"
+	}
+	for _, marker := range []string{
+		"apt update failed before nginx install",
+		"nginx prerequisites install failed",
+		"nginx signing key temp file creation failed",
+		"nginx signing key download failed",
+		"nginx signing key fingerprint read failed",
+		"nginx signing key fingerprint mismatch",
+		"nginx signing key import failed",
+		"nginx repository codename detection failed",
+		"nginx repository codename is invalid",
+		"nginx repository setup failed",
+		"nginx apt pinning setup failed",
+		"apt update failed after nginx repo setup",
+		"nginx package install failed",
+	} {
+		if strings.Contains(text, marker) {
+			return "nginx.org repository install failed: " + marker
+		}
+	}
+	return ""
 }
 
 func installNginxUbuntuRepo(ctx context.Context, reason string) map[string]any {

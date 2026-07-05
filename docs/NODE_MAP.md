@@ -1,6 +1,6 @@
 # Node Map
 
-**Release:** `7.0.1.19`
+**Release:** `7.0.1.20`
 
 Node Map is the topology workspace for approximate node placement and managed
 backhaul visibility. Operators do not enter latitude, longitude or datacenter
