@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -164,32 +165,23 @@ func (s *Store) ensureXrayProvisioningGroups(ctx context.Context, instanceID str
 }
 
 func (s *Store) SyncVLESSGroupCatalog(ctx context.Context) (domain.VLESSGroupCatalogSyncResult, error) {
-	instances, err := s.ListInstances(ctx)
+	catalog, err := s.loadVLESSGroupCatalogSnapshot(ctx)
+	if err != nil {
+		return domain.VLESSGroupCatalogSyncResult{}, err
+	}
+	instances, err := s.listXrayVLESSGroupSyncInstances(ctx)
 	if err != nil {
 		return domain.VLESSGroupCatalogSyncResult{}, err
 	}
 	result := domain.VLESSGroupCatalogSyncResult{}
 	for _, instance := range instances {
-		if normalizeInstanceRuntimeCode(instance.ServiceCode) != "xray-core" {
-			continue
-		}
 		result.ScannedInstances++
 		record := domain.VLESSGroupCatalogSyncInstance{
 			InstanceID: instance.ID,
 			NodeID:     instance.NodeID,
 			Status:     instance.Status,
 		}
-		spec, err := s.latestInstanceSpec(ctx, instance.ID)
-		if err != nil {
-			result.FailedInstances = append(result.FailedInstances, domain.VLESSGroupCatalogSyncFailure{
-				InstanceID: instance.ID,
-				NodeID:     instance.NodeID,
-				Stage:      "load_spec",
-				Error:      err.Error(),
-			})
-			continue
-		}
-		next, changed, err := s.syncXrayVLESSGroupCatalogSpec(ctx, instance, spec)
+		next, changed, err := s.syncXrayVLESSGroupCatalogSpec(ctx, instance, instance.Spec, catalog)
 		if err != nil {
 			result.FailedInstances = append(result.FailedInstances, domain.VLESSGroupCatalogSyncFailure{
 				InstanceID: instance.ID,
@@ -277,12 +269,74 @@ func (s *Store) SyncVLESSGroupCatalog(ctx context.Context) (domain.VLESSGroupCat
 	return result, nil
 }
 
-func (s *Store) syncXrayVLESSGroupCatalogSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, bool, error) {
-	original := cloneMap(spec)
-	enriched, _, err := s.specWithVLESSGroupCatalog(ctx, spec)
+func (s *Store) listXrayVLESSGroupSyncInstances(ctx context.Context) ([]domain.Instance, error) {
+	rows, err := s.db.Query(ctx, `select
+		i.id,
+		i.node_id,
+		sd.code,
+		i.name,
+		i.slug,
+		coalesce(i.systemd_unit,''),
+		i.status,
+		i.enabled,
+		coalesce(i.endpoint_host,''),
+		coalesce(i.endpoint_port,0),
+		i.current_revision_id,
+		i.last_applied_revision_id,
+		i.created_at,
+		i.updated_at,
+		coalesce(r.spec_json,'{}'::jsonb)
+	from instances i
+	join service_definitions sd on sd.id=i.service_definition_id
+	left join lateral (
+		select spec_json
+		from instance_revisions
+		where instance_id=i.id
+		order by revision_no desc
+		limit 1
+	) r on true
+	where i.status <> 'deleted'
+	  and sd.code='xray-core'
+	order by i.created_at desc`)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
+	defer rows.Close()
+	out := make([]domain.Instance, 0)
+	for rows.Next() {
+		var instance domain.Instance
+		var specRaw []byte
+		if err := rows.Scan(
+			&instance.ID,
+			&instance.NodeID,
+			&instance.ServiceCode,
+			&instance.Name,
+			&instance.Slug,
+			&instance.SystemdUnit,
+			&instance.Status,
+			&instance.Enabled,
+			&instance.EndpointHost,
+			&instance.EndpointPort,
+			&instance.CurrentRevisionID,
+			&instance.LastAppliedRevisionID,
+			&instance.CreatedAt,
+			&instance.UpdatedAt,
+			&specRaw,
+		); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(specRaw, &instance.Spec)
+		if instance.Spec == nil {
+			instance.Spec = map[string]any{}
+		}
+		out = append(out, instance)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) syncXrayVLESSGroupCatalogSpec(ctx context.Context, instance domain.Instance, spec map[string]any, catalog vlessGroupCatalogSnapshot) (map[string]any, bool, error) {
+	original := cloneMap(spec)
+	enriched, _ := specWithVLESSGroupCatalogSnapshot(spec, catalog)
 	if _, err := s.resolveXrayVLESSGroupEgress(ctx, instance, enriched); err != nil {
 		return nil, false, err
 	}
@@ -313,6 +367,7 @@ func (s *Store) resolveXrayVLESSGroupEgress(ctx context.Context, instance domain
 		return false, nil
 	}
 	changed := false
+	resolvedByEgressNode := map[string]XrayVLESSEgressResolution{}
 	updated := make([]any, 0, len(groups))
 	for idx, item := range groups {
 		group, _ := cloneAny(item).(map[string]any)
@@ -369,9 +424,14 @@ func (s *Store) resolveXrayVLESSGroupEgress(ctx context.Context, instance domain
 			if egressNodeID == "" {
 				return changed, fmt.Errorf("vless group %q requires egress_node_id", groupKey)
 			}
-			resolved, err := s.ResolveXrayVLESSEgress(ctx, instance.ID, egressNodeID)
-			if err != nil {
-				return changed, fmt.Errorf("vless group %q egress resolution failed: %w", groupKey, err)
+			resolved, ok := resolvedByEgressNode[egressNodeID]
+			if !ok {
+				var err error
+				resolved, err = s.ResolveXrayVLESSEgress(ctx, instance.ID, egressNodeID)
+				if err != nil {
+					return changed, fmt.Errorf("vless group %q egress resolution failed: %w", groupKey, err)
+				}
+				resolvedByEgressNode[egressNodeID] = resolved
 			}
 			if setVLESSGroupMapValue(group, "egress_mode", "egress_node") {
 				changed = true
@@ -457,22 +517,55 @@ func nestedVLESSGroupMap(source map[string]any, key string) map[string]any {
 	return value
 }
 
-func (s *Store) specWithVLESSGroupCatalog(ctx context.Context, spec map[string]any) (map[string]any, bool, error) {
-	templates, err := s.ListVLESSGroupTemplates(ctx)
+type vlessGroupCatalogSnapshot struct {
+	active  []domain.VLESSGroupTemplate
+	catalog []domain.VLESSGroupTemplate
+	managed map[string]struct{}
+}
+
+func (s *Store) loadVLESSGroupCatalogSnapshot(ctx context.Context) (vlessGroupCatalogSnapshot, error) {
+	active, err := s.ListVLESSGroupTemplates(ctx)
 	if err != nil {
-		return nil, false, err
+		return vlessGroupCatalogSnapshot{}, err
 	}
 	catalog, err := s.ListVLESSGroupTemplateCatalog(ctx)
 	if err != nil {
+		return vlessGroupCatalogSnapshot{}, err
+	}
+	snapshot := vlessGroupCatalogSnapshot{
+		active:  active,
+		catalog: catalog,
+		managed: make(map[string]struct{}, len(catalog)+len(active)),
+	}
+	for _, template := range catalog {
+		if key := normalizeXrayVLESSGroupKey(template.Key); key != "" {
+			snapshot.managed[key] = struct{}{}
+		}
+	}
+	for _, template := range active {
+		if key := normalizeXrayVLESSGroupKey(template.Key); key != "" {
+			snapshot.managed[key] = struct{}{}
+		}
+	}
+	return snapshot, nil
+}
+
+func (s *Store) specWithVLESSGroupCatalog(ctx context.Context, spec map[string]any) (map[string]any, bool, error) {
+	catalog, err := s.loadVLESSGroupCatalogSnapshot(ctx)
+	if err != nil {
 		return nil, false, err
 	}
-	if len(templates) == 0 && len(catalog) == 0 {
-		return spec, false, nil
+	enriched, changed := specWithVLESSGroupCatalogSnapshot(spec, catalog)
+	return enriched, changed, nil
+}
+
+func specWithVLESSGroupCatalogSnapshot(spec map[string]any, catalog vlessGroupCatalogSnapshot) (map[string]any, bool) {
+	if len(catalog.active) == 0 && len(catalog.catalog) == 0 {
+		return spec, false
 	}
 	enriched := cloneMap(spec)
-	merged := make([]any, 0, len(templates)+len(xraySpecGroupItems(spec)))
+	merged := make([]any, 0, len(catalog.active)+len(xraySpecGroupItems(spec)))
 	seen := map[string]struct{}{}
-	managed := make(map[string]struct{}, len(catalog)+len(templates))
 	add := func(raw any) {
 		group, _ := cloneAny(raw).(map[string]any)
 		if group == nil {
@@ -489,27 +582,19 @@ func (s *Store) specWithVLESSGroupCatalog(ctx context.Context, spec map[string]a
 		merged = append(merged, group)
 		seen[key] = struct{}{}
 	}
-	for _, template := range catalog {
-		if key := normalizeXrayVLESSGroupKey(template.Key); key != "" {
-			managed[key] = struct{}{}
-		}
-	}
-	for _, template := range templates {
-		if key := normalizeXrayVLESSGroupKey(template.Key); key != "" {
-			managed[key] = struct{}{}
-		}
+	for _, template := range catalog.active {
 		add(vlessTemplateSpecGroup(template))
 	}
 	for _, raw := range xraySpecGroupItems(spec) {
 		group, _ := cloneAny(raw).(map[string]any)
 		key := normalizeXrayVLESSGroupKey(firstString(group["key"], group["name"], group["id"]))
-		if _, ok := managed[key]; key != "" && ok {
+		if _, ok := catalog.managed[key]; key != "" && ok {
 			continue
 		}
 		add(raw)
 	}
 	if len(merged) == 0 {
-		return spec, false, nil
+		return spec, false
 	}
 	defaultGroup := normalizeXrayVLESSGroupKey(firstString(spec["default_vless_group"], spec["default_xray_group"], spec["default_outbound_group"]))
 	if _, ok := seen[defaultGroup]; defaultGroup == "" || !ok {
@@ -524,7 +609,7 @@ func (s *Store) specWithVLESSGroupCatalog(ctx context.Context, spec map[string]a
 	}
 	enriched["vless_groups"] = merged
 	enriched["default_vless_group"] = defaultGroup
-	return enriched, changed, nil
+	return enriched, changed
 }
 
 func xraySpecGroupItems(spec map[string]any) []any {

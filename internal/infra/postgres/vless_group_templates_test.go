@@ -60,3 +60,49 @@ func TestClearResolvedXrayVLESSGroupEgress(t *testing.T) {
 		}
 	}
 }
+
+func TestSpecWithVLESSGroupCatalogSnapshotDropsInactiveManagedGroups(t *testing.T) {
+	spec := map[string]any{
+		"default_vless_group": "blocked",
+		"vless_groups": []any{
+			map[string]any{"key": "default", "label": "Old default", "outbound_tag": "direct"},
+			map[string]any{"key": "blocked", "label": "Deleted managed group", "outbound_tag": "block"},
+			map[string]any{"key": "custom", "label": "Custom group", "outbound_tag": "direct"},
+		},
+	}
+	catalog := vlessGroupCatalogSnapshot{
+		active: []domain.VLESSGroupTemplate{
+			{Key: "default", Label: "Default access", AccessMode: "instance_default", EgressMode: "default", OutboundTag: "direct", Status: "active"},
+		},
+		catalog: []domain.VLESSGroupTemplate{
+			{Key: "default", Label: "Default access", Status: "active"},
+			{Key: "blocked", Label: "Blocked", Status: "deleted"},
+		},
+		managed: map[string]struct{}{
+			"default": {},
+			"blocked": {},
+		},
+	}
+
+	enriched, changed := specWithVLESSGroupCatalogSnapshot(spec, catalog)
+	if !changed {
+		t.Fatal("specWithVLESSGroupCatalogSnapshot() changed = false, want true")
+	}
+	groups := xrayVLESSGroups(enriched)
+	if len(groups) != 2 {
+		t.Fatalf("groups = %#v, want default plus custom", groups)
+	}
+	keys := map[string]bool{}
+	for _, group := range groups {
+		keys[group.Key] = true
+	}
+	if !keys["default"] || !keys["custom"] {
+		t.Fatalf("groups keys = %#v, want default and custom", keys)
+	}
+	if keys["blocked"] {
+		t.Fatalf("deleted managed group was preserved: %#v", groups)
+	}
+	if got := stringify(enriched["default_vless_group"]); got != "default" {
+		t.Fatalf("default_vless_group = %q, want default fallback after deleted managed group", got)
+	}
+}
