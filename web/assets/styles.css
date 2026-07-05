@@ -4905,6 +4905,446 @@ tr:hover td { background: #f8fafc; }
 .vless-group-editor-form {
   max-width: 980px;
 }
+
+/* Unified control-plane UI layer. Keep this after feature-specific rules and before responsive rules. */
+:root {
+  --bg: #f3f6fa;
+  --panel: #ffffff;
+  --panel-2: #f8fafc;
+  --panel-3: #eef2f7;
+  --line: rgba(15, 23, 42, 0.12);
+  --line-strong: rgba(15, 23, 42, 0.20);
+  --text: #172033;
+  --muted: #5f6f85;
+  --muted-2: #8290a3;
+  --accent: #b91c1c;
+  --accent-2: #1d4ed8;
+  --danger: #dc2626;
+  --warn: #b45309;
+  --ok: #047857;
+  --shadow: 0 12px 28px rgba(15, 23, 42, 0.07);
+  --radius: 8px;
+}
+
+body {
+  color: var(--text);
+  background: linear-gradient(180deg, #f8fafc 0%, #f3f6fa 48%, #eef2f7 100%);
+}
+
+body.auth-mode {
+  background: linear-gradient(180deg, #f8fafc 0%, #f3f6fa 52%, #eef2f7 100%);
+}
+
+body,
+h1,
+h2,
+h3,
+.brand-title,
+.page-tab,
+.node-tab-btn,
+.metric-value {
+  letter-spacing: 0;
+}
+
+.main {
+  background: transparent;
+}
+
+.sidebar {
+  background: #172033;
+  border-right-color: rgba(15, 23, 42, 0.22);
+}
+
+.sidebar .brand-title,
+.sidebar .nav-item.active,
+.sidebar .nav-item:hover {
+  color: #ffffff;
+}
+
+.sidebar .brand-subtitle,
+.sidebar .mini-label,
+.sidebar .api-base,
+.sidebar .release-label,
+.sidebar-footer {
+  color: rgba(226, 232, 240, 0.76);
+}
+
+.brand-mark,
+.sidebar-footer,
+.user-menu-trigger,
+.user-menu-panel,
+.user-menu-row,
+.modal,
+.modal-body > .empty,
+.form-validation-summary {
+  border-radius: var(--radius);
+}
+
+.card,
+.table-card,
+.form-card,
+.section-card,
+.dashboard-status-card,
+.dashboard-attention-card,
+.dashboard-stat,
+.dashboard-fact,
+.dashboard-empty,
+.nodes-workspace-head,
+.node-workspace-head,
+.node-fleet-fact,
+.node-card,
+.nodes-empty-state,
+.node-console-nav,
+.node-detail-list,
+.operator-action,
+.fact-card,
+.node-record-card,
+.inventory-panel,
+.inventory-item,
+.details-block,
+.choice-card,
+.check-row,
+.response-card,
+.response-fact,
+.action-outcome-head,
+.certificate-overview-card,
+.certificate-wizard-head,
+.certificate-import-preview,
+.backhaul-profile-row,
+.backhaul-panel,
+.backhaul-health-line,
+.instance-empty-panel,
+.instance-panel,
+.instance-service-profile-card,
+.vless-global-summary,
+.advanced-form-section,
+.node-instance-group,
+.pool-summary-card,
+.pool-space-card,
+.firewall-policy-card,
+.client-summary-card,
+.client-access-overview > div,
+.client-workflow-strip div,
+.client-provision-choice,
+.client-provision-queued-head,
+.client-provision-result-grid > div,
+.client-provision-result-service,
+.client-provision-next div,
+.client-inbound-card,
+.vless-group-card,
+.vless-template-card,
+.vless-template-route,
+.job-result-body,
+.audit-event-row,
+.control-page-intro,
+.firewall-toolbar,
+.revision-instance-strip,
+.revision-fact,
+.revision-error {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.dashboard-fact,
+.dashboard-empty,
+.node-card-fact,
+.service-strategy-row,
+.timeline-item,
+.artifact-workflow div,
+.artifact-success-grid div,
+.inventory-item,
+.node-record-card,
+.job-result-body,
+.response-fact,
+.backhaul-panel,
+.backhaul-health-line,
+.instance-empty-panel,
+.instance-panel,
+.instance-service-profile-card,
+.instance-service-profile-facts span,
+.vless-global-summary,
+.advanced-form-section,
+.node-instance-group-head,
+.instance-list-toolbar,
+.pool-range-line div,
+.pool-facts div,
+.firewall-policy-facts div,
+.firewall-rule-preview div:not(.empty),
+.client-workflow-strip div,
+.client-provision-result-grid > div,
+.client-provision-result-service,
+.client-provision-next div,
+.client-inbound-section,
+.vless-template-route,
+.certificate-import-preview,
+.revision-fact {
+  background: var(--panel-2);
+  box-shadow: none;
+}
+
+.spotlight-card,
+.panel-banner,
+.login-hero,
+.auth-card {
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.auth-gate .login-shell,
+.auth-gate .login-compact .auth-card,
+.auth-gate .login-hero,
+.auth-gate .auth-card {
+  border-radius: var(--radius);
+}
+
+.auth-gate .login-hero h2 {
+  font-size: 42px;
+  letter-spacing: 0;
+}
+
+.table-head,
+.card-head,
+.section-head,
+.modal-head,
+.node-instance-group-head,
+.instance-list-toolbar,
+.backhaul-row,
+.instance-load-more {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.search-input,
+.field input,
+.field select,
+.field textarea,
+.table-tools select,
+.ops-filter-bar select,
+.ops-filter-bar .compact-search,
+.client-vless-group-select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #ffffff;
+  color: var(--text);
+}
+
+.search-input:focus,
+.field input:focus,
+.field select:focus,
+.field textarea:focus,
+.table-tools select:focus,
+.ops-filter-bar select:focus,
+.ops-filter-bar .compact-search:focus,
+.client-vless-group-select:focus {
+  border-color: rgba(29, 78, 216, 0.54);
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.11);
+  outline: none;
+}
+
+.primary-btn,
+.secondary-btn,
+.ghost-btn,
+.icon-btn,
+.danger-btn,
+.small-action,
+.table-actions .primary-btn,
+.table-actions .secondary-btn,
+.table-actions .danger-btn,
+.node-card-actions button,
+.instance-actions button,
+.backhaul-actions button,
+.pool-actions button,
+.compact-action-grid .secondary-btn,
+.compact-action-grid .danger-btn,
+.vless-template-actions button {
+  min-height: 36px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: #ffffff;
+  color: var(--text);
+  box-shadow: none;
+}
+
+.primary-btn {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.primary-btn:hover {
+  border-color: #991b1b;
+  background: #991b1b;
+}
+
+.secondary-btn:hover,
+.ghost-btn:hover,
+.icon-btn:hover,
+.operator-action:hover,
+.page-tab:hover,
+.node-tab-btn:hover {
+  border-color: rgba(29, 78, 216, 0.36);
+  background: #eff6ff;
+  color: #172033;
+}
+
+.danger-btn,
+.operator-action.danger-action {
+  border-color: rgba(220, 38, 38, 0.28);
+  background: #fff1f2;
+  color: #991b1b;
+}
+
+.status-pill,
+.tag,
+.job-type-chip,
+.client-choice-selected,
+.client-inbound-included,
+.node-map-pin-cluster {
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--muted);
+}
+
+.tag.ok,
+.status-light.ok {
+  border-color: rgba(4, 120, 87, 0.24);
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.tag.warn,
+.status-light.warn {
+  border-color: rgba(180, 83, 9, 0.24);
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.tag.danger,
+.status-light.danger {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: #fff1f2;
+  color: #991b1b;
+}
+
+.tag.stub {
+  border-color: rgba(29, 78, 216, 0.20);
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.notice,
+.subtle-notice {
+  border-radius: var(--radius);
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #7c2d12;
+}
+
+table {
+  color: var(--text);
+}
+
+th {
+  background: #f8fafc;
+  color: var(--muted);
+}
+
+td {
+  color: var(--text);
+}
+
+tr:hover td {
+  background: #f8fafc;
+}
+
+.table-wrap th,
+.table-wrap td {
+  border-bottom-color: var(--line);
+}
+
+.page-tabs,
+.node-console-nav {
+  gap: 8px;
+}
+
+.page-tab,
+.node-tab-btn,
+.instance-view-switch,
+.firewall-rule-presets button {
+  border-radius: var(--radius);
+  box-shadow: none;
+}
+
+.page-tab.is-active,
+.node-tab-btn.is-active,
+.instance-view-switch button.is-active {
+  border-color: rgba(185, 28, 28, 0.34);
+  background: #fff7f7;
+  color: #991b1b;
+}
+
+.page-tab span,
+.node-tab-btn span,
+.node-card-title h3,
+.node-record-head strong,
+.node-record-grid strong,
+.inventory-item-title,
+.metric-caption.strong,
+.backhaul-fact strong,
+.instance-fact strong,
+.pool-facts strong,
+.firewall-policy-facts strong,
+.client-inbound-card strong,
+.vless-template-card-head h3 {
+  color: var(--text);
+}
+
+.code-block,
+.code-textarea,
+.details-block,
+.response-raw .code-block {
+  border-radius: var(--radius);
+}
+
+.code-block,
+.code-textarea {
+  border-color: var(--line);
+  background: #f8fafc;
+  color: #273449;
+}
+
+.web-terminal {
+  border-radius: var(--radius);
+  background: #07111f;
+  color: #d1fae5;
+}
+
+.modal {
+  border-radius: var(--radius);
+}
+
+.modal-body .section-card,
+.modal-body > .card,
+.modal-body > .empty {
+  border-radius: var(--radius);
+}
+
+.node-map-hud,
+.node-map-pin,
+.node-map-inspector,
+.node-map-detail-panel,
+.node-map-link-chip,
+.node-map-backhaul-route-row {
+  border-radius: var(--radius);
+}
 @media (max-width: 1180px) {
   .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .split { grid-template-columns: 1fr; }

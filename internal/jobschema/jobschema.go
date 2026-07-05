@@ -337,6 +337,15 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else {
 			normalized["routes"] = []any{}
 		}
+		if rawRoutes, ok := payload["system_routes"]; ok {
+			routes, err := normalizeObjectArray(rawRoutes, "payload.system_routes")
+			if err != nil {
+				return nil, err
+			}
+			normalized["system_routes"] = routes
+		} else {
+			normalized["system_routes"] = []any{}
+		}
 		if v, ok, err := optionalInt(payload, "route_count"); err != nil {
 			return nil, err
 		} else if ok {
@@ -346,6 +355,16 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 			return nil, err
 		} else if ok {
 			normalized["active_route_count"] = v
+		}
+		if v, ok, err := optionalInt(payload, "system_route_count"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["system_route_count"] = v
+		}
+		if v, ok, err := optionalInt(payload, "active_system_route_count"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["active_system_route_count"] = v
 		}
 	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe":
 		nodeID, err := requireString(payload, "node_id")

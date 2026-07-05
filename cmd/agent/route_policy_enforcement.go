@@ -9,13 +9,15 @@ import (
 )
 
 const (
-	routePolicyScriptPath = "/usr/local/lib/megavpn/route-policy/client-access-routes.sh"
-	routePolicyUnitName   = "megavpn-route-policy.service"
-	routePolicyUnitPath   = "/etc/systemd/system/" + routePolicyUnitName
-	routePolicyTimerName  = "megavpn-route-policy.timer"
-	routePolicyTimerPath  = "/etc/systemd/system/" + routePolicyTimerName
-	routePolicyPriority   = 22000
-	routePolicyPriorityTo = 22999
+	routePolicyScriptPath       = "/usr/local/lib/megavpn/route-policy/client-access-routes.sh"
+	routePolicyUnitName         = "megavpn-route-policy.service"
+	routePolicyUnitPath         = "/etc/systemd/system/" + routePolicyUnitName
+	routePolicyTimerName        = "megavpn-route-policy.timer"
+	routePolicyTimerPath        = "/etc/systemd/system/" + routePolicyTimerName
+	routePolicySystemPriority   = 21900
+	routePolicySystemPriorityTo = 21949
+	routePolicyPriority         = 22000
+	routePolicyPriorityTo       = 22999
 )
 
 type routePolicyKernelCandidate struct {
@@ -40,17 +42,34 @@ type routePolicyKernelRule struct {
 }
 
 type routePolicyKernelPlan struct {
-	Script       string
-	RuleCount    int
-	MarkedCount  int
-	SkippedCount int
-	Reasons      []string
+	Script          string
+	RuleCount       int
+	SystemRuleCount int
+	MarkedCount     int
+	SkippedCount    int
+	Reasons         []string
 }
 
-func renderRoutePolicyKernelScript(routes []any, revision string) (routePolicyKernelPlan, error) {
+func renderRoutePolicyKernelScript(routes []any, systemRoutes []any, revision string) (routePolicyKernelPlan, error) {
+	systemRules := []routePolicyKernelRule{}
 	rules := []routePolicyKernelRule{}
 	skipped := 0
 	reasons := []string{}
+	for _, item := range systemRoutes {
+		route, _ := item.(map[string]any)
+		rule, ok, reason, err := routePolicyKernelRuleFromSystemRoute(route, len(systemRules))
+		if err != nil {
+			return routePolicyKernelPlan{}, err
+		}
+		if !ok {
+			skipped++
+			if reason != "" {
+				reasons = append(reasons, reason)
+			}
+			continue
+		}
+		systemRules = append(systemRules, rule)
+	}
 	for _, item := range routes {
 		route, _ := item.(map[string]any)
 		if route == nil || stringify(nestedMap(route, "enforcement")["mode"]) != "l3_l4_candidate" {
@@ -69,7 +88,7 @@ func renderRoutePolicyKernelScript(routes []any, revision string) (routePolicyKe
 		}
 		rules = append(rules, rule)
 	}
-	if len(rules) == 0 {
+	if len(rules)+len(systemRules) == 0 {
 		return routePolicyKernelPlan{SkippedCount: skipped, Reasons: reasons}, nil
 	}
 
@@ -82,6 +101,13 @@ func renderRoutePolicyKernelScript(routes []any, revision string) (routePolicyKe
 		"# Revision: " + strings.TrimSpace(revision),
 		"if ! command -v ip >/dev/null 2>&1; then echo 'iproute2 is required for route policy enforcement' >&2; exit 1; fi",
 		"sysctl -w net.ipv4.ip_forward=1 >/dev/null",
+		"",
+		"# Remove old MegaVPN system source-route rules from the reserved priority range.",
+		"p=" + strconv.Itoa(routePolicySystemPriority),
+		"while [ \"$p\" -le " + strconv.Itoa(routePolicySystemPriorityTo) + " ]; do",
+		"  while ip rule delete priority \"$p\" >/dev/null 2>&1; do :; done",
+		"  p=$((p + 1))",
+		"done",
 		"",
 		"# Remove old MegaVPN route-policy rules from the reserved priority range.",
 		"p=" + strconv.Itoa(routePolicyPriority),
@@ -149,6 +175,11 @@ func renderRoutePolicyKernelScript(routes []any, revision string) (routePolicyKe
 		"",
 		"# Route tables and policy rules.",
 	)
+	for _, rule := range systemRules {
+		lines = append(lines, "route_policy_flush_destination "+shellQuote(rule.Destination)+" "+shellQuote(rule.Table))
+		lines = append(lines, ipRoutePolicyRouteCommands(rule)...)
+		lines = append(lines, "ip rule add from "+shellQuote(rule.Source)+" table "+shellQuote(rule.Table)+" priority "+strconv.Itoa(rule.Priority))
+	}
 	for _, rule := range rules {
 		lines = append(lines, "route_policy_flush_destination "+shellQuote(rule.Destination)+" "+shellQuote(rule.Table))
 		lines = append(lines, ipRoutePolicyRouteCommands(rule)...)
@@ -161,12 +192,59 @@ func renderRoutePolicyKernelScript(routes []any, revision string) (routePolicyKe
 		lines = append(lines, "ip rule add fwmark "+rule.Mark+" table "+shellQuote(rule.Table)+" priority "+strconv.Itoa(rule.Priority))
 	}
 	return routePolicyKernelPlan{
-		Script:       strings.Join(lines, "\n") + "\n",
-		RuleCount:    len(rules),
-		MarkedCount:  marked,
-		SkippedCount: skipped,
-		Reasons:      reasons,
+		Script:          strings.Join(lines, "\n") + "\n",
+		RuleCount:       len(rules),
+		SystemRuleCount: len(systemRules),
+		MarkedCount:     marked,
+		SkippedCount:    skipped,
+		Reasons:         reasons,
 	}, nil
+}
+
+func routePolicyKernelRuleFromSystemRoute(route map[string]any, idx int) (routePolicyKernelRule, bool, string, error) {
+	if route == nil {
+		return routePolicyKernelRule{}, false, "system route is empty", nil
+	}
+	if !strings.EqualFold(stringify(route["status"]), "active") {
+		return routePolicyKernelRule{}, false, "system route is not active", nil
+	}
+	source := normalizeRoutePolicyIPPrefix(first(stringify(route["source"]), stringify(route["source_address"])))
+	if source == "" {
+		return routePolicyKernelRule{}, false, "system route source is not an IPv4 address or prefix", nil
+	}
+	destination := normalizeRoutePolicyIPPrefix(first(stringify(route["destination"]), "0.0.0.0/0"))
+	if destination == "" {
+		return routePolicyKernelRule{}, false, "system route destination is not an IPv4 prefix", nil
+	}
+	table := strings.TrimSpace(stringify(route["table"]))
+	if table == "" || strings.EqualFold(table, "main") {
+		return routePolicyKernelRule{}, false, "system route requires a non-main table", nil
+	}
+	if !isSafeNetworkToken(table) {
+		return routePolicyKernelRule{}, false, "", fmt.Errorf("system route contains unsafe table token")
+	}
+	candidates, err := routePolicyKernelCandidatesFromEgress(route, table)
+	if err != nil {
+		return routePolicyKernelRule{}, false, "", err
+	}
+	if len(candidates) == 0 {
+		return routePolicyKernelRule{}, false, "system route requires a managed backhaul candidate or explicit interface", nil
+	}
+	priority := routePolicySystemPriority + idx
+	if priority > routePolicySystemPriorityTo {
+		return routePolicyKernelRule{}, false, "", fmt.Errorf("too many system route policy rules for reserved priority range")
+	}
+	comment := "megavpn:route-policy:system:" + slugifyLocal(first(stringify(route["system_route_id"]), stringify(route["kind"]), strconv.Itoa(idx)))
+	return routePolicyKernelRule{
+		RouteID:     stringify(route["system_route_id"]),
+		Source:      source,
+		Destination: destination,
+		Protocol:    "any",
+		Table:       table,
+		Candidates:  candidates,
+		Priority:    priority,
+		Comment:     comment,
+	}, true, "", nil
 }
 
 func routePolicyKernelRuleFromRoute(route map[string]any, idx int) (routePolicyKernelRule, bool, string, error) {

@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.5`
+**Release:** `7.0.1.6`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -60,7 +60,10 @@ Core API/UI:
 9. When both sides succeed, managed-systemd transports become `active`; profile-only transports become `materialized` and never produce a false active route. Failed apply results are stored per side in `health_json.ingress` or `health_json.egress` so a partial apply shows the missing/failing side explicitly, with the root cause shown before generic failure text.
 10. Every L3 transport profile gets its own `/30`; duplicate failed profiles are normalized to a unique CIDR during the next apply.
 11. Route-policy projection can use the active managed backhaul interface for remote egress routes.
-12. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow` candidates only.
+12. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow`
+    candidates and Xray/VLESS system source-routes. For VLESS remote egress,
+    the source route is derived from Xray `sendThrough` and points
+    `from <ingress_backhaul_ip>/32` to the selected backhaul routing table.
 13. Operator can run `probe` from the Backhaul UI after the selected transport is `active` and both ingress/egress sides have applied timestamps. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
 14. Each probe waits for systemd active state, local interface presence, route lookup to the peer tunnel address through the expected backhaul interface and ICMP reachability with retries.
 15. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer route lookup, peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
@@ -79,7 +82,11 @@ Core API/UI:
 - Managed L3 backhaul uses double NAT by default: ingress SNATs selected client traffic to the ingress tunnel address before it enters the backhaul, and egress masquerades traffic leaving the backhaul to the public/default route. This avoids unsafe broad reverse routes on egress nodes and keeps node-side return routing deterministic.
 - WireGuard/OpenVPN managed units are role-specific (`...-ingress.service` / `...-egress.service`) and bounded in length for systemd compatibility. Re-applying a profile after upgrade stops/disables the older common unit name from the previous manifest when present.
 - Agent apply results include systemd activation preflight, unit file path, `daemon-reload` output, `LoadState`, `ActiveState` and first useful `systemctl status` lines. `unit unknown` should be treated as a node-side systemd/load-state problem, not as a generic backhaul status.
-- Route policy enforcement is conservative: IPv4, `allow`, L3/L4 source identity, CIDR/IPv4 endpoint destination and explicit non-main route table are required.
+- Route policy enforcement is conservative: client policies require IPv4,
+  `allow`, L3/L4 source identity, CIDR/IPv4 endpoint destination and explicit
+  non-main route table. Xray/VLESS system routes require a valid IPv4
+  `sendThrough` source, explicit managed backhaul interface and explicit
+  non-main route table.
 - Xray/IPsec profiles are not auto-enabled until transport-specific safety gates are implemented.
 
 ## Deployment Model
@@ -101,7 +108,11 @@ Minimum production path for the first ingress/egress pair:
 11. Verify route projection uses `managed_backhaul` for the primary candidate,
     `managed_backhauls` for the failover set, and route policy job reports
     `enforced=true`.
-12. When disabling a mapped backhaul route, the control plane marks the link and
+12. For VLESS remote egress, verify the route-policy job result includes an
+    active `xray_vless_remote_egress` system route and the ingress node has
+    `ip rule from <sendThrough>/32 table <backhaul_table>` in the kernel rule
+    set.
+13. When disabling a mapped backhaul route, the control plane marks the link and
     transports `disabled`, queues scoped cleanup jobs with
     `route_disable_batch_id`, and queues a mandatory ingress route-policy
     refresh. The disabled link remains visible in topology but is excluded from
@@ -116,6 +127,12 @@ Minimum production path for the first ingress/egress pair:
 - Agent offline: jobs remain queued until the agent polls. If an agent claimed a job and died, the backend returns the expired `running` lease to `retrying`.
 - Endpoint unreachable: tunnel unit may start but health reports `degraded`; inspect agent job result and transport health.
 - Client traffic reaches egress but replies do not return: verify both managed NAT comments exist in `nft list chain ip megavpn_backhaul postrouting`: `ingress-snat` on the ingress node and `egress-masquerade` on the egress node. Re-apply the selected backhaul transport if either rule is missing.
+- VLESS clients connect but traffic exits from ingress or does not leave the
+  node: verify the rendered Xray outbound has `sendThrough`, then run
+  `node.route_policy.apply` on the ingress node and confirm the job produced an
+  active `xray_vless_remote_egress` system route. If the route is blocked, fix
+  the selected managed backhaul table/interface before re-applying the Xray
+  instance.
 - Cleanup failed: link remains `failed`; inspect the cleanup job result. Stale `running` cleanup jobs are recovered automatically after lease expiry, but real failed/cancelled jobs still require operator retry. The agent will not remove paths outside the managed backhaul directory or managed systemd unit prefix.
 - Cleanup succeeded and link disappeared from the active list: expected lifecycle behavior. The link is now `deleted`; use the `Recently Deleted Backhaul` table and Jobs/Audit views for cleanup confirmation.
 - Xray/IPsec selected: config is written and status becomes `materialized`, but it is not enabled automatically; manual transport activation is required until the driver-specific safety gate exists.

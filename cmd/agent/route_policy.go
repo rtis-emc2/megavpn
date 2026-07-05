@@ -28,6 +28,10 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 	if !ok {
 		return "failed", map[string]any{"error": "route policy routes payload must be an array"}
 	}
+	systemRoutes, ok := j.Payload["system_routes"].([]any)
+	if !ok {
+		systemRoutes = []any{}
+	}
 	snapshot := cloneRoutePolicyPayload(j.Payload)
 	snapshot["node_id"] = nodeID
 	snapshot["output_path"] = outputPath
@@ -38,18 +42,19 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 	if err := writeManagedFile(managedFileSpec{Path: outputPath, Content: string(b) + "\n", Mode: "0640"}); err != nil {
 		return "failed", map[string]any{"error": err.Error(), "stage": "write_route_policy", "output_path": outputPath}
 	}
-	kernelPlan, err := renderRoutePolicyKernelScript(routes, stringify(j.Payload["revision"]))
+	kernelPlan, err := renderRoutePolicyKernelScript(routes, systemRoutes, stringify(j.Payload["revision"]))
 	if err != nil {
 		return "failed", map[string]any{"error": err.Error(), "stage": "render_route_policy_enforcement", "output_path": outputPath}
 	}
 	kernelResult := map[string]any{
-		"enforced":        false,
-		"rule_count":      kernelPlan.RuleCount,
-		"marked_count":    kernelPlan.MarkedCount,
-		"skipped_count":   kernelPlan.SkippedCount,
-		"skipped_reasons": kernelPlan.Reasons,
+		"enforced":          false,
+		"rule_count":        kernelPlan.RuleCount,
+		"system_rule_count": kernelPlan.SystemRuleCount,
+		"marked_count":      kernelPlan.MarkedCount,
+		"skipped_count":     kernelPlan.SkippedCount,
+		"skipped_reasons":   kernelPlan.Reasons,
 	}
-	if kernelPlan.RuleCount > 0 {
+	if kernelPlan.RuleCount+kernelPlan.SystemRuleCount > 0 {
 		if !isSafeRoutePolicyManagedPath(routePolicyScriptPath) || !isSafeRoutePolicyManagedPath(routePolicyUnitPath) || !isSafeRoutePolicyManagedPath(routePolicyTimerPath) {
 			return "failed", map[string]any{"error": "route policy managed path is not allowed", "stage": "route_policy_enforcement_paths"}
 		}
@@ -106,23 +111,32 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		}
 	}
 	message := "route policy snapshot applied"
-	if kernelPlan.RuleCount > 0 {
+	if kernelPlan.RuleCount+kernelPlan.SystemRuleCount > 0 {
 		message = "route policy snapshot and kernel egress enforcement applied"
 	}
+	activeSystemRouteCount := 0
+	for _, item := range systemRoutes {
+		route, _ := item.(map[string]any)
+		if strings.EqualFold(stringify(route["status"]), "active") {
+			activeSystemRouteCount++
+		}
+	}
 	return "succeeded", map[string]any{
-		"message":                 message,
-		"node_id":                 nodeID,
-		"output_path":             outputPath,
-		"revision":                stringify(j.Payload["revision"]),
-		"enforcement_mode":        first(stringify(j.Payload["enforcement_mode"]), "snapshot"),
-		"enforced":                kernelResult["enforced"],
-		"kernel":                  kernelResult,
-		"enforceable_routes":      enforceableCount,
-		"observe_only_routes":     observeOnlyCount,
-		"egress_candidate_routes": egressCandidateCount,
-		"egress_blocked_routes":   egressBlockedCount,
-		"route_count":             len(routes),
-		"active_route_count":      activeCount,
+		"message":                   message,
+		"node_id":                   nodeID,
+		"output_path":               outputPath,
+		"revision":                  stringify(j.Payload["revision"]),
+		"enforcement_mode":          first(stringify(j.Payload["enforcement_mode"]), "snapshot"),
+		"enforced":                  kernelResult["enforced"],
+		"kernel":                    kernelResult,
+		"enforceable_routes":        enforceableCount,
+		"observe_only_routes":       observeOnlyCount,
+		"egress_candidate_routes":   egressCandidateCount,
+		"egress_blocked_routes":     egressBlockedCount,
+		"route_count":               len(routes),
+		"active_route_count":        activeCount,
+		"system_route_count":        len(systemRoutes),
+		"active_system_route_count": activeSystemRouteCount,
 	}
 }
 
@@ -162,6 +176,11 @@ func validateRoutePolicyPayload(payload map[string]any) error {
 	}
 	if _, ok := payload["routes"].([]any); !ok {
 		return fmt.Errorf("route policy routes must be an array")
+	}
+	if raw, ok := payload["system_routes"]; ok {
+		if _, ok := raw.([]any); !ok {
+			return fmt.Errorf("route policy system_routes must be an array")
+		}
 	}
 	return nil
 }

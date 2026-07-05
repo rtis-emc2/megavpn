@@ -271,3 +271,122 @@ func TestRouteEgressProjectionUsesManagedBackhaul(t *testing.T) {
 		t.Fatalf("managed_backhauls = %#v, want one candidate", egress["managed_backhauls"])
 	}
 }
+
+func TestXrayVLESSSystemRoutesForSpecUsesSendThroughBackhaul(t *testing.T) {
+	t.Parallel()
+
+	managed := map[string][]routePolicyBackhaul{
+		"egress-1": {{
+			LinkID:         "backhaul-1",
+			TransportID:    "transport-1",
+			Driver:         "wireguard",
+			Priority:       10,
+			InterfaceName:  "mgbh1234567890",
+			IngressAddress: "10.240.35.245/30",
+			EgressAddress:  "10.240.35.246/30",
+			RoutingTable:   "21001",
+			RouteMetric:    70,
+			Status:         "active",
+		}},
+	}
+	routes := xrayVLESSSystemRoutesForSpec(routePolicyXrayInstance{
+		ID:          "instance-1",
+		Name:        "edge-vless",
+		SystemdUnit: "megavpn-edge-vless",
+		NodeID:      "ingress-1",
+	}, map[string]any{
+		"xray_egress": map[string]any{
+			"mode":           "remote_egress",
+			"egress_node_id": "egress-1",
+			"send_through":   "10.240.35.245",
+			"routing_table":  "21001",
+			"interface":      "mgbh1234567890",
+		},
+		"xray_default_outbound": map[string]any{
+			"tag":         "egress-default",
+			"protocol":    "freedom",
+			"sendThrough": "10.240.35.245",
+		},
+		"vless_groups": []any{
+			map[string]any{
+				"key":          "remote",
+				"outbound_tag": "egress-remote",
+				"egress": map[string]any{
+					"mode":           "remote_egress",
+					"egress_node_id": "egress-1",
+					"send_through":   "10.240.35.245",
+					"routing_table":  "21001",
+					"interface":      "mgbh1234567890",
+				},
+				"outbound": map[string]any{
+					"tag":         "egress-remote",
+					"protocol":    "freedom",
+					"sendThrough": "10.240.35.245",
+				},
+			},
+		},
+	}, managed)
+	routes = dedupeRoutePolicySystemRoutes(routes)
+	if len(routes) != 1 {
+		t.Fatalf("system routes = %#v, want one deduplicated source route", routes)
+	}
+	route := routes[0]
+	if got := stringify(route["status"]); got != "active" {
+		t.Fatalf("status = %q, want active: %#v", got, route)
+	}
+	if got := stringify(route["source"]); got != "10.240.35.245/32" {
+		t.Fatalf("source = %q, want sendThrough /32: %#v", got, route)
+	}
+	if got := stringify(route["table"]); got != "21001" {
+		t.Fatalf("table = %q, want backhaul table: %#v", got, route)
+	}
+	if got := stringify(route["interface"]); got != "mgbh1234567890" {
+		t.Fatalf("interface = %q, want managed backhaul interface: %#v", got, route)
+	}
+	refs, ok := route["references"].([]any)
+	if !ok || len(refs) != 2 {
+		t.Fatalf("references = %#v, want default and group refs", route["references"])
+	}
+	backhaul, ok := route["managed_backhaul"].(map[string]any)
+	if !ok || stringify(backhaul["link_id"]) != "backhaul-1" {
+		t.Fatalf("managed_backhaul = %#v, want backhaul projection", route["managed_backhaul"])
+	}
+}
+
+func TestXrayVLESSSystemRoutesForSpecBlocksWithoutActiveManagedBackhaul(t *testing.T) {
+	t.Parallel()
+
+	routes := xrayVLESSSystemRoutesForSpec(routePolicyXrayInstance{
+		ID:     "instance-1",
+		Name:   "edge-vless",
+		NodeID: "ingress-1",
+	}, map[string]any{
+		"xray_egress": map[string]any{
+			"mode":           "remote_egress",
+			"egress_node_id": "egress-1",
+			"send_through":   "10.240.35.245",
+			"routing_table":  "21001",
+			"interface":      "mgbh1234567890",
+		},
+	}, nil)
+	if len(routes) != 1 {
+		t.Fatalf("system routes = %#v, want one blocked route", routes)
+	}
+	route := routes[0]
+	if got := stringify(route["status"]); got != "blocked" {
+		t.Fatalf("status = %q, want blocked: %#v", got, route)
+	}
+	reasons, ok := route["reasons"].([]string)
+	if !ok || len(reasons) == 0 {
+		t.Fatalf("reasons = %#v, want blocked reason", route["reasons"])
+	}
+	found := false
+	for _, reason := range reasons {
+		if reason == "xray remote egress requires an active managed backhaul matching the sendThrough source" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("reasons = %#v, want active managed backhaul reason", reasons)
+	}
+}

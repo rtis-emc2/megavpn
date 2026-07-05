@@ -31,7 +31,7 @@ func TestRenderRoutePolicyKernelScriptWithManagedBackhaul(t *testing.T) {
 			},
 			"enforcement": map[string]any{"mode": "l3_l4_candidate"},
 		},
-	}, "rev-1")
+	}, nil, "rev-1")
 	if err != nil {
 		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestRenderRoutePolicyKernelScriptWithManagedBackhaulCandidates(t *testing.T
 			},
 			"enforcement": map[string]any{"mode": "l3_l4_candidate"},
 		},
-	}, "rev-candidates")
+	}, nil, "rev-candidates")
 	if err != nil {
 		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
 	}
@@ -92,6 +92,41 @@ func TestRenderRoutePolicyKernelScriptWithManagedBackhaulCandidates(t *testing.T
 		"route_policy_replace_route '203.0.113.0/24' '21001' 10 'mgbh-primary' '' '10.240.1.2'",
 		"route_policy_replace_route '203.0.113.0/24' '21001' 100 'mgbh-backup' '' '10.240.2.2'",
 		"ip rule add from '10.66.0.2/32' to '203.0.113.0/24' table '21001' priority 22000",
+	}
+	for _, check := range checks {
+		if !strings.Contains(plan.Script, check) {
+			t.Fatalf("expected script to contain %q, got:\n%s", check, plan.Script)
+		}
+	}
+}
+
+func TestRenderRoutePolicyKernelScriptWithXraySystemRoute(t *testing.T) {
+	t.Parallel()
+
+	plan, err := renderRoutePolicyKernelScript(nil, []any{
+		map[string]any{
+			"system_route_id": "xray-route-1",
+			"kind":            "xray_vless_remote_egress",
+			"status":          "active",
+			"source":          "10.240.35.245/32",
+			"destination":     "0.0.0.0/0",
+			"interface":       "mgbh1234567890",
+			"table":           "21001",
+			"managed_backhaul": map[string]any{
+				"route_metric":   70,
+				"egress_address": "10.240.35.246/30",
+			},
+		},
+	}, "rev-system")
+	if err != nil {
+		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
+	}
+	if plan.SystemRuleCount != 1 || plan.RuleCount != 0 || plan.MarkedCount != 0 {
+		t.Fatalf("unexpected plan counts: %#v", plan)
+	}
+	checks := []string{
+		"route_policy_replace_route '0.0.0.0/0' '21001' 70 'mgbh1234567890' '' '10.240.35.246'",
+		"ip rule add from '10.240.35.245/32' table '21001' priority 21900",
 	}
 	for _, check := range checks {
 		if !strings.Contains(plan.Script, check) {
@@ -116,7 +151,7 @@ func TestRenderRoutePolicyKernelScriptWithPortMark(t *testing.T) {
 			"egress":           map[string]any{"status": "candidate", "mode": "remote_egress", "interface": "mgbh123", "table": "21001"},
 			"enforcement":      map[string]any{"mode": "l3_l4_candidate"},
 		},
-	}, "rev-2")
+	}, nil, "rev-2")
 	if err != nil {
 		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
 	}
@@ -149,7 +184,7 @@ func TestRenderRoutePolicyKernelScriptSkipsMainTable(t *testing.T) {
 			"egress":           map[string]any{"status": "candidate", "mode": "remote_egress", "interface": "mgbh123", "table": "main"},
 			"enforcement":      map[string]any{"mode": "l3_l4_candidate"},
 		},
-	}, "rev-3")
+	}, nil, "rev-3")
 	if err != nil {
 		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
 	}

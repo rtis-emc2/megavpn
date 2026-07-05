@@ -409,6 +409,9 @@ func TestNormalizeNodeRoutePolicyApplyAcceptsGoRouteObjects(t *testing.T) {
 		"routes": []map[string]any{
 			{"route_id": "route-1", "status": "active"},
 		},
+		"system_routes": []map[string]any{
+			{"system_route_id": "xray-route-1", "status": "active"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
@@ -420,9 +423,19 @@ func TestNormalizeNodeRoutePolicyApplyAcceptsGoRouteObjects(t *testing.T) {
 	if route, ok := routes[0].(map[string]any); !ok || route["route_id"] != "route-1" {
 		t.Fatalf("routes[0] = %#v, want route object", routes[0])
 	}
+	systemRoutes, ok := payload["system_routes"].([]any)
+	if !ok || len(systemRoutes) != 1 {
+		t.Fatalf("system_routes = %#v, want one normalized system route object", payload["system_routes"])
+	}
+	if route, ok := systemRoutes[0].(map[string]any); !ok || route["system_route_id"] != "xray-route-1" {
+		t.Fatalf("system_routes[0] = %#v, want system route object", systemRoutes[0])
+	}
 
 	if _, err := Normalize("node.route_policy.apply", map[string]any{"node_id": "node-1", "routes": []any{"bad"}}); err == nil {
 		t.Fatal("expected non-object route item to be rejected")
+	}
+	if _, err := Normalize("node.route_policy.apply", map[string]any{"node_id": "node-1", "system_routes": []any{"bad"}}); err == nil {
+		t.Fatal("expected non-object system route item to be rejected")
 	}
 }
 

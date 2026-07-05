@@ -620,18 +620,31 @@ func (s *Store) buildNodeRoutePolicyPayload(ctx context.Context, nodeID string) 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	revision := routePolicyRevision(routes)
-	enforcementSummary := routePolicyEnforcementSummary(routes)
+	systemRoutes, err := s.buildNodeRoutePolicySystemRoutes(ctx, nodeID, managedBackhauls)
+	if err != nil {
+		return nil, err
+	}
+	activeSystemRouteCount := 0
+	for _, route := range systemRoutes {
+		if strings.EqualFold(strings.TrimSpace(stringify(route["status"])), "active") {
+			activeSystemRouteCount++
+		}
+	}
+	revision := routePolicyRevision(routes, systemRoutes)
+	enforcementSummary := routePolicyEnforcementSummary(routes, systemRoutes)
 	return map[string]any{
-		"node_id":            strings.TrimSpace(nodeID),
-		"generated_at":       time.Now().UTC().Format(time.RFC3339),
-		"revision":           revision,
-		"enforcement_mode":   "kernel_policy_apply",
-		"output_path":        "/etc/megavpn/client-access-routes.json",
-		"route_count":        len(routes),
-		"active_route_count": activeCount,
-		"enforcement":        enforcementSummary,
-		"routes":             routes,
+		"node_id":                   strings.TrimSpace(nodeID),
+		"generated_at":              time.Now().UTC().Format(time.RFC3339),
+		"revision":                  revision,
+		"enforcement_mode":          "kernel_policy_apply",
+		"output_path":               "/etc/megavpn/client-access-routes.json",
+		"route_count":               len(routes),
+		"active_route_count":        activeCount,
+		"system_route_count":        len(systemRoutes),
+		"active_system_route_count": activeSystemRouteCount,
+		"enforcement":               enforcementSummary,
+		"routes":                    routes,
+		"system_routes":             systemRoutes,
 	}, nil
 }
 
@@ -652,13 +665,317 @@ func (s *Store) listRoutePolicyEgressNodes(ctx context.Context) (map[string]rout
 	return out, rows.Err()
 }
 
-func routePolicyRevision(routes []map[string]any) string {
-	b, err := json.Marshal(routes)
+func routePolicyRevision(routes []map[string]any, systemRoutes ...[]map[string]any) string {
+	payload := map[string]any{"routes": routes}
+	if len(systemRoutes) > 0 {
+		payload["system_routes"] = systemRoutes[0]
+	}
+	b, err := json.Marshal(payload)
 	if err != nil {
 		return ""
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+func (s *Store) buildNodeRoutePolicySystemRoutes(ctx context.Context, nodeID string, managedBackhauls map[string][]routePolicyBackhaul) ([]map[string]any, error) {
+	rows, err := s.db.Query(ctx, `select
+		i.id::text,
+		i.name,
+		i.slug,
+		coalesce(i.systemd_unit,''),
+		i.status,
+		i.enabled,
+		coalesce(ir.spec_json, '{}'::jsonb)
+	from instances i
+	join service_definitions sd on sd.id=i.service_definition_id
+	left join instance_revisions ir on ir.id=coalesce(i.last_applied_revision_id, i.current_revision_id)
+	where i.node_id=$1
+	  and i.status <> 'deleted'
+	  and sd.code in ('xray-core','xray','xray_core')
+	order by i.name asc, i.created_at asc`, strings.TrimSpace(nodeID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := make([]map[string]any, 0)
+	for rows.Next() {
+		var instanceID, name, slug, unit, status string
+		var enabled bool
+		var raw []byte
+		if err := rows.Scan(&instanceID, &name, &slug, &unit, &status, &enabled, &raw); err != nil {
+			return nil, err
+		}
+		if !enabled || !strings.EqualFold(status, "active") {
+			continue
+		}
+		spec := map[string]any{}
+		_ = json.Unmarshal(raw, &spec)
+		entries = append(entries, xrayVLESSSystemRoutesForSpec(routePolicyXrayInstance{
+			ID:          instanceID,
+			Name:        name,
+			Slug:        slug,
+			SystemdUnit: unit,
+			NodeID:      strings.TrimSpace(nodeID),
+		}, spec, managedBackhauls)...)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return dedupeRoutePolicySystemRoutes(entries), nil
+}
+
+type routePolicyXrayInstance struct {
+	ID          string
+	Name        string
+	Slug        string
+	SystemdUnit string
+	NodeID      string
+}
+
+func xrayVLESSSystemRoutesForSpec(instance routePolicyXrayInstance, spec map[string]any, managedBackhauls map[string][]routePolicyBackhaul) []map[string]any {
+	if spec == nil {
+		return nil
+	}
+	entries := make([]map[string]any, 0, 2)
+	if egress, _ := spec["xray_egress"].(map[string]any); len(egress) > 0 {
+		outbound, _ := spec["xray_default_outbound"].(map[string]any)
+		entries = append(entries, routePolicySystemRouteFromXrayEgress(instance, "instance_default", "default", firstString(outbound["tag"], "egress-default"), egress, outbound, managedBackhauls))
+	}
+	for _, item := range rawXrayVLESSGroupList(spec) {
+		group, _ := item.(map[string]any)
+		if group == nil {
+			continue
+		}
+		egress, _ := group["egress"].(map[string]any)
+		outbound, _ := group["outbound"].(map[string]any)
+		if len(egress) == 0 && len(outbound) == 0 {
+			continue
+		}
+		groupKey := normalizeXrayVLESSGroupKey(firstString(group["key"], group["name"], group["id"]))
+		if groupKey == "" {
+			continue
+		}
+		outboundTag := normalizeXrayOutboundTag(firstString(outbound["tag"], group["outbound_tag"], group["outboundTag"], group["tag"]))
+		if outboundTag == "" {
+			outboundTag = "direct"
+		}
+		entries = append(entries, routePolicySystemRouteFromXrayEgress(instance, "vless_group", groupKey, outboundTag, egress, outbound, managedBackhauls))
+	}
+	out := entries[:0]
+	for _, entry := range entries {
+		if entry != nil {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+func rawXrayVLESSGroupList(spec map[string]any) []any {
+	if spec == nil {
+		return nil
+	}
+	for _, key := range []string{"vless_groups", "xray_groups", "outbound_groups"} {
+		if list, ok := spec[key].([]any); ok {
+			return list
+		}
+	}
+	return nil
+}
+
+func routePolicySystemRouteFromXrayEgress(instance routePolicyXrayInstance, scope, scopeKey, outboundTag string, egress, outbound map[string]any, managedBackhauls map[string][]routePolicyBackhaul) map[string]any {
+	if egress == nil {
+		egress = map[string]any{}
+	}
+	if outbound == nil {
+		outbound = map[string]any{}
+	}
+	mode := strings.ToLower(firstString(egress["mode"], egress["egress_mode"]))
+	source := hostAddress(firstString(egress["send_through"], egress["sendThrough"], outbound["sendThrough"], outbound["send_through"]))
+	if source == "" {
+		return nil
+	}
+	if mode == "" {
+		mode = "remote_egress"
+	}
+	if mode == "local" || mode == "direct" || mode == "local_breakout" {
+		return nil
+	}
+	entry := map[string]any{
+		"system_route_id": routePolicySystemRouteID(instance.ID, scope, scopeKey, source),
+		"kind":            "xray_vless_remote_egress",
+		"status":          "active",
+		"source":          source + "/32",
+		"source_address":  source,
+		"destination":     "0.0.0.0/0",
+		"mode":            "remote_egress",
+		"outbound_tag":    outboundTag,
+		"references": []any{map[string]any{
+			"instance_id":   instance.ID,
+			"instance_name": firstNonEmptyRouteValue(instance.Name, instance.Slug, instance.ID),
+			"systemd_unit":  instance.SystemdUnit,
+			"scope":         scope,
+			"scope_key":     scopeKey,
+			"outbound_tag":  outboundTag,
+		}},
+		"reasons": []string{"xray/vless remote egress uses sendThrough source routing over a managed backhaul"},
+	}
+	if instance.NodeID != "" {
+		entry["node_id"] = instance.NodeID
+	}
+	egressNodeID := firstString(egress["egress_node_id"], egress["node_id"])
+	if egressNodeID != "" {
+		entry["egress_node_id"] = egressNodeID
+	}
+	if linkID := firstString(egress["link_id"]); linkID != "" {
+		entry["link_id"] = linkID
+	}
+	if transportID := firstString(egress["transport_id"]); transportID != "" {
+		entry["transport_id"] = transportID
+	}
+	table := firstString(egress["routing_table"], egress["table"])
+	iface := firstString(egress["interface"], egress["interface_name"], egress["dev"])
+	metric := intFromAnyRoutePolicy(egress["route_metric"], egress["metric"])
+	matched := matchingRoutePolicyBackhaulsForSource(managedBackhauls[egressNodeID], source)
+	if len(matched) > 0 {
+		if table == "" || strings.EqualFold(table, "main") {
+			table = matched[0].RoutingTable
+		}
+		if iface == "" {
+			iface = matched[0].InterfaceName
+		}
+		if metric <= 0 {
+			metric = matched[0].RouteMetric
+		}
+		entry["managed_backhaul"] = routePolicyBackhaulProjection(matched[0], table)
+		entry["managed_backhauls"] = routePolicyBackhaulProjections(matched, table)
+	}
+	if table != "" {
+		entry["table"] = table
+		entry["routing_table"] = table
+	}
+	if iface != "" {
+		entry["interface"] = iface
+	}
+	if metric > 0 {
+		entry["route_metric"] = metric
+	}
+	reasons := routePolicySystemRouteBlockReasons(source, table, iface)
+	if egressNodeID != "" && len(matched) == 0 {
+		reasons = append(reasons, "xray remote egress requires an active managed backhaul matching the sendThrough source")
+	}
+	if len(reasons) > 0 {
+		entry["status"] = "blocked"
+		entry["reasons"] = reasons
+	}
+	return entry
+}
+
+func routePolicySystemRouteBlockReasons(source, table, iface string) []string {
+	reasons := []string{}
+	if addr, err := netip.ParseAddr(source); err != nil || !addr.Is4() {
+		reasons = append(reasons, "xray sendThrough source is not a valid IPv4 address")
+	}
+	if strings.TrimSpace(table) == "" || strings.EqualFold(strings.TrimSpace(table), "main") {
+		reasons = append(reasons, "xray remote egress requires a non-main managed backhaul routing table")
+	}
+	if strings.TrimSpace(iface) == "" {
+		reasons = append(reasons, "xray remote egress requires a managed backhaul interface")
+	}
+	return reasons
+}
+
+func matchingRoutePolicyBackhaulsForSource(backhauls []routePolicyBackhaul, source string) []routePolicyBackhaul {
+	out := make([]routePolicyBackhaul, 0, len(backhauls))
+	for _, backhaul := range backhauls {
+		if hostAddress(backhaul.IngressAddress) == source {
+			out = append(out, backhaul)
+		}
+	}
+	return out
+}
+
+func routePolicySystemRouteID(instanceID, scope, scopeKey, source string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{instanceID, scope, scopeKey, source}, "|")))
+	return "xray-" + hex.EncodeToString(sum[:6])
+}
+
+func dedupeRoutePolicySystemRoutes(entries []map[string]any) []map[string]any {
+	byKey := map[string]map[string]any{}
+	order := []string{}
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		key := strings.Join([]string{
+			strings.TrimSpace(stringify(entry["source"])),
+			strings.TrimSpace(stringify(entry["destination"])),
+			strings.TrimSpace(stringify(entry["table"])),
+			strings.TrimSpace(stringify(entry["interface"])),
+		}, "|")
+		if key == "|||" {
+			key = strings.TrimSpace(stringify(entry["system_route_id"]))
+		}
+		if existing, ok := byKey[key]; ok {
+			existing["references"] = appendSystemRouteReferences(existing["references"], entry["references"])
+			if !strings.EqualFold(stringify(existing["status"]), "active") && strings.EqualFold(stringify(entry["status"]), "active") {
+				for k, v := range entry {
+					if k != "references" {
+						existing[k] = v
+					}
+				}
+			}
+			continue
+		}
+		byKey[key] = entry
+		order = append(order, key)
+	}
+	sort.Slice(order, func(i, j int) bool {
+		left, right := byKey[order[i]], byKey[order[j]]
+		return strings.Join([]string{stringify(left["source"]), stringify(left["table"]), stringify(left["interface"]), stringify(left["system_route_id"])}, "|") <
+			strings.Join([]string{stringify(right["source"]), stringify(right["table"]), stringify(right["interface"]), stringify(right["system_route_id"])}, "|")
+	})
+	out := make([]map[string]any, 0, len(order))
+	for _, key := range order {
+		out = append(out, byKey[key])
+	}
+	return out
+}
+
+func appendSystemRouteReferences(existingRaw, nextRaw any) []any {
+	out := []any{}
+	if existing, ok := existingRaw.([]any); ok {
+		out = append(out, existing...)
+	}
+	if next, ok := nextRaw.([]any); ok {
+		out = append(out, next...)
+	}
+	return out
+}
+
+func intFromAnyRoutePolicy(values ...any) int {
+	for _, value := range values {
+		switch x := value.(type) {
+		case int:
+			if x != 0 {
+				return x
+			}
+		case int64:
+			if x != 0 {
+				return int(x)
+			}
+		case float64:
+			if x != 0 {
+				return int(x)
+			}
+		case string:
+			if parsed, err := strconv.Atoi(strings.TrimSpace(x)); err == nil && parsed != 0 {
+				return parsed
+			}
+		}
+	}
+	return 0
 }
 
 func routeSourceIdentity(serviceCode string, metadata map[string]any) map[string]any {
@@ -752,15 +1069,18 @@ func routeEnforcementProjection(entry map[string]any) map[string]any {
 	}
 }
 
-func routePolicyEnforcementSummary(routes []map[string]any) map[string]any {
+func routePolicyEnforcementSummary(routes []map[string]any, systemRoutes ...[]map[string]any) map[string]any {
 	out := map[string]any{
-		"mode":                "kernel_policy_apply",
-		"enforced":            false,
-		"enforceable_routes":  0,
-		"observe_only_routes": 0,
+		"mode":                 "kernel_policy_apply",
+		"enforced":             false,
+		"enforceable_routes":   0,
+		"observe_only_routes":  0,
+		"system_routes":        0,
+		"active_system_routes": 0,
 		"notes": []string{
 			"agent materializes a signed route-policy snapshot",
 			"agent applies kernel policy routing only for L3/L4 allow candidates with explicit egress output",
+			"agent applies system source routes for Xray/VLESS remote egress outbounds",
 		},
 	}
 	for _, route := range routes {
@@ -770,6 +1090,14 @@ func routePolicyEnforcementSummary(routes []map[string]any) map[string]any {
 			continue
 		}
 		out["observe_only_routes"] = intFromRouteSummary(out["observe_only_routes"]) + 1
+	}
+	if len(systemRoutes) > 0 {
+		out["system_routes"] = len(systemRoutes[0])
+		for _, route := range systemRoutes[0] {
+			if strings.EqualFold(strings.TrimSpace(stringify(route["status"])), "active") {
+				out["active_system_routes"] = intFromRouteSummary(out["active_system_routes"]) + 1
+			}
+		}
 	}
 	return out
 }

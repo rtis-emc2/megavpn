@@ -1,6 +1,6 @@
 # VLESS Access Groups
 
-**Release:** `7.0.1.5`
+**Release:** `7.0.1.6`
 
 Russian companion: [VLESS_GROUPS_RU.md](VLESS_GROUPS_RU.md).
 
@@ -88,6 +88,11 @@ domain data installed.
 - Client provisioning stores the selected group key on the client access
   binding.
 - Apply renders Xray routing rules per client user/email.
+- When instance or group remote egress resolves to a managed backhaul, the
+  driver writes Xray `freedom.sendThrough` with the ingress-side backhaul
+  address. `node.route_policy.apply` also publishes a system route for that
+  source address so locally generated Xray traffic leaves through the selected
+  egress node instead of the ingress node default route.
 - A client binding that references a deleted or unknown group falls back to the
   instance default group during render.
 - `Only selected instance` generates an allow rule for the target endpoint and
@@ -120,5 +125,5 @@ Operators should be able to answer:
 | Group is not visible during provisioning | Confirm it is active and refresh core data. |
 | Changed group has no runtime effect | Check the group mutation response for sync failures, then inspect the queued `instance.apply` job for that instance. |
 | Target-only group fails validation | Verify the target instance endpoint host and port. |
-| Remote egress is not used | Verify instance egress mode, selected egress node, active backhaul and route-policy sync. |
+| Remote egress is not used | Verify instance egress mode, selected egress node, active backhaul and route-policy sync. The ingress node should have a `node.route_policy.apply` result with an active `xray_vless_remote_egress` system route and an `ip rule from <sendThrough>/32 table <backhaul_table>` kernel rule. |
 | Ad blocking has no effect | Verify Xray geosite data and generated routing rules. |
