@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.10`
+**Release:** `7.0.1.11`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -47,9 +47,22 @@ Core API/UI:
 | `xray_vless_reality` | Proxy | Writes Xray client/server Reality profile and unit only | Camouflage transport, not direct kernel routing. |
 | `xray_tun_vless` | L3 over proxy | Writes Xray profile and unit only | Requires policy routing and loop protection before activation. |
 
+## UI Selection Semantics
+
+The Backhaul create form has two related controls:
+
+| Control | Meaning | Operational effect |
+| --- | --- | --- |
+| `Primary transport driver` | The selected driver for the active ingress-to-egress path. | Stored as `desired_driver`, rendered as the selected transport, used by apply/probe gating and route-policy projection. |
+| `Transport profiles to create` | Driver profiles generated for this backhaul link. | Stored as `drivers` during create. The primary driver is always included first; additional checked profiles are standby alternatives for controlled fallback, diagnostics or later promotion. |
+
+These controls do not select client-facing VPN protocols. They define the
+internal node-to-node transport between ingress and egress. Client access
+instances keep their own service drivers, client configs and route policies.
+
 ## Data Flow
 
-1. Operator creates a backhaul link and selects ingress node, egress node, preferred driver and internal transport profiles.
+1. Operator creates a backhaul link and selects ingress node, egress node, primary transport driver and internal transport profiles.
 2. Control Plane validates node roles and driver support.
 3. Control Plane generates driver material and stores secrets as encrypted secret refs.
 4. Operator applies the backhaul link.

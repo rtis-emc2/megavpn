@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.0.1.10`
+**Релиз:** `7.0.1.11`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -370,12 +370,16 @@ Workflow:
 
 1. Откройте `Backhaul`.
 2. Создайте link: ingress node -> egress node.
-3. Выберите transport profile: WireGuard как основной вариант, OpenVPN как
-   fallback.
-4. Нажмите `Apply`.
-5. Дождитесь успешного apply на обеих сторонах.
-6. Нажмите `Test`.
-7. Проверьте:
+3. Выберите `Primary transport driver`: это активный node-to-node transport для
+   apply, health checks и route projection. Это не выбор клиентского
+   VPN-протокола.
+4. Выберите `Transport profiles to create`: primary driver остается включенным,
+   дополнительные профили, например OpenVPN, нужны как standby/fallback и для
+   диагностики.
+5. Нажмите `Apply`.
+6. Дождитесь успешного apply на обеих сторонах.
+7. Нажмите `Test`.
+8. Проверьте:
    - обе стороны `healthy`;
    - packet loss `0`;
    - latency видна;

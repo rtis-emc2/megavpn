@@ -528,6 +528,64 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 .check-row strong { color: var(--text); }
 .check-row small { color: var(--muted-2); font-size: 11px; line-height: 1.35; margin-top: 5px; }
 .profile-mode-tags { margin-top: 8px; }
+.backhaul-driver-help {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0 12px;
+}
+.backhaul-driver-help div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--panel-soft);
+}
+.backhaul-driver-help strong,
+.backhaul-driver-help span {
+  display: block;
+}
+.backhaul-driver-help strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.backhaul-driver-help span {
+  color: var(--muted-2);
+  font-size: 11px;
+  line-height: 1.35;
+  margin-top: 4px;
+}
+.backhaul-driver-list { align-items: stretch; }
+.backhaul-driver-choice {
+  min-height: 138px;
+  align-content: start;
+}
+.backhaul-driver-choice.is-primary {
+  border-color: rgba(22, 163, 74, 0.42);
+  background: #f5fff8;
+  box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.08);
+}
+.backhaul-driver-choice-body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.backhaul-driver-choice-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.backhaul-driver-choice-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.backhaul-driver-choice-head .tag {
+  flex: 0 0 auto;
+  margin-top: -1px;
+}
+.tag[hidden] { display: none !important; }
 .small-action { padding: 9px 12px; min-height: 36px; font-size: 13px; }
 .instance-diagnostics { margin-top: 16px; }
 .instance-diagnostics .code-block { max-height: 360px; }
@@ -5593,7 +5651,7 @@ tr:hover td {
   .auth-gate .login-shell { grid-template-columns: 1fr; }
   .auth-gate .login-hero, .auth-gate .auth-card { min-height: auto; }
   .certificate-overview-grid,
-  .certificate-choice-grid, .certificate-manage-layout, .certificate-preview-grid, .choice-list { grid-template-columns: 1fr; }
+  .certificate-choice-grid, .certificate-manage-layout, .certificate-preview-grid, .choice-list, .backhaul-driver-help { grid-template-columns: 1fr; }
   .revision-instance-strip { grid-template-columns: 1fr; }
   .revision-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .backhaul-row-grid, .backhaul-row-grid.compact {
