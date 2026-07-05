@@ -67,6 +67,15 @@ func (s *Server) applyNodeRoutePolicy(w nethttp.ResponseWriter, r *nethttp.Reque
 	})
 }
 
+func (s *Server) previewNodeRoutePolicy(w nethttp.ResponseWriter, r *nethttp.Request) {
+	preview, err := s.store.PreviewNodeRoutePolicy(r.Context(), idParam(r))
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, preview)
+}
+
 func (s *Server) clearNodeStaleRotation(w nethttp.ResponseWriter, r *nethttp.Request) {
 	jobs, err := s.store.ClearNodeStalePendingRotation(r.Context(), idParam(r))
 	if err != nil {

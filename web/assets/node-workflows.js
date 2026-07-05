@@ -131,6 +131,128 @@
       return `${host}:${port}`;
     }
 
+    function previewNumber(value) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function renderRoutePolicyPreviewMetric(label, value, caption = '') {
+      return `
+        <div class="card">
+          <div class="mini-label">${escapeHTML(label)}</div>
+          <div class="metric-value">${escapeHTML(String(previewNumber(value)))}</div>
+          ${caption ? `<div class="metric-caption">${escapeHTML(caption)}</div>` : ''}
+        </div>`;
+    }
+
+    function renderRoutePolicyReasons(reasons) {
+      const list = arrayOrEmpty(reasons).map((item) => String(item || '').trim()).filter(Boolean);
+      if (!list.length) return '<span class="metric-caption">No reasons reported.</span>';
+      return list.map((item) => `<span class="tag warn">${escapeHTML(item)}</span>`).join('');
+    }
+
+    function renderRoutePolicyWarningRows(warnings) {
+      const list = arrayOrEmpty(warnings).slice(0, 12);
+      if (!list.length) return '<div class="empty">No route-policy warnings in the current projection.</div>';
+      return list.map((item) => `
+        <div class="node-record-card route-policy-warning">
+          <div>
+            <strong>${escapeHTML(item.type || 'warning')}</strong>
+            <span class="metric-caption mono-clip">${escapeHTML(item.route_id || item.system_route_id || item.source || 'n/a')}</span>
+          </div>
+          <div class="instance-state-cluster">${renderRoutePolicyReasons(item.reasons)}</div>
+        </div>`).join('');
+    }
+
+    function renderRoutePolicySystemRows(systemRoutes) {
+      const list = arrayOrEmpty(systemRoutes).slice(0, 8);
+      if (!list.length) return '<div class="empty">No managed system routes are projected for this node.</div>';
+      return list.map((route) => `
+        <div class="node-record-card">
+          <div>
+            <strong>${escapeHTML(route.kind || 'system route')}</strong>
+            <span class="metric-caption mono-clip">${escapeHTML(route.system_route_id || 'n/a')}</span>
+          </div>
+          <div>
+            <code class="mono-clip">${escapeHTML(route.source || 'n/a')} -> ${escapeHTML(route.destination || 'n/a')}</code>
+            <span class="metric-caption">table ${escapeHTML(route.table || route.routing_table || 'n/a')} · interface ${escapeHTML(route.interface || 'n/a')}</span>
+          </div>
+          <div class="instance-state-cluster">
+            ${statusTag(route.status || 'unknown')}
+            <span class="tag">${escapeHTML(route.outbound_tag || 'outbound')}</span>
+          </div>
+        </div>`).join('');
+    }
+
+    function renderRoutePolicyClientRows(routes) {
+      const list = arrayOrEmpty(routes).slice(0, 8);
+      if (!list.length) return '<div class="empty">No client access routes are projected for this node.</div>';
+      return list.map((route) => {
+        const source = route.source_identity || {};
+        const egress = route.egress || {};
+        const enforcement = route.enforcement || {};
+        return `
+          <div class="node-record-card">
+            <div>
+              <strong>${escapeHTML(route.username || route.name || 'client route')}</strong>
+              <span class="metric-caption mono-clip">${escapeHTML(route.route_id || 'n/a')}</span>
+            </div>
+            <div>
+              <code class="mono-clip">${escapeHTML(route.destination_type || 'destination')}:${escapeHTML(route.destination || 'n/a')}</code>
+              <span class="metric-caption">${escapeHTML(route.protocol || 'any')} ${escapeHTML(route.ports || '')}</span>
+            </div>
+            <div>
+              <span class="metric-caption">source ${escapeHTML(source.type || 'unknown')}${source.value ? ` · ${escapeHTML(source.value)}` : ''}</span>
+              <span class="metric-caption">egress ${escapeHTML(egress.mode || 'unknown')} · table ${escapeHTML(egress.table || 'n/a')}</span>
+            </div>
+            <div class="instance-state-cluster">
+              ${statusTag(route.status || 'unknown')}
+              ${statusTag(egress.status || 'unknown')}
+              <span class="tag">${escapeHTML(enforcement.mode || 'observe_only')}</span>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function renderRoutePolicyPreview(data) {
+      const summary = data?.summary || {};
+      const kernel = data?.kernel || {};
+      return `
+        <div class="route-policy-preview stack">
+          <div class="section-head compact-head">
+            <div>
+              <div class="eyebrow">Route Policy Preview</div>
+              <h3>${escapeHTML(data?.node_name || data?.node_id || 'node')}</h3>
+            </div>
+            <div class="section-meta">
+              ${statusTag(data?.status || 'unknown')}
+              <span class="tag">rev ${escapeHTML(String(data?.revision || 'n/a').slice(0, 12))}</span>
+            </div>
+          </div>
+          <div class="grid cols-3">
+            ${renderRoutePolicyPreviewMetric('Client routes', summary.route_count, `${previewNumber(summary.enforceable_routes)} enforceable · ${previewNumber(summary.observe_only_routes)} observe-only`)}
+            ${renderRoutePolicyPreviewMetric('System routes', summary.system_route_count, `${previewNumber(summary.active_system_route_count)} active · ${previewNumber(summary.blocked_system_route_count)} blocked`)}
+            ${renderRoutePolicyPreviewMetric('Warnings', summary.warning_count, `${previewNumber(summary.blocked_egress_outputs)} blocked egress outputs`)}
+          </div>
+          <div class="code-block">nft table: ${escapeHTML(kernel.managed_table || 'inet megavpn')}
+chains: ${escapeHTML(kernel.client_mark_chain || 'route_policy_prerouting')}, ${escapeHTML(kernel.system_mark_chain || 'route_policy_output')}
+ip rule priorities: system ${escapeHTML(kernel.system_priority_range || '21900..21949')}, client ${escapeHTML(kernel.client_priority_range || '22000..22999')}
+snapshot: ${escapeHTML(kernel.managed_snapshot || data?.output_path || 'n/a')}</div>
+          <details class="details-block" open>
+            <summary>Warnings and blocked projections</summary>
+            <div class="node-record-list">${renderRoutePolicyWarningRows(data?.warnings)}</div>
+          </details>
+          <details class="details-block" open>
+            <summary>VLESS/system egress routes</summary>
+            <div class="node-record-list">${renderRoutePolicySystemRows(data?.system_routes)}</div>
+          </details>
+          <details class="details-block">
+            <summary>Client access routes</summary>
+            <div class="node-record-list">${renderRoutePolicyClientRows(data?.routes)}</div>
+          </details>
+        </div>`;
+    }
+
     function openInstancesForNode(node) {
       if (!node?.id) return;
       if (state.nodeTerminalActive) disconnectNodeTerminal();
@@ -1032,6 +1154,7 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
                   <button class="secondary-btn" id="retryInventorySyncBtn" type="button">Retry inventory sync</button>
                   <button class="secondary-btn" id="retryDiscoverySyncBtn" type="button">Retry discovery sync</button>
                   <button class="secondary-btn" id="probeNodeChannelBtn" type="button">Channel probe</button>
+                  <button class="secondary-btn" id="inspectRoutePolicyBtn" type="button">Inspect route policy</button>
                   <button class="secondary-btn" id="syncRoutePolicyBtn" type="button">Sync route policy</button>
                   <button class="secondary-btn" id="requeueStuckNodeJobBtn" type="button"${canRequeueStuckJob ? '' : ' disabled'}>Requeue stuck job</button>
                   <button class="secondary-btn" id="clearStaleRotationBtn" type="button"${canClearStaleRotation ? '' : ' disabled'}>Clear stale pending rotation</button>
@@ -1162,6 +1285,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       document.getElementById('retryInventorySyncBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'inventory'));
       document.getElementById('retryDiscoverySyncBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'discover'));
       document.getElementById('probeNodeChannelBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'probe'));
+      document.getElementById('inspectRoutePolicyBtn').addEventListener('click', () => inspectNodeRoutePolicy(node));
       document.getElementById('syncRoutePolicyBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'routes'));
       document.getElementById('requeueStuckNodeJobBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'requeue'));
       document.getElementById('clearStaleRotationBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'clear_rotation'));
@@ -1425,6 +1549,17 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       }
     }
 
+    async function inspectNodeRoutePolicy(node) {
+      const target = document.getElementById('nodeDiagnosticsActionResult');
+      target.innerHTML = '<span class="tag warn">loading route policy preview</span>';
+      try {
+        const data = await requestJSON(`/api/v1/nodes/${node.id}/routes/preview`);
+        target.innerHTML = renderRoutePolicyPreview(data);
+      } catch (err) {
+        target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
     async function runNodeDiagnosticsAction(node, action) {
       const target = document.getElementById('nodeDiagnosticsActionResult');
       const actions = {
@@ -1508,6 +1643,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       rotateAgentToken,
       revokeAgentIdentity,
       viewBootstrapRun,
+      inspectNodeRoutePolicy,
       runNodeDiagnosticsAction,
       toggleNodeMaintenance,
     };

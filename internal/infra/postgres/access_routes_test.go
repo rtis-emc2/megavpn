@@ -1,6 +1,10 @@
 package postgres
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/rtis-emc2/megavpn/internal/domain"
+)
 
 func TestRouteEnforcementProjectionL3L4Candidate(t *testing.T) {
 	t.Parallel()
@@ -388,5 +392,94 @@ func TestXrayVLESSSystemRoutesForSpecBlocksWithoutActiveManagedBackhaul(t *testi
 	}
 	if !found {
 		t.Fatalf("reasons = %#v, want active managed backhaul reason", reasons)
+	}
+}
+
+func TestRoutePolicyPreviewRedactsL7SourceIdentity(t *testing.T) {
+	t.Parallel()
+
+	preview := routePolicyPreviewForNode(testRoutePolicyNode(), map[string]any{
+		"generated_at": "2026-07-06T00:00:00Z",
+		"revision":     "rev-test",
+		"routes": []map[string]any{{
+			"route_id":         "route-1",
+			"username":         "client-1",
+			"service_code":     "xray-core",
+			"status":           "active",
+			"action":           "allow",
+			"destination_type": "cidr",
+			"destination":      "0.0.0.0/0",
+			"protocol":         "any",
+			"source_identity":  map[string]any{"type": "xray_uuid", "value": "8c4f0c2e-0000-4000-9000-000000000001"},
+			"egress":           map[string]any{"mode": "local_breakout", "status": "candidate"},
+			"enforcement":      map[string]any{"mode": "observe_only", "reasons": []string{"route source identity is not enforceable at L3/L4"}},
+		}},
+	})
+	routes, ok := preview["routes"].([]any)
+	if !ok || len(routes) != 1 {
+		t.Fatalf("preview routes = %#v, want one route", preview["routes"])
+	}
+	route, ok := routes[0].(map[string]any)
+	if !ok {
+		t.Fatalf("route type = %T", routes[0])
+	}
+	identity, ok := route["source_identity"].(map[string]any)
+	if !ok {
+		t.Fatalf("source_identity type = %T", route["source_identity"])
+	}
+	if got := stringify(identity["value"]); got != "[redacted]" {
+		t.Fatalf("source identity value = %q, want redacted", got)
+	}
+	if identity["redacted"] != true {
+		t.Fatalf("source identity redacted flag = %#v, want true", identity["redacted"])
+	}
+}
+
+func TestRoutePolicyPreviewSummarizesSystemWarnings(t *testing.T) {
+	t.Parallel()
+
+	preview := routePolicyPreviewForNode(testRoutePolicyNode(), map[string]any{
+		"system_routes": []map[string]any{
+			{
+				"system_route_id": "xray-active",
+				"kind":            "xray_vless_remote_egress",
+				"status":          "active",
+				"source":          "10.240.1.1/32",
+				"destination":     "0.0.0.0/0",
+				"table":           "21001",
+				"interface":       "mgbh123",
+			},
+			{
+				"system_route_id": "xray-blocked",
+				"kind":            "xray_vless_remote_egress",
+				"status":          "blocked",
+				"source":          "10.240.2.1/32",
+				"destination":     "0.0.0.0/0",
+				"reasons":         []string{"xray remote egress requires a managed backhaul interface"},
+			},
+		},
+	})
+	summary, ok := preview["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("summary type = %T", preview["summary"])
+	}
+	if got := intFromRouteSummary(summary["active_system_route_count"]); got != 1 {
+		t.Fatalf("active system routes = %d, want 1: %#v", got, summary)
+	}
+	if got := intFromRouteSummary(summary["blocked_system_route_count"]); got != 1 {
+		t.Fatalf("blocked system routes = %d, want 1: %#v", got, summary)
+	}
+	if got := intFromRouteSummary(summary["warning_count"]); got != 1 {
+		t.Fatalf("warning count = %d, want 1: %#v", got, summary)
+	}
+}
+
+func testRoutePolicyNode() domain.Node {
+	return domain.Node{
+		ID:      "node-1",
+		Name:    "ingress-1",
+		Role:    "ingress",
+		Status:  "online",
+		Address: "203.0.113.10",
 	}
 }

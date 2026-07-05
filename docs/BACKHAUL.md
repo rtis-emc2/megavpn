@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.29`
+**Release:** `7.0.1.30`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -32,6 +32,8 @@ Core API/UI:
 - `POST /api/v1/backhaul-links/{id}/probe`
 - `POST /api/v1/backhaul-links/{id}/promote`
 - `DELETE /api/v1/backhaul-links/{id}`
+- `GET /api/v1/nodes/{id}/routes/preview`
+- `POST /api/v1/nodes/{id}/routes/apply`
 - Backhaul page in the Control Plane UI.
 
 ## Driver Status
@@ -108,8 +110,14 @@ instances keep their own service drivers, client configs and route policies.
   non-main route table.
 - Node-side route policy is kernel-enforced through managed nftables marks and
   policy routing. The agent owns only `inet megavpn route_policy_prerouting`,
-  `inet megavpn route_policy_output` and reserved `ip rule` priorities
-  `21900..22099`; empty policy snapshots still clean these managed rules.
+  `inet megavpn route_policy_output`, reserved system-route `ip rule`
+  priorities `21900..21949` and reserved client-route priorities
+  `22000..22999`; empty policy snapshots still clean these managed rules.
+- Node route-policy preview is read-only and redacts non-L3 source identity
+  values such as VLESS UUIDs while showing operator-relevant projection state:
+  enforceable routes, observe-only routes, VLESS/Xray system egress routes,
+  blocked reasons, selected managed backhaul table/interface and managed
+  nft/ip-rule primitives.
 - Xray/IPsec profiles are not auto-enabled until transport-specific safety gates are implemented.
 
 ## Deployment Model
@@ -127,15 +135,18 @@ Minimum production path for the first ingress/egress pair:
 7. Run Backhaul `Test` and verify both ingress and egress probe jobs are `succeeded`.
 8. Check health summary: both sides should report `healthy`, packet loss should be `0`, latency should be visible as average RTT. If a service is active but the test is `failed/degraded`, use the shown reason, route lookup, peer address and packet loss to distinguish missing connected route, firewall/UDP reachability, tunnel handshake and route table problems.
 9. Create client access route with remote egress node.
-10. Queue route policy sync for the ingress node.
-11. Verify route projection uses `managed_backhaul` for the primary candidate,
+10. Open the ingress node diagnostics and run `Inspect route policy`. Confirm
+    the projected VLESS/Xray system route is `active`, the selected table is a
+    non-main managed backhaul table and no blocking warning is present.
+11. Queue route policy sync for the ingress node.
+12. Verify route projection uses `managed_backhaul` for the primary candidate,
     `managed_backhauls` for the failover set, and route policy job reports
     `enforced=true`.
-12. For VLESS remote egress, verify the route-policy job result includes an
+13. For VLESS remote egress, verify the route-policy job result includes an
     active `xray_vless_remote_egress` system route and the ingress node has
     `nft` output-mark rules plus `ip rule fwmark <mark> table <backhaul_table>`
     in the kernel rule set.
-13. When disabling a mapped backhaul route, the control plane marks the link and
+14. When disabling a mapped backhaul route, the control plane marks the link and
     transports `disabled`, queues scoped cleanup jobs with
     `route_disable_batch_id`, and queues a mandatory ingress route-policy
     refresh. The disabled link remains visible in topology but is excluded from

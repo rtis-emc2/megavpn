@@ -483,6 +483,21 @@ func (s *Store) CreateNodeRoutePolicyApplyJob(ctx context.Context, nodeID string
 	return j, err
 }
 
+func (s *Store) PreviewNodeRoutePolicy(ctx context.Context, nodeID string) (map[string]any, error) {
+	node, err := s.GetNode(ctx, strings.TrimSpace(nodeID))
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(node.Status, "retired") {
+		return nil, errors.New("node is retired")
+	}
+	payload, err := s.buildNodeRoutePolicyPayload(ctx, node.ID)
+	if err != nil {
+		return nil, err
+	}
+	return routePolicyPreviewForNode(node, payload), nil
+}
+
 func (s *Store) buildNodeRoutePolicyPayload(ctx context.Context, nodeID string) (map[string]any, error) {
 	egressNodes, err := s.listRoutePolicyEgressNodes(ctx)
 	if err != nil {
@@ -1100,6 +1115,320 @@ func routePolicyEnforcementSummary(routes []map[string]any, systemRoutes ...[]ma
 		}
 	}
 	return out
+}
+
+func routePolicyPreviewForNode(node domain.Node, payload map[string]any) map[string]any {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	routes := routePolicyMapList(payload["routes"])
+	systemRoutes := routePolicyMapList(payload["system_routes"])
+	previewRoutes := make([]any, 0, len(routes))
+	for _, route := range routes {
+		previewRoutes = append(previewRoutes, routePolicyPreviewRoute(route))
+	}
+	previewSystemRoutes := make([]any, 0, len(systemRoutes))
+	for _, route := range systemRoutes {
+		previewSystemRoutes = append(previewSystemRoutes, routePolicyPreviewSystemRoute(route))
+	}
+	warnings := routePolicyPreviewWarnings(routes, systemRoutes)
+	return map[string]any{
+		"status":        "ok",
+		"node_id":       node.ID,
+		"node_name":     node.Name,
+		"node_role":     node.Role,
+		"node_address":  node.Address,
+		"generated_at":  stringify(payload["generated_at"]),
+		"revision":      stringify(payload["revision"]),
+		"output_path":   stringify(payload["output_path"]),
+		"enforcement":   payload["enforcement"],
+		"kernel":        routePolicyPreviewKernel(payload),
+		"summary":       routePolicyPreviewSummary(routes, systemRoutes, len(warnings)),
+		"warnings":      warnings,
+		"routes":        previewRoutes,
+		"system_routes": previewSystemRoutes,
+	}
+}
+
+func routePolicyPreviewKernel(payload map[string]any) map[string]any {
+	return map[string]any{
+		"managed_table":          "inet megavpn",
+		"client_mark_chain":      "route_policy_prerouting",
+		"system_mark_chain":      "route_policy_output",
+		"client_priority_range":  "22000..22999",
+		"system_priority_range":  "21900..21949",
+		"refresh_unit":           "megavpn-route-policy.service",
+		"refresh_timer":          "megavpn-route-policy.timer",
+		"managed_script":         "/usr/local/lib/megavpn/route-policy/client-access-routes.sh",
+		"managed_snapshot":       firstNonEmptyRouteValue(stringify(payload["output_path"]), "/etc/megavpn/client-access-routes.json"),
+		"enforcement_primitives": []string{"nftables fwmark", "ip rule fwmark lookup table", "ip route replace table"},
+	}
+}
+
+func routePolicyPreviewSummary(routes, systemRoutes []map[string]any, warningCount int) map[string]any {
+	out := map[string]any{
+		"route_count":                len(routes),
+		"active_route_count":         0,
+		"enforceable_routes":         0,
+		"observe_only_routes":        0,
+		"candidate_egress_outputs":   0,
+		"blocked_egress_outputs":     0,
+		"system_route_count":         len(systemRoutes),
+		"active_system_route_count":  0,
+		"blocked_system_route_count": 0,
+		"warning_count":              warningCount,
+	}
+	for _, route := range routes {
+		if strings.EqualFold(stringify(route["status"]), "active") {
+			out["active_route_count"] = intFromRouteSummary(out["active_route_count"]) + 1
+		}
+		enforcement := routePolicyNestedMap(route, "enforcement")
+		if stringify(enforcement["mode"]) == "l3_l4_candidate" {
+			out["enforceable_routes"] = intFromRouteSummary(out["enforceable_routes"]) + 1
+		} else {
+			out["observe_only_routes"] = intFromRouteSummary(out["observe_only_routes"]) + 1
+		}
+		egress := routePolicyNestedMap(route, "egress")
+		if strings.EqualFold(stringify(egress["status"]), "candidate") {
+			out["candidate_egress_outputs"] = intFromRouteSummary(out["candidate_egress_outputs"]) + 1
+		}
+		if strings.EqualFold(stringify(egress["status"]), "blocked") {
+			out["blocked_egress_outputs"] = intFromRouteSummary(out["blocked_egress_outputs"]) + 1
+		}
+	}
+	for _, route := range systemRoutes {
+		switch strings.ToLower(strings.TrimSpace(stringify(route["status"]))) {
+		case "active":
+			out["active_system_route_count"] = intFromRouteSummary(out["active_system_route_count"]) + 1
+		case "blocked":
+			out["blocked_system_route_count"] = intFromRouteSummary(out["blocked_system_route_count"]) + 1
+		}
+	}
+	return out
+}
+
+func routePolicyPreviewRoute(route map[string]any) map[string]any {
+	out := map[string]any{
+		"route_id":         stringify(route["route_id"]),
+		"client_id":        stringify(route["client_id"]),
+		"username":         stringify(route["username"]),
+		"display_name":     stringify(route["display_name"]),
+		"service_code":     stringify(route["service_code"]),
+		"name":             stringify(route["name"]),
+		"status":           stringify(route["status"]),
+		"action":           stringify(route["action"]),
+		"destination_type": stringify(route["destination_type"]),
+		"destination":      stringify(route["destination"]),
+		"protocol":         stringify(route["protocol"]),
+		"ports":            stringify(route["ports"]),
+		"source_identity":  routePolicyPreviewSourceIdentity(routePolicyNestedMap(route, "source_identity")),
+		"egress":           routePolicyPreviewEgress(routePolicyNestedMap(route, "egress")),
+		"enforcement":      route["enforcement"],
+	}
+	if serviceAccessID := strings.TrimSpace(stringify(route["service_access_id"])); serviceAccessID != "" {
+		out["service_access_id"] = serviceAccessID
+	}
+	if instanceID := strings.TrimSpace(stringify(route["instance_id"])); instanceID != "" {
+		out["instance_id"] = instanceID
+	}
+	if nodeID := strings.TrimSpace(stringify(route["node_id"])); nodeID != "" {
+		out["node_id"] = nodeID
+	}
+	if inbound := routePolicyNestedMap(route, "inbound_service"); len(inbound) > 0 {
+		out["inbound_service"] = inbound
+	}
+	return out
+}
+
+func routePolicyPreviewSystemRoute(route map[string]any) map[string]any {
+	out := map[string]any{
+		"system_route_id": stringify(route["system_route_id"]),
+		"kind":            stringify(route["kind"]),
+		"status":          stringify(route["status"]),
+		"source":          stringify(route["source"]),
+		"source_address":  stringify(route["source_address"]),
+		"destination":     stringify(route["destination"]),
+		"mode":            stringify(route["mode"]),
+		"outbound_tag":    stringify(route["outbound_tag"]),
+		"node_id":         stringify(route["node_id"]),
+		"egress_node_id":  stringify(route["egress_node_id"]),
+		"link_id":         stringify(route["link_id"]),
+		"transport_id":    stringify(route["transport_id"]),
+		"table":           stringify(route["table"]),
+		"routing_table":   stringify(route["routing_table"]),
+		"interface":       stringify(route["interface"]),
+		"route_metric":    intFromAnyRoutePolicy(route["route_metric"]),
+		"reasons":         routePolicyReasonStrings(route["reasons"]),
+	}
+	if refs := routePolicyAnyList(route["references"]); len(refs) > 0 {
+		out["references"] = refs
+	}
+	if backhaul := routePolicyNestedMap(route, "managed_backhaul"); len(backhaul) > 0 {
+		out["managed_backhaul"] = backhaul
+	}
+	if candidates := routePolicyAnyList(route["managed_backhauls"]); len(candidates) > 0 {
+		out["managed_backhaul_count"] = len(candidates)
+		out["managed_backhauls"] = candidates
+	}
+	return out
+}
+
+func routePolicyPreviewSourceIdentity(identity map[string]any) map[string]any {
+	sourceType := strings.TrimSpace(stringify(identity["type"]))
+	sourceValue := strings.TrimSpace(stringify(identity["value"]))
+	out := map[string]any{"type": firstNonEmptyRouteValue(sourceType, "unknown")}
+	if sourceValue == "" {
+		return out
+	}
+	if routeSourceIdentityEnforceable(sourceType, sourceValue) {
+		out["value"] = sourceValue
+		return out
+	}
+	out["value"] = "[redacted]"
+	out["redacted"] = true
+	return out
+}
+
+func routePolicyPreviewEgress(egress map[string]any) map[string]any {
+	out := map[string]any{
+		"mode":     stringify(egress["mode"]),
+		"status":   stringify(egress["status"]),
+		"next_hop": stringify(egress["next_hop"]),
+		"interface": stringify(firstNonEmptyRouteValue(
+			stringify(egress["interface"]),
+			stringify(egress["egress_interface"]),
+		)),
+		"table":   stringify(egress["table"]),
+		"reasons": routePolicyReasonStrings(egress["reasons"]),
+	}
+	if selected := routePolicyNestedMap(egress, "selected_node"); len(selected) > 0 {
+		out["selected_node"] = selected
+	}
+	if current := routePolicyNestedMap(egress, "current_node"); len(current) > 0 {
+		out["current_node"] = current
+	}
+	if backhaul := routePolicyNestedMap(egress, "managed_backhaul"); len(backhaul) > 0 {
+		out["managed_backhaul"] = backhaul
+	}
+	if candidates := routePolicyAnyList(egress["managed_backhauls"]); len(candidates) > 0 {
+		out["managed_backhaul_count"] = len(candidates)
+		out["managed_backhauls"] = candidates
+	}
+	return out
+}
+
+func routePolicyPreviewWarnings(routes, systemRoutes []map[string]any) []any {
+	warnings := make([]any, 0)
+	for _, route := range routes {
+		egress := routePolicyNestedMap(route, "egress")
+		if strings.EqualFold(stringify(egress["status"]), "blocked") {
+			warnings = append(warnings, map[string]any{
+				"type":     "route_egress_blocked",
+				"route_id": stringify(route["route_id"]),
+				"username": stringify(route["username"]),
+				"reasons":  routePolicyReasonStrings(egress["reasons"]),
+			})
+		}
+		enforcement := routePolicyNestedMap(route, "enforcement")
+		if stringify(enforcement["mode"]) != "l3_l4_candidate" {
+			warnings = append(warnings, map[string]any{
+				"type":     "route_observe_only",
+				"route_id": stringify(route["route_id"]),
+				"username": stringify(route["username"]),
+				"reasons":  routePolicyReasonStrings(enforcement["reasons"]),
+			})
+		}
+	}
+	for _, route := range systemRoutes {
+		if strings.EqualFold(stringify(route["status"]), "blocked") {
+			warnings = append(warnings, map[string]any{
+				"type":            "system_route_blocked",
+				"system_route_id": stringify(route["system_route_id"]),
+				"kind":            stringify(route["kind"]),
+				"source":          stringify(route["source"]),
+				"destination":     stringify(route["destination"]),
+				"reasons":         routePolicyReasonStrings(route["reasons"]),
+			})
+		}
+	}
+	if len(warnings) > 80 {
+		return append(warnings[:80], map[string]any{"type": "truncated", "reasons": []string{"route policy preview warnings were truncated to 80 items"}})
+	}
+	return warnings
+}
+
+func routePolicyMapList(raw any) []map[string]any {
+	switch items := raw.(type) {
+	case []map[string]any:
+		out := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			if item != nil {
+				out = append(out, item)
+			}
+		}
+		return out
+	case []any:
+		out := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			if mapped, ok := item.(map[string]any); ok && mapped != nil {
+				out = append(out, mapped)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func routePolicyAnyList(raw any) []any {
+	switch items := raw.(type) {
+	case []any:
+		return items
+	case []map[string]any:
+		out := make([]any, 0, len(items))
+		for _, item := range items {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func routePolicyNestedMap(src map[string]any, key string) map[string]any {
+	if src == nil {
+		return nil
+	}
+	if mapped, ok := src[key].(map[string]any); ok {
+		return mapped
+	}
+	return nil
+}
+
+func routePolicyReasonStrings(raw any) []string {
+	switch items := raw.(type) {
+	case []string:
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			if trimmed := strings.TrimSpace(item); trimmed != "" {
+				out = append(out, trimmed)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			if trimmed := strings.TrimSpace(stringify(item)); trimmed != "" {
+				out = append(out, trimmed)
+			}
+		}
+		return out
+	default:
+		if trimmed := strings.TrimSpace(stringify(raw)); trimmed != "" {
+			return []string{trimmed}
+		}
+		return nil
+	}
 }
 
 func routeEgressProjection(routeNode routePolicyNode, policy map[string]any, egressNodes map[string]routePolicyNode, managedBackhauls map[string][]routePolicyBackhaul) map[string]any {

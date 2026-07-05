@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.29`
+**Release:** `7.0.1.30`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,7 +55,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.29` is a hardening baseline for release stabilization. The codebase has
+`7.0.1.30` is a hardening baseline for release stabilization. The codebase has
 moved from feature expansion to controlled production-readiness work. The
 current focus is:
 
@@ -90,6 +90,9 @@ current focus is:
 - route-policy enforcement hardening: ingress client traffic and local
   Xray/VLESS system egress are marked through managed nftables chains and
   routed by `fwmark` into managed backhaul tables;
+- read-only route-policy preview for nodes: operators can inspect projected
+  client routes, VLESS/Xray system egress routes, blocked/observe-only reasons
+  and managed nft/ip-rule primitives before queueing `node.route_policy.apply`;
 - client VLESS camouflage UX that separates public client endpoints from local
   Xray backend endpoints and makes pending provisioning state actionable;
 - hard client deletion with PostgreSQL cleanup coverage for service access,

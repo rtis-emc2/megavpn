@@ -1,6 +1,6 @@
 # VLESS Access Groups
 
-**Release:** `7.0.1.29`
+**Release:** `7.0.1.30`
 
 Russian companion: [VLESS_GROUPS_RU.md](VLESS_GROUPS_RU.md).
 
@@ -93,6 +93,11 @@ domain data installed.
   address. `node.route_policy.apply` also publishes a system route for that
   source address so locally generated Xray traffic leaves through the selected
   egress node instead of the ingress node default route.
+- Before applying route policy, open the ingress node diagnostics and run
+  `Inspect route policy`. The preview shows whether the VLESS/Xray system
+  route is active, which managed backhaul table/interface will be used, and any
+  blocked reason. VLESS UUID-like source identities are redacted in this preview
+  because they are credential-like values.
 - A client binding that references a deleted or unknown group falls back to the
   instance default group during render.
 - `Only selected instance` generates an allow rule for the target endpoint and

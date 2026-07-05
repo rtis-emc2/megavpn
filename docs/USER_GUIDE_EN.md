@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.29`
+**Release:** `7.0.1.30`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -570,7 +570,14 @@ Where to configure it:
   provisioning.
 - `Clients -> Access -> Add route`: for individual route-policy rules, select
   `Egress mode = egress node` and choose the egress node. After route-policy
-  changes, run `Nodes -> Manage -> Sync route policy` on the ingress node.
+  changes, run `Nodes -> Manage -> Inspect route policy` first; if the preview
+  has no blocking warning for the intended path, run `Sync route policy` on the
+  ingress node.
+- `Nodes -> Manage -> Inspect route policy`: read-only projection for the
+  ingress node. It shows enforceable routes, observe-only routes, VLESS/Xray
+  system egress routes, blocked reasons, managed table/interface and the
+  nft/ip-rule primitives that the agent will own. VLESS UUID-like source
+  identities are redacted.
 - `Nodes -> Manage -> Sync route policy`: the ingress agent writes the signed
   snapshot and installs managed kernel rules. Client traffic is marked in
   `inet megavpn route_policy_prerouting`; local Xray/VLESS `sendThrough`
@@ -592,8 +599,11 @@ Minimal path for “enter through VLESS and exit through another node”:
    access.
 6. Click `Apply` on the instance if you changed instance-level `Egress mode`.
    VLESS group changes themselves are propagated automatically by catalog sync.
-7. If client route rules are used, run `Sync route policy`.
-8. On the ingress node, verify `nft list chain inet megavpn
+7. Run `Inspect route policy` on the ingress node and verify that the
+   VLESS/Xray system route is active and uses the expected backhaul table and
+   `mgbh*` interface.
+8. If client route rules are used, run `Sync route policy`.
+9. On the ingress node, verify `nft list chain inet megavpn
    route_policy_output`, `nft list chain inet megavpn route_policy_prerouting`,
    `ip rule show` and `ip route show table <backhaul_table>` when debugging a
    remote-egress path.

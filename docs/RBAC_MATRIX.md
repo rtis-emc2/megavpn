@@ -1,6 +1,6 @@
 # RBAC Matrix
 
-**Release:** `7.0.1.29`
+**Release:** `7.0.1.30`
 
 ## Seeded Roles
 
@@ -17,8 +17,8 @@
 | --- | --- | --- |
 | `dashboard.read` | Global | Dashboard summary |
 | `service.read` | Global | Service catalog |
-| `node.read` | Node | Nodes, diagnostics, inventory |
-| `node.write` | Node | Node metadata, capability install/verify, backhaul, route policy |
+| `node.read` | Node | Nodes, diagnostics, inventory, route-policy preview |
+| `node.write` | Node | Node metadata, capability install/verify, backhaul, route-policy apply |
 | `node.bootstrap` | Node | SSH/manual bootstrap, agent token rotation |
 | `instance.read` | Instance | Instance list/detail/revisions |
 | `instance.write` | Instance | Desired spec/revision edits |
