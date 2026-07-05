@@ -138,10 +138,12 @@ type Store interface {
 	GetClient(context.Context, string) (domain.Client, error)
 	CreateClient(context.Context, domain.Client) (domain.Client, error)
 	SetClientStatus(context.Context, string, string) (domain.Client, error)
+	DeleteClient(context.Context, string) (domain.ClientDeleteResult, error)
 	ProvisionClient(context.Context, string, []string) (domain.Job, error)
 	ProvisionClientWithOptions(context.Context, string, []string, map[string]map[string]any) (domain.Job, error)
 	CreateArtifactBuildJob(context.Context, string, string, []string) (domain.Job, error)
 	RevokeClient(context.Context, string) (domain.Job, error)
+	ClearClientConfigs(context.Context, string) (domain.ClientConfigCleanupResult, error)
 	ListServiceAccesses(context.Context, string) ([]domain.ServiceAccess, error)
 	ListClientAccessRoutes(context.Context, string) ([]domain.ClientAccessRoute, error)
 	CreateClientAccessRoute(context.Context, string, domain.ClientAccessRoute) (domain.ClientAccessRoute, error)
@@ -435,6 +437,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/clients", "client.write", s.createClient)
 	protected("GET /api/v1/clients/{id}", "client.read", s.getClient)
 	protected("DELETE /api/v1/clients/{id}", "client.write", s.deleteClient)
+	protected("DELETE /api/v1/clients/{id}/configs", "client.write", s.clearClientConfigs)
 	protected("POST /api/v1/clients/{id}/provision", "client.provision", s.provisionClient)
 	protected("POST /api/v1/clients/{id}/revoke", "client.provision", s.revokeClient)
 	protected("POST /api/v1/clients/{id}/suspend", "client.write", s.clientStatus("suspended"))
@@ -1371,7 +1374,15 @@ func (s *Server) createClient(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, 201, x)
 }
 func (s *Server) deleteClient(w nethttp.ResponseWriter, r *nethttp.Request) {
-	x, err := s.store.SetClientStatus(r.Context(), idParam(r), "deleted")
+	x, err := s.store.DeleteClient(r.Context(), idParam(r))
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, x)
+}
+func (s *Server) clearClientConfigs(w nethttp.ResponseWriter, r *nethttp.Request) {
+	x, err := s.store.ClearClientConfigs(r.Context(), idParam(r))
 	if err != nil {
 		writeErr(w, 409, err.Error())
 		return

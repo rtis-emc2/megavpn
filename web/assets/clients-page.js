@@ -297,6 +297,32 @@
       return serviceInstanceOptions(instances, selectedIDs, 'No provisioned service access yet');
     }
 
+    function renderClientConfigInstanceChoices(accessList = [], selectedIDs = []) {
+      const selected = new Set(selectedIDs || []);
+      const accessByInstanceID = new Map((accessList || []).filter((access) => access.instance_id).map((access) => [access.instance_id, access]));
+      const instances = provisionableClientInstances().filter((instance) => accessByInstanceID.has(instance.id));
+      if (!instances.length) {
+        return '<div class="empty compact-empty">No provisioned service access yet. Provision this client first.</div>';
+      }
+      return instances.map((instance) => {
+        const access = accessByInstanceID.get(instance.id);
+        const node = findNode(instance.node_id);
+        const inbound = serviceAccessInboundInfo(access);
+        const checked = selected.has(instance.id) ? ' checked' : '';
+        return `
+          <label class="client-config-choice">
+            <input type="checkbox" name="instance_ids" value="${escapeHTML(instance.id)}"${checked} />
+            <span class="client-choice-check" aria-hidden="true"></span>
+            <span class="client-choice-body">
+              <strong>${escapeHTML(instance.name || instance.slug || instance.id)}</strong>
+              <small>${escapeHTML(compactServiceLabel(instance.service_code))} · ${escapeHTML(node?.name || instance.node_id || 'node')} · ${escapeHTML(access?.status || 'unknown')}</small>
+              <em>${escapeHTML(inbound.endpoint || endpointLabel(instance))}</em>
+            </span>
+            <span class="client-choice-tags">${statusTag(access?.status || 'unknown')}</span>
+          </label>`;
+      }).join('');
+    }
+
     function renderActionButtons(client) {
       return `
         <div class="table-actions client-action-grid">
@@ -304,6 +330,7 @@
           <button class="secondary-btn client-provision-btn" type="button" data-client-id="${escapeHTML(client.id)}">Provision</button>
           <button class="secondary-btn client-build-btn" type="button" data-client-id="${escapeHTML(client.id)}">Build</button>
           <button class="secondary-btn client-email-btn" type="button" data-client-id="${escapeHTML(client.id)}">Email</button>
+          <button class="danger-btn client-delete-btn" type="button" data-client-id="${escapeHTML(client.id)}">Delete</button>
         </div>`;
     }
 
@@ -320,6 +347,9 @@
       });
       document.querySelectorAll('.client-email-btn').forEach((button) => {
         button.addEventListener('click', () => openClientEmailModal(button.dataset.clientId));
+      });
+      document.querySelectorAll('.client-delete-btn').forEach((button) => {
+        button.addEventListener('click', () => openDeleteClientModal(button.dataset.clientId));
       });
     }
 
@@ -937,6 +967,7 @@
                 <button class="secondary-btn" id="clientArtifactBuildBtn" type="button">Build configs</button>
                 <button class="secondary-btn" id="clientSharePublishBtn" type="button">Publish link</button>
                 <button class="secondary-btn" id="clientManageEmailBtn" type="button">Email</button>
+                <button class="danger-btn" id="clientConfigsClearBtn" type="button"${artifactList.length || shareLinkList.length || subscriptionList.length ? '' : ' disabled'}>Clear configs</button>
               </div>
             </div>
             <div class="table-wrap">
@@ -975,13 +1006,13 @@
               </table>
             </div>
           </section>`;
-        bindAccessModalActions(clientID, accessOptions, accessList, artifactList);
+        bindAccessModalActions(clientID, accessOptions, accessList, artifactList, shareLinkList, subscriptionList);
       } catch (err) {
         el('modalBody').innerHTML = `<div class="empty">Failed to load service accesses: ${escapeHTML(err.message)}</div>`;
       }
     }
 
-    function bindAccessModalActions(clientID, accessOptions, accessList = [], artifactList = []) {
+    function bindAccessModalActions(clientID, accessOptions, accessList = [], artifactList = [], shareLinkList = [], subscriptionList = []) {
       document.querySelectorAll('.rotate-access-btn').forEach((button) => {
         button.addEventListener('click', () => rotateClientAccess(button.dataset.clientId, button.dataset.accessId, button.dataset.driver));
       });
@@ -992,6 +1023,7 @@
       document.getElementById('clientArtifactBuildBtn')?.addEventListener('click', () => openBuildClientArtifactsModal(clientID, accessList));
       document.getElementById('clientSharePublishBtn')?.addEventListener('click', () => openPublishShareLinkModal(clientID, artifactList));
       document.getElementById('clientManageEmailBtn')?.addEventListener('click', () => openClientEmailModal(clientID));
+      document.getElementById('clientConfigsClearBtn')?.addEventListener('click', () => openClearClientConfigsModal(clientID, artifactList, shareLinkList, subscriptionList));
       document.getElementById('clientSubscriptionRotateBtn')?.addEventListener('click', () => openRotateClientSubscriptionModal(clientID));
       document.querySelectorAll('.client-share-revoke-btn').forEach((button) => {
         button.addEventListener('click', () => revokeClientShareLink(button.dataset.clientId, button.dataset.linkId));
@@ -1008,6 +1040,112 @@
           window.open(url, '_blank', 'noopener,noreferrer');
         });
       });
+    }
+
+    function openClearClientConfigsModal(clientID, artifactList = [], shareLinkList = [], subscriptionList = []) {
+      const client = findClient(clientID);
+      if (!client) return;
+      openModal(`Clear configs: ${client.username}`, 'Remove generated config artifacts and delivery tokens', `
+        <p class="danger-text">This removes generated config files, public delivery links and VLESS subscription tokens for this client. Service access remains provisioned, so new configs can be built again.</p>
+        <div class="client-danger-summary">
+          <div><span>Configs</span><strong>${escapeHTML(String(artifactList.length))}</strong></div>
+          <div><span>Share links</span><strong>${escapeHTML(String(shareLinkList.length))}</strong></div>
+          <div><span>Subscriptions</span><strong>${escapeHTML(String(subscriptionList.length))}</strong></div>
+        </div>
+        <div class="modal-actions">
+          <button class="danger-btn" id="confirmClearClientConfigsBtn" type="button">Clear configs</button>
+          <button class="secondary-btn" id="cancelClearClientConfigsBtn" type="button">Cancel</button>
+        </div>
+        <div id="clientConfigCleanupResult" class="form-result"></div>`, { variant: 'warning' });
+      document.getElementById('cancelClearClientConfigsBtn')?.addEventListener('click', () => openClientAccessesModal(clientID));
+      document.getElementById('confirmClearClientConfigsBtn')?.addEventListener('click', () => clearClientConfigs(clientID));
+    }
+
+    async function clearClientConfigs(clientID) {
+      const target = document.getElementById('clientConfigCleanupResult');
+      const button = document.getElementById('confirmClearClientConfigsBtn');
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Clearing configs';
+      }
+      if (target) target.innerHTML = '<span class="tag warn">clearing configs</span>';
+      try {
+        const data = await requestJSON(`/api/v1/clients/${clientID}/configs`, { method: 'DELETE' });
+        if (target) {
+          target.innerHTML = `
+            <div class="notice success">
+              <strong>Client configs cleared</strong>
+              <p>${escapeHTML(String(data.artifacts_deleted || 0))} configs, ${escapeHTML(String(data.share_links_deleted || 0))} links and ${escapeHTML(String(data.subscriptions_deleted || 0))} subscriptions removed.</p>
+            </div>`;
+        }
+        await refresh();
+        setTimeout(() => openClientAccessesModal(clientID), 500);
+      } catch (err) {
+        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Clear configs';
+        }
+      }
+    }
+
+    function openDeleteClientModal(clientID) {
+      const client = findClient(clientID);
+      if (!client) return;
+      const summary = clientSummary(client);
+      const confirmValue = client.username || client.id;
+      openModal(`Delete client: ${client.username}`, 'Permanent client removal', `
+        <p class="danger-text">This permanently deletes the client account, service accesses, routes, generated configs, delivery links, subscriptions and service-access secret refs. Audit and job history remain for traceability.</p>
+        <div class="client-danger-summary">
+          <div><span>Accesses</span><strong>${escapeHTML(String(summary.serviceAccessCount))}</strong></div>
+          <div><span>Routes</span><strong>${escapeHTML(String(summary.routeCount))}</strong></div>
+          <div><span>Configs</span><strong>${escapeHTML(String(summary.artifactCount))}</strong></div>
+          <div><span>Delivery</span><strong>${escapeHTML(String(summary.shareLinkCount))}</strong></div>
+        </div>
+        <div class="field full">
+          <label>Type client username to confirm</label>
+          <input id="deleteClientConfirmInput" autocomplete="off" placeholder="${escapeHTML(confirmValue)}" />
+        </div>
+        <div class="modal-actions">
+          <button class="danger-btn" id="confirmDeleteClientBtn" type="button" disabled>Delete client</button>
+          <button class="secondary-btn" id="cancelDeleteClientBtn" type="button">Cancel</button>
+        </div>
+        <div id="deleteClientResult" class="form-result"></div>`, { variant: 'danger' });
+      const input = document.getElementById('deleteClientConfirmInput');
+      const button = document.getElementById('confirmDeleteClientBtn');
+      input?.addEventListener('input', () => {
+        if (button) button.disabled = String(input.value || '').trim() !== confirmValue;
+      });
+      document.getElementById('cancelDeleteClientBtn')?.addEventListener('click', closeModal);
+      button?.addEventListener('click', () => deleteClient(clientID));
+    }
+
+    async function deleteClient(clientID) {
+      const target = document.getElementById('deleteClientResult');
+      const button = document.getElementById('confirmDeleteClientBtn');
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Deleting client';
+      }
+      if (target) target.innerHTML = '<span class="tag warn">deleting client</span>';
+      try {
+        const data = await requestJSON(`/api/v1/clients/${clientID}`, { method: 'DELETE' });
+        if (target) {
+          target.innerHTML = `
+            <div class="notice success">
+              <strong>Client deleted</strong>
+              <p>${escapeHTML(String(data.service_accesses_deleted || 0))} accesses and ${escapeHTML(String(data.config_cleanup?.artifacts_deleted || 0))} configs removed. ${escapeHTML(String(data.instance_apply_jobs_queued || 0))} instance apply jobs queued.</p>
+            </div>`;
+        }
+        await refresh();
+        setTimeout(closeModal, 700);
+      } catch (err) {
+        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Delete client';
+        }
+      }
     }
 
     function openRotateClientSubscriptionModal(clientID) {
@@ -1086,22 +1224,26 @@
       if (!client) return;
       const defaultInstances = (accessList || []).map((access) => access.instance_id).filter(Boolean);
       openModal(`Build configs: ${client.username}`, 'Generate OVPN, VLESS and other client artifacts', `
-        <form id="clientArtifactBuildForm" class="form-grid">
-          <div class="field"><label>Artifact type</label><select name="artifact_type">
-            <option value="all">all supported</option>
-            <option value="zip_bundle">zip_bundle</option>
-            <option value="ovpn">ovpn</option>
-            <option value="vless_url">vless_url</option>
-            <option value="wg_conf">wg_conf</option>
-            <option value="mtproto_url">mtproto_url</option>
-            <option value="http_proxy_bundle">http_proxy_bundle</option>
-            <option value="ipsec_bundle">ipsec_bundle</option>
-            <option value="ss_url">ss_url</option>
+        <form id="clientArtifactBuildForm" class="client-config-build-form form-grid">
+          <div class="field client-config-type-field"><label>Artifact type</label><select name="artifact_type">
+            <option value="all">All supported configs</option>
+            <option value="zip_bundle">ZIP bundle</option>
+            <option value="ovpn">OpenVPN .ovpn</option>
+            <option value="vless_url">VLESS URL</option>
+            <option value="wg_conf">WireGuard config</option>
+            <option value="mtproto_url">MTProto URL</option>
+            <option value="http_proxy_bundle">HTTP proxy bundle</option>
+            <option value="ipsec_bundle">IPsec/L2TP bundle</option>
+            <option value="ss_url">Shadowsocks URL</option>
           </select></div>
-          <div class="field full"><label>Provisioned service accesses</label><select name="instance_ids" id="clientArtifactInstances" multiple size="8">${clientConfigInstanceOptions(accessList, defaultInstances)}</select></div>
+          <div class="client-config-build-note">
+            <strong>${escapeHTML(String(defaultInstances.length))}</strong>
+            <span>provisioned service accesses selected by default</span>
+          </div>
+          <div class="field full"><label>Provisioned service access</label><div class="client-config-choice-grid" id="clientArtifactInstances">${renderClientConfigInstanceChoices(accessList, defaultInstances)}</div></div>
           <div class="field full inline-actions"><button class="primary-btn" type="submit">Queue build</button><button class="secondary-btn" id="cancelClientArtifactBuildBtn" type="button">Cancel</button></div>
         </form>
-        <div id="clientArtifactBuildResult" class="form-result"></div>`, { wide: true });
+        <div id="clientArtifactBuildResult" class="form-result"></div>`, { size: 'full', bodyClass: 'client-config-build-modal' });
       document.getElementById('cancelClientArtifactBuildBtn')?.addEventListener('click', () => openClientAccessesModal(clientID));
       document.getElementById('clientArtifactBuildForm')?.addEventListener('submit', (event) => submitClientArtifactBuild(event, clientID));
     }
@@ -1125,8 +1267,8 @@
       try {
         const formElement = event.currentTarget;
         const form = new FormData(formElement);
-        const instanceIDs = Array.from(formElement.querySelector('#clientArtifactInstances')?.selectedOptions || [])
-          .map((option) => option.value)
+        const instanceIDs = Array.from(formElement.querySelectorAll('input[name="instance_ids"]:checked') || [])
+          .map((input) => input.value)
           .filter(Boolean);
         if (instanceIDs.length === 0) {
           if (target) target.innerHTML = '<span class="tag danger">Provision at least one service access first</span>';

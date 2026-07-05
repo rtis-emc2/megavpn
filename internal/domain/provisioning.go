@@ -40,3 +40,26 @@ type ClientSubscriptionDocument struct {
 	Profiles     []ClientSubscriptionProfile `json:"profiles"`
 	GeneratedAt  time.Time                   `json:"generated_at"`
 }
+
+type ClientConfigCleanupResult struct {
+	ClientID             string   `json:"client_id"`
+	ArtifactsDeleted     int64    `json:"artifacts_deleted"`
+	ShareLinksDeleted    int64    `json:"share_links_deleted"`
+	SubscriptionsDeleted int64    `json:"subscriptions_deleted"`
+	FilesDeleted         int64    `json:"files_deleted"`
+	FileErrors           []string `json:"file_errors,omitempty"`
+}
+
+type ClientDeleteResult struct {
+	ClientID                string                    `json:"client_id"`
+	Username                string                    `json:"username"`
+	Deleted                 bool                      `json:"deleted"`
+	ConfigCleanup           ClientConfigCleanupResult `json:"config_cleanup"`
+	ServiceAccessesDeleted  int64                     `json:"service_accesses_deleted"`
+	AccessRoutesDeleted     int64                     `json:"access_routes_deleted"`
+	EmailDeliveriesDeleted  int64                     `json:"email_deliveries_deleted"`
+	SecretRefsDeleted       int64                     `json:"secret_refs_deleted"`
+	InstanceApplyJobsQueued int64                     `json:"instance_apply_jobs_queued"`
+	RoutePolicyJobsQueued   int64                     `json:"route_policy_jobs_queued"`
+	QueueErrors             []string                  `json:"queue_errors,omitempty"`
+}

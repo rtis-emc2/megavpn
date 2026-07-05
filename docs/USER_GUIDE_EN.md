@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.21`
+**Release:** `7.0.1.22`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -597,9 +597,19 @@ runtime behavior and validation rules.
 9. Preview/download generated material before sending it to the client.
 10. Optionally publish a share link, rotate a VLESS subscription URL or send
     email.
+11. To rebuild delivery material without removing service access, use `Clients ->
+    Access -> Client Configs -> Clear configs`, then run `Build configs` again.
+12. To fully remove a client, use `Clients -> Delete`. The operation removes the
+    client account, service accesses, routes, generated configs, delivery links,
+    VLESS subscriptions and service-access secret refs, then queues apply jobs
+    for affected service instances.
 
 Provisioning must not silently grant every compatible service. Operators choose
 the exact inbound services per client.
+
+`Clear configs` does not revoke service access: service bindings stay in place
+and the operator can build fresh artifacts. `Delete client` is irreversible
+removal from the runtime model; audit and job history remain for traceability.
 
 ## 17. Share Links, VLESS Subscriptions And Email
 
