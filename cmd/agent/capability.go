@@ -467,9 +467,7 @@ func nginxOrgFallbackReason(res map[string]any) string {
 func installNginxUbuntuRepo(ctx context.Context, reason string) map[string]any {
 	steps := []map[string]any{}
 	run := func(name string, args ...string) bool {
-		code, out := runInstallCommand(ctx, name, args...)
-		steps = append(steps, map[string]any{"command": append([]string{name}, args...), "exit_code": code, "output": truncate(out, 4000)})
-		return code == 0
+		return runTrackedInstallCommand(ctx, &steps, name, args...)
 	}
 	if os.Geteuid() != 0 {
 		return map[string]any{"ok": false, "message": "nginx install requires root", "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason}
@@ -477,10 +475,18 @@ func installNginxUbuntuRepo(ctx context.Context, reason string) map[string]any {
 	_ = os.Remove(nginxOrgSourceListPath)
 	_ = os.Remove(nginxOrgPreferencesPath)
 	_ = os.Remove(nginxOrgKeyringPath)
-	_ = run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "purge", "-y", "nginx")
-	_ = run("systemctl", "daemon-reload")
 	if !run("apt-get", "update") {
-		return map[string]any{"ok": false, "message": "apt update failed before ubuntu nginx install", "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason}
+		if !aptPackageCandidateAvailable(ctx, "nginx", &steps) {
+			res := aptInstallFailureResult("nginx", "nginx", "apt update failed before ubuntu nginx install", steps)
+			res["effective_strategy"] = "ubuntu_repo"
+			res["fallback_reason"] = reason
+			return res
+		}
+		steps = append(steps, map[string]any{
+			"stage":   "apt_update",
+			"package": "nginx",
+			"note":    "apt update failed, but local package metadata has an nginx install candidate; continuing with package install",
+		})
 	}
 	policyCode, policyOut := runInstallCommand(ctx, "apt-cache", "policy", "nginx")
 	steps = append(steps, map[string]any{"command": []string{"apt-cache", "policy", "nginx"}, "exit_code": policyCode, "output": truncate(policyOut, 4000)})
@@ -490,8 +496,13 @@ func installNginxUbuntuRepo(ctx context.Context, reason string) map[string]any {
 	if aptPolicyMentionsNginxOrg(policyOut) {
 		return map[string]any{"ok": false, "message": "ubuntu_repo fallback still resolves to nginx.org package; refusing unsafe reinstall", "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason, "apt_policy": truncate(policyOut, 4000)}
 	}
+	_ = run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "purge", "-y", "nginx")
+	_ = run("systemctl", "daemon-reload")
 	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "nginx") {
-		return map[string]any{"ok": false, "message": "ubuntu nginx package install failed", "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason}
+		res := aptInstallFailureResult("nginx", "nginx", "ubuntu nginx package install failed", steps)
+		res["effective_strategy"] = "ubuntu_repo"
+		res["fallback_reason"] = reason
+		return res
 	}
 	_ = run("systemctl", "enable", "--now", "nginx")
 	verify := verifyNginx(ctx)
@@ -708,56 +719,7 @@ func verifyFileSHA256(path, expectedHex string) error {
 func installUbuntuPackageCapability(ctx context.Context, capabilityCode, packageName, verifyHint string, enableUnits []string) map[string]any {
 	steps := []map[string]any{}
 	run := func(name string, args ...string) bool {
-		command := append([]string{name}, args...)
-		maxAttempts := aptInstallCommandAttempts(name, args...)
-		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			code, out := runInstallCommand(ctx, name, args...)
-			step := map[string]any{"command": command, "exit_code": code, "output": truncate(out, 4000), "attempt": attempt}
-			if code == 0 {
-				steps = append(steps, step)
-				return true
-			}
-			if aptFailureLooksSandboxSetuid(out) {
-				step["apt_sandbox_fallback"] = "retrying with APT::Sandbox::User=root"
-				steps = append(steps, step)
-				if fallbackName, fallbackArgs, ok := aptSandboxRootFallbackCommand(name, args...); ok {
-					fallbackCommand := append([]string{fallbackName}, fallbackArgs...)
-					fallbackCode, fallbackOut := runInstallCommand(ctx, fallbackName, fallbackArgs...)
-					fallbackStep := map[string]any{
-						"command":            fallbackCommand,
-						"exit_code":          fallbackCode,
-						"output":             truncate(fallbackOut, 4000),
-						"attempt":            attempt,
-						"apt_sandbox_user":   "root",
-						"apt_sandbox_reason": "apt could not switch to the _apt sandbox user inside the agent service sandbox",
-					}
-					steps = append(steps, fallbackStep)
-					if fallbackCode == 0 {
-						return true
-					}
-					if !shouldRetryAptInstallCommand(fallbackName, fallbackArgs, fallbackCode, fallbackOut) || attempt == maxAttempts {
-						return false
-					}
-					delay := aptInstallRetryDelay(attempt)
-					fallbackStep["retry_after_seconds"] = int(delay.Seconds())
-					if err := sleepContext(ctx, delay); err != nil {
-						return false
-					}
-					continue
-				}
-			}
-			if !shouldRetryAptInstallCommand(name, args, code, out) || attempt == maxAttempts {
-				steps = append(steps, step)
-				return false
-			}
-			delay := aptInstallRetryDelay(attempt)
-			step["retry_after_seconds"] = int(delay.Seconds())
-			steps = append(steps, step)
-			if err := sleepContext(ctx, delay); err != nil {
-				return false
-			}
-		}
-		return false
+		return runTrackedInstallCommand(ctx, &steps, name, args...)
 	}
 	if os.Geteuid() != 0 {
 		return map[string]any{"ok": false, "message": capabilityCode + " install requires root", "steps": steps}
@@ -818,6 +780,69 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 	verify["steps"] = steps
 	verify["package"] = packageName
 	return verify
+}
+
+func runTrackedInstallCommand(ctx context.Context, steps *[]map[string]any, name string, args ...string) bool {
+	command := append([]string{name}, args...)
+	maxAttempts := aptInstallCommandAttempts(name, args...)
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		code, out := runInstallCommand(ctx, name, args...)
+		step := map[string]any{"command": command, "exit_code": code, "output": truncate(out, 4000), "attempt": attempt}
+		if code == 0 {
+			if steps != nil {
+				*steps = append(*steps, step)
+			}
+			return true
+		}
+		if aptFailureLooksSandboxSetuid(out) {
+			step["apt_sandbox_fallback"] = "retrying with APT::Sandbox::User=root"
+			if steps != nil {
+				*steps = append(*steps, step)
+			}
+			if fallbackName, fallbackArgs, ok := aptSandboxRootFallbackCommand(name, args...); ok {
+				fallbackCommand := append([]string{fallbackName}, fallbackArgs...)
+				fallbackCode, fallbackOut := runInstallCommand(ctx, fallbackName, fallbackArgs...)
+				fallbackStep := map[string]any{
+					"command":            fallbackCommand,
+					"exit_code":          fallbackCode,
+					"output":             truncate(fallbackOut, 4000),
+					"attempt":            attempt,
+					"apt_sandbox_user":   "root",
+					"apt_sandbox_reason": "apt could not switch to the _apt sandbox user inside the agent service sandbox",
+				}
+				if steps != nil {
+					*steps = append(*steps, fallbackStep)
+				}
+				if fallbackCode == 0 {
+					return true
+				}
+				if !shouldRetryAptInstallCommand(fallbackName, fallbackArgs, fallbackCode, fallbackOut) || attempt == maxAttempts {
+					return false
+				}
+				delay := aptInstallRetryDelay(attempt)
+				fallbackStep["retry_after_seconds"] = int(delay.Seconds())
+				if err := sleepContext(ctx, delay); err != nil {
+					return false
+				}
+				continue
+			}
+		}
+		if !shouldRetryAptInstallCommand(name, args, code, out) || attempt == maxAttempts {
+			if steps != nil {
+				*steps = append(*steps, step)
+			}
+			return false
+		}
+		delay := aptInstallRetryDelay(attempt)
+		step["retry_after_seconds"] = int(delay.Seconds())
+		if steps != nil {
+			*steps = append(*steps, step)
+		}
+		if err := sleepContext(ctx, delay); err != nil {
+			return false
+		}
+	}
+	return false
 }
 
 func ubuntuPackageEnableUnits(capabilityCode string, units ...string) []string {

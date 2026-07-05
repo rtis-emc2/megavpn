@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.20`
+**Release:** `7.0.1.21`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.20`
+**Code baseline:** RTIS MegaVPN `7.0.1.21`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.20` continues the production-hardening line after the `7.0.1.14`
+`7.0.1.21` continues the production-hardening line after the `7.0.1.14`
 security hardening release. The codebase already has a working control-plane
 foundation:
 
@@ -226,9 +226,9 @@ Closed in this release:
 
 No database migration or VPN runtime behavior changed in this release.
 
-## 13. Release 7.0.1.20 Closure
+## 13. Release 7.0.1.21 Closure
 
-The goal of `7.0.1.20` is to close the last visible UI/API regression in the
+The goal of `7.0.1.21` is to close the last visible UI/API regression in the
 operator console.
 
 Closed in this release:
@@ -262,6 +262,9 @@ Closed in this release:
   to Ubuntu's distro package when the nginx.org apt path fails before runtime
   verification. This keeps VLESS WebSocket camouflage edge rollout from being
   blocked by stale or unavailable nginx.org repository metadata.
+- Ubuntu Nginx fallback now checks the distro package candidate before purging
+  any existing Nginx package and can continue from local apt metadata when
+  `apt-get update` is degraded but the package candidate is available.
 
 No VPN runtime behavior changed in this release. Database changes are limited to
 additive/idempotent catalog repair migrations.

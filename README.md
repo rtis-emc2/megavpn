@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.20`
+**Release:** `7.0.1.21`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,7 +55,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.20` is a hardening baseline for release stabilization. The codebase has
+`7.0.1.21` is a hardening baseline for release stabilization. The codebase has
 moved from feature expansion to controlled production-readiness work. The
 current focus is:
 
@@ -79,6 +79,8 @@ current focus is:
   historical duplicate default pack rows;
 - resilient Nginx capability install for camouflage ingress with nginx.org to
   Ubuntu repository fallback on repository/package-stage failures;
+- safer Ubuntu Nginx fallback that preserves existing packages until a distro
+  candidate is confirmed and reports precise apt failure commands;
 - operator-grade Firewall UI with posture cards, rule filters, grouped
   protocol presets and explicit apply modes;
 - operator console typography and layout hardening with one UI font stack,
