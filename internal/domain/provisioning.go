@@ -63,3 +63,17 @@ type ClientDeleteResult struct {
 	RoutePolicyJobsQueued   int64                     `json:"route_policy_jobs_queued"`
 	QueueErrors             []string                  `json:"queue_errors,omitempty"`
 }
+
+type ClientServiceAccessDeleteResult struct {
+	ClientID                string                    `json:"client_id"`
+	ServiceAccessID         string                    `json:"service_access_id"`
+	InstanceID              string                    `json:"instance_id"`
+	Deleted                 bool                      `json:"deleted"`
+	ConfigCleanup           ClientConfigCleanupResult `json:"config_cleanup"`
+	ServiceAccessesDeleted  int64                     `json:"service_accesses_deleted"`
+	AccessRoutesDeleted     int64                     `json:"access_routes_deleted"`
+	SecretRefsDeleted       int64                     `json:"secret_refs_deleted"`
+	InstanceApplyJobsQueued int64                     `json:"instance_apply_jobs_queued"`
+	RoutePolicyJobsQueued   int64                     `json:"route_policy_jobs_queued"`
+	QueueErrors             []string                  `json:"queue_errors,omitempty"`
+}

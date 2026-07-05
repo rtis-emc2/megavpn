@@ -807,12 +807,12 @@
               ${inbound.transportLabel ? `<div class="timeline-meta">${escapeHTML(inbound.transportLabel)}</div>` : ''}
             </td>
             <td><div class="client-status-cluster">${statusTag(access.status || 'unknown')}${statusTag(inbound.availability || 'available')}</div></td>
-            <td>${renderRotateButtons(clientID, access.id, inbound.serviceCode)}</td>
+            <td>${renderServiceAccessActions(clientID, access.id, inbound.serviceCode)}</td>
           </tr>`;
       }).join('') || '<tr><td colspan="6"><div class="empty">No service accesses for this client.</div></td></tr>';
     }
 
-    function renderRotateButtons(clientID, accessID, serviceCode) {
+    function renderServiceAccessActions(clientID, accessID, serviceCode) {
       const actions = [
         ['openvpn', 'openvpn', 'Rotate OpenVPN'],
         ['xray-core', 'xray-core', 'Rotate Xray UUID'],
@@ -823,10 +823,10 @@
         ['http_proxy', 'http_proxy', 'Rotate Proxy Access'],
         ['shadowsocks', 'shadowsocks', 'Rotate SS Access'],
       ].filter(([code]) => code === serviceCode);
-      if (!actions.length) return '<span class="tag">no rotation</span>';
       return `
         <div class="inline-actions compact-actions">
           ${actions.map(([, driver, label]) => `<button class="secondary-btn rotate-access-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-access-id="${escapeHTML(accessID)}" data-driver="${escapeHTML(driver)}">${escapeHTML(label)}</button>`).join('')}
+          <button class="danger-btn client-access-delete-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-access-id="${escapeHTML(accessID)}">Remove access</button>
         </div>`;
     }
 
@@ -1127,6 +1127,9 @@
       document.querySelectorAll('.rotate-access-btn').forEach((button) => {
         button.addEventListener('click', () => rotateClientAccess(button.dataset.clientId, button.dataset.accessId, button.dataset.driver));
       });
+      document.querySelectorAll('.client-access-delete-btn').forEach((button) => {
+        button.addEventListener('click', () => openDeleteServiceAccessModal(button.dataset.clientId, button.dataset.accessId, accessList));
+      });
       document.getElementById('clientRouteAddBtn')?.addEventListener('click', () => openCreateClientRouteModal(clientID, accessOptions));
       document.querySelectorAll('.client-route-delete-btn').forEach((button) => {
         button.addEventListener('click', () => revokeClientAccessRoute(button.dataset.clientId, button.dataset.routeId));
@@ -1151,6 +1154,56 @@
           window.open(url, '_blank', 'noopener,noreferrer');
         });
       });
+    }
+
+    function openDeleteServiceAccessModal(clientID, accessID, accessList = []) {
+      const client = findClient(clientID);
+      const access = (accessList || []).find((item) => item.id === accessID);
+      if (!client || !access) return;
+      const inbound = serviceAccessInboundInfo(access);
+      openModal(`Remove access: ${inbound.serviceLabel}`, 'Delete one service binding and its generated configs', `
+        <p class="danger-text">This removes this service access, its managed route rows, generated config artifacts, delivery links for those artifacts and service-access secrets. The client account remains active.</p>
+        <div class="client-danger-summary">
+          <div><span>Client</span><strong>${escapeHTML(clientDisplayName(client))}</strong></div>
+          <div><span>Service</span><strong>${escapeHTML(inbound.serviceLabel)}</strong></div>
+          <div><span>Instance</span><strong>${escapeHTML(inbound.instanceName)}</strong></div>
+          <div><span>Endpoint</span><strong>${escapeHTML(inbound.endpoint)}</strong></div>
+        </div>
+        <div class="modal-actions">
+          <button class="danger-btn" id="confirmDeleteServiceAccessBtn" type="button">Remove access</button>
+          <button class="secondary-btn" id="cancelDeleteServiceAccessBtn" type="button">Cancel</button>
+        </div>
+        <div id="deleteServiceAccessResult" class="form-result"></div>`, { variant: 'danger' });
+      document.getElementById('cancelDeleteServiceAccessBtn')?.addEventListener('click', () => openClientAccessesModal(clientID));
+      document.getElementById('confirmDeleteServiceAccessBtn')?.addEventListener('click', () => deleteServiceAccess(clientID, accessID));
+    }
+
+    async function deleteServiceAccess(clientID, accessID) {
+      const target = document.getElementById('deleteServiceAccessResult');
+      const button = document.getElementById('confirmDeleteServiceAccessBtn');
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Removing access';
+      }
+      if (target) target.innerHTML = '<span class="tag warn">removing access</span>';
+      try {
+        const data = await requestJSON(`/api/v1/clients/${clientID}/accesses/${accessID}`, { method: 'DELETE' });
+        if (target) {
+          target.innerHTML = `
+            <div class="notice success">
+              <strong>Service access removed</strong>
+              <p>${escapeHTML(String(data.service_accesses_deleted || 0))} access, ${escapeHTML(String(data.access_routes_deleted || 0))} routes and ${escapeHTML(String(data.config_cleanup?.artifacts_deleted || 0))} configs removed.</p>
+            </div>`;
+        }
+        await refresh();
+        setTimeout(() => openClientAccessesModal(clientID), 500);
+      } catch (err) {
+        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Remove access';
+        }
+      }
     }
 
     function openClearClientConfigsModal(clientID, artifactList = [], shareLinkList = [], subscriptionList = []) {

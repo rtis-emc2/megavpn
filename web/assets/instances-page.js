@@ -2002,7 +2002,7 @@
         <div class="card">
           <div class="mini-label">Managed cleanup</div>
           <h3>${escapeHTML(instance?.name || instanceName || instanceID)}</h3>
-          <p>This queues an agent cleanup job on the selected node. The agent stops the managed unit, removes managed files and then the control plane hides the instance after cleanup succeeds. Deletion is blocked while active service accesses still reference this instance.</p>
+          <p>This queues an agent cleanup job on the selected node. After cleanup succeeds, the control plane removes dependent client service access, managed routes, generated config artifacts and service-access secrets for this instance.</p>
           <div class="response-grid">
             <div class="response-fact"><span>Service</span><strong>${escapeHTML(instance?.service_code || 'unknown')}</strong></div>
             <div class="response-fact"><span>Node</span><strong>${escapeHTML(instance?.node_id || 'n/a')}</strong></div>

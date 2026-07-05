@@ -16,6 +16,13 @@ type clientConfigRowsCleanup struct {
 	paths  []string
 }
 
+type serviceAccessRowsCleanup struct {
+	result      domain.ClientServiceAccessDeleteResult
+	paths       []string
+	instanceIDs []string
+	nodeIDs     []string
+}
+
 func (s *Store) ClearClientConfigs(ctx context.Context, clientID string) (domain.ClientConfigCleanupResult, error) {
 	clientID = strings.TrimSpace(clientID)
 	if clientID == "" {
@@ -131,6 +138,159 @@ func (s *Store) DeleteClient(ctx context.Context, clientID string) (domain.Clien
 	return result, nil
 }
 
+func (s *Store) DeleteClientServiceAccess(ctx context.Context, clientID, accessID string) (domain.ClientServiceAccessDeleteResult, error) {
+	clientID = strings.TrimSpace(clientID)
+	accessID = strings.TrimSpace(accessID)
+	if clientID == "" || accessID == "" {
+		return domain.ClientServiceAccessDeleteResult{}, fmt.Errorf("client id and service access id are required")
+	}
+	if _, err := s.GetClient(ctx, clientID); err != nil {
+		return domain.ClientServiceAccessDeleteResult{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.ClientServiceAccessDeleteResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	cleanup, err := deleteServiceAccessRowsTx(ctx, tx, clientID, accessID)
+	if err != nil {
+		return domain.ClientServiceAccessDeleteResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.ClientServiceAccessDeleteResult{}, err
+	}
+
+	cleanup.result.Deleted = true
+	cleanup.result.ConfigCleanup.FilesDeleted, cleanup.result.ConfigCleanup.FileErrors = s.removeManagedArtifactFiles(cleanup.paths)
+	cleanup.result.InstanceApplyJobsQueued, cleanup.result.RoutePolicyJobsQueued, cleanup.result.QueueErrors = s.queueClientCleanupConvergence(ctx, cleanup.instanceIDs, cleanup.nodeIDs)
+	_, _ = s.CreateAudit(ctx, "system", "client.service_access.delete", "client", &clientID, "client service access and generated configs deleted")
+	return cleanup.result, nil
+}
+
+func (s *Store) cleanupInstanceClientServiceAccesses(ctx context.Context, tx pgx.Tx, instanceID string) (serviceAccessRowsCleanup, error) {
+	out := serviceAccessRowsCleanup{}
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return out, nil
+	}
+	rows, err := tx.Query(ctx, `select client_account_id::text,id::text from service_accesses where instance_id=$1`, instanceID)
+	if err != nil {
+		return out, err
+	}
+	type target struct {
+		clientID string
+		accessID string
+	}
+	targets := make([]target, 0)
+	for rows.Next() {
+		var item target
+		if err := rows.Scan(&item.clientID, &item.accessID); err != nil {
+			rows.Close()
+			return out, err
+		}
+		targets = append(targets, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return out, err
+	}
+	rows.Close()
+
+	for _, item := range targets {
+		cleanup, err := deleteServiceAccessRowsTx(ctx, tx, item.clientID, item.accessID)
+		if err != nil {
+			return out, err
+		}
+		out.result.ConfigCleanup.ArtifactsDeleted += cleanup.result.ConfigCleanup.ArtifactsDeleted
+		out.result.ConfigCleanup.ShareLinksDeleted += cleanup.result.ConfigCleanup.ShareLinksDeleted
+		out.result.ServiceAccessesDeleted += cleanup.result.ServiceAccessesDeleted
+		out.result.AccessRoutesDeleted += cleanup.result.AccessRoutesDeleted
+		out.result.SecretRefsDeleted += cleanup.result.SecretRefsDeleted
+		out.paths = append(out.paths, cleanup.paths...)
+		out.nodeIDs = append(out.nodeIDs, cleanup.nodeIDs...)
+	}
+	return out, nil
+}
+
+func deleteServiceAccessRowsTx(ctx context.Context, tx pgx.Tx, clientID, accessID string) (serviceAccessRowsCleanup, error) {
+	clientID = strings.TrimSpace(clientID)
+	accessID = strings.TrimSpace(accessID)
+	out := serviceAccessRowsCleanup{
+		result: domain.ClientServiceAccessDeleteResult{
+			ClientID:        clientID,
+			ServiceAccessID: accessID,
+			ConfigCleanup:   domain.ClientConfigCleanupResult{ClientID: clientID},
+		},
+	}
+
+	var instanceID string
+	err := tx.QueryRow(ctx, `select instance_id::text from service_accesses where client_account_id=$1 and id=$2 for update`, clientID, accessID).Scan(&instanceID)
+	if err != nil {
+		return out, err
+	}
+	out.result.InstanceID = strings.TrimSpace(instanceID)
+
+	activeInstanceIDs, err := activeServiceAccessInstanceIDsTx(ctx, tx, accessID)
+	if err != nil {
+		return out, err
+	}
+	out.instanceIDs = activeInstanceIDs
+
+	nodeIDs, err := serviceAccessRouteNodeIDsTx(ctx, tx, clientID, accessID)
+	if err != nil {
+		return out, err
+	}
+	out.nodeIDs = nodeIDs
+
+	artifactIDs, paths, err := serviceAccessArtifactRefsTx(ctx, tx, clientID, accessID)
+	if err != nil {
+		return out, err
+	}
+	out.paths = paths
+	if len(artifactIDs) > 0 {
+		tag, err := tx.Exec(ctx, `delete from share_links
+			where client_account_id=$1
+			  and target_type='artifact'
+			  and target_id = any($2::uuid[])`, clientID, artifactIDs)
+		if err != nil {
+			return out, err
+		}
+		out.result.ConfigCleanup.ShareLinksDeleted = tag.RowsAffected()
+	}
+
+	tag, err := tx.Exec(ctx, `delete from artifacts where client_account_id=$1 and service_access_id=$2`, clientID, accessID)
+	if err != nil {
+		return out, err
+	}
+	out.result.ConfigCleanup.ArtifactsDeleted = tag.RowsAffected()
+
+	tag, err = tx.Exec(ctx, `delete from client_access_routes where client_account_id=$1 and service_access_id=$2`, clientID, accessID)
+	if err != nil {
+		return out, err
+	}
+	out.result.AccessRoutesDeleted = tag.RowsAffected()
+
+	tag, err = tx.Exec(ctx, `delete from secret_refs
+		where meta_json->>'scope'='service_access'
+		  and meta_json->>'service_access_id'=$1`, accessID)
+	if err != nil {
+		return out, err
+	}
+	out.result.SecretRefsDeleted = tag.RowsAffected()
+
+	tag, err = tx.Exec(ctx, `delete from service_accesses where client_account_id=$1 and id=$2`, clientID, accessID)
+	if err != nil {
+		return out, err
+	}
+	out.result.ServiceAccessesDeleted = tag.RowsAffected()
+	if tag.RowsAffected() == 0 {
+		return out, pgx.ErrNoRows
+	}
+	return out, nil
+}
+
 func deleteClientConfigRowsTx(ctx context.Context, tx pgx.Tx, clientID string) (clientConfigRowsCleanup, error) {
 	out := clientConfigRowsCleanup{
 		result: domain.ClientConfigCleanupResult{ClientID: clientID},
@@ -207,6 +367,59 @@ func clientServiceAccessIDsTx(ctx context.Context, tx pgx.Tx, clientID string) (
 	return scanStringColumn(rows)
 }
 
+func activeServiceAccessInstanceIDsTx(ctx context.Context, tx pgx.Tx, accessID string) ([]string, error) {
+	rows, err := tx.Query(ctx, `select distinct i.id::text
+		from service_accesses sa
+		join instances i on i.id=sa.instance_id
+		where sa.id=$1
+		  and i.status not in ('deleted','deleting')`, accessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanStringColumn(rows)
+}
+
+func serviceAccessRouteNodeIDsTx(ctx context.Context, tx pgx.Tx, clientID, accessID string) ([]string, error) {
+	rows, err := tx.Query(ctx, `select distinct node_id::text
+		from client_access_routes
+		where client_account_id=$1
+		  and service_access_id=$2
+		  and node_id is not null`, clientID, accessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanStringColumn(rows)
+}
+
+func serviceAccessArtifactRefsTx(ctx context.Context, tx pgx.Tx, clientID, accessID string) ([]string, []string, error) {
+	rows, err := tx.Query(ctx, `select id::text,storage_path from artifacts where client_account_id=$1 and service_access_id=$2`, clientID, accessID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	paths := make([]string, 0)
+	for rows.Next() {
+		var artifactID string
+		var path string
+		if err := rows.Scan(&artifactID, &path); err != nil {
+			return nil, nil, err
+		}
+		if strings.TrimSpace(artifactID) != "" {
+			ids = append(ids, strings.TrimSpace(artifactID))
+		}
+		if strings.TrimSpace(path) != "" {
+			paths = append(paths, path)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return ids, paths, nil
+}
+
 func scanStringColumn(rows pgx.Rows) ([]string, error) {
 	out := make([]string, 0)
 	seen := map[string]struct{}{}
@@ -262,6 +475,16 @@ func (s *Store) removeClientArtifactFiles(clientID string, paths []string) (int6
 	if clientID == "" {
 		return 0, nil
 	}
+	deleted, errs := s.removeManagedArtifactFiles(paths)
+	if dir, ok := s.managedClientArtifactDir(clientID); ok {
+		if err := os.RemoveAll(dir); err != nil {
+			errs = append(errs, fmt.Sprintf("remove artifact directory %s: %v", dir, err))
+		}
+	}
+	return deleted, errs
+}
+
+func (s *Store) removeManagedArtifactFiles(paths []string) (int64, []string) {
 	var deleted int64
 	var errs []string
 	seen := map[string]struct{}{}
@@ -287,11 +510,6 @@ func (s *Store) removeClientArtifactFiles(clientID string, paths []string) (int6
 			continue
 		}
 		deleted++
-	}
-	if dir, ok := s.managedClientArtifactDir(clientID); ok {
-		if err := os.RemoveAll(dir); err != nil {
-			errs = append(errs, fmt.Sprintf("remove artifact directory %s: %v", dir, err))
-		}
 	}
 	return deleted, errs
 }

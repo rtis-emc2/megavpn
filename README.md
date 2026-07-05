@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.23`
+**Release:** `7.0.1.24`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,7 +55,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.23` is a hardening baseline for release stabilization. The codebase has
+`7.0.1.24` is a hardening baseline for release stabilization. The codebase has
 moved from feature expansion to controlled production-readiness work. The
 current focus is:
 
@@ -86,6 +86,9 @@ current focus is:
 - hard client deletion with PostgreSQL cleanup coverage for service access,
   routes, generated artifacts, share links, subscriptions, delivery records and
   service-access scoped secrets;
+- instance deletion now cascades client service-access cleanup after managed
+  node cleanup succeeds, and operators can remove a single stale service access
+  from the Client Access modal;
 - operator-grade Firewall UI with posture cards, rule filters, grouped
   protocol presets and explicit apply modes;
 - operator console typography and layout hardening with one UI font stack,

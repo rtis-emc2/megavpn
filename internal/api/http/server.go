@@ -145,6 +145,7 @@ type Store interface {
 	RevokeClient(context.Context, string) (domain.Job, error)
 	ClearClientConfigs(context.Context, string) (domain.ClientConfigCleanupResult, error)
 	ListServiceAccesses(context.Context, string) ([]domain.ServiceAccess, error)
+	DeleteClientServiceAccess(context.Context, string, string) (domain.ClientServiceAccessDeleteResult, error)
 	ListClientAccessRoutes(context.Context, string) ([]domain.ClientAccessRoute, error)
 	CreateClientAccessRoute(context.Context, string, domain.ClientAccessRoute) (domain.ClientAccessRoute, error)
 	DeleteClientAccessRoute(context.Context, string, string) (domain.ClientAccessRoute, error)
@@ -443,6 +444,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/clients/{id}/suspend", "client.write", s.clientStatus("suspended"))
 	protected("POST /api/v1/clients/{id}/activate", "client.write", s.clientStatus("active"))
 	protected("GET /api/v1/clients/{id}/accesses", "client.read", s.clientAccesses)
+	protected("DELETE /api/v1/clients/{id}/accesses/{access_id}", "client.provision", s.deleteClientServiceAccess)
 	protected("GET /api/v1/clients/{id}/routes", "client.read", s.clientAccessRoutes)
 	protected("POST /api/v1/clients/{id}/routes", "client.provision", s.createClientAccessRoute)
 	protected("DELETE /api/v1/clients/{id}/routes/{route_id}", "client.provision", s.deleteClientAccessRoute)
@@ -1424,6 +1426,15 @@ func (s *Server) clientAccesses(w nethttp.ResponseWriter, r *nethttp.Request) {
 	x, err := s.store.ListServiceAccesses(r.Context(), idParam(r))
 	if err != nil {
 		writeErr(w, 500, "list accesses failed")
+		return
+	}
+	writeJSON(w, 200, x)
+}
+
+func (s *Server) deleteClientServiceAccess(w nethttp.ResponseWriter, r *nethttp.Request) {
+	x, err := s.store.DeleteClientServiceAccess(r.Context(), idParam(r), strings.TrimSpace(r.PathValue("access_id")))
+	if err != nil {
+		writeErr(w, classifyClientRouteErrStatus(err), err.Error())
 		return
 	}
 	writeJSON(w, 200, x)

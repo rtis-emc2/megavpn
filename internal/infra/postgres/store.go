@@ -1513,13 +1513,6 @@ func (s *Store) runtimeCapabilityInstallNeeded(ctx context.Context, instance dom
 }
 
 func (s *Store) DeleteInstance(ctx context.Context, instanceID string) (domain.Instance, error) {
-	var accesses int
-	if err := s.db.QueryRow(ctx, `select count(*) from service_accesses where instance_id=$1 and status in ('pending','active','disabled')`, instanceID).Scan(&accesses); err != nil {
-		return domain.Instance{}, err
-	}
-	if accesses > 0 {
-		return domain.Instance{}, fmt.Errorf("instance has %d service accesses", accesses)
-	}
 	x, err := s.GetInstance(ctx, instanceID)
 	if err != nil {
 		return domain.Instance{}, err
@@ -2401,6 +2394,7 @@ func (s *Store) applyInstanceJobCompletionSideEffects(ctx context.Context, insta
 	defer tx.Rollback(ctx)
 
 	routePolicyNeeded := false
+	var artifactCleanupPaths []string
 	if status == "succeeded" {
 		switch jobType {
 		case "instance.apply":
@@ -2446,12 +2440,15 @@ func (s *Store) applyInstanceJobCompletionSideEffects(ctx context.Context, insta
 			if _, err := tx.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, instanceID); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `update client_access_routes set status='deleted',updated_at=now() where instance_id=$1 and status in ('pending','active','disabled')`, instanceID); err != nil {
+			cleanup, err := s.cleanupInstanceClientServiceAccesses(ctx, tx, instanceID)
+			if err != nil {
 				return err
 			}
+			artifactCleanupPaths = cleanup.paths
 			if err := releaseInstanceAddressPoolAllocationsTx(ctx, tx, instanceID); err != nil && !isAddressPoolCatalogUnavailable(err) {
 				return err
 			}
+			routePolicyNeeded = true
 		}
 	} else if jobType == "instance.apply" {
 		validationErrors := []any{}
@@ -2485,6 +2482,12 @@ func (s *Store) applyInstanceJobCompletionSideEffects(ctx context.Context, insta
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
+	}
+	if len(artifactCleanupPaths) > 0 {
+		_, fileErrors := s.removeManagedArtifactFiles(artifactCleanupPaths)
+		if len(fileErrors) > 0 {
+			_ = s.AddJobLog(ctx, jobID, "warn", "instance delete left artifact cleanup warnings", map[string]any{"errors": fileErrors})
+		}
 	}
 	if routePolicyNeeded {
 		s.queueRoutePolicyJobForInstance(ctx, instanceID)
@@ -2526,8 +2529,17 @@ func (s *Store) applyNodeEmergencyCleanupResult(ctx context.Context, nodeID stri
 	rows.Close()
 	for _, instanceID := range instanceIDs {
 		_, _ = s.db.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, instanceID)
-		_, _ = s.db.Exec(ctx, `update client_access_routes set status='deleted',updated_at=now() where instance_id=$1 and status in ('pending','active','disabled')`, instanceID)
-		_, _ = s.db.Exec(ctx, `update service_accesses set status='failed',updated_at=now() where instance_id=$1 and status in ('pending','active','disabled')`, instanceID)
+		tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+		if err == nil {
+			cleanup, cleanupErr := s.cleanupInstanceClientServiceAccesses(ctx, tx, instanceID)
+			if cleanupErr != nil {
+				_ = tx.Rollback(ctx)
+			} else if commitErr := tx.Commit(ctx); commitErr != nil {
+				_ = tx.Rollback(ctx)
+			} else if len(cleanup.paths) > 0 {
+				s.removeManagedArtifactFiles(cleanup.paths)
+			}
+		}
 		s.releaseInstanceAddressPoolAllocations(ctx, instanceID)
 	}
 	if includeAgent {

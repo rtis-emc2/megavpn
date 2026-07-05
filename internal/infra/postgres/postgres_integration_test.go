@@ -1273,6 +1273,177 @@ func TestPostgresIntegrationDeleteClientRemovesProvisioningRows(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationDeleteClientServiceAccessRemovesRows(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	store.SetArtifactRoot(t.TempDir())
+
+	fixture := createClientServiceAccessCleanupFixture(t, ctx, store, "access-cleanup")
+	result, err := store.DeleteClientServiceAccess(ctx, fixture.client.ID, fixture.access.ID)
+	if err != nil {
+		t.Fatalf("delete client service access: %v", err)
+	}
+	if !result.Deleted {
+		t.Fatalf("service access delete result did not mark deleted: %#v", result)
+	}
+	if result.ServiceAccessesDeleted != 1 || result.AccessRoutesDeleted != 1 || result.ConfigCleanup.ArtifactsDeleted != 1 || result.ConfigCleanup.ShareLinksDeleted != 1 || result.SecretRefsDeleted != 1 {
+		t.Fatalf("service access delete result = %#v, want one access/route/artifact/share/secret", result)
+	}
+
+	assertPostgresCount(t, ctx, store, `select count(*) from client_accounts where id=$1`, 1, fixture.client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from instances where id=$1`, 1, fixture.instance.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where id=$1`, 0, fixture.access.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from client_access_routes where service_access_id=$1`, 0, fixture.access.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from artifacts where id=$1`, 0, fixture.artifact.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from share_links where id=$1`, 0, fixture.share.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, fixture.secret.ID)
+	if _, err := os.Stat(fixture.artifact.StoragePath); !os.IsNotExist(err) {
+		t.Fatalf("artifact file after service access delete error = %v, want not exist", err)
+	}
+}
+
+func TestPostgresIntegrationInstanceDeleteRemovesClientServiceAccessRows(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	store.SetArtifactRoot(t.TempDir())
+
+	fixture := createClientServiceAccessCleanupFixture(t, ctx, store, "instance-cleanup")
+	deleting, err := store.DeleteInstance(ctx, fixture.instance.ID)
+	if err != nil {
+		t.Fatalf("delete instance with client access: %v", err)
+	}
+	if deleting.Status != "deleting" {
+		t.Fatalf("delete instance status = %q, want deleting", deleting.Status)
+	}
+	deleteJob, ok, err := store.AgentNextJob(ctx, fixture.node.ID)
+	if err != nil {
+		t.Fatalf("claim instance delete job: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected queued instance delete job")
+	}
+	if deleteJob.Type != "instance.delete" {
+		t.Fatalf("claimed job type = %q, want instance.delete", deleteJob.Type)
+	}
+	if err := store.CompleteJob(ctx, deleteJob.ID, "succeeded", map[string]any{"active_state": "inactive"}); err != nil {
+		t.Fatalf("complete instance delete job: %v", err)
+	}
+
+	var status string
+	if err := store.db.QueryRow(ctx, `select status from instances where id=$1`, fixture.instance.ID).Scan(&status); err != nil {
+		t.Fatalf("get instance status after delete: %v", err)
+	}
+	if status != "deleted" {
+		t.Fatalf("instance status after delete = %q, want deleted", status)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from client_accounts where id=$1`, 1, fixture.client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where id=$1`, 0, fixture.access.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from client_access_routes where service_access_id=$1`, 0, fixture.access.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from artifacts where id=$1`, 0, fixture.artifact.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from share_links where id=$1`, 0, fixture.share.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, fixture.secret.ID)
+	if _, err := os.Stat(fixture.artifact.StoragePath); !os.IsNotExist(err) {
+		t.Fatalf("artifact file after instance delete error = %v, want not exist", err)
+	}
+}
+
+type clientServiceAccessCleanupFixture struct {
+	node     domain.Node
+	instance domain.Instance
+	client   domain.Client
+	access   domain.ServiceAccess
+	artifact domain.Artifact
+	share    domain.ShareLink
+	secret   domain.SecretRef
+}
+
+func createClientServiceAccessCleanupFixture(t *testing.T, ctx context.Context, store *Store, prefix string) clientServiceAccessCleanupFixture {
+	t.Helper()
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-" + prefix + "-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "203.0.113.45",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	instance, err := store.CreateInstance(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "wireguard",
+		Name:         "it-" + prefix + "-wg-" + suffix,
+		Slug:         "it-" + prefix + "-wg-" + suffix,
+		EndpointHost: "198.51.100.45",
+		EndpointPort: 51820,
+		Spec: map[string]any{
+			"config_content": "[Interface]\nAddress = 10.99.1.1/24\nListenPort = 51820\nPrivateKey = integration-test\n",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	applyJob, ok, err := store.AgentNextJob(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("claim initial apply job: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected initial apply job")
+	}
+	if err := store.CompleteJob(ctx, applyJob.ID, "succeeded", map[string]any{"active_state": "active"}); err != nil {
+		t.Fatalf("complete initial apply job: %v", err)
+	}
+
+	client, err := store.CreateClient(ctx, domain.Client{
+		Username:    "it-" + prefix + "-client-" + suffix,
+		DisplayName: "Integration Access Cleanup Client",
+		Email:       "it-" + prefix + "-client-" + suffix + "@example.invalid",
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if _, err := store.ProvisionClient(ctx, client.ID, []string{instance.ID}); err != nil {
+		t.Fatalf("provision client: %v", err)
+	}
+	accesses, err := store.ListServiceAccesses(ctx, client.ID)
+	if err != nil {
+		t.Fatalf("list service accesses: %v", err)
+	}
+	if len(accesses) != 1 {
+		t.Fatalf("service access count = %d, want 1", len(accesses))
+	}
+	access := accesses[0]
+	artifact, err := store.SaveArtifactContent(ctx, client.ID, &access.ID, "wg_conf", "client.conf", []byte("[Interface]\nPrivateKey = integration-test\n"))
+	if err != nil {
+		t.Fatalf("save artifact: %v", err)
+	}
+	share, err := store.PublishShareLink(ctx, client.ID, artifact.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("publish share link: %v", err)
+	}
+	secret, err := store.CreateSecretRef(ctx, "private_key", []byte("integration-secret"), map[string]any{
+		"scope":             "service_access",
+		"service_access_id": access.ID,
+	})
+	if err != nil {
+		t.Fatalf("create service access secret: %v", err)
+	}
+	return clientServiceAccessCleanupFixture{
+		node:     node,
+		instance: instance,
+		client:   client,
+		access:   access,
+		artifact: artifact,
+		share:    share,
+		secret:   secret,
+	}
+}
+
 func routePolicyPayloadRoute(t *testing.T, payload map[string]any, routeID string) map[string]any {
 	t.Helper()
 
