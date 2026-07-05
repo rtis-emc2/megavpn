@@ -217,6 +217,45 @@
       return role === 'egress' ? Boolean(transport.applied_egress_at) : Boolean(transport.applied_ingress_at);
     }
 
+    function transportIsSelected(transport, link) {
+      return Boolean(transport?.id && transport.id === link?.selected_transport_id);
+    }
+
+    function transportReadyForPromotion(transport, link) {
+      if (!transport || transportIsSelected(transport, link)) return false;
+      const driver = driverDef(transport.driver) || {};
+      return String(transport.status || '').toLowerCase() === 'active'
+        && Boolean(driver.supports_kernel_routes)
+        && roleApplied(transport, 'ingress')
+        && roleApplied(transport, 'egress');
+    }
+
+    function selectedTransportHasIssue(transport) {
+      if (!transport) return true;
+      const status = String(transport.status || '').toLowerCase();
+      if (status !== 'active') return true;
+      const health = transportHealth(transport);
+      const bad = new Set(['failed', 'unhealthy', 'degraded']);
+      return [health.ingress.status, health.egress.status]
+        .map((value) => String(value || '').toLowerCase())
+        .some((value) => bad.has(value));
+    }
+
+    function promotableStandbyTransports(link) {
+      const transports = Array.isArray(link?.transports) ? link.transports : [];
+      return transports.filter((transport) => transportReadyForPromotion(transport, link));
+    }
+
+    function renderStandbyNotice(link, transport) {
+      const standby = promotableStandbyTransports(link);
+      if (!standby.length || !selectedTransportHasIssue(transport)) return '';
+      return `
+        <div class="backhaul-standby-notice">
+          <span class="tag warn">active transport issue</span>
+          <span>Ready standby: ${escapeHTML(standby.map((item) => driverLabel(item.driver)).join(', '))}. Open Manage and promote it to move route projection.</span>
+        </div>`;
+    }
+
     function renderAppliedCell(transport) {
       if (!transport) return '<span class="tag">n/a</span>';
       const ingressApplied = roleApplied(transport, 'ingress');
@@ -278,6 +317,7 @@
             <section class="backhaul-panel backhaul-health-panel">
               <div class="backhaul-panel-label">Health</div>
               ${renderBackhaulHealthBlock(transport)}
+              ${renderStandbyNotice(link, transport)}
             </section>
             <section class="backhaul-panel backhaul-actions-panel">
               <div class="backhaul-panel-label">Actions</div>
@@ -299,7 +339,13 @@
 
     function renderTransportProfilePanel(transport, link) {
       const driver = driverDef(transport.driver) || {};
-      const selected = transport.id === link.selected_transport_id;
+      const selected = transportIsSelected(transport, link);
+      const canPromote = transportReadyForPromotion(transport, link);
+      const stateTag = selected
+        ? statusTag(transport.status || 'planned')
+        : canPromote
+          ? '<span class="tag ok">standby ready</span>'
+          : statusTag(transport.status || 'planned');
       return `
         <article class="backhaul-profile-row">
           <div class="backhaul-profile-head">
@@ -308,9 +354,11 @@
               <span>${escapeHTML(transport.interface_name || 'n/a')}</span>
             </div>
             <div class="backhaul-row-tags">
-              ${statusTag(transport.status || 'planned')}
-              ${selected ? '<span class="tag ok">selected</span>' : ''}
+              ${stateTag}
+              ${selected ? '<span class="tag ok">active path</span>' : ''}
+              ${canPromote ? '<span class="tag warn">promotion available</span>' : ''}
               ${driverModeTag(driver)}
+              ${canPromote ? `<button class="secondary-btn small-action" type="button" data-promote-backhaul-transport data-link-id="${escapeHTML(link.id || '')}" data-transport-id="${escapeHTML(transport.id || '')}">Promote to active</button>` : ''}
             </div>
           </div>
           <div class="backhaul-row-grid compact">
@@ -704,6 +752,9 @@
       if (!blockReason) {
         document.getElementById('probeBackhaulDetailsBtn')?.addEventListener('click', () => probeBackhaul(link.id, 'backhaulDetailsResult'));
       }
+      document.querySelectorAll('[data-promote-backhaul-transport]').forEach((button) => {
+        button.addEventListener('click', () => promoteBackhaulTransport(button.dataset.linkId, button.dataset.transportId, 'backhaulDetailsResult'));
+      });
     }
 
     async function applyBackhaul(linkID, targetID = '') {
@@ -757,6 +808,33 @@
         const body = renderActionResponse({ error: err.message, details: err?.payload || null }, 'Backhaul probe failed');
         if (target) target.innerHTML = body;
         else openModal('Backhaul probe failed', 'Error', body, { wide: true });
+      }
+    }
+
+    async function promoteBackhaulTransport(linkID, transportID, targetID = '') {
+      const target = targetID ? document.getElementById(targetID) : null;
+      if (target) target.innerHTML = '<span class="tag warn">promoting</span>';
+      try {
+        const data = await sendJSON(`/api/v1/backhaul-links/${encodeURIComponent(linkID)}/promote`, 'POST', { transport_id: transportID });
+        const jobIDs = (data.jobs || []).map((job) => job.id).filter(Boolean);
+        const body = `
+          ${renderActionResponse(data, 'Active backhaul transport updated')}
+          <div id="backhaulPromoteJobs">${renderJobList(data.jobs || [])}</div>
+          <div class="empty">Route projection now uses the promoted transport. Re-apply dependent service routes if a runtime service was already using the old path.</div>
+          <div class="modal-actions">
+            <button class="primary-btn" type="button" id="closeBackhaulPromoteBtn">Close</button>
+          </div>`;
+        if (target) target.innerHTML = body;
+        else openModal('Backhaul transport promoted', 'Route projection refresh', body, { wide: true });
+        document.getElementById('closeBackhaulPromoteBtn')?.addEventListener('click', closeModal);
+        await refresh();
+        await pollJobs(jobIDs, 'backhaulPromoteJobs', async () => {
+          await refresh();
+        });
+      } catch (err) {
+        const body = renderActionResponse({ error: err.message, details: err?.payload || null }, 'Backhaul transport promote failed');
+        if (target) target.innerHTML = body;
+        else openModal('Backhaul transport promote failed', 'Error', body, { wide: true });
       }
     }
 

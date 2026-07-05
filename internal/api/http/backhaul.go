@@ -24,6 +24,10 @@ type updateBackhaulRouteStateRequest struct {
 	Enabled *bool `json:"enabled"`
 }
 
+type promoteBackhaulTransportRequest struct {
+	TransportID string `json:"transport_id"`
+}
+
 func (s *Server) listBackhaulDrivers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, backhaul.Catalog())
 }
@@ -108,6 +112,28 @@ func (s *Server) probeBackhaulLink(w http.ResponseWriter, r *http.Request) {
 		out = append(out, redactedJob(job))
 	}
 	writeJSON(w, 202, response{"jobs": out, "job_count": len(out)})
+}
+
+func (s *Server) promoteBackhaulTransport(w http.ResponseWriter, r *http.Request) {
+	var req promoteBackhaulTransportRequest
+	if !decode(r, &req) || strings.TrimSpace(req.TransportID) == "" {
+		writeErr(w, 400, "transport_id is required")
+		return
+	}
+	link, jobs, err := s.store.PromoteBackhaulTransport(r.Context(), idParam(r), req.TransportID)
+	if err != nil {
+		writeErr(w, classifyBackhaulErrStatus(err), err.Error())
+		return
+	}
+	out := make([]domain.Job, 0, len(jobs))
+	for _, job := range jobs {
+		out = append(out, redactedJob(job))
+	}
+	status := http.StatusAccepted
+	if len(out) == 0 {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, response{"link": link, "jobs": out, "job_count": len(out)})
 }
 
 func (s *Server) updateBackhaulRouteState(w http.ResponseWriter, r *http.Request) {

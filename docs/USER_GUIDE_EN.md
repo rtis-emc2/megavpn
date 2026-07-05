@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.16`
+**Release:** `7.0.1.17`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -379,8 +379,10 @@ Workflow:
    diagnostics.
 5. Select `Apply`.
 6. Wait for successful apply on both sides.
-7. Select `Test`.
-8. Verify:
+7. If the active transport is unhealthy but a standby is `standby ready`, open
+   `Manage` and select `Promote to active` on the standby transport.
+8. Select `Test`.
+9. Verify:
    - both sides are `healthy`;
    - packet loss is `0`;
    - latency is visible;

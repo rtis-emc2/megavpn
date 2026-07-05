@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.0.1.16`
+**Релиз:** `7.0.1.17`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -378,8 +378,10 @@ Workflow:
    последующего promotion или диагностики.
 5. Нажмите `Apply`.
 6. Дождитесь успешного apply на обеих сторонах.
-7. Нажмите `Test`.
-8. Проверьте:
+7. Если active transport unhealthy, а standby показывает `standby ready`,
+   откройте `Manage` и нажмите `Promote to active` на standby transport.
+8. Нажмите `Test`.
+9. Проверьте:
    - обе стороны `healthy`;
    - packet loss `0`;
    - latency видна;

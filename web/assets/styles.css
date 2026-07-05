@@ -601,6 +601,22 @@ tr:hover td { background: rgba(148,163,184,0.04); }
   flex: 0 0 auto;
   margin-top: -1px;
 }
+.backhaul-standby-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  border: 1px solid rgba(180, 83, 9, 0.26);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #fffbeb;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.backhaul-standby-notice .tag {
+  flex: 0 0 auto;
+}
 .tag[hidden] { display: none !important; }
 .small-action { padding: 9px 12px; min-height: 36px; font-size: 13px; }
 .instance-diagnostics { margin-top: 16px; }

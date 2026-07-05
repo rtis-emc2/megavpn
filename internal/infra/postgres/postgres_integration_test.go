@@ -414,6 +414,149 @@ func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T
 	}
 }
 
+func TestPostgresIntegrationBackhaulPromoteStandbyTransportRefreshesRoutePolicy(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	ingress, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-ingress-promote-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "198.51.100.30",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create ingress node: %v", err)
+	}
+	egress, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-egress-promote-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "203.0.113.30",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create egress node: %v", err)
+	}
+	link, err := store.CreateBackhaulLink(ctx, domain.BackhaulLink{
+		Name:          "it-backhaul-promote-" + suffix,
+		IngressNodeID: ingress.ID,
+		EgressNodeID:  egress.ID,
+		DesiredDriver: backhaul.DriverWireGuard,
+		RouteMetric:   30,
+		Metadata: map[string]any{
+			"endpoint_host": egress.Address,
+			"tunnel_cidr":   "10.240.252.0/30",
+			"drivers":       []any{backhaul.DriverWireGuard, backhaul.DriverOpenVPNUDP},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create backhaul link: %v", err)
+	}
+	if len(link.Transports) != 2 {
+		t.Fatalf("backhaul transports = %#v, want wireguard and openvpn", link.Transports)
+	}
+	var wireguardTransport, openVPNTransport *domain.BackhaulTransport
+	for idx := range link.Transports {
+		switch link.Transports[idx].Driver {
+		case backhaul.DriverWireGuard:
+			wireguardTransport = &link.Transports[idx]
+		case backhaul.DriverOpenVPNUDP:
+			openVPNTransport = &link.Transports[idx]
+		}
+	}
+	if wireguardTransport == nil || openVPNTransport == nil {
+		t.Fatalf("backhaul transports = %#v, want wireguard and openvpn", link.Transports)
+	}
+
+	client, err := store.CreateClient(ctx, domain.Client{
+		Username:    "it-route-promote-" + suffix,
+		DisplayName: "Integration Promote Route Client",
+		Email:       "it-route-promote-" + suffix + "@example.invalid",
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	route, err := store.CreateClientAccessRoute(ctx, client.ID, domain.ClientAccessRoute{
+		NodeID:          &ingress.ID,
+		Name:            "remote-egress-promote-" + suffix,
+		Status:          "active",
+		Action:          "allow",
+		DestinationType: "cidr",
+		Destination:     "0.0.0.0/0",
+		Protocol:        "any",
+		Ports:           "*",
+		Policy: map[string]any{
+			"egress_mode":    "egress_node",
+			"egress_node_id": egress.ID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create client access route: %v", err)
+	}
+
+	applyJobs, err := store.CreateBackhaulApplyJobs(ctx, link.ID)
+	if err != nil {
+		t.Fatalf("create backhaul apply jobs: %v", err)
+	}
+	for _, job := range applyJobs {
+		role := strings.TrimSpace(stringify(job.Payload["role"]))
+		transportID := strings.TrimSpace(stringify(job.Payload["transport_id"]))
+		driver := strings.TrimSpace(stringify(job.Payload["driver"]))
+		status := "succeeded"
+		health := map[string]any{"status": "healthy", "reason": "service active and interface present"}
+		if driver == backhaul.DriverWireGuard {
+			status = "failed"
+			health = map[string]any{"status": "unhealthy", "reason": "systemd unit is not active", "active_state": "unknown"}
+		}
+		if err := store.CompleteJob(ctx, job.ID, status, map[string]any{
+			"link_id":      link.ID,
+			"transport_id": transportID,
+			"role":         role,
+			"health":       health,
+		}); err != nil {
+			t.Fatalf("complete %s %s backhaul apply job: %v", driver, role, err)
+		}
+	}
+
+	failedLink, err := store.GetBackhaulLink(ctx, link.ID)
+	if err != nil {
+		t.Fatalf("reload failed backhaul link: %v", err)
+	}
+	if failedLink.Status != "failed" {
+		t.Fatalf("link status before promote = %q, want failed selected transport", failedLink.Status)
+	}
+	promoted, jobs, err := store.PromoteBackhaulTransport(ctx, link.ID, openVPNTransport.ID)
+	if err != nil {
+		t.Fatalf("promote openvpn standby transport: %v", err)
+	}
+	if promoted.Status != "active" || promoted.DesiredDriver != backhaul.DriverOpenVPNUDP || promoted.SelectedTransportID == nil || *promoted.SelectedTransportID != openVPNTransport.ID {
+		t.Fatalf("promoted link = status:%s desired:%s selected:%v, want active openvpn %s", promoted.Status, promoted.DesiredDriver, promoted.SelectedTransportID, openVPNTransport.ID)
+	}
+	if len(jobs) != 1 || jobs[0].Type != "node.route_policy.apply" {
+		t.Fatalf("promotion jobs = %#v, want one route policy refresh", jobs)
+	}
+	promotedRoute := routePolicyPayloadRoute(t, jobs[0].Payload, route.ID)
+	promotedEgress := routePolicyPayloadEgress(t, promotedRoute)
+	managedBackhaul, _ := promotedEgress["managed_backhaul"].(map[string]any)
+	if managedBackhaul["transport_id"] != openVPNTransport.ID {
+		t.Fatalf("promoted managed_backhaul = %#v, want openvpn transport %s", managedBackhaul, openVPNTransport.ID)
+	}
+	if managedBackhaul["transport_id"] == wireguardTransport.ID {
+		t.Fatalf("promoted managed_backhaul still points to wireguard: %#v", managedBackhaul)
+	}
+}
+
 func TestPostgresIntegrationBinaryRepositoryTicketLifecycle(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 

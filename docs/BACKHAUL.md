@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.16`
+**Release:** `7.0.1.17`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -30,6 +30,7 @@ Core API/UI:
 - `POST /api/v1/backhaul-links`
 - `POST /api/v1/backhaul-links/{id}/apply`
 - `POST /api/v1/backhaul-links/{id}/probe`
+- `POST /api/v1/backhaul-links/{id}/promote`
 - `DELETE /api/v1/backhaul-links/{id}`
 - Backhaul page in the Control Plane UI.
 
@@ -55,6 +56,7 @@ The Backhaul create form has two related controls:
 | --- | --- | --- |
 | `Active backhaul transport` | The single active ingress-to-egress transport path. | Stored as `desired_driver`, rendered as the selected transport, used by apply/probe gating and route-policy projection. It is always included and cannot be unchecked in the create form. |
 | `Optional standby transports` | Extra internal profiles generated for this backhaul link. | Stored as `drivers` during create only when explicitly checked. They are generated backup profiles for controlled fallback, diagnostics or later promotion, but they are not active after create. |
+| `Promote to active` | Explicitly changes the selected active transport to a healthy standby transport. | Updates `selected_transport_id` and `desired_driver`, sets the link active when the promoted transport is active on both sides, and queues an ingress route-policy refresh. |
 
 These controls do not select client-facing VPN protocols. They define the
 internal node-to-node transport between ingress and egress. Client access
@@ -73,16 +75,20 @@ instances keep their own service drivers, client configs and route policies.
 9. When both sides succeed, managed-systemd transports become `active`; profile-only transports become `materialized` and never produce a false active route. Failed apply results are stored per side in `health_json.ingress` or `health_json.egress` so a partial apply shows the missing/failing side explicitly, with the root cause shown before generic failure text.
 10. Every L3 transport profile gets its own `/30`; duplicate failed profiles are normalized to a unique CIDR during the next apply.
 11. Route-policy projection can use the active managed backhaul interface for remote egress routes.
-12. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow`
+12. If the selected active transport fails but a standby L3 transport is active
+    on both sides, the operator can promote the standby transport. Promotion is
+    explicit: the system does not silently move production traffic to a standby
+    path without operator intent.
+13. `node.route_policy.apply` installs policy routing for IPv4 L3/L4 `allow`
     candidates and Xray/VLESS system source-routes. For VLESS remote egress,
     the source route is derived from Xray `sendThrough` and points
     `from <ingress_backhaul_ip>/32` to the selected backhaul routing table.
-13. Operator can run `probe` from the Backhaul UI after the selected transport is `active` and both ingress/egress sides have applied timestamps. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
-14. Each probe waits for systemd active state, local interface presence, route lookup to the peer tunnel address through the expected backhaul interface and ICMP reachability with retries.
-15. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer route lookup, peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
-16. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; missing units/files/directories/interfaces are reported as `not found - skip`, and only after the cleanup batch succeeds does the link move to `deleted`.
-17. Before queueing a new cleanup batch and before Jobs API reads, the backend recovers stale `running` jobs whose lease has expired back to `retrying`. This prevents a dead agent request or interrupted process from blocking backhaul deletion indefinitely.
-18. Deleted links are excluded from active Backhaul operations but remain visible for a short operator-review window in the Backhaul UI `Recently Deleted Backhaul` table with per-transport ingress/egress cleanup summaries.
+14. Operator can run `probe` from the Backhaul UI after the selected transport is `active` and both ingress/egress sides have applied timestamps. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
+15. Each probe waits for systemd active state, local interface presence, route lookup to the peer tunnel address through the expected backhaul interface and ICMP reachability with retries.
+16. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer route lookup, peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
+17. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; missing units/files/directories/interfaces are reported as `not found - skip`, and only after the cleanup batch succeeds does the link move to `deleted`.
+18. Before queueing a new cleanup batch and before Jobs API reads, the backend recovers stale `running` jobs whose lease has expired back to `retrying`. This prevents a dead agent request or interrupted process from blocking backhaul deletion indefinitely.
+19. Deleted links are excluded from active Backhaul operations but remain visible for a short operator-review window in the Backhaul UI `Recently Deleted Backhaul` table with per-transport ingress/egress cleanup summaries.
 
 ## Security Model
 
@@ -134,6 +140,9 @@ Minimum production path for the first ingress/egress pair:
 ## Failure Scenarios
 
 - One side fails apply: transport and link move to `failed`; Backhaul UI shows `partial`, the applied side, the missing/failing side and the per-side health/error saved from the failed job. Root-cause readiness reasons such as `systemd unit is not active`, `interface is not present`, `active_state=failed` and `unit_status_output` are preserved for operator diagnostics.
+- Selected transport fails while a standby is healthy: traffic and route
+  projection still use the selected active transport until an operator promotes
+  the healthy standby. Use `Backhaul -> Manage -> Promote to active`.
 - OpenVPN unit fails on start: check the Jobs or Backhaul modal result summary first; it includes the unit name, active state and first useful `systemctl status`/OpenVPN error line before manual SSH inspection is needed.
 - Different `mgbh*` interface names or different tunnel CIDRs on ingress and egress for the same selected transport indicate stale runtime state or different transport profiles, not a healthy single tunnel. Re-apply removes interfaces recorded in the previous managed manifest and the target managed interface before recreating it; unrelated stale interfaces from older/deleted links must be removed by managed Backhaul delete or a controlled one-time cleanup after verifying the owning unit is obsolete.
 - Unit/interface missing after apply: apply job fails; install/verify the runtime capability on that node before applying again.

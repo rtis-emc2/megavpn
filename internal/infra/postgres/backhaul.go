@@ -387,6 +387,79 @@ func (s *Store) SetBackhaulRouteEnabled(ctx context.Context, linkID string, enab
 	return link, []domain.Job{routeJob}, nil
 }
 
+func (s *Store) PromoteBackhaulTransport(ctx context.Context, linkID, transportID string) (domain.BackhaulLink, []domain.Job, error) {
+	linkID = strings.TrimSpace(linkID)
+	transportID = strings.TrimSpace(transportID)
+	if linkID == "" || transportID == "" {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("backhaul link id and transport_id are required")
+	}
+	link, err := s.GetBackhaulLink(ctx, linkID)
+	if err != nil {
+		return domain.BackhaulLink{}, nil, err
+	}
+	if link.Status == "deleted" {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("cannot promote transport on deleted backhaul link")
+	}
+	if link.Status == "disabled" {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("cannot promote transport on disabled backhaul link; enable the route first")
+	}
+	target := backhaulTransportByID(link.Transports, transportID)
+	if target == nil {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("backhaul transport not found")
+	}
+	def, ok := backhaul.Definition(target.Driver)
+	if !ok {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("unsupported backhaul transport %q", target.Driver)
+	}
+	if !def.SupportsKernelRoutes {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("backhaul transport %q cannot be promoted because it does not support kernel route projection", target.Driver)
+	}
+	if target.Status != "active" {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("backhaul transport must be active on both sides before promotion")
+	}
+	if target.AppliedIngressAt == nil || target.AppliedEgressAt == nil {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("backhaul transport must be applied on both sides before promotion")
+	}
+	selectedID := ""
+	if link.SelectedTransportID != nil {
+		selectedID = strings.TrimSpace(*link.SelectedTransportID)
+	}
+	if selectedID == target.ID && link.Status == "active" && link.DesiredDriver == target.Driver {
+		return link, nil, nil
+	}
+	if link.Metadata == nil {
+		link.Metadata = map[string]any{}
+	}
+	link.Metadata["active_transport_promoted_at"] = time.Now().UTC().Format(time.RFC3339)
+	link.Metadata["active_transport_promoted_from"] = selectedID
+	link.Metadata["active_transport_promoted_to"] = target.ID
+	link.Metadata["active_transport_promoted_driver"] = target.Driver
+	tag, err := s.db.Exec(ctx, `update backhaul_links
+		set selected_transport_id=$2,
+		    desired_driver=$3,
+		    status='active',
+		    metadata_json=$4,
+		    updated_at=now()
+		where id=$1 and status not in ('deleted','disabled')`,
+		link.ID, target.ID, target.Driver, mustJSON(link.Metadata))
+	if err != nil {
+		return domain.BackhaulLink{}, nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("backhaul link is not promotable in its current status")
+	}
+	routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID)
+	if err != nil {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("queue route policy refresh after backhaul transport promotion: %w", err)
+	}
+	link, err = s.GetBackhaulLink(ctx, link.ID)
+	if err != nil {
+		return domain.BackhaulLink{}, []domain.Job{routeJob}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "backhaul.transport.promote", "backhaul", &link.ID, "managed backhaul active transport promoted to "+target.Driver)
+	return link, []domain.Job{routeJob}, nil
+}
+
 func (s *Store) CreateBackhaulApplyJobs(ctx context.Context, linkID string) ([]domain.Job, error) {
 	link, err := s.GetBackhaulLink(ctx, linkID)
 	if err != nil {
@@ -1369,9 +1442,17 @@ func selectedBackhaulTransport(link domain.BackhaulLink) *domain.BackhaulTranspo
 	if link.SelectedTransportID == nil {
 		return nil
 	}
-	for idx := range link.Transports {
-		if link.Transports[idx].ID == *link.SelectedTransportID {
-			return &link.Transports[idx]
+	return backhaulTransportByID(link.Transports, *link.SelectedTransportID)
+}
+
+func backhaulTransportByID(transports []domain.BackhaulTransport, transportID string) *domain.BackhaulTransport {
+	transportID = strings.TrimSpace(transportID)
+	if transportID == "" {
+		return nil
+	}
+	for idx := range transports {
+		if strings.TrimSpace(transports[idx].ID) == transportID {
+			return &transports[idx]
 		}
 	}
 	return nil
