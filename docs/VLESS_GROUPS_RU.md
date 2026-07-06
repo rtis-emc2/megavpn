@@ -1,6 +1,6 @@
 # VLESS Access Groups
 
-**Релиз:** `7.0.1.32`
+**Релиз:** `7.0.1.33`
 
 English companion: [VLESS_GROUPS.md](VLESS_GROUPS.md).
 

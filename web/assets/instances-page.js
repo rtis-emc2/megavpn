@@ -1081,7 +1081,6 @@
         <article class="pack-component-card selectable is-selected" data-pack-component-card="${escapeHTML(String(index))}" data-pack-component-service="${escapeHTML(serviceCode)}" data-pack-component-camouflage="${usesCamouflage ? 'true' : 'false'}" data-pack-component-tls-edge="${usesTLSEdge ? 'true' : 'false'}">
           <label class="pack-component-toggle-row">
             <input class="pack-component-toggle" type="checkbox" name="pack_component_indexes" value="${escapeHTML(String(index))}" data-pack-component-index="${escapeHTML(String(index))}" checked>
-            <span class="pack-component-index">${escapeHTML(String(index + 1))}</span>
             <span class="pack-component-copy">
               <strong>${escapeHTML(component?.label || component?.service_code || `Component ${index + 1}`)}</strong>
               <span>${escapeHTML(meta)}</span>

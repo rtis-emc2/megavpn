@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.32`
+**Release:** `7.0.1.33`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,7 +55,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.32` is a hardening baseline for release stabilization. The codebase has
+`7.0.1.33` is a hardening baseline for release stabilization. The codebase has
 moved from feature expansion to controlled production-readiness work. The
 current focus is:
 
@@ -99,6 +99,10 @@ current focus is:
 - explicit route-policy cleanup: operators can queue a typed node job that
   stops route-policy runtime, removes managed `fwmark` rules/chains and cleans
   stale destinations remembered in the previous node snapshot;
+- generated TLS-enabled Nginx edge configs include an HTTP listener that
+  redirects plain HTTP traffic to HTTPS before camouflage/fallback routing;
+- Nginx instance and emergency cleanup now reload shared Nginx when managed
+  configs remain and stop it when all MegaVPN-managed edge configs are gone;
 - client VLESS camouflage UX that separates public client endpoints from local
   Xray backend endpoints and makes pending provisioning state actionable;
 - hard client deletion with PostgreSQL cleanup coverage for service access,

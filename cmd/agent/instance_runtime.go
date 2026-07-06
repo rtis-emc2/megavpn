@@ -303,6 +303,13 @@ func (e instanceRuntimeExecutor) Delete(ctx context.Context, payload instanceJob
 	if errText := stringify(networkPolicy["error"]); errText != "" {
 		warnings = append(warnings, "network policy cleanup warning: "+errText)
 	}
+	if driver.NormalizeCode(payload.ServiceCode) == driver.Nginx {
+		nginxRuntime := finalizeSharedNginxRuntime(ctx)
+		result["nginx_runtime"] = nginxRuntime
+		if errText := stringify(nginxRuntime["error"]); errText != "" {
+			warnings = append(warnings, "nginx cleanup warning: "+errText)
+		}
+	}
 	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
 
 	result["message"] = "instance runtime cleanup completed"

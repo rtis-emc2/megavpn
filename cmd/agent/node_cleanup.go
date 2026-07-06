@@ -106,6 +106,7 @@ func emergencyCleanupManagedLeftovers(ctx context.Context, cleanupScope string) 
 	removedPaths := []string{}
 	skippedItems := []string{}
 	warnings := []string{}
+	nginxRuntime := map[string]any{}
 
 	for _, unit := range emergencyCleanupUnitNames(cleanupScope) {
 		code, out := runInstallCommand(ctx, "systemctl", "disable", "--now", unit)
@@ -183,6 +184,12 @@ func emergencyCleanupManagedLeftovers(ctx context.Context, cleanupScope string) 
 		}
 	}
 
+	if nginxRuntime = finalizeSharedNginxRuntime(ctx); len(nginxRuntime) > 0 {
+		if errText := stringify(nginxRuntime["error"]); errText != "" {
+			warnings = append(warnings, "nginx cleanup warning: "+errText)
+		}
+	}
+
 	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
 	return map[string]any{
 		"cleanup_scope": cleanupScope,
@@ -190,7 +197,48 @@ func emergencyCleanupManagedLeftovers(ctx context.Context, cleanupScope string) 
 		"removed_paths": removedPaths,
 		"skipped_items": skippedItems,
 		"warnings":      warnings,
+		"nginx_runtime": nginxRuntime,
 	}
+}
+
+func finalizeSharedNginxRuntime(ctx context.Context) map[string]any {
+	matches, err := filepath.Glob("/etc/nginx/conf.d/megavpn-*.conf")
+	if err != nil {
+		return map[string]any{"error": err.Error(), "pattern": "/etc/nginx/conf.d/megavpn-*.conf"}
+	}
+	result := map[string]any{
+		"remaining_managed_configs": len(matches),
+		"unit":                      "nginx",
+	}
+	if len(matches) > 0 {
+		code, out := runInstallCommand(ctx, "nginx", "-t")
+		result["test_exit_code"] = code
+		result["test_output"] = truncate(strings.TrimSpace(out), 2000)
+		if code != 0 {
+			result["error"] = "nginx config validation failed after managed cleanup"
+			result["active_state"] = currentUnitState("nginx")
+			return result
+		}
+		reloadCode, reloadOut := runInstallCommand(ctx, "systemctl", "reload", "nginx")
+		result["action"] = "reload"
+		result["reload_exit_code"] = reloadCode
+		result["reload_output"] = truncate(strings.TrimSpace(reloadOut), 2000)
+		result["active_state"] = currentUnitState("nginx")
+		if reloadCode != 0 && !isMissingSystemdUnitOutput(reloadOut) {
+			result["error"] = "nginx reload failed after managed cleanup"
+		}
+		return result
+	}
+	code, out := runInstallCommand(ctx, "systemctl", "disable", "--now", "nginx")
+	result["action"] = "stop"
+	result["stop_exit_code"] = code
+	result["stop_output"] = truncate(strings.TrimSpace(out), 2000)
+	_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", "nginx")
+	result["active_state"] = currentUnitState("nginx")
+	if code != 0 && !isMissingSystemdUnitOutput(out) {
+		result["error"] = "nginx stop failed after all managed configs were removed"
+	}
+	return result
 }
 
 func emergencyCleanupUnitNames(cleanupScope string) []string {

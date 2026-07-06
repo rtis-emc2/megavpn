@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.32`
+**Релиз:** `7.0.1.33`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.32
+Базовая версия кода: RTIS MegaVPN 7.0.1.33
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1082,29 +1082,30 @@ operator console.
 В релизе не менялся VPN runtime behavior. Database-изменения ограничены
 additive/idempotent catalog repair migrations.
 
-## 15. Release 7.0.1.32 Closure
+## 15. Release 7.0.1.33 Closure
 
-Цель релиза `7.0.1.32`: закрыть первый явный lifecycle loop для route-policy
-после preview/apply telemetry. Теперь оператор может inspect, sync и clean
-managed route-policy runtime из одного diagnostics surface ноды.
+Цель релиза `7.0.1.33`: закрыть три operator-facing дефекта в
+traffic-camouflage и service-pack workflow: plain HTTP не должен оставаться на
+fallback path, shared Nginx не должен продолжать обслуживать удаленные
+MegaVPN edge configs, а selective pack component cards должны быть ровными.
 
 Зафиксировано в этом релизе:
 
-- Добавлены typed jobs `node.route_policy.cleanup` и endpoint
-  `POST /api/v1/nodes/{id}/routes/cleanup`.
-- Agent останавливает managed route-policy timer/unit, удаляет managed
-  route-policy snapshot/script/unit files, reserved `ip rule` priorities и
-  managed nftables route-policy chains.
-- `node.route_policy.apply` читает предыдущий on-node snapshot перед записью
-  нового, поэтому retired client/system destinations можно удалить даже после
-  того, как control-plane payload уже не содержит старый route.
-- В node diagnostics UI добавлена кнопка `Clean route policy` с явным
-  подтверждением рядом с `Inspect route policy` и `Sync route policy`.
-- Обновлены job schema, typed job authorization tests, agent renderer tests и
-  operator documentation для cleanup path.
+- Generated TLS-enabled Nginx configs теперь включают managed `listen 80`
+  redirect server block. Plain HTTP requests редиректятся на HTTPS до VLESS
+  camouflage или fallback-site routing.
+- Nginx instance cleanup и node emergency cleanup теперь запускают shared
+  Nginx finalizer. Если другие MegaVPN Nginx configs остались, Nginx
+  валидируется и reload; если MegaVPN Nginx configs больше нет, shared
+  `nginx` unit останавливается.
+- Selective service-pack component cards больше не рисуют съехавшие numbered
+  circles; row выровнен как checkbox плюс component content.
+- Regression tests покрывают Nginx redirect generation и существующие managed
+  cleanup allowlists.
 
-Database migration не требовалась. Cleanup ограничен MegaVPN-owned
-route-policy files, nftables chains и reserved policy-rule priorities.
+Database migration не требовалась. Изменение cleanup не добавляет `nginx` в
+generic managed-unit allowlists; это dedicated shared-runtime finalizer,
+ограниченный `/etc/nginx/conf.d/megavpn-*.conf`.
 
 ## 16. Immediate Next Actions
 
@@ -1113,6 +1114,7 @@ route-policy files, nftables chains и reserved policy-rule priorities.
 3. Проверить runtime artifact upload/fetch/install для Xray и Shadowsocks.
 4. Validate service-pack create/apply/delete на реальных disposable nodes.
 5. Validate VLESS ingress с managed egress route policy, route-policy preview,
-   route-policy telemetry и explicit cleanup на реальных ingress/egress nodes.
+   route-policy telemetry, explicit cleanup и Nginx HTTP-to-HTTPS redirect на
+   реальных ingress/egress nodes.
 6. Продолжить traffic-camouflage ingress case: config preview/diff,
    `nginx -t` evidence surface и live fallback-site smoke.

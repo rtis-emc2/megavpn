@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.32`
+**Release:** `7.0.1.33`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -477,6 +477,8 @@ Xray backend bound to `127.0.0.1`. Nginx proxies only the hidden VLESS/gRPC path
 to Xray, while ordinary browser traffic on `/` is reverse-proxied to the
 fallback website. This masks ingress behavior deliberately, but it does not
 replace correct TLS/SNI, certificate and DNS configuration for the endpoint.
+Generated TLS-enabled Nginx edge configs also listen on HTTP port `80` and
+redirect plain HTTP requests to HTTPS before applying camouflage routing.
 For repeatable smoke tests, pass the same fallback explicitly:
 `MEGAVPN_FALLBACK_UPSTREAM_URL=https://target.example.com
 scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>

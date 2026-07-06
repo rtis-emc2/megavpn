@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.0.1.32`
+**Релиз:** `7.0.1.33`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -477,6 +477,8 @@ backend на `127.0.0.1`. Nginx проксирует только скрытый
 а обычный web-трафик на `/` reverse-proxy направляет на fallback website. Это
 осознанная маскировка ingress-поведения, а не замена корректной TLS/SNI,
 сертификатной и DNS-настройки endpoint.
+Сгенерированные TLS-enabled Nginx edge configs также слушают HTTP port `80` и
+редиректят обычные HTTP requests на HTTPS до применения camouflage routing.
 Для repeatable smoke передавайте тот же fallback явно:
 `MEGAVPN_FALLBACK_UPSTREAM_URL=https://target.example.com
 scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>

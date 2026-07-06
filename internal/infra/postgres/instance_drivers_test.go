@@ -181,6 +181,8 @@ func TestBuildNginxServerConfigGRPCProxy(t *testing.T) {
 	}
 
 	checks := []string{
+		"listen 80;",
+		"return 301 https://$host$request_uri;",
 		"listen 443 ssl http2;",
 		"location /vless-grpc {",
 		"grpc_pass grpc://127.0.0.1:7443;",
@@ -216,6 +218,8 @@ func TestBuildNginxServerConfigReverseProxyWithWebsiteFallback(t *testing.T) {
 	}
 
 	checks := []string{
+		"listen 80;",
+		"return 301 https://$host$request_uri;",
 		"server_name enter.example.com;",
 		"location /assets/rtis-sync {",
 		"proxy_pass http://127.0.0.1:7080;",
@@ -234,6 +238,28 @@ func TestBuildNginxServerConfigReverseProxyWithWebsiteFallback(t *testing.T) {
 		if !strings.Contains(cfg, check) {
 			t.Fatalf("expected config to contain %q, got:\n%s", check, cfg)
 		}
+	}
+}
+
+func TestBuildNginxServerConfigRedirectsHTTPToNonStandardHTTPSPort(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 8443,
+	}, map[string]any{
+		"mode":          "reverse_proxy",
+		"tls_enabled":   true,
+		"tls_cert_path": "/etc/ssl/certs/enter.crt",
+		"tls_key_path":  "/etc/ssl/private/enter.key",
+		"location_path": "/assets/rtis-sync",
+		"upstream_url":  "http://127.0.0.1:7080",
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	if !strings.Contains(cfg, "return 301 https://$host:8443$request_uri;") {
+		t.Fatalf("expected non-standard HTTPS redirect target, got:\n%s", cfg)
 	}
 }
 

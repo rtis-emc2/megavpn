@@ -5136,7 +5136,7 @@ tr:hover td { background: #f8fafc; }
 }
 .pack-component-toggle-row {
   display: grid;
-  grid-template-columns: 18px 30px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: start;
   gap: 10px;
   min-width: 0;
@@ -5149,16 +5149,7 @@ tr:hover td { background: #f8fafc; }
   accent-color: #1d4ed8;
 }
 .pack-component-index {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  background: #eef2ff;
-  color: #1d4ed8;
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 800;
+  display: none;
 }
 .pack-component-copy {
   display: block;
@@ -5192,7 +5183,7 @@ tr:hover td { background: #f8fafc; }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  padding-left: 58px;
+  padding-left: 28px;
 }
 .pack-component-setting {
   display: grid;

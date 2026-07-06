@@ -1245,8 +1245,10 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 	if err := validateNginxServerName(serverName); err != nil {
 		return "", err
 	}
-	lines := []string{"server {"}
+	lines := []string{}
 	if truthy(spec["tls_enabled"]) {
+		lines = appendNginxHTTPRedirectServer(lines, serverName, listenPort)
+		lines = append(lines, "server {")
 		certPath := firstString(spec["tls_cert_path"])
 		keyPath := firstString(spec["tls_key_path"])
 		if certPath == "" || keyPath == "" {
@@ -1260,6 +1262,7 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 		lines = append(lines, "    ssl_certificate "+certPath+";")
 		lines = append(lines, "    ssl_certificate_key "+keyPath+";")
 	} else {
+		lines = append(lines, "server {")
 		lines = append(lines, "    listen "+strconv.Itoa(listenPort)+";")
 	}
 	lines = append(lines, "    server_name "+serverName+";")
@@ -1343,6 +1346,21 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 	lines = append(lines, extraIndentedLines(spec["server_extra_lines"], "    ")...)
 	lines = append(lines, "}")
 	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func appendNginxHTTPRedirectServer(lines []string, serverName string, httpsPort int) []string {
+	redirectTarget := "https://$host$request_uri"
+	if httpsPort > 0 && httpsPort != 443 {
+		redirectTarget = "https://$host:" + strconv.Itoa(httpsPort) + "$request_uri"
+	}
+	return append(lines,
+		"server {",
+		"    listen 80;",
+		"    server_name "+serverName+";",
+		"    return 301 "+redirectTarget+";",
+		"}",
+		"",
+	)
 }
 
 func appendNginxReverseProxyLocation(lines []string, locationPath, upstreamURL string, spec map[string]any, extraLinesKey string) []string {
