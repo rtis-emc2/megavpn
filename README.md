@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.43`
+**Release:** `7.1.0.1`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,9 +55,9 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.43` is a hardening baseline for release stabilization. The codebase has
-moved from feature expansion to controlled production-readiness work. The
-current focus is:
+`7.1.0.1` is a firewall-clarity and release-planning baseline for release
+stabilization. The codebase has moved from feature expansion to controlled
+production-readiness work. The current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;
@@ -76,8 +76,12 @@ current focus is:
 - default node firewall baseline with strict input/forward deny, HTTP/HTTPS
   edge allow rules, ICMP/ICMPv6 diagnostics, VPN client forwarding ranges and a
   dedicated `inet megavpn_firewall` table;
+- operator-facing firewall model diagram that shows address lists, rules,
+  policies, apply jobs and node state as one catalog-to-apply workflow;
 - firewall schema repair for upgraded installations and simplified address-list
   workflows without internal identity fields;
+- next engineering path fixed around user traffic accounting with at least
+  180-day retention before production traffic collection is enabled;
 - semantic service-pack deduplication in API/UI plus database repair for
   historical duplicate default pack rows;
 - VLESS client provisioning now syncs active access-group catalog entries into

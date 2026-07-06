@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.43`
+**Release:** `7.1.0.1`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.43`
+**Code baseline:** RTIS MegaVPN `7.1.0.1`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,10 +23,12 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.43` continues the production-hardening line after the firewall,
+`7.1.0.1` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
-documentation-gate and VLESS provisioning-sync releases. The codebase already
-has a working control-plane foundation:
+documentation-gate and VLESS provisioning-sync releases. This release makes the
+managed firewall model operator-readable and fixes the next development path
+around audited user traffic accounting with at least 180-day retention. The
+codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -384,17 +386,43 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Immediate Next Actions
+## 18. Release 7.1.0.1 Closure
 
-1. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
-2. Run disposable PostgreSQL migrations and integration tests.
-3. Verify runtime artifact upload/fetch/install for Xray and Shadowsocks.
-4. Validate service-pack creation, apply, runtime logs and cleanup on real nodes.
-5. Validate OpenVPN client config generation and customizable templates.
-6. Validate VLESS ingress with managed egress route policy, route-policy preview,
+The goal of `7.1.0.1` is to make managed firewall configuration understandable
+before broader production rollout. The runtime enforcement model already exists;
+the operator issue was that the UI and docs did not show how address lists,
+rules, policies, apply jobs and node state relate to each other.
+
+Closed in this release:
+
+- Firewall Overview now shows the catalog-to-apply pipeline:
+  address lists -> rules -> policy -> apply job -> node state.
+- Firewall Rules now shows a compact rule-anatomy guide:
+  priority -> chain -> match -> action -> apply mode.
+- Firewall documentation now includes a Mermaid model diagram and an explicit
+  default baseline table for the seeded production node rules.
+- The documented development path puts user traffic accounting with at least
+  180-day retention first, before production traffic collection is enabled.
+- Web asset cache keys, release banners and release review artifacts were
+  advanced to `7.1.0.1`.
+
+No database migration, public API contract or node nftables runtime behavior
+changed. The default firewall seed and agent renderer remain covered by the
+existing integration and agent tests.
+
+## 19. Immediate Next Actions
+
+1. Design user traffic accounting with at least 180-day retention: event schema,
+   aggregation, partitioning, privacy boundary, RBAC and export audit.
+2. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
+3. Run disposable PostgreSQL migrations and integration tests.
+4. Verify runtime artifact upload/fetch/install for Xray and Shadowsocks.
+5. Validate service-pack creation, apply, runtime logs and cleanup on real nodes.
+6. Validate OpenVPN client config generation and customizable templates.
+7. Validate VLESS ingress with managed egress route policy, route-policy preview,
    route-policy telemetry, explicit cleanup, on-demand access-group catalog sync
    and Nginx HTTP-to-HTTPS redirect on real ingress/egress nodes.
-7. Validate VLESS subscription rotation, public feed import and revocation on a
+8. Validate VLESS subscription rotation, public feed import and revocation on a
    real client profile.
-8. Continue UI consistency review for remaining modal form action rows.
-9. Keep release banners and English/Russian documentation pairs synchronized.
+9. Continue UI consistency review for remaining modal form action rows.
+10. Keep release banners and English/Russian documentation pairs synchronized.

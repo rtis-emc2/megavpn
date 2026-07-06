@@ -1,6 +1,6 @@
 # Firewall Policy Catalog
 
-**Release:** `7.0.1.43`
+**Release:** `7.1.0.1`
 
 Firewall is the managed policy workspace for node and control-plane boundaries.
 It is intentionally modeled as a catalog before apply: operators prepare address
@@ -10,7 +10,18 @@ Russian companion: [FIREWALL_RU.md](FIREWALL_RU.md).
 
 ## Operating Model
 
-The workflow is:
+Use the firewall as a catalog-to-apply pipeline:
+
+```mermaid
+flowchart LR
+  A["Address lists\nCIDR/IP/range groups"] --> B["Rules\npriority + chain + match + action"]
+  B --> C["Policy\ninput/forward/output defaults"]
+  C --> D["Apply job\nsigned node job"]
+  D --> E["Node nftables\ninet megavpn_firewall"]
+  E --> F["Node state\nrevision, counts, failures"]
+```
+
+The operator workflow is:
 
 1. Create reusable address lists for operators, trusted networks, VPN pools or
    blocked destinations.
@@ -21,6 +32,16 @@ The workflow is:
 
 This keeps editing separate from rollout. A catalog change does not alter a node
 until an apply job is queued and completed.
+
+Read every rule left to right:
+
+```text
+priority -> chain -> source/destination match -> protocol/ports/state -> action
+```
+
+`input` protects services listening on the node, `forward` protects routed VPN
+or backhaul traffic through the node, and `output` protects traffic originated
+by the node itself.
 
 Existing installations upgraded from an earlier `7.0.1` build must run database
 migrations through `000009_firewall_schema_repair` before creating address
@@ -53,6 +74,18 @@ baseline for production nodes. In strict mode it denies unsolicited input and
 forwarded traffic, keeps node output at `accept`, allows IPv4/IPv6 diagnostics,
 allows public HTTP/HTTPS edge entrypoints and permits forwarding for the seeded
 private/CGNAT/ULA client source ranges in `vpn_client_sources`.
+
+The default baseline is intentionally small:
+
+| Priority | Chain | Action | Match | Purpose |
+| --- | --- | --- | --- | --- |
+| 50 | input | drop | invalid state | Drop malformed tracked input packets. |
+| 55 | forward | drop | invalid state | Drop malformed forwarded packets. |
+| 100 | input | accept | ICMP | Keep IPv4 diagnostics available. |
+| 105 | input | accept | ICMPv6 | Keep IPv6 diagnostics and neighbor behavior available. |
+| 120 | input | accept | TCP 80,443 | Allow public HTTP/HTTPS edge entrypoints. |
+| 200 | input | accept | SSH from `trusted_operators` | Disabled until the trusted operator list is populated. |
+| 300 | forward | accept | `vpn_client_sources` | Allow managed VPN clients to route through the node. |
 
 The SSH rule is present but disabled until `trusted_operators` is populated and
 the operator deliberately enables it. Protocol listener ports beyond HTTP/HTTPS

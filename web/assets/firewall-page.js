@@ -142,6 +142,41 @@
         </div>`;
     }
 
+    function renderFirewallModelGuide() {
+      const steps = [
+        ['Address lists', 'Reusable source and destination groups', 'CIDR · IP · range'],
+        ['Rules', 'Priority, chain, protocol, ports and action', 'lower priority first'],
+        ['Policy', 'Default input, forward and output posture', 'observe or strict'],
+        ['Apply job', 'Signed node job renders nftables payload', 'node-scoped rollout'],
+        ['Node state', 'Observed revision, rule counts and failures', 'operator evidence'],
+      ];
+      return `
+        <section class="table-card firewall-model-card">
+          <div class="table-head">
+            <div>
+              <h2>Firewall model</h2>
+              <div class="metric-caption">Build policy in the catalog first, then apply a snapshot to a selected node.</div>
+            </div>
+            <div class="table-tools"><span class="tag">catalog -> apply -> observe</span></div>
+          </div>
+          <div class="firewall-flow-diagram" aria-label="Firewall configuration flow">
+            ${steps.map((step, index) => `
+              <div class="firewall-flow-step">
+                <span>${escapeHTML(String(index + 1))}</span>
+                <strong>${escapeHTML(step[0])}</strong>
+                <small>${escapeHTML(step[1])}</small>
+                <code>${escapeHTML(step[2])}</code>
+              </div>
+              ${index < steps.length - 1 ? '<div class="firewall-flow-arrow" aria-hidden="true">-></div>' : ''}`).join('')}
+          </div>
+          <div class="firewall-model-notes">
+            <div><strong>Rules only</strong><span>Installs explicit catalog rules while base chain policies stay accept.</span></div>
+            <div><strong>Strict defaults</strong><span>Enforces input, forward and output defaults after safety rules are rendered.</span></div>
+            <div><strong>Managed table</strong><span>Node apply owns <code>inet megavpn_firewall</code>; manual node rules are not persistent product state.</span></div>
+          </div>
+        </section>`;
+    }
+
     function renderPolicyCard(policy) {
       const rules = rulesForPolicy(policy.id);
       const posture = policyPosture(policy, rules);
@@ -501,11 +536,32 @@
               <span class="tag">${escapeHTML(String(inv.rules.length))} rules</span>
             </div>
           </div>
+          ${renderRuleAnatomyGuide()}
           ${renderRuleFilters(inv, rows)}
           <div class="table-wrap">
             <table class="firewall-rules-table"><thead><tr><th>Priority</th><th>Policy</th><th>Chain</th><th>Action</th><th>Proto</th><th>Source</th><th>Destination</th><th>Comment</th><th>Actions</th></tr></thead><tbody>${renderRuleRows(rows)}</tbody></table>
           </div>
         </section>`;
+    }
+
+    function renderRuleAnatomyGuide() {
+      const items = [
+        ['Priority', 'execution order'],
+        ['Chain', 'input / forward / output'],
+        ['Match', 'source, destination, protocol, port and state'],
+        ['Action', 'accept / drop / reject'],
+        ['Apply mode', 'rules only or strict defaults'],
+      ];
+      return `
+        <div class="firewall-rule-anatomy" aria-label="Firewall rule anatomy">
+          <strong>Rule reads left to right</strong>
+          ${items.map((item, index) => `
+            <div>
+              <span>${escapeHTML(String(index + 1))}</span>
+              <code>${escapeHTML(item[0])}</code>
+              <small>${escapeHTML(item[1])}</small>
+            </div>`).join('')}
+        </div>`;
     }
 
     function renderAddressFilters(listRows, entryRows) {
@@ -574,6 +630,7 @@
       const stale = inv.nodeStates.filter((item) => item.status === 'pending' || item.status === 'stale').length;
       return `
         ${renderSummary()}
+        ${renderFirewallModelGuide()}
         <section class="table-card">
           <div class="table-head">
             <div>
