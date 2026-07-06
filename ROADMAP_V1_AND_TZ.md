@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.6`
+**Release:** `7.1.0.7`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.6`
+**Code baseline:** RTIS MegaVPN `7.1.0.7`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,13 +23,14 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.6` continues the production-hardening line after the firewall,
+`7.1.0.7` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
-documentation-gate and VLESS provisioning-sync releases. This release hardens
-the traffic-accounting storage path with bounded retention cleanup and query
-indexes while keeping the next development path focused on live-node
-validation, measured cardinality and long-term storage decisions. The codebase
-already has a working control-plane foundation:
+documentation-gate and VLESS provisioning-sync releases. This release makes
+traffic-accounting retention visible to operators by exposing cutoff, expired
+backlog and prune-budget state in the overview API and UI while keeping the
+next development path focused on live-node validation, measured cardinality and
+long-term storage decisions. The codebase already has a working control-plane
+foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -387,29 +388,32 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Release 7.1.0.6 Closure
+## 18. Release 7.1.0.7 Closure
 
-The goal of `7.1.0.6` is to harden audited traffic-accounting retention and
-query paths without expanding the privacy boundary. The platform still stores
+The goal of `7.1.0.7` is to make audited traffic-accounting retention behavior
+visible without expanding the privacy boundary. The platform still stores
 aggregate byte counters, not payloads, URLs, DNS queries or per-destination
 browsing history.
 
 Closed in this release:
 
-- Retention cleanup now runs bounded batches on ingest instead of one
-  unbounded delete across all expired samples.
-- Overview and export queries continue to enforce the 180-day retention cutoff
-  even if physical cleanup is draining an older backlog.
-- PostgreSQL migration `000016_traffic_accounting_query_indexes` adds indexes
-  for recent-sample ordering and common export filters by client, node and
-  protocol.
-- Regression tests cover the bounded prune query shape and cleanup budget.
+- Traffic-accounting overview summary now includes `retention_cutoff`,
+  `expired_sample_count`, `prune_batch_size`, `prune_batches_per_ingest` and
+  `max_prune_per_ingest`.
+- Traffic Accounting UI shows retention cutoff, expired cleanup backlog and
+  bounded prune budget beside existing sample/client/node counters.
+- The store uses one shared retention-cutoff helper for overview, export and
+  prune paths so API behavior stays consistent.
+- Regression tests cover the retention-cutoff helper and prune-budget
+  calculation.
+- Summary card text wrapping was hardened so long cutoff values cannot expand
+  the layout.
 - Web asset cache keys, release banners and release review artifacts were
-  advanced to `7.1.0.6`.
+  advanced to `7.1.0.7`.
 
-The public API and agent runtime collector behavior did not change. The
-database migration adds indexes only; retention semantics remain 180 days with
-bounded physical pruning.
+The ingest/export contracts, agent runtime collector behavior and database
+schema did not change. The read-only overview response gained operational
+retention metadata under the existing `traffic.read` permission.
 
 ## 19. Immediate Next Actions
 

@@ -48,15 +48,20 @@ type TrafficAccountingSample struct {
 }
 
 type TrafficAccountingSummary struct {
-	RetentionDays     int        `json:"retention_days"`
-	SampleCount       int64      `json:"sample_count"`
-	ClientCount       int64      `json:"client_count"`
-	NodeCount         int64      `json:"node_count"`
-	RxBytes           int64      `json:"rx_bytes"`
-	TxBytes           int64      `json:"tx_bytes"`
-	FlowCount         int64      `json:"flow_count"`
-	OldestBucketStart *time.Time `json:"oldest_bucket_start,omitempty"`
-	NewestBucketEnd   *time.Time `json:"newest_bucket_end,omitempty"`
+	RetentionDays         int        `json:"retention_days"`
+	RetentionCutoff       *time.Time `json:"retention_cutoff,omitempty"`
+	ExpiredSampleCount    int64      `json:"expired_sample_count"`
+	PruneBatchSize        int        `json:"prune_batch_size"`
+	PruneBatchesPerIngest int        `json:"prune_batches_per_ingest"`
+	MaxPrunePerIngest     int        `json:"max_prune_per_ingest"`
+	SampleCount           int64      `json:"sample_count"`
+	ClientCount           int64      `json:"client_count"`
+	NodeCount             int64      `json:"node_count"`
+	RxBytes               int64      `json:"rx_bytes"`
+	TxBytes               int64      `json:"tx_bytes"`
+	FlowCount             int64      `json:"flow_count"`
+	OldestBucketStart     *time.Time `json:"oldest_bucket_start,omitempty"`
+	NewestBucketEnd       *time.Time `json:"newest_bucket_end,omitempty"`
 }
 
 type TrafficAccountingOverview struct {

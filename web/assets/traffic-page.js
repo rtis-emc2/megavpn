@@ -98,6 +98,13 @@
       const summary = data.summary || {};
       const samples = Array.isArray(data.samples) ? data.samples : [];
       const retention = Number(summary.retention_days || 180);
+      const pruneBudget = Number(summary.max_prune_per_ingest || 0);
+      const pruneBatch = Number(summary.prune_batch_size || 0);
+      const pruneBatches = Number(summary.prune_batches_per_ingest || 0);
+      const pruneCaption = pruneBatch > 0 && pruneBatches > 0
+        ? `${intValue(pruneBatch)} x ${intValue(pruneBatches)} per ingest`
+        : 'bounded cleanup per ingest';
+      const cutoff = summary.retention_cutoff ? formatDate(summary.retention_cutoff) : 'not set';
       el('content').innerHTML = `
         <section class="table-card">
           <div class="table-head">
@@ -112,6 +119,9 @@
           </div>
           <div class="pool-summary-grid">
             ${summaryCard('Retention', `${retention} days`, 'automatic prune window')}
+            ${summaryCard('Cutoff', cutoff, 'old rows hidden from reads')}
+            ${summaryCard('Prune backlog', intValue(summary.expired_sample_count), 'expired rows pending cleanup')}
+            ${summaryCard('Prune budget', pruneBudget ? intValue(pruneBudget) : 'bounded', pruneCaption)}
             ${summaryCard('Samples', intValue(summary.sample_count), 'stored aggregate rows')}
             ${summaryCard('Clients', intValue(summary.client_count), 'with attributed samples')}
             ${summaryCard('Nodes', intValue(summary.node_count), 'reporting counters')}

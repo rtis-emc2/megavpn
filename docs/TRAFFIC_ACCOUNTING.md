@@ -1,6 +1,6 @@
 # Traffic Accounting
 
-**Release:** `7.1.0.6`
+**Release:** `7.1.0.7`
 
 Traffic accounting stores aggregate traffic counters for operational audit,
 capacity planning and incident diagnostics. It is not packet capture and it is
@@ -49,6 +49,16 @@ Operator read API:
 GET /api/v1/traffic/accounting?limit=250
 ```
 
+The read response includes summary metadata for retention operations:
+
+- `retention_cutoff`: oldest timestamp returned by overview/export reads;
+- `expired_sample_count`: rows older than cutoff that are waiting for physical
+  batched cleanup;
+- `prune_batch_size` and `prune_batches_per_ingest`: cleanup bounds for one
+  ingest request;
+- `max_prune_per_ingest`: maximum expired rows the control plane attempts to
+  delete during one ingest.
+
 Operator CSV export API:
 
 ```text
@@ -83,7 +93,8 @@ The Traffic Accounting UI provides `Export CSV` for audit handoff. Export is
 read-only, uses the same `traffic.read` permission, sets `Cache-Control:
 no-store` and is capped server-side. Export filters support `limit`, `from`,
 `to`, `client_id`, `node_id` and `protocol`. Time filters accept RFC3339 or
-`YYYY-MM-DD`.
+`YYYY-MM-DD`. The overview cards show active rows, retention cutoff, expired
+cleanup backlog and per-ingest prune budget.
 
 ## Runtime Collectors
 

@@ -3,6 +3,9 @@ package postgres
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
 func TestTrafficAccountingPruneBatchQueryIsBounded(t *testing.T) {
@@ -26,5 +29,17 @@ func TestTrafficAccountingPruneConstantsBoundIngestWork(t *testing.T) {
 	}
 	if trafficAccountingPruneBatchSize*trafficAccountingPruneBatchesPerIngest > 100000 {
 		t.Fatalf("traffic accounting prune budget is too large for an ingest path")
+	}
+	if got := trafficAccountingPruneBudget(); got != trafficAccountingPruneBatchSize*trafficAccountingPruneBatchesPerIngest {
+		t.Fatalf("trafficAccountingPruneBudget() = %d, want configured batch budget", got)
+	}
+}
+
+func TestTrafficAccountingRetentionCutoffUsesDomainPolicy(t *testing.T) {
+	now := time.Date(2026, 7, 6, 12, 34, 56, 0, time.FixedZone("test", 3*60*60))
+	got := trafficAccountingRetentionCutoff(now)
+	want := now.UTC().AddDate(0, 0, -domain.TrafficAccountingRetentionDays)
+	if !got.Equal(want) {
+		t.Fatalf("cutoff = %s, want %s", got, want)
 	}
 }

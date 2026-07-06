@@ -3737,10 +3737,12 @@ tr:hover td { background: #f8fafc; }
   text-transform: uppercase;
 }
 .pool-summary-card strong {
+  min-width: 0;
   color: var(--text);
   font-family: var(--mono);
   font-size: 22px;
   line-height: 1.1;
+  overflow-wrap: anywhere;
 }
 .pool-summary-card small {
   min-width: 0;

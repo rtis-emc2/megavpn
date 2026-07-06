@@ -53,9 +53,13 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, limit int) (domai
 	if limit <= 0 || limit > trafficAccountingMaxRows {
 		limit = 200
 	}
-	cutoff := time.Now().UTC().AddDate(0, 0, -domain.TrafficAccountingRetentionDays)
+	cutoff := trafficAccountingRetentionCutoff(time.Now().UTC())
 	var out domain.TrafficAccountingOverview
 	out.Summary.RetentionDays = domain.TrafficAccountingRetentionDays
+	out.Summary.RetentionCutoff = &cutoff
+	out.Summary.PruneBatchSize = trafficAccountingPruneBatchSize
+	out.Summary.PruneBatchesPerIngest = trafficAccountingPruneBatchesPerIngest
+	out.Summary.MaxPrunePerIngest = trafficAccountingPruneBudget()
 	err := s.db.QueryRow(ctx, `select
 			count(*),
 			count(distinct client_account_id) filter(where client_account_id is not null),
@@ -77,6 +81,9 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, limit int) (domai
 		&out.Summary.NewestBucketEnd,
 	)
 	if err != nil {
+		return out, err
+	}
+	if err := s.db.QueryRow(ctx, `select count(*) from traffic_accounting_samples where received_at < $1`, cutoff).Scan(&out.Summary.ExpiredSampleCount); err != nil {
 		return out, err
 	}
 
@@ -131,7 +138,7 @@ func (s *Store) TrafficAccountingSamples(ctx context.Context, filter domain.Traf
 	if limit <= 0 || limit > trafficAccountingMaxExportRows {
 		limit = trafficAccountingMaxExportRows
 	}
-	args := []any{time.Now().UTC().AddDate(0, 0, -domain.TrafficAccountingRetentionDays)}
+	args := []any{trafficAccountingRetentionCutoff(time.Now().UTC())}
 	where := []string{"t.received_at >= $1"}
 	if filter.From != nil && !filter.From.IsZero() {
 		args = append(args, filter.From.UTC())
@@ -461,7 +468,7 @@ func (s *Store) upsertTrafficAccountingSample(ctx context.Context, input traffic
 }
 
 func (s *Store) pruneTrafficAccountingSamples(ctx context.Context) (int64, error) {
-	cutoff := time.Now().UTC().AddDate(0, 0, -domain.TrafficAccountingRetentionDays)
+	cutoff := trafficAccountingRetentionCutoff(time.Now().UTC())
 	var total int64
 	for batch := 0; batch < trafficAccountingPruneBatchesPerIngest; batch++ {
 		affected, err := s.pruneTrafficAccountingSamplesBatch(ctx, cutoff, trafficAccountingPruneBatchSize)
@@ -496,6 +503,14 @@ func trafficAccountingPruneBatchQuery() string {
 			order by received_at asc
 			limit $2
 		)`
+}
+
+func trafficAccountingRetentionCutoff(now time.Time) time.Time {
+	return now.UTC().AddDate(0, 0, -domain.TrafficAccountingRetentionDays)
+}
+
+func trafficAccountingPruneBudget() int {
+	return trafficAccountingPruneBatchSize * trafficAccountingPruneBatchesPerIngest
 }
 
 func (s *Store) trafficAccountingInstanceBelongsToNode(ctx context.Context, instanceID, nodeID string) (bool, error) {

@@ -1,6 +1,6 @@
 # Учет трафика
 
-**Релиз:** `7.1.0.6`
+**Релиз:** `7.1.0.7`
 
 Учет трафика хранит агрегированные счетчики для операционного аудита,
 capacity planning и диагностики инцидентов. Это не packet capture и не
@@ -49,6 +49,17 @@ Operator read API:
 GET /api/v1/traffic/accounting?limit=250
 ```
 
+Read response включает summary metadata для retention operations:
+
+- `retention_cutoff`: самый старый timestamp, который возвращают overview/export
+  reads;
+- `expired_sample_count`: строки старше cutoff, ожидающие physical batched
+  cleanup;
+- `prune_batch_size` и `prune_batches_per_ingest`: cleanup bounds для одного
+  ingest request;
+- `max_prune_per_ingest`: максимум expired rows, которые control plane пытается
+  удалить за один ingest.
+
 Operator CSV export API:
 
 ```text
@@ -83,7 +94,8 @@ Traffic Accounting UI дает кнопку `Export CSV` для audit handoff. E
 read-only, использует тот же permission `traffic.read`, отдает `Cache-Control:
 no-store` и ограничен server-side cap. Export filters поддерживают `limit`,
 `from`, `to`, `client_id`, `node_id` и `protocol`. Time filters принимают
-RFC3339 или `YYYY-MM-DD`.
+RFC3339 или `YYYY-MM-DD`. Overview cards показывают active rows, retention
+cutoff, expired cleanup backlog и per-ingest prune budget.
 
 ## Runtime collectors
 
