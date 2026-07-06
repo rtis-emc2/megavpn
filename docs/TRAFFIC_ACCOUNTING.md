@@ -1,6 +1,6 @@
 # Traffic Accounting
 
-**Release:** `7.1.0.9`
+**Release:** `7.1.0.10`
 
 Traffic accounting stores aggregate traffic counters for operational audit,
 capacity planning and incident diagnostics. It is not packet capture and it is
@@ -60,6 +60,14 @@ The read response includes summary metadata for retention operations:
 - `max_prune_per_ingest`: maximum expired rows the control plane attempts to
   delete during one ingest.
 
+The same response also includes `collectors`: derived status rows grouped by
+node, collector source and protocol for the selected retained dataset. Each row
+contains `status`, `last_received_at`, `last_received_age_seconds`,
+`last_bucket_end`, sample/client counts and aggregate byte counters. Status is
+`active` when samples arrived within the normal reporting window, `degraded`
+when the stream is late, and `inactive` when the stream has been silent long
+enough to require operator validation.
+
 Operator CSV export API:
 
 ```text
@@ -95,12 +103,13 @@ flowchart LR
   E --> F["Traffic Accounting UI"]
 ```
 
-The Traffic Accounting UI provides one filter form for overview cards, recent
-rows and `Export CSV`. Reads are server-side, use the same `traffic.read`
-permission, enforce retention cutoff and stay capped by endpoint type. CSV
-responses set `Cache-Control: no-store`. Time filters accept RFC3339 or
-`YYYY-MM-DD`. The overview cards show active rows, retention cutoff, expired
-cleanup backlog and per-ingest prune budget for the selected retained dataset.
+The Traffic Accounting UI provides one filter form for overview cards, collector
+status, recent rows and `Export CSV`. Reads are server-side, use the same
+`traffic.read` permission, enforce retention cutoff and stay capped by endpoint
+type. CSV responses set `Cache-Control: no-store`. Time filters accept RFC3339
+or `YYYY-MM-DD`. The overview cards show active rows, retention cutoff, expired
+cleanup backlog, collector stream counts and per-ingest prune budget for the
+selected retained dataset.
 
 The UI exposes the same export filters as form controls:
 
@@ -110,9 +119,9 @@ The UI exposes the same export filters as form controls:
 - node;
 - row limit.
 
-Changing a filter reloads the overview and recent-sample table from the
-backend. CSV export uses the same selected values against the retained dataset,
-not a browser-side subset of already loaded rows.
+Changing a filter reloads the overview, collector-status table and recent-sample
+table from the backend. CSV export uses the same selected values against the
+retained dataset, not a browser-side subset of already loaded rows.
 
 ## Runtime Collectors
 

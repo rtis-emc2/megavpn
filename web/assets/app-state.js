@@ -29,7 +29,7 @@
       addressPoolSpaces: [],
       addressPoolAllocations: [],
       firewallInventory: { address_lists: [], entries: [], policies: [], rules: [], node_states: [] },
-      trafficAccounting: { summary: { retention_days: 180 }, samples: [] },
+      trafficAccounting: { summary: { retention_days: 180 }, samples: [], collectors: [] },
       trafficExportFilters: readSessionObject('megavpn.trafficExportFilters'),
       clients: [],
       jobs: [],

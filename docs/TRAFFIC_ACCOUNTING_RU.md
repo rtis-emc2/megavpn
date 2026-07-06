@@ -1,6 +1,6 @@
 # Учет трафика
 
-**Релиз:** `7.1.0.9`
+**Релиз:** `7.1.0.10`
 
 Учет трафика хранит агрегированные счетчики для операционного аудита,
 capacity planning и диагностики инцидентов. Это не packet capture и не
@@ -61,6 +61,14 @@ Read response включает summary metadata для retention operations:
 - `max_prune_per_ingest`: максимум expired rows, которые control plane пытается
   удалить за один ingest.
 
+Этот же response включает `collectors`: derived status rows, сгруппированные по
+node, collector source и protocol для выбранного retained dataset. Каждая строка
+содержит `status`, `last_received_at`, `last_received_age_seconds`,
+`last_bucket_end`, sample/client counts и aggregate byte counters. Status равен
+`active`, если samples пришли в нормальное reporting window, `degraded`, если
+stream запаздывает, и `inactive`, если stream молчит достаточно долго для
+operator validation.
+
 Operator CSV export API:
 
 ```text
@@ -96,13 +104,13 @@ flowchart LR
   E --> F["Traffic Accounting UI"]
 ```
 
-Traffic Accounting UI дает одну filter form для overview cards, recent rows и
-`Export CSV`. Reads выполняются server-side, используют тот же permission
-`traffic.read`, применяют retention cutoff и ограничиваются cap конкретного
-endpoint-а. CSV responses отдают `Cache-Control: no-store`. Time filters
-принимают RFC3339 или `YYYY-MM-DD`. Overview cards показывают active rows,
-retention cutoff, expired cleanup backlog и per-ingest prune budget для
-выбранного retained dataset.
+Traffic Accounting UI дает одну filter form для overview cards, collector
+status, recent rows и `Export CSV`. Reads выполняются server-side, используют
+тот же permission `traffic.read`, применяют retention cutoff и ограничиваются
+cap конкретного endpoint-а. CSV responses отдают `Cache-Control: no-store`.
+Time filters принимают RFC3339 или `YYYY-MM-DD`. Overview cards показывают
+active rows, retention cutoff, expired cleanup backlog, collector stream counts
+и per-ingest prune budget для выбранного retained dataset.
 
 UI показывает те же export filters как form controls:
 
@@ -112,9 +120,9 @@ UI показывает те же export filters как form controls:
 - node;
 - row limit.
 
-Изменение фильтра перезагружает overview и recent-sample table с backend-а.
-CSV export использует те же выбранные значения по retained dataset, а не
-browser-side subset уже загруженных строк.
+Изменение фильтра перезагружает overview, collector-status table и
+recent-sample table с backend-а. CSV export использует те же выбранные значения
+по retained dataset, а не browser-side subset уже загруженных строк.
 
 ## Runtime collectors
 

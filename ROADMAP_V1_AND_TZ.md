@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.9`
+**Release:** `7.1.0.10`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.9`
+**Code baseline:** RTIS MegaVPN `7.1.0.10`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,14 +23,14 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.9` continues the production-hardening line after the firewall,
+`7.1.0.10` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
-documentation-gate and VLESS provisioning-sync releases. This release makes
-Traffic Accounting filters server-side for overview summary, recent rows and
-CSV export, so operator audit views use one retained-dataset query model while
-the next development path stays focused on live-node validation, measured
-cardinality and long-term storage decisions. The codebase already has a working
-control-plane foundation:
+documentation-gate and VLESS provisioning-sync releases. This release adds
+Traffic Accounting collector-status observability on top of the retained-dataset
+query model, so live-node validation can confirm which node/source/protocol
+streams are active, degraded or inactive before measured cardinality and
+long-term storage decisions. The codebase already has a working control-plane
+foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -388,30 +388,32 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Release 7.1.0.9 Closure
+## 18. Release 7.1.0.10 Closure
 
-The goal of `7.1.0.9` is to make Traffic Accounting filters authoritative on
-the server for overview summary, recent rows and CSV export without expanding
-the privacy boundary. The platform still stores aggregate byte counters, not
-payloads, URLs, DNS queries or per-destination browsing history.
+The goal of `7.1.0.10` is to make live Traffic Accounting validation observable
+without expanding the privacy boundary. The platform still stores aggregate byte
+counters, not payloads, URLs, DNS queries or per-destination browsing history.
 
 Closed in this release:
 
-- `/api/v1/traffic/accounting` now accepts the same retained-dataset filters as
-  CSV export: `from`, `to`, `protocol`, `client_id`, `node_id` and `limit`.
-- Overview summary and recent rows are filtered in PostgreSQL through the same
-  validated predicate builder used by CSV export.
-- Oversized overview limits clamp to the read maximum instead of falling back
-  to a smaller implicit value.
-- Traffic Accounting UI reloads the overview from the backend whenever filters
-  change and uses the same selected values for CSV export.
-- Regression tests cover shared SQL predicates, UUID validation, limit clamping,
-  export filter request parsing, inverted date ranges and CSV header uniqueness.
+- `/api/v1/traffic/accounting` now returns `collectors` derived from retained
+  aggregate samples and grouped by node, source and protocol.
+- Collector status includes active/degraded/inactive freshness, last report
+  timestamp, last bucket timestamp, sample count, client count and aggregate
+  byte/flow counters for the selected retained dataset.
+- Traffic Accounting UI now shows a dedicated Collector status table alongside
+  overview cards, recent rows and CSV export filters.
+- Collector freshness thresholds are deterministic server-side constants:
+  active within the normal reporting window, degraded when late and inactive
+  when silent long enough to require operator validation.
+- Regression tests cover collector freshness classification in addition to the
+  retained-dataset filter and CSV coverage from the previous increment.
 - Web asset cache keys, release banners and release review artifacts were
-  advanced to `7.1.0.9`.
+  advanced to `7.1.0.10`.
 
-Agent runtime collector behavior and database schema did not change. The
-existing `traffic.read` permission still protects both overview and CSV export.
+Agent runtime collector behavior, database schema and traffic privacy boundary
+did not change. The existing `traffic.read` permission protects overview,
+collector status and CSV export.
 
 ## 19. Immediate Next Actions
 

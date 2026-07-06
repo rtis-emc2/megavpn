@@ -108,3 +108,23 @@ func TestTrafficAccountingFilterWhereRejectsInvalidUUIDs(t *testing.T) {
 		t.Fatal("expected invalid node_id to fail")
 	}
 }
+
+func TestTrafficAccountingCollectorStatusClassifiesFreshness(t *testing.T) {
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	status, age := trafficAccountingCollectorStatus(now, now.Add(-trafficAccountingCollectorActiveWindow))
+	if status != "active" || age != int64(trafficAccountingCollectorActiveWindow.Seconds()) {
+		t.Fatalf("active boundary = %s/%d", status, age)
+	}
+	status, age = trafficAccountingCollectorStatus(now, now.Add(-trafficAccountingCollectorWarnWindow))
+	if status != "degraded" || age != int64(trafficAccountingCollectorWarnWindow.Seconds()) {
+		t.Fatalf("degraded boundary = %s/%d", status, age)
+	}
+	status, age = trafficAccountingCollectorStatus(now, now.Add(-(trafficAccountingCollectorWarnWindow + time.Second)))
+	if status != "inactive" || age != int64((trafficAccountingCollectorWarnWindow+time.Second).Seconds()) {
+		t.Fatalf("inactive boundary = %s/%d", status, age)
+	}
+	status, age = trafficAccountingCollectorStatus(now, now.Add(time.Minute))
+	if status != "active" || age != 0 {
+		t.Fatalf("future clock skew = %s/%d, want active/0", status, age)
+	}
+}

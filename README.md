@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.9`
+**Release:** `7.1.0.10`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,9 +56,9 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.9` makes Traffic Accounting filters server-side for overview cards,
-recent rows and CSV export while keeping release stabilization as the operating
-mode. The current focus is:
+`7.1.0.10` adds Traffic Accounting collector status observability for live-node
+validation while keeping release stabilization as the operating mode. The
+current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;
@@ -92,6 +92,9 @@ mode. The current focus is:
 - traffic-accounting filters for date range, protocol, client, node and row
   limit are now applied by the backend to overview summary, recent rows and
   no-store CSV export with one retained-dataset query model;
+- traffic-accounting collector status now shows node/source/protocol freshness,
+  active/degraded/inactive streams, last report time, last bucket and aggregate
+  client/sample coverage for the selected retained dataset;
 - semantic service-pack deduplication in API/UI plus database repair for
   historical duplicate default pack rows;
 - VLESS client provisioning now syncs active access-group catalog entries into

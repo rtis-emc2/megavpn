@@ -426,6 +426,7 @@
     statusTag,
     escapeHTML,
     formatDate,
+    formatDurationSeconds,
     apiURL,
   });
   if (!trafficPage) throw new Error('MegaVPNTrafficPage is not loaded');

@@ -21,6 +21,9 @@ const (
 	trafficAccountingMaxBatch              = 1000
 	trafficAccountingMaxRows               = 1000
 	trafficAccountingMaxExportRows         = 50000
+	trafficAccountingMaxCollectorRows      = 100
+	trafficAccountingCollectorActiveWindow = 5 * time.Minute
+	trafficAccountingCollectorWarnWindow   = 30 * time.Minute
 	trafficAccountingMaxBucketSpan         = 24 * time.Hour
 	trafficAccountingPruneBatchSize        = 5000
 	trafficAccountingPruneBatchesPerIngest = 10
@@ -51,7 +54,8 @@ type trafficAccountingSampleInput struct {
 
 func (s *Store) TrafficAccountingOverview(ctx context.Context, filter domain.TrafficAccountingExportFilter) (domain.TrafficAccountingOverview, error) {
 	limit := trafficAccountingFilterLimit(filter.Limit, trafficAccountingMaxRows, 200)
-	cutoff := trafficAccountingRetentionCutoff(time.Now().UTC())
+	now := time.Now().UTC()
+	cutoff := trafficAccountingRetentionCutoff(now)
 	args, where, err := trafficAccountingFilterWhere(filter, cutoff)
 	if err != nil {
 		return domain.TrafficAccountingOverview{}, err
@@ -87,6 +91,10 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, filter domain.Tra
 		return out, err
 	}
 	if err := s.db.QueryRow(ctx, `select count(*) from traffic_accounting_samples where received_at < $1`, cutoff).Scan(&out.Summary.ExpiredSampleCount); err != nil {
+		return out, err
+	}
+	out.Collectors, err = s.trafficAccountingCollectorStatuses(ctx, args, where, now)
+	if err != nil {
 		return out, err
 	}
 
@@ -134,6 +142,49 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, filter domain.Tra
 	}
 	if out.Samples == nil {
 		out.Samples = []domain.TrafficAccountingSample{}
+	}
+	if out.Collectors == nil {
+		out.Collectors = []domain.TrafficAccountingCollectorStatus{}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) trafficAccountingCollectorStatuses(ctx context.Context, args []any, where []string, now time.Time) ([]domain.TrafficAccountingCollectorStatus, error) {
+	queryArgs := append([]any{}, args...)
+	queryArgs = append(queryArgs, trafficAccountingMaxCollectorRows)
+	query := `select
+			t.node_id::text,
+			coalesce(n.name, ''),
+			t.source,
+			t.protocol,
+			count(*),
+			count(distinct t.client_account_id) filter(where t.client_account_id is not null),
+			coalesce(sum(t.rx_bytes), 0),
+			coalesce(sum(t.tx_bytes), 0),
+			coalesce(sum(t.flow_count), 0),
+			max(t.bucket_end),
+			max(t.received_at)
+		from traffic_accounting_samples t
+		left join nodes n on n.id=t.node_id
+		where ` + strings.Join(where, " and ") + `
+		group by t.node_id, n.name, t.source, t.protocol
+		order by max(t.received_at) desc, t.protocol asc, t.source asc
+		limit $` + strconv.Itoa(len(queryArgs))
+	rows, err := s.db.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.TrafficAccountingCollectorStatus, 0)
+	for rows.Next() {
+		item, err := scanTrafficAccountingCollectorStatus(rows, now)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if out == nil {
+		out = []domain.TrafficAccountingCollectorStatus{}
 	}
 	return out, rows.Err()
 }
@@ -312,6 +363,45 @@ func scanTrafficAccountingSample(row interface{ Scan(dest ...any) error }) (doma
 		item.Metadata = map[string]any{}
 	}
 	return item, nil
+}
+
+func scanTrafficAccountingCollectorStatus(row interface{ Scan(dest ...any) error }, now time.Time) (domain.TrafficAccountingCollectorStatus, error) {
+	var item domain.TrafficAccountingCollectorStatus
+	if err := row.Scan(
+		&item.NodeID,
+		&item.NodeName,
+		&item.Source,
+		&item.Protocol,
+		&item.SampleCount,
+		&item.ClientCount,
+		&item.RxBytes,
+		&item.TxBytes,
+		&item.FlowCount,
+		&item.LastBucketEnd,
+		&item.LastReceivedAt,
+	); err != nil {
+		return domain.TrafficAccountingCollectorStatus{}, err
+	}
+	item.Status, item.LastReceivedAgeSeconds = trafficAccountingCollectorStatus(now, item.LastReceivedAt)
+	return item, nil
+}
+
+func trafficAccountingCollectorStatus(now, lastReceivedAt time.Time) (string, int64) {
+	if lastReceivedAt.IsZero() {
+		return "inactive", 0
+	}
+	age := now.UTC().Sub(lastReceivedAt.UTC())
+	if age < 0 {
+		age = 0
+	}
+	switch {
+	case age <= trafficAccountingCollectorActiveWindow:
+		return "active", int64(age.Seconds())
+	case age <= trafficAccountingCollectorWarnWindow:
+		return "degraded", int64(age.Seconds())
+	default:
+		return "inactive", int64(age.Seconds())
+	}
 }
 
 func (s *Store) normalizeTrafficAccountingSample(ctx context.Context, nodeID string, sample domain.AgentTrafficAccountingSample) (trafficAccountingSampleInput, error) {

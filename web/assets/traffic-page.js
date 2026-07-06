@@ -10,6 +10,7 @@
       statusTag,
       escapeHTML,
       formatDate,
+      formatDurationSeconds,
       apiURL,
     } = ctx;
     if (
@@ -20,6 +21,7 @@
       typeof statusTag !== 'function' ||
       typeof escapeHTML !== 'function' ||
       typeof formatDate !== 'function' ||
+      typeof formatDurationSeconds !== 'function' ||
       typeof apiURL !== 'function'
     ) {
       throw new Error('MegaVPNTrafficPage requires page dependencies');
@@ -119,8 +121,9 @@
         ? {
             summary: data.summary && typeof data.summary === 'object' ? data.summary : { retention_days: 180 },
             samples: Array.isArray(data.samples) ? data.samples : [],
+            collectors: Array.isArray(data.collectors) ? data.collectors : [],
           }
-        : { summary: { retention_days: 180 }, samples: [] };
+        : { summary: { retention_days: 180 }, samples: [], collectors: [] };
     }
 
     function optionList(items, valueKey, labelFn, selected) {
@@ -259,6 +262,53 @@
         </tr>`).join('');
     }
 
+    function collectorStatusCounts(collectors) {
+      return collectors.reduce((acc, collector) => {
+        const status = String(collector?.status || 'unknown').toLowerCase();
+        acc[status] = (acc[status] || 0) + 1;
+        return acc;
+      }, {});
+    }
+
+    function collectorRows(collectors) {
+      if (!collectors.length) {
+        return `
+          <tr>
+            <td colspan="8">
+              <div class="nodes-empty-state compact">
+                <strong>No collector streams yet</strong>
+                <span>Re-apply managed Xray, WireGuard or OpenVPN instances and wait for agent traffic accounting reports.</span>
+              </div>
+            </td>
+          </tr>`;
+      }
+      return collectors.map((collector) => {
+        const rx = Number(collector.rx_bytes || 0);
+        const tx = Number(collector.tx_bytes || 0);
+        const age = Number(collector.last_received_age_seconds || 0);
+        return `
+          <tr>
+            <td>
+              <strong>${escapeHTML(collector.node_name || collector.node_id || 'node')}</strong>
+              <small>${escapeHTML(collector.node_id || 'unknown node')}</small>
+            </td>
+            <td>
+              <strong>${escapeHTML(collector.protocol || 'unknown')}</strong>
+              <small>${escapeHTML(collector.source || 'agent')}</small>
+            </td>
+            <td>${statusTag(collector.status || 'unknown')}</td>
+            <td>
+              <strong>${escapeHTML(formatDate(collector.last_received_at))}</strong>
+              <small>${escapeHTML(formatDurationSeconds(age))} ago</small>
+            </td>
+            <td>${escapeHTML(formatDate(collector.last_bucket_end))}</td>
+            <td><span class="mono">${escapeHTML(intValue(collector.sample_count))}</span></td>
+            <td><span class="mono">${escapeHTML(intValue(collector.client_count))}</span></td>
+            <td><span class="mono">${escapeHTML(bytes(rx + tx))}</span></td>
+          </tr>`;
+      }).join('');
+    }
+
     function render() {
       setTitle('Traffic Accounting');
       const data = state.trafficAccounting && typeof state.trafficAccounting === 'object'
@@ -266,8 +316,10 @@
         : { summary: {}, samples: [] };
       const summary = data.summary || {};
       const samples = Array.isArray(data.samples) ? data.samples : [];
+      const collectors = Array.isArray(data.collectors) ? data.collectors : [];
       const filters = trafficExportFilters();
       const previewSamples = filterSamples(samples, filters);
+      const collectorCounts = collectorStatusCounts(collectors);
       const retention = Number(summary.retention_days || 180);
       const pruneBudget = Number(summary.max_prune_per_ingest || 0);
       const pruneBatch = Number(summary.prune_batch_size || 0);
@@ -296,11 +348,41 @@
             ${summaryCard('Samples', intValue(summary.sample_count), 'stored aggregate rows')}
             ${summaryCard('Clients', intValue(summary.client_count), 'with attributed samples')}
             ${summaryCard('Nodes', intValue(summary.node_count), 'reporting counters')}
+            ${summaryCard('Collectors', intValue(collectors.length), `${intValue(collectorCounts.active)} active / ${intValue(collectorCounts.degraded)} degraded / ${intValue(collectorCounts.inactive)} inactive`)}
             ${summaryCard('Received', bytes(summary.rx_bytes), 'client uplink / ingress')}
             ${summaryCard('Sent', bytes(summary.tx_bytes), 'client downlink / egress')}
           </div>
         </section>
         ${renderExportFilters(filters, samples)}
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Collector status</h2>
+              <p>Freshness by node, collector source and protocol for the selected retained dataset. Active means samples arrived within the normal reporting window.</p>
+            </div>
+            <div class="table-tools">
+              <span class="tag">${escapeHTML(String(collectors.length))} streams</span>
+              ${statusTag(collectorCounts.inactive || collectorCounts.degraded ? 'degraded' : collectors.length ? 'active' : 'planned')}
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Node</th>
+                  <th>Collector</th>
+                  <th>Status</th>
+                  <th>Last report</th>
+                  <th>Last bucket</th>
+                  <th>Samples</th>
+                  <th>Clients</th>
+                  <th>Traffic</th>
+                </tr>
+              </thead>
+              <tbody>${collectorRows(collectors)}</tbody>
+            </table>
+          </div>
+        </section>
         <section class="table-card">
           <div class="table-head">
             <h2>Recent traffic samples</h2>

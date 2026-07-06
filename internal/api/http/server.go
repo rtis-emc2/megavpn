@@ -792,6 +792,9 @@ func (s *Server) trafficAccountingOverview(w nethttp.ResponseWriter, r *nethttp.
 	if x.Samples == nil {
 		x.Samples = []domain.TrafficAccountingSample{}
 	}
+	if x.Collectors == nil {
+		x.Collectors = []domain.TrafficAccountingCollectorStatus{}
+	}
 	writeJSON(w, 200, x)
 }
 
