@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.33`
+**Release:** `7.0.1.34`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -569,7 +569,11 @@ Where to configure it:
   non-standard transport experiments.
 - `Clients -> Provision`: when selecting a VLESS inbound, choose the access
   group. The group is saved in the client access binding and used for
-  provisioning.
+  provisioning. Provisioning synchronizes active catalog groups into the
+  selected Xray instance before validation, so a freshly created active group
+  can be selected immediately. If the group is disabled/deleted or selected
+  egress cannot be resolved through active backhaul, the API returns the
+  available groups and the blocking resolution error.
 - `Clients -> Access -> Add route`: for individual route-policy rules, select
   `Egress mode = egress node` and choose the egress node. After route-policy
   changes, run `Nodes -> Manage -> Inspect route policy` first; if the preview

@@ -1,6 +1,6 @@
 # VLESS Access Groups
 
-**Release:** `7.0.1.33`
+**Release:** `7.0.1.34`
 
 Russian companion: [VLESS_GROUPS_RU.md](VLESS_GROUPS_RU.md).
 
@@ -84,9 +84,14 @@ domain data installed.
 ## Runtime Behavior
 
 - Group data is copied into an instance revision at instance save/create time
-  and during global catalog sync.
+  during global catalog sync and on demand during client provisioning. This
+  prevents a freshly created active group from being visible in the provisioning
+  UI while missing from the selected Xray instance revision.
 - Client provisioning stores the selected group key on the client access
   binding.
+- Provisioning validates the chosen group after catalog sync. If a group is not
+  active or selected egress cannot be resolved through active backhaul, the API
+  returns the available group keys and the blocking resolution error.
 - Apply renders Xray routing rules per client user/email.
 - When instance or group remote egress resolves to a managed backhaul, the
   driver writes Xray `freedom.sendThrough` with the ingress-side backhaul

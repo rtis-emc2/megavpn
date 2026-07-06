@@ -1,6 +1,6 @@
 # Следующие шаги
 
-**Релиз:** `7.0.1.33`
+**Релиз:** `7.0.1.34`
 
 Актуальный baseline: [`ROADMAP_V1_AND_TZ_RU.md`](../ROADMAP_V1_AND_TZ_RU.md).
 Английская версия: [`NEXT_STEPS.md`](NEXT_STEPS.md).
@@ -13,7 +13,7 @@
 5. Довести удаленный deployment baseline на тестовом сервере: прогнать `scripts/control-plane-install.sh` на свежей машине, проверить generated env/master key/admin credentials/nginx self-signed edge, затем проверить `MEGAVPN_DEPLOY_SYNC_MODE=auto`, backup branch flow и повторный deploy после rewritten history.
 6. Проверить service-pack и runtime paths на тестовом сервере: IPsec+XL2TPD, Xray Reality, Xray+Nginx gRPC, Xray VLESS WebSocket Camouflage с fallback website, OpenVPN TCP/UDP, WireGuard, HTTP Proxy, MTProto, Shadowsocks. Для repeatable smoke использовать `scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain> [certificate-id]`; для camouflage matrix обязательно задать `MEGAVPN_FALLBACK_UPSTREAM_URL` на реальный fallback website, иначе эти packs будут намеренно пропущены. Для полного operational-truth включать provisioning и artifact/share-link checks.
 7. Проверить и усилить topology workspace: локальная статичная world map, GeoIP node placement, node owner metadata, role/health badges, backhaul edges, operator-facing route-toggle UX на реальных nodes, failed-hop diagnostics и per-node workload drill-down. Backend schema для route-toggle, cleanup batch metadata и regression coverage route-policy refresh уже добавлены.
-8. Проверить VLESS access groups end to end: default route, local breakout, selected egress node, target-only access, blocked access, ad-block rule и выбор группы при provisioning.
+8. Проверить VLESS access groups end to end: default route, local breakout, selected egress node, target-only access, blocked access, ad-block rule, выбор группы при provisioning и on-demand catalog sync для свежесозданных active groups.
 9. Проверить VLESS subscriptions end-to-end: rotate/revoke token, one-time URL display, public `Cache-Control: no-store` feed, фильтрация active access, QR/text export и visibility provisioning result.
 10. Довести hardening traffic camouflage после baseline HTTP-to-HTTPS redirect и shared Nginx cleanup: Nginx config preview, `nginx -t` evidence surface, live smoke fallback site и проверка generated VLESS subscription.
 11. Выделить Nginx edge profile catalog: reusable profile definitions, certificate binding, generated config diff, atomic apply and operator-visible failure reason.

@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.33`
+**Релиз:** `7.0.1.34`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.33
+Базовая версия кода: RTIS MegaVPN 7.0.1.34
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1082,30 +1082,28 @@ operator console.
 В релизе не менялся VPN runtime behavior. Database-изменения ограничены
 additive/idempotent catalog repair migrations.
 
-## 15. Release 7.0.1.33 Closure
+## 15. Release 7.0.1.34 Closure
 
-Цель релиза `7.0.1.33`: закрыть три operator-facing дефекта в
-traffic-camouflage и service-pack workflow: plain HTTP не должен оставаться на
-fallback path, shared Nginx не должен продолжать обслуживать удаленные
-MegaVPN edge configs, а selective pack component cards должны быть ровными.
+Цель релиза `7.0.1.34`: закрыть дефект contract-а VLESS provisioning:
+`Clients -> Provision` мог показывать active access-group catalog entry, пока
+выбранный Xray service instance еще не materialized эту группу в current
+revision. API отклонял запрос ошибкой
+`vless outbound group "..." is not defined for service instance ...`.
 
 Зафиксировано в этом релизе:
 
-- Generated TLS-enabled Nginx configs теперь включают managed `listen 80`
-  redirect server block. Plain HTTP requests редиректятся на HTTPS до VLESS
-  camouflage или fallback-site routing.
-- Nginx instance cleanup и node emergency cleanup теперь запускают shared
-  Nginx finalizer. Если другие MegaVPN Nginx configs остались, Nginx
-  валидируется и reload; если MegaVPN Nginx configs больше нет, shared
-  `nginx` unit останавливается.
-- Selective service-pack component cards больше не рисуют съехавшие numbered
-  circles; row выровнен как checkbox плюс component content.
-- Regression tests покрывают Nginx redirect generation и существующие managed
-  cleanup allowlists.
+- Client provisioning теперь синхронизирует active VLESS access-group catalog в
+  выбранный Xray instance до validation выбранной группы.
+- Provisioning path использует ту же selected-egress materialization logic, что
+  и catalog sync: `egress_node` groups получают resolved egress metadata, Xray
+  `outbound` config и `sendThrough` source-route metadata до принятия revision.
+- Invalid или disabled groups теперь возвращают diagnostic со списком available
+  groups после catalog sync.
+- Regression coverage проверяет, что selected-egress group вроде `route`
+  превращается в `egress-route` с конкретным `sendThrough` outbound до apply.
 
-Database migration не требовалась. Изменение cleanup не добавляет `nginx` в
-generic managed-unit allowlists; это dedicated shared-runtime finalizer,
-ограниченный `/etc/nginx/conf.d/megavpn-*.conf`.
+Database migration не требовалась. Изменение ограничено control-plane
+provisioning contract и не меняет wire format существующих client configs.
 
 ## 16. Immediate Next Actions
 
@@ -1114,7 +1112,7 @@ generic managed-unit allowlists; это dedicated shared-runtime finalizer,
 3. Проверить runtime artifact upload/fetch/install для Xray и Shadowsocks.
 4. Validate service-pack create/apply/delete на реальных disposable nodes.
 5. Validate VLESS ingress с managed egress route policy, route-policy preview,
-   route-policy telemetry, explicit cleanup и Nginx HTTP-to-HTTPS redirect на
-   реальных ingress/egress nodes.
+   route-policy telemetry, explicit cleanup, on-demand access-group catalog sync
+   и Nginx HTTP-to-HTTPS redirect на реальных ingress/egress nodes.
 6. Продолжить traffic-camouflage ingress case: config preview/diff,
    `nginx -t` evidence surface и live fallback-site smoke.

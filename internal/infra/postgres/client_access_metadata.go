@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
@@ -132,7 +133,7 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, instanceI
 	}
 	allowed := xrayVLESSGroupKeySet(spec)
 	if _, ok := allowed[group]; !ok {
-		return nil, fmt.Errorf("vless outbound group %q is not defined for service instance %s", group, strings.TrimSpace(instanceID))
+		return nil, fmt.Errorf("vless outbound group %q is not available for service instance %s after catalog sync; available groups: %s", group, strings.TrimSpace(instanceID), strings.Join(sortedXrayVLESSGroupKeys(allowed), ", "))
 	}
 	metadata["vless_group"] = group
 	metadata["xray_group"] = group
@@ -145,6 +146,17 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, instanceI
 	inbound["outbound_group"] = group
 	metadata["inbound_service"] = inbound
 	return metadata, nil
+}
+
+func sortedXrayVLESSGroupKeys(set map[string]struct{}) []string {
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func applyXrayPublicClientEndpointMetadata(metadata, inbound, spec map[string]any) {
@@ -218,21 +230,37 @@ func clientEndpointString(host string, port int) string {
 }
 
 func (s *Store) ensureXrayProvisioningGroups(ctx context.Context, instanceID string, spec map[string]any) (map[string]any, error) {
-	enriched, changed, err := s.specWithVLESSGroupCatalog(ctx, spec)
+	instance, err := s.GetInstance(ctx, instanceID)
 	if err != nil {
 		return nil, err
+	}
+	catalog, err := s.loadVLESSGroupCatalogSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	enriched, changed, err := s.syncXrayVLESSGroupCatalogSpec(ctx, instance, spec, catalog)
+	if err != nil {
+		return nil, fmt.Errorf("prepare vless group catalog for service instance: %w", err)
 	}
 	if !changed {
 		return enriched, nil
 	}
-	revision, err := s.ReplaceInstanceSpec(ctx, instanceID, "system:vless-groups", enriched)
+	materialized, err := s.materializeInstanceDriverSpecDefaults(ctx, instance, enriched)
+	if err != nil {
+		return nil, fmt.Errorf("materialize vless group catalog for service instance: %w", err)
+	}
+	status, _, validationErrors := s.validateInstanceRevisionSpec(ctx, instance, materialized)
+	if !in(status, "validated", "applied") {
+		return nil, fmt.Errorf("vless group catalog revision is not apply-ready; status=%s errors=%v", status, validationErrors)
+	}
+	revision, err := s.ReplaceInstanceSpec(ctx, instanceID, "system:vless-groups", materialized)
 	if err != nil {
 		return nil, fmt.Errorf("sync vless group catalog into service instance: %w", err)
 	}
 	if !in(strings.TrimSpace(revision.Status), "validated", "applied") {
-		return nil, fmt.Errorf("vless group catalog revision is not apply-ready; status=%s", strings.TrimSpace(revision.Status))
+		return nil, fmt.Errorf("vless group catalog revision is not apply-ready; status=%s errors=%v", strings.TrimSpace(revision.Status), revision.ValidationErrors)
 	}
-	return enriched, nil
+	return revision.Spec, nil
 }
 
 func (s *Store) SyncVLESSGroupCatalog(ctx context.Context) (domain.VLESSGroupCatalogSyncResult, error) {
@@ -432,10 +460,23 @@ func shouldQueueVLESSGroupCatalogApply(instance domain.Instance) (bool, string) 
 	}
 }
 
+type xrayVLESSEgressResolver func(context.Context, string, string) (XrayVLESSEgressResolution, error)
+
 func (s *Store) resolveXrayVLESSGroupEgress(ctx context.Context, instance domain.Instance, spec map[string]any) (bool, error) {
+	return resolveXrayVLESSGroupEgressWithResolver(ctx, instance, spec, s.ResolveXrayVLESSEgress, "control-plane:vless-group-catalog-sync")
+}
+
+func resolveXrayVLESSGroupEgressWithResolver(ctx context.Context, instance domain.Instance, spec map[string]any, resolver xrayVLESSEgressResolver, resolvedBy string) (bool, error) {
 	groups := sliceRuleItemsFromAny(spec["vless_groups"])
 	if len(groups) == 0 {
 		return false, nil
+	}
+	if resolver == nil {
+		return false, fmt.Errorf("xray vless egress resolver is required")
+	}
+	resolvedBy = strings.TrimSpace(resolvedBy)
+	if resolvedBy == "" {
+		resolvedBy = "control-plane:vless-group-catalog-sync"
 	}
 	changed := false
 	resolvedByEgressNode := map[string]XrayVLESSEgressResolution{}
@@ -498,7 +539,7 @@ func (s *Store) resolveXrayVLESSGroupEgress(ctx context.Context, instance domain
 			resolved, ok := resolvedByEgressNode[egressNodeID]
 			if !ok {
 				var err error
-				resolved, err = s.ResolveXrayVLESSEgress(ctx, instance.ID, egressNodeID)
+				resolved, err = resolver(ctx, instance.ID, egressNodeID)
 				if err != nil {
 					return changed, fmt.Errorf("vless group %q egress resolution failed: %w", groupKey, err)
 				}
@@ -513,7 +554,7 @@ func (s *Store) resolveXrayVLESSGroupEgress(ctx context.Context, instance domain
 			if setVLESSGroupMapValue(group, "egress", resolved.Map()) {
 				changed = true
 			}
-			if setVLESSGroupMapValue(group, "egress_resolved_by", "control-plane:vless-group-catalog-sync") {
+			if setVLESSGroupMapValue(group, "egress_resolved_by", resolvedBy) {
 				changed = true
 			}
 			if resolved.Mode == "local_breakout" {
@@ -619,15 +660,6 @@ func (s *Store) loadVLESSGroupCatalogSnapshot(ctx context.Context) (vlessGroupCa
 		}
 	}
 	return snapshot, nil
-}
-
-func (s *Store) specWithVLESSGroupCatalog(ctx context.Context, spec map[string]any) (map[string]any, bool, error) {
-	catalog, err := s.loadVLESSGroupCatalogSnapshot(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	enriched, changed := specWithVLESSGroupCatalogSnapshot(spec, catalog)
-	return enriched, changed, nil
 }
 
 func specWithVLESSGroupCatalogSnapshot(spec map[string]any, catalog vlessGroupCatalogSnapshot) (map[string]any, bool) {

@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.33`
+**Release:** `7.0.1.34`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 

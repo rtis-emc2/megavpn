@@ -1,6 +1,6 @@
 # Next Steps
 
-**Release:** `7.0.1.33`
+**Release:** `7.0.1.34`
 
 Current roadmap: [`ROADMAP_V1_AND_TZ.md`](../ROADMAP_V1_AND_TZ.md).
 Russian companion: [`NEXT_STEPS_RU.md`](NEXT_STEPS_RU.md).
@@ -40,7 +40,8 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
    metadata and route-policy refresh regression coverage are in place.
 8. Validate VLESS access groups end to end: default route, local breakout,
    selected egress node, target-only access, blocked access, ad-block rule and
-   provisioning selection.
+   provisioning selection, including on-demand catalog sync for freshly created
+   active groups.
 9. Validate VLESS subscriptions end to end: rotate/revoke token, one-time URL
    display, public `Cache-Control: no-store` feed, active-access filtering,
    QR/text export and provisioning-result visibility.

@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.33`
+**Release:** `7.0.1.34`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.33`
+**Code baseline:** RTIS MegaVPN `7.0.1.34`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,9 +23,10 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.33` continues the production-hardening line after the firewall,
-backhaul, VLESS routing, route-policy preview and documentation-gate releases.
-The codebase already has a working control-plane foundation:
+`7.0.1.34` continues the production-hardening line after the firewall,
+backhaul, VLESS routing, route-policy preview, traffic-camouflage and
+documentation-gate releases. The codebase already has a working control-plane
+foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -277,30 +278,30 @@ Closed in this release:
 No VPN runtime behavior changed in this release. Database changes are limited to
 additive/idempotent catalog repair migrations.
 
-## 14. Release 7.0.1.33 Closure
+## 14. Release 7.0.1.34 Closure
 
-The goal of `7.0.1.33` is to close three operator-facing defects in the
-traffic-camouflage and service-pack workflow: plain HTTP should not remain on
-the fallback path, shared Nginx should not keep serving removed MegaVPN edge
-configs, and selective pack component cards must stay aligned.
+The goal of `7.0.1.34` is to close a VLESS provisioning contract defect:
+`Clients -> Provision` could offer an active access-group catalog entry while
+the selected Xray service instance had not yet materialized that group in its
+current revision. The API then rejected the request with
+`vless outbound group "..." is not defined for service instance ...`.
 
 Closed in this release:
 
-- Generated TLS-enabled Nginx configs now include a managed `listen 80`
-  redirect server block. Plain HTTP requests are redirected to HTTPS before
-  VLESS camouflage or fallback-site routing is evaluated.
-- Nginx instance cleanup and node emergency cleanup now run a shared Nginx
-  finalizer. If other MegaVPN Nginx configs remain, Nginx is validated and
-  reloaded; if no MegaVPN Nginx configs remain, the shared `nginx` unit is
-  stopped.
-- Selective service-pack component cards no longer render misaligned numbered
-  circles; the row is aligned as checkbox plus component content.
-- Regression tests cover Nginx redirect generation and existing managed cleanup
-  allowlists.
+- Client provisioning now syncs the active VLESS access-group catalog into the
+  selected Xray instance before validating the requested group.
+- The provisioning path uses the same selected-egress materialization logic as
+  catalog sync: `egress_node` groups receive resolved egress metadata, Xray
+  `outbound` config and `sendThrough` source-route metadata before the revision
+  is accepted.
+- Invalid or disabled groups now return a diagnostic that includes the available
+  groups after catalog sync.
+- Regression coverage verifies that a selected-egress group such as `route`
+  becomes `egress-route` with a concrete `sendThrough` outbound before apply.
 
-No database migration was required. The cleanup change does not add `nginx` to
-generic managed-unit allowlists; it is a dedicated shared-runtime finalizer
-scoped to `/etc/nginx/conf.d/megavpn-*.conf`.
+No database migration was required. The change is scoped to the control-plane
+provisioning contract and does not change the wire format of existing client
+configs.
 
 ## 15. Immediate Next Actions
 
@@ -310,8 +311,8 @@ scoped to `/etc/nginx/conf.d/megavpn-*.conf`.
 4. Validate service-pack creation, apply, runtime logs and cleanup on real nodes.
 5. Validate OpenVPN client config generation and customizable templates.
 6. Validate VLESS ingress with managed egress route policy, route-policy preview,
-   route-policy telemetry, explicit cleanup and Nginx HTTP-to-HTTPS redirect on
-   real ingress/egress nodes.
+   route-policy telemetry, explicit cleanup, on-demand access-group catalog sync
+   and Nginx HTTP-to-HTTPS redirect on real ingress/egress nodes.
 7. Validate VLESS subscription rotation, public feed import and revocation on a
    real client profile.
 8. Complete topology-map and node-link design before implementing the UI.
