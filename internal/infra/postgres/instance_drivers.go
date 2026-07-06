@@ -593,7 +593,14 @@ func (s *Store) buildWireGuardServerConfig(ctx context.Context, instance domain.
 		if publicKey == "" || allowedIPs == "" {
 			continue
 		}
-		lines = append(lines, "", "[Peer]")
+		lines = append(lines, "")
+		if serviceAccessID := firstString(peer["service_access_id"]); serviceAccessID != "" {
+			lines = append(lines, "# megavpn-service-access-id = "+wireGuardManagedCommentValue(serviceAccessID))
+		}
+		if username := firstString(peer["username"], peer["client_username"], peer["client_user"]); username != "" {
+			lines = append(lines, "# megavpn-client = "+wireGuardManagedCommentValue(username))
+		}
+		lines = append(lines, "[Peer]")
 		lines = append(lines, "PublicKey = "+publicKey)
 		if presharedKey, err := s.resolveSecretText(ctx, peer["preshared_key_secret_ref_id"], peer["preshared_key"]); err != nil {
 			return "", err
@@ -604,6 +611,14 @@ func (s *Store) buildWireGuardServerConfig(ctx context.Context, instance domain.
 		lines = append(lines, extraServerLines(peer["peer_extra_lines"])...)
 	}
 	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func wireGuardManagedCommentValue(value string) string {
+	value = strings.NewReplacer("\r", " ", "\n", " ", "#", "").Replace(strings.TrimSpace(value))
+	if len(value) > 200 {
+		value = value[:200]
+	}
+	return value
 }
 
 func (s *Store) renderIPSecPayloadSpec(ctx context.Context, instance domain.Instance, spec map[string]any) (map[string]any, error) {
@@ -1067,13 +1082,17 @@ func buildOpenVPNServerConfig(instance domain.Instance, spec map[string]any, bas
 	dev := firstString(spec["dev"], "tun")
 	serverNetwork := firstString(spec["server_network"], "10.8.0.0")
 	serverNetmask := firstString(spec["server_netmask"], "255.255.255.0")
+	ippPath := firstString(spec["ifconfig_pool_persist_path"], baseDir+"/ipp.txt")
+	statusPath := firstString(spec["status_path"], baseDir+"/status.log")
 	lines := []string{
 		"port " + strconv.Itoa(port),
 		"proto " + proto,
 		"dev " + dev,
 		"topology subnet",
 		"server " + serverNetwork + " " + serverNetmask,
-		"ifconfig-pool-persist /var/lib/megavpn/openvpn/" + firstString(instance.Slug, "server") + "/ipp.txt",
+		"ifconfig-pool-persist " + ippPath,
+		"status-version 2",
+		"status " + statusPath + " 60",
 		"persist-key",
 		"persist-tun",
 		"keepalive 10 120",

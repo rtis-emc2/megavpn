@@ -1,6 +1,6 @@
 # Traffic Accounting
 
-**Release:** `7.1.0.3`
+**Release:** `7.1.0.4`
 
 Traffic accounting stores aggregate traffic counters for operational audit,
 capacity planning and incident diagnostics. It is not packet capture and it is
@@ -70,7 +70,7 @@ flowchart LR
   E --> F["Traffic Accounting UI"]
 ```
 
-## Xray/VLESS Collector
+## Runtime Collectors
 
 Managed Xray specs can enable `traffic_accounting_enabled`. When enabled, the
 rendered Xray config includes:
@@ -86,6 +86,26 @@ is stored as `rx_bytes`; Xray `downlink` is stored as `tx_bytes`.
 Existing Xray instances must be re-applied after upgrading so the node receives
 the updated config with the loopback Stats API.
 
+Managed WireGuard instances are collected through local `wg show <interface>
+transfer` counters. The agent maps counters to client metadata using the
+WireGuard public key and client address stored on `service_accesses`. Managed
+WireGuard configs also render non-secret attribution comments for diagnostics.
+
+Managed OpenVPN instances render:
+
+- `status-version 2`;
+- `status <managed runtime dir>/status.log 60`;
+- `ifconfig-pool-persist <managed runtime dir>/ipp.txt`.
+
+The agent parses the local status file, aggregates duplicate common names and
+maps samples back to `service_accesses` through
+`openvpn_client_common_name`.
+
+Existing OpenVPN/WireGuard instances should be re-applied after upgrading so
+the node receives the managed status path and peer attribution comments. Raw
+operator-supplied OpenVPN configs are not modified automatically; add an
+explicit `status` directive if accounting is required for a raw config.
+
 ## Security Notes
 
 - Accounting samples are append/update aggregate records, not raw traffic.
@@ -94,8 +114,9 @@ the updated config with the loopback Stats API.
 - Invalid references fail closed.
 - Retention cleanup is automatic on ingest.
 
-## Current Limitation
+## Current Limitation And Next Work
 
-Xray/VLESS collection is implemented for managed Xray configs. OpenVPN and
-WireGuard collectors are still pending and should use interface/client counters
-mapped through service access metadata.
+The current collectors store byte aggregates, not per-destination flow logs.
+The next development step is a dedicated export/retention workflow for long-term
+audit storage, plus live-node validation evidence across Xray, WireGuard and
+OpenVPN under reconnect/restart scenarios.

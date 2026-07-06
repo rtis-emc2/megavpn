@@ -1,6 +1,6 @@
 # Учет трафика
 
-**Релиз:** `7.1.0.3`
+**Релиз:** `7.1.0.4`
 
 Учет трафика хранит агрегированные счетчики для операционного аудита,
 capacity planning и диагностики инцидентов. Это не packet capture и не
@@ -70,7 +70,7 @@ flowchart LR
   E --> F["Traffic Accounting UI"]
 ```
 
-## Xray/VLESS collector
+## Runtime collectors
 
 Managed Xray specs могут включать `traffic_accounting_enabled`. В этом случае
 rendered Xray config содержит:
@@ -87,6 +87,26 @@ Xray `uplink` записывается как `rx_bytes`; Xray `downlink` зап
 Существующие Xray instances нужно повторно применить после upgrade, чтобы node
 получила обновленный config с loopback Stats API.
 
+Managed WireGuard instances собираются через локальные счетчики
+`wg show <interface> transfer`. Agent сопоставляет counters с клиентом по
+WireGuard public key и client address, которые уже хранятся в metadata
+`service_accesses`. Управляемые WireGuard configs также рендерят non-secret
+attribution comments для диагностики.
+
+Managed OpenVPN instances рендерят:
+
+- `status-version 2`;
+- `status <managed runtime dir>/status.log 60`;
+- `ifconfig-pool-persist <managed runtime dir>/ipp.txt`.
+
+Agent парсит локальный status file, агрегирует duplicate common names и
+сопоставляет samples с `service_accesses` через `openvpn_client_common_name`.
+
+Существующие OpenVPN/WireGuard instances нужно повторно применить после
+upgrade, чтобы node получила managed status path и peer attribution comments.
+Raw operator-supplied OpenVPN configs не меняются автоматически; если accounting
+нужен для raw config, добавь явный `status` directive.
+
 ## Security notes
 
 - Accounting samples - агрегаты, а не raw traffic.
@@ -95,8 +115,9 @@ Xray `uplink` записывается как `rx_bytes`; Xray `downlink` зап
 - Неверные ссылки fail-closed.
 - Retention cleanup автоматический на ingest.
 
-## Текущее ограничение
+## Текущее ограничение и следующий этап
 
-Xray/VLESS collection реализован для managed Xray configs. OpenVPN и WireGuard
-collectors еще нужно реализовать отдельно через interface/client counters,
-связанные с service access metadata.
+Текущие collectors хранят byte aggregates, а не per-destination flow logs.
+Следующий этап разработки - отдельный export/retention workflow для
+долгосрочного audit storage и live-node validation evidence по Xray, WireGuard
+и OpenVPN при reconnect/restart сценариях.

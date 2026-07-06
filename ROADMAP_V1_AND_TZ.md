@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.3`
+**Release:** `7.1.0.4`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.3`
+**Code baseline:** RTIS MegaVPN `7.1.0.4`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,11 +23,12 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.3` continues the production-hardening line after the firewall,
+`7.1.0.4` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
-documentation-gate and VLESS provisioning-sync releases. This release makes the
-managed firewall model operator-readable and fixes the next development path
-around audited user traffic accounting with at least 180-day retention. The
+documentation-gate and VLESS provisioning-sync releases. This release extends
+audited user traffic accounting beyond Xray/VLESS to managed WireGuard and
+OpenVPN byte counters while keeping the next development path focused on
+live-node validation, export audit trail and load-tested 180-day retention. The
 codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
@@ -386,34 +387,40 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Release 7.1.0.3 Closure
+## 18. Release 7.1.0.4 Closure
 
-The goal of `7.1.0.3` is to make managed firewall configuration understandable
-before broader production rollout. The runtime enforcement model already exists;
-the operator issue was that the UI and docs did not show how address lists,
-rules, policies, apply jobs and node state relate to each other.
+The goal of `7.1.0.4` is to extend audited user traffic accounting from
+Xray/VLESS to managed WireGuard and OpenVPN without crossing the privacy
+boundary: the platform stores aggregate byte counters, not payloads, URLs, DNS
+queries or per-destination browsing history.
 
 Closed in this release:
 
-- Firewall Overview now shows the catalog-to-apply pipeline:
-  address lists -> rules -> policy -> apply job -> node state.
-- Firewall Rules now shows a compact rule-anatomy guide:
-  priority -> chain -> match -> action -> apply mode.
-- Firewall documentation now includes a Mermaid model diagram and an explicit
-  default baseline table for the seeded production node rules.
-- The documented development path puts user traffic accounting with at least
-  180-day retention first, before production traffic collection is enabled.
+- The agent collects Xray Stats API, WireGuard `wg show <interface> transfer`
+  and OpenVPN status-file counters as delta buckets.
+- Managed OpenVPN configs render `status-version 2`, a managed `status` path
+  and a managed `ifconfig-pool-persist` path.
+- Managed WireGuard configs render non-secret attribution comments for peer
+  diagnostics.
+- Control Plane ingest maps OpenVPN/WireGuard samples back to
+  `service_accesses` through existing metadata identity.
+- Default service-pack templates enable `traffic_accounting_enabled` for
+  managed OpenVPN/WireGuard, and migration `000015` updates existing default
+  templates.
 - Web asset cache keys, release banners and release review artifacts were
-  advanced to `7.1.0.3`.
+  advanced to `7.1.0.4`.
 
-No database migration, public API contract or node nftables runtime behavior
-changed. The default firewall seed and agent renderer remain covered by the
-existing integration and agent tests.
+No public API contract changed. The database migration only updates default
+service-pack templates. Existing instances must be re-applied after upgrade so
+nodes receive the managed OpenVPN status path and WireGuard attribution
+comments.
 
 ## 19. Immediate Next Actions
 
-1. Design user traffic accounting with at least 180-day retention: event schema,
-   aggregation, partitioning, privacy boundary, RBAC and export audit.
+1. Validate traffic accounting on live nodes: Xray Stats API,
+   WireGuard/OpenVPN reconnect and restart behavior, attribution to
+   `service_accesses`, export audit trail and partitioning/retention under real
+   cardinality.
 2. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
 3. Run disposable PostgreSQL migrations and integration tests.
 4. Verify runtime artifact upload/fetch/install for Xray and Shadowsocks.

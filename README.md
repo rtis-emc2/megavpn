@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.3`
+**Release:** `7.1.0.4`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,9 +56,9 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.3` is a firewall-clarity and release-planning baseline for release
-stabilization. The codebase has moved from feature expansion to controlled
-production-readiness work. The current focus is:
+`7.1.0.4` extends runtime traffic accounting from Xray/VLESS to managed
+WireGuard and OpenVPN while keeping release stabilization as the operating
+mode. The current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;
@@ -82,9 +82,9 @@ production-readiness work. The current focus is:
 - firewall schema repair for upgraded installations and simplified address-list
   workflows without internal identity fields;
 - traffic-accounting foundation with signed agent ingest API, PostgreSQL
-  aggregate storage, 180-day retention cleanup, `traffic.read` RBAC and a
-  dedicated operator UI page; protocol collectors remain gated until runtime
-  validation on real nodes;
+  aggregate storage, 180-day retention cleanup, `traffic.read` RBAC, a
+  dedicated operator UI page and managed Xray/WireGuard/OpenVPN byte-counter
+  collectors that still require live-node validation before broad rollout;
 - semantic service-pack deduplication in API/UI plus database repair for
   historical duplicate default pack rows;
 - VLESS client provisioning now syncs active access-group catalog entries into

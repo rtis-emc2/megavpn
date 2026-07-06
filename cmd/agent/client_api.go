@@ -18,13 +18,15 @@ import (
 
 func newClient(baseURL, token, statePath string) *client {
 	return &client{
-		baseURL:                 strings.TrimRight(baseURL, "/"),
-		token:                   token,
-		statePath:               statePath,
-		http:                    &http.Client{Timeout: 10 * time.Second},
-		responseReplay:          newResponseReplayCache(5 * time.Minute),
-		trafficReportInterval:   time.Minute,
-		xrayTrafficCounterState: map[string]int64{},
+		baseURL:                      strings.TrimRight(baseURL, "/"),
+		token:                        token,
+		statePath:                    statePath,
+		http:                         &http.Client{Timeout: 10 * time.Second},
+		responseReplay:               newResponseReplayCache(5 * time.Minute),
+		trafficReportInterval:        time.Minute,
+		xrayTrafficCounterState:      map[string]int64{},
+		wireGuardTrafficCounterState: map[string]int64{},
+		openVPNTrafficCounterState:   map[string]int64{},
 	}
 }
 

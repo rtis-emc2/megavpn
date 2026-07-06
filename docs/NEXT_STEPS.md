@@ -1,6 +1,6 @@
 # Next Steps
 
-**Release:** `7.1.0.3`
+**Release:** `7.1.0.4`
 
 Current roadmap: [`ROADMAP_V1_AND_TZ.md`](../ROADMAP_V1_AND_TZ.md).
 Russian companion: [`NEXT_STEPS_RU.md`](NEXT_STEPS_RU.md).
@@ -8,10 +8,11 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
 
 ## Immediate Engineering Queue
 
-1. Validate the Xray/VLESS Stats API collector on live nodes after re-applying
-   managed Xray instances, then implement OpenVPN/WireGuard collectors through
-   interface/client counters, export audit trail and load-tested retention
-   behavior before broad production collection is enabled.
+1. Validate traffic accounting collectors on live nodes after re-applying
+   managed Xray, OpenVPN and WireGuard instances: Xray Stats API, WireGuard
+   `wg show <interface> transfer`, OpenVPN status files, attribution to
+   `service_accesses`, reconnect/restart behavior, export audit trail and
+   load-tested retention before broad production collection is enabled.
 2. Re-run managed backhaul apply on real ingress/egress nodes after updating API,
    UI and agents. Re-apply must stop obsolete managed units, remove stale
    managed interfaces, remove conflicting managed WireGuard listeners, create

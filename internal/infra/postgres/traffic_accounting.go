@@ -281,6 +281,20 @@ func (s *Store) normalizeTrafficAccountingSample(ctx context.Context, nodeID str
 			return input, fmt.Errorf("instance_id %s does not belong to reporting node", input.InstanceID)
 		}
 	}
+	if input.ServiceAccessID == "" && input.InstanceID != "" {
+		accessID, clientID, err := s.trafficAccountingServiceAccessByMetadata(ctx, input.InstanceID, input.Metadata)
+		if err != nil {
+			return input, err
+		}
+		if accessID != "" {
+			input.ServiceAccessID = accessID
+			if input.ClientAccountID == "" {
+				input.ClientAccountID = clientID
+			} else if clientID != "" && input.ClientAccountID != clientID {
+				return input, fmt.Errorf("traffic metadata matches service access for a different client")
+			}
+		}
+	}
 	if input.ServiceAccessID != "" {
 		accessInstanceID, accessClientID, err := s.trafficAccountingServiceAccessRefs(ctx, input.ServiceAccessID)
 		if err != nil {
@@ -417,6 +431,40 @@ func (s *Store) trafficAccountingServiceAccessID(ctx context.Context, clientID, 
 	return accessID, err
 }
 
+func (s *Store) trafficAccountingServiceAccessByMetadata(ctx context.Context, instanceID string, metadata map[string]any) (string, string, error) {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" || metadata == nil {
+		return "", "", nil
+	}
+	matchers := []struct {
+		Key   string
+		Value string
+	}{
+		{Key: "wireguard_client_public_key", Value: trafficAccountingMetadataString(metadata, "wireguard_client_public_key")},
+		{Key: "wireguard_client_address", Value: trafficAccountingFirstListValue(trafficAccountingMetadataString(metadata, "wireguard_client_address", "wireguard_allowed_ip"))},
+		{Key: "openvpn_client_common_name", Value: trafficAccountingMetadataString(metadata, "openvpn_client_common_name", "openvpn_common_name")},
+	}
+	for _, matcher := range matchers {
+		value := strings.TrimSpace(matcher.Value)
+		if value == "" {
+			continue
+		}
+		var accessID, clientID string
+		err := s.db.QueryRow(ctx, `select id::text, client_account_id::text
+			from service_accesses
+			where instance_id=$1
+			  and status in ('active','pending')
+			  and metadata_json->>$2=$3
+			order by case status when 'active' then 0 when 'pending' then 1 else 2 end, updated_at desc
+			limit 1`, instanceID, matcher.Key, value).Scan(&accessID, &clientID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		return accessID, clientID, err
+	}
+	return "", "", nil
+}
+
 func trafficAccountingMetadataString(metadata map[string]any, keys ...string) string {
 	if metadata == nil {
 		return ""
@@ -427,6 +475,15 @@ func trafficAccountingMetadataString(metadata map[string]any, keys ...string) st
 		}
 	}
 	return ""
+}
+
+func trafficAccountingFirstListValue(value string) string {
+	for _, part := range strings.Split(value, ",") {
+		if text := strings.TrimSpace(part); text != "" {
+			return text
+		}
+	}
+	return strings.TrimSpace(value)
 }
 
 func validateOptionalTrafficAccountingUUID(name, value string) error {

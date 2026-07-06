@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -220,6 +221,58 @@ func TestAttachDefaultNetworkPolicyCanBeDisabled(t *testing.T) {
 	}
 	if spec["firewall_rules"] != nil {
 		t.Fatalf("did not expect firewall rules when network policy disabled: %#v", spec["firewall_rules"])
+	}
+}
+
+func TestBuildOpenVPNServerConfigAddsManagedStatusFile(t *testing.T) {
+	t.Parallel()
+
+	cfg := buildOpenVPNServerConfig(domain.Instance{
+		Slug:         "edge-openvpn-udp",
+		EndpointPort: 1194,
+	}, map[string]any{
+		"proto": "udp",
+	}, "/etc/openvpn/server/megavpn-edge-openvpn-udp")
+
+	for _, want := range []string{
+		"ifconfig-pool-persist /etc/openvpn/server/megavpn-edge-openvpn-udp/ipp.txt",
+		"status-version 2",
+		"status /etc/openvpn/server/megavpn-edge-openvpn-udp/status.log 60",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Fatalf("openvpn config missing %q:\n%s", want, cfg)
+		}
+	}
+}
+
+func TestBuildWireGuardServerConfigAddsPeerAttributionComments(t *testing.T) {
+	t.Parallel()
+
+	store := &Store{}
+	cfg, err := store.buildWireGuardServerConfig(context.Background(), domain.Instance{}, map[string]any{
+		"server_private_key": "server-private-key",
+		"server_address":     "10.66.0.1/24",
+		"managed_peers": []any{
+			map[string]any{
+				"service_access_id": "3d7f9a79-8738-41fa-9322-58b8bc12b10e",
+				"username":          "nlgate.999-iphone",
+				"public_key":        "client-public-key",
+				"allowed_ips":       "10.66.0.2/32",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildWireGuardServerConfig returned error: %v", err)
+	}
+	for _, want := range []string{
+		"# megavpn-service-access-id = 3d7f9a79-8738-41fa-9322-58b8bc12b10e",
+		"# megavpn-client = nlgate.999-iphone",
+		"PublicKey = client-public-key",
+		"AllowedIPs = 10.66.0.2/32",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Fatalf("wireguard config missing %q:\n%s", want, cfg)
+		}
 	}
 }
 

@@ -15,14 +15,16 @@ type agentLogger interface {
 }
 
 type client struct {
-	baseURL                 string
-	token                   string
-	statePath               string
-	http                    httpDoer
-	responseReplay          *responseReplayCache
-	trafficReportInterval   time.Duration
-	lastTrafficReportAt     time.Time
-	xrayTrafficCounterState map[string]int64
+	baseURL                      string
+	token                        string
+	statePath                    string
+	http                         httpDoer
+	responseReplay               *responseReplayCache
+	trafficReportInterval        time.Duration
+	lastTrafficReportAt          time.Time
+	xrayTrafficCounterState      map[string]int64
+	wireGuardTrafficCounterState map[string]int64
+	openVPNTrafficCounterState   map[string]int64
 }
 
 type httpDoer interface {
