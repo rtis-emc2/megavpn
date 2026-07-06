@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -93,7 +94,7 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, filter domain.Tra
 	if err := s.db.QueryRow(ctx, `select count(*) from traffic_accounting_samples where received_at < $1`, cutoff).Scan(&out.Summary.ExpiredSampleCount); err != nil {
 		return out, err
 	}
-	out.Collectors, err = s.trafficAccountingCollectorStatuses(ctx, args, where, now)
+	out.Collectors, err = s.trafficAccountingCollectorStatuses(ctx, args, where, filter, now)
 	if err != nil {
 		return out, err
 	}
@@ -149,26 +150,95 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, filter domain.Tra
 	return out, rows.Err()
 }
 
-func (s *Store) trafficAccountingCollectorStatuses(ctx context.Context, args []any, where []string, now time.Time) ([]domain.TrafficAccountingCollectorStatus, error) {
+func (s *Store) trafficAccountingCollectorStatuses(ctx context.Context, args []any, where []string, filter domain.TrafficAccountingExportFilter, now time.Time) ([]domain.TrafficAccountingCollectorStatus, error) {
 	queryArgs := append([]any{}, args...)
+	expectedWhere := []string{
+		"i.enabled=true",
+		"i.status not in ('deleted','disabled')",
+		"sd.code in ('xray-core','wireguard','openvpn')",
+		`(
+			lower(coalesce(r.spec_json->>'traffic_accounting_enabled','')) in ('true','1','yes','on','enabled')
+			or (sd.code='xray-core' and lower(coalesce(r.spec_json->>'xray_stats_enabled','')) in ('true','1','yes','on','enabled'))
+			or (sd.code='xray-core' and lower(coalesce(r.spec_json->>'stats_enabled','')) in ('true','1','yes','on','enabled'))
+		)`,
+	}
+	if strings.TrimSpace(filter.ClientAccountID) != "" {
+		expectedWhere = append(expectedWhere, "false")
+	}
+	if nodeID := strings.TrimSpace(filter.NodeID); nodeID != "" {
+		queryArgs = append(queryArgs, nodeID)
+		expectedWhere = append(expectedWhere, fmt.Sprintf("i.node_id = $%d::uuid", len(queryArgs)))
+	}
+	if protocol := normalizeTrafficAccountingToken(filter.Protocol, ""); protocol != "" {
+		queryArgs = append(queryArgs, protocol)
+		expectedWhere = append(expectedWhere, fmt.Sprintf(`case
+			when sd.code='xray-core' then 'vless'
+			when sd.code='wireguard' then 'wireguard'
+			when sd.code='openvpn' then 'openvpn'
+			else sd.code
+		end = $%d`, len(queryArgs)))
+	}
 	queryArgs = append(queryArgs, trafficAccountingMaxCollectorRows)
-	query := `select
-			t.node_id::text,
-			coalesce(n.name, ''),
+	query := `with observed as (
+		select
+			t.node_id::text as node_id,
+			coalesce(n.name, '') as node_name,
 			t.source,
 			t.protocol,
-			count(*),
-			count(distinct t.client_account_id) filter(where t.client_account_id is not null),
-			coalesce(sum(t.rx_bytes), 0),
-			coalesce(sum(t.tx_bytes), 0),
-			coalesce(sum(t.flow_count), 0),
-			max(t.bucket_end),
-			max(t.received_at)
+			count(*) as sample_count,
+			count(distinct t.client_account_id) filter(where t.client_account_id is not null) as client_count,
+			count(distinct t.instance_id) filter(where t.instance_id is not null) as observed_instance_count,
+			coalesce(sum(t.rx_bytes), 0) as rx_bytes,
+			coalesce(sum(t.tx_bytes), 0) as tx_bytes,
+			coalesce(sum(t.flow_count), 0) as flow_count,
+			max(t.bucket_end) as last_bucket_end,
+			max(t.received_at) as last_received_at
 		from traffic_accounting_samples t
 		left join nodes n on n.id=t.node_id
 		where ` + strings.Join(where, " and ") + `
 		group by t.node_id, n.name, t.source, t.protocol
-		order by max(t.received_at) desc, t.protocol asc, t.source asc
+	), expected as (
+		select
+			i.node_id::text as node_id,
+			coalesce(n.name, '') as node_name,
+			'agent'::text as source,
+			case
+				when sd.code='xray-core' then 'vless'
+				when sd.code='wireguard' then 'wireguard'
+				when sd.code='openvpn' then 'openvpn'
+				else sd.code
+			end as protocol,
+			count(distinct i.id) as expected_instance_count
+		from instances i
+		join service_definitions sd on sd.id=i.service_definition_id
+		join instance_revisions r on r.id=i.current_revision_id
+		left join nodes n on n.id=i.node_id
+		where ` + strings.Join(expectedWhere, " and ") + `
+		group by i.node_id, n.name, case
+			when sd.code='xray-core' then 'vless'
+			when sd.code='wireguard' then 'wireguard'
+			when sd.code='openvpn' then 'openvpn'
+			else sd.code
+		end
+	)
+	select
+		coalesce(o.node_id, e.node_id),
+		coalesce(nullif(o.node_name,''), nullif(e.node_name,''), ''),
+		coalesce(o.source, e.source),
+		coalesce(o.protocol, e.protocol),
+		coalesce(o.sample_count, 0),
+		coalesce(o.client_count, 0),
+		coalesce(o.rx_bytes, 0),
+		coalesce(o.tx_bytes, 0),
+		coalesce(o.flow_count, 0),
+		coalesce(e.expected_instance_count, 0),
+		coalesce(o.observed_instance_count, 0),
+		greatest(coalesce(e.expected_instance_count, 0) - coalesce(o.observed_instance_count, 0), 0),
+		o.last_bucket_end,
+		o.last_received_at
+	from observed o
+	full join expected e on e.node_id=o.node_id and e.source=o.source and e.protocol=o.protocol
+	order by coalesce(o.last_received_at, to_timestamp(0)) desc, coalesce(o.protocol, e.protocol) asc, coalesce(o.source, e.source) asc
 		limit $` + strconv.Itoa(len(queryArgs))
 	rows, err := s.db.Query(ctx, query, queryArgs...)
 	if err != nil {
@@ -367,6 +437,8 @@ func scanTrafficAccountingSample(row interface{ Scan(dest ...any) error }) (doma
 
 func scanTrafficAccountingCollectorStatus(row interface{ Scan(dest ...any) error }, now time.Time) (domain.TrafficAccountingCollectorStatus, error) {
 	var item domain.TrafficAccountingCollectorStatus
+	var lastBucketEnd sql.NullTime
+	var lastReceivedAt sql.NullTime
 	if err := row.Scan(
 		&item.NodeID,
 		&item.NodeName,
@@ -377,17 +449,29 @@ func scanTrafficAccountingCollectorStatus(row interface{ Scan(dest ...any) error
 		&item.RxBytes,
 		&item.TxBytes,
 		&item.FlowCount,
-		&item.LastBucketEnd,
-		&item.LastReceivedAt,
+		&item.ExpectedInstanceCount,
+		&item.ObservedInstanceCount,
+		&item.MissingInstanceCount,
+		&lastBucketEnd,
+		&lastReceivedAt,
 	); err != nil {
 		return domain.TrafficAccountingCollectorStatus{}, err
 	}
-	item.Status, item.LastReceivedAgeSeconds = trafficAccountingCollectorStatus(now, item.LastReceivedAt)
+	if lastBucketEnd.Valid {
+		item.LastBucketEnd = &lastBucketEnd.Time
+	}
+	if lastReceivedAt.Valid {
+		item.LastReceivedAt = &lastReceivedAt.Time
+	}
+	item.Status, item.LastReceivedAgeSeconds = trafficAccountingCollectorStatus(now, item.LastReceivedAt, item.MissingInstanceCount)
 	return item, nil
 }
 
-func trafficAccountingCollectorStatus(now, lastReceivedAt time.Time) (string, int64) {
-	if lastReceivedAt.IsZero() {
+func trafficAccountingCollectorStatus(now time.Time, lastReceivedAt *time.Time, missingInstances int64) (string, int64) {
+	if lastReceivedAt == nil || lastReceivedAt.IsZero() {
+		if missingInstances > 0 {
+			return "missing", 0
+		}
 		return "inactive", 0
 	}
 	age := now.UTC().Sub(lastReceivedAt.UTC())
@@ -396,6 +480,9 @@ func trafficAccountingCollectorStatus(now, lastReceivedAt time.Time) (string, in
 	}
 	switch {
 	case age <= trafficAccountingCollectorActiveWindow:
+		if missingInstances > 0 {
+			return "degraded", int64(age.Seconds())
+		}
 		return "active", int64(age.Seconds())
 	case age <= trafficAccountingCollectorWarnWindow:
 		return "degraded", int64(age.Seconds())

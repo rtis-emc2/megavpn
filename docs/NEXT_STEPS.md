@@ -1,6 +1,6 @@
 # Next Steps
 
-**Release:** `7.1.0.10`
+**Release:** `7.1.0.11`
 
 Current roadmap: [`ROADMAP_V1_AND_TZ.md`](../ROADMAP_V1_AND_TZ.md).
 Russian companion: [`NEXT_STEPS_RU.md`](NEXT_STEPS_RU.md).
@@ -12,8 +12,11 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
    managed Xray, OpenVPN and WireGuard instances: Xray Stats API, WireGuard
    `wg show <interface> transfer`, OpenVPN status files, attribution to
    `service_accesses`, Traffic Accounting `Collector status` active/degraded/
-   inactive freshness, reconnect/restart behavior and measured real cardinality
-   before deciding whether table partitioning or cold archive storage is needed.
+   missing/inactive freshness, expected/observed/missing instance coverage,
+   reconnect/restart behavior and measured real cardinality before deciding
+   whether table partitioning or cold archive storage is needed. Then add an
+   explicit collector heartbeat if operators need collector health independent
+   from user traffic deltas.
 2. Re-run managed backhaul apply on real ingress/egress nodes after updating API,
    UI and agents. Re-apply must stop obsolete managed units, remove stale
    managed interfaces, remove conflicting managed WireGuard listeners, create

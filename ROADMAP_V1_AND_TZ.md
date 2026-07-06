@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.10`
+**Release:** `7.1.0.11`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.10`
+**Code baseline:** RTIS MegaVPN `7.1.0.11`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,14 +23,13 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.10` continues the production-hardening line after the firewall,
+`7.1.0.11` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. This release adds
-Traffic Accounting collector-status observability on top of the retained-dataset
-query model, so live-node validation can confirm which node/source/protocol
-streams are active, degraded or inactive before measured cardinality and
-long-term storage decisions. The codebase already has a working control-plane
-foundation:
+expected-vs-observed Traffic Accounting collector coverage on top of the
+collector freshness model, so live-node validation can see when an active
+traffic-accounting-enabled managed instance should report but no sample stream
+has arrived. The codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -388,32 +387,42 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Release 7.1.0.10 Closure
+## 18. Release 7.1.0.11 Closure
 
-The goal of `7.1.0.10` is to make live Traffic Accounting validation observable
-without expanding the privacy boundary. The platform still stores aggregate byte
-counters, not payloads, URLs, DNS queries or per-destination browsing history.
+The goal of `7.1.0.11` is to make missing expected Traffic Accounting collector
+streams visible without expanding the privacy boundary. The platform still
+stores aggregate byte counters, not payloads, URLs, DNS queries or
+per-destination browsing history.
 
 Closed in this release:
 
 - `/api/v1/traffic/accounting` now returns `collectors` derived from retained
   aggregate samples and grouped by node, source and protocol.
-- Collector status includes active/degraded/inactive freshness, last report
-  timestamp, last bucket timestamp, sample count, client count and aggregate
+- Collector status includes active/degraded/missing/inactive freshness, last
+  report timestamp, last bucket timestamp, sample count, client count,
+  expected/observed instance counts, missing instance count and aggregate
   byte/flow counters for the selected retained dataset.
-- Traffic Accounting UI now shows a dedicated Collector status table alongside
-  overview cards, recent rows and CSV export filters.
+- Expected collector rows are derived from active/enabled managed
+  Xray/WireGuard/OpenVPN instances whose current revision has traffic
+  accounting enabled, then full-joined with observed retained samples.
+- Traffic Accounting UI now shows expected/observed/missing collector coverage
+  alongside overview cards, recent rows and CSV export filters.
 - Collector freshness thresholds are deterministic server-side constants:
-  active within the normal reporting window, degraded when late and inactive
-  when silent long enough to require operator validation.
-- Regression tests cover collector freshness classification in addition to the
-  retained-dataset filter and CSV coverage from the previous increment.
+  active within the normal reporting window, degraded when late or partially
+  observed, missing when no expected stream has reported and inactive when an
+  observed stream is silent long enough to require operator validation.
+- Regression tests cover collector freshness and missing-stream classification
+  in addition to the retained-dataset filter and CSV coverage from the previous
+  increment.
 - Web asset cache keys, release banners and release review artifacts were
-  advanced to `7.1.0.10`.
+  advanced to `7.1.0.11`.
 
 Agent runtime collector behavior, database schema and traffic privacy boundary
-did not change. The existing `traffic.read` permission protects overview,
-collector status and CSV export.
+did not change. Because current agents emit accounting rows only when counters
+advance, `missing` is a diagnostic retained-sample signal rather than standalone
+proof of collector failure; explicit collector heartbeat is the next hardening
+step if operators need health independent from user traffic. The existing
+`traffic.read` permission protects overview, collector status and CSV export.
 
 ## 19. Immediate Next Actions
 

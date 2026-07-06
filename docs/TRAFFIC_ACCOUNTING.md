@@ -1,6 +1,6 @@
 # Traffic Accounting
 
-**Release:** `7.1.0.10`
+**Release:** `7.1.0.11`
 
 Traffic accounting stores aggregate traffic counters for operational audit,
 capacity planning and incident diagnostics. It is not packet capture and it is
@@ -63,10 +63,24 @@ The read response includes summary metadata for retention operations:
 The same response also includes `collectors`: derived status rows grouped by
 node, collector source and protocol for the selected retained dataset. Each row
 contains `status`, `last_received_at`, `last_received_age_seconds`,
-`last_bucket_end`, sample/client counts and aggregate byte counters. Status is
-`active` when samples arrived within the normal reporting window, `degraded`
-when the stream is late, and `inactive` when the stream has been silent long
+`last_bucket_end`, sample/client counts, expected/observed instance counts,
+missing instance count and aggregate byte counters. Status is `active` when
+samples arrived within the normal reporting window, `degraded` when the stream
+is late or only partially observed, `missing` when an expected collector stream
+has no samples, and `inactive` when an observed stream has been silent long
 enough to require operator validation.
+
+Expected collector coverage is derived from active/enabled managed
+Xray/WireGuard/OpenVPN instances whose current revision enables traffic
+accounting. It is joined with retained samples by node, source and protocol so
+operators can see expected, observed and missing streams in one table. Expected
+coverage is intentionally omitted under `client_id` filters because a
+per-client slice cannot prove that a whole instance stream is missing.
+Current agents report aggregate samples when counters advance; an expected row
+with no retained samples can therefore mean no observed traffic yet, a collector
+configuration problem or a node-side reporting failure. Treat `missing` as a
+diagnostic signal that requires live-node validation, not as standalone proof
+of packet loss.
 
 Operator CSV export API:
 

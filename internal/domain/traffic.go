@@ -65,19 +65,22 @@ type TrafficAccountingSummary struct {
 }
 
 type TrafficAccountingCollectorStatus struct {
-	NodeID                 string    `json:"node_id"`
-	NodeName               string    `json:"node_name"`
-	Source                 string    `json:"source"`
-	Protocol               string    `json:"protocol"`
-	Status                 string    `json:"status"`
-	SampleCount            int64     `json:"sample_count"`
-	ClientCount            int64     `json:"client_count"`
-	RxBytes                int64     `json:"rx_bytes"`
-	TxBytes                int64     `json:"tx_bytes"`
-	FlowCount              int64     `json:"flow_count"`
-	LastBucketEnd          time.Time `json:"last_bucket_end"`
-	LastReceivedAt         time.Time `json:"last_received_at"`
-	LastReceivedAgeSeconds int64     `json:"last_received_age_seconds"`
+	NodeID                 string     `json:"node_id"`
+	NodeName               string     `json:"node_name"`
+	Source                 string     `json:"source"`
+	Protocol               string     `json:"protocol"`
+	Status                 string     `json:"status"`
+	SampleCount            int64      `json:"sample_count"`
+	ClientCount            int64      `json:"client_count"`
+	RxBytes                int64      `json:"rx_bytes"`
+	TxBytes                int64      `json:"tx_bytes"`
+	FlowCount              int64      `json:"flow_count"`
+	ExpectedInstanceCount  int64      `json:"expected_instance_count"`
+	ObservedInstanceCount  int64      `json:"observed_instance_count"`
+	MissingInstanceCount   int64      `json:"missing_instance_count"`
+	LastBucketEnd          *time.Time `json:"last_bucket_end,omitempty"`
+	LastReceivedAt         *time.Time `json:"last_received_at,omitempty"`
+	LastReceivedAgeSeconds int64      `json:"last_received_age_seconds"`
 }
 
 type TrafficAccountingOverview struct {

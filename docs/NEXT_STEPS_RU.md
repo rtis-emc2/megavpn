@@ -1,6 +1,6 @@
 # Следующие шаги
 
-**Релиз:** `7.1.0.10`
+**Релиз:** `7.1.0.11`
 
 Актуальный baseline: [`ROADMAP_V1_AND_TZ_RU.md`](../ROADMAP_V1_AND_TZ_RU.md).
 Английская версия: [`NEXT_STEPS.md`](NEXT_STEPS.md).
@@ -10,9 +10,11 @@
    apply managed Xray, OpenVPN и WireGuard instances: Xray Stats API, WireGuard
    `wg show <interface> transfer`, OpenVPN status files, attribution к
    `service_accesses`, Traffic Accounting `Collector status`
-   active/degraded/inactive freshness, reconnect/restart behavior и измеренную
-   реальную cardinality перед решением о table partitioning или cold archive
-   storage.
+   active/degraded/missing/inactive freshness, expected/observed/missing
+   instance coverage, reconnect/restart behavior и измеренную реальную
+   cardinality перед решением о table partitioning или cold archive storage.
+   Затем добавить explicit collector heartbeat, если operators нужен collector
+   health независимо от user traffic deltas.
 2. На реальных ingress/egress nodes повторить Backhaul Apply profiles после обновления API/UI/agent: re-apply должен остановить obsolete managed unit из предыдущего/sibling manifest, удалить предыдущий/целевой `mgbh*` interface, удалить stale managed WireGuard listener с конфликтующим endpoint port, корректно создать nft NAT rule с quoted comment, поднять новый runtime-state и показать одинаковый `/30` profile на ingress/egress. После Delete Backhaul убедиться, что link ушел из активного списка и отображается в `Recently Deleted Backhaul` с cleanup summary. Если OpenVPN profile снова упадет, Jobs/Backhaul summary должен показать unit name, active state и первую полезную строку `systemctl status`/OpenVPN error; эту строку использовать как root cause для следующего исправления.
 3. Запустить PostgreSQL integration suite с `MEGAVPN_TEST_DATABASE_DSN`; тест создает временную schema, применяет все migrations и проверяет jobs, locks, provisioning и baseline access routes.
 4. Проверить `/api/v1/service-drivers`, `/api/v1/instances/runtime-states`, `/api/v1/instances/{id}/runtime-state`, `/api/v1/instances/{id}/runtime-observations` и `/agent/runtime/instances` на тестовом control plane после реального `instance.apply`.

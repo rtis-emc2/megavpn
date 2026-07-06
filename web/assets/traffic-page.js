@@ -286,6 +286,9 @@
         const rx = Number(collector.rx_bytes || 0);
         const tx = Number(collector.tx_bytes || 0);
         const age = Number(collector.last_received_age_seconds || 0);
+        const lastReceived = collector.last_received_at ? formatDate(collector.last_received_at) : 'n/a';
+        const lastBucket = collector.last_bucket_end ? formatDate(collector.last_bucket_end) : 'n/a';
+        const ageCaption = collector.last_received_at ? `${formatDurationSeconds(age)} ago` : 'no report yet';
         return `
           <tr>
             <td>
@@ -298,12 +301,18 @@
             </td>
             <td>${statusTag(collector.status || 'unknown')}</td>
             <td>
-              <strong>${escapeHTML(formatDate(collector.last_received_at))}</strong>
-              <small>${escapeHTML(formatDurationSeconds(age))} ago</small>
+              <strong>${escapeHTML(lastReceived)}</strong>
+              <small>${escapeHTML(ageCaption)}</small>
             </td>
-            <td>${escapeHTML(formatDate(collector.last_bucket_end))}</td>
-            <td><span class="mono">${escapeHTML(intValue(collector.sample_count))}</span></td>
-            <td><span class="mono">${escapeHTML(intValue(collector.client_count))}</span></td>
+            <td>${escapeHTML(lastBucket)}</td>
+            <td>
+              <strong>${escapeHTML(intValue(collector.sample_count))}</strong>
+              <small>${escapeHTML(intValue(collector.client_count))} clients</small>
+            </td>
+            <td>
+              <strong>${escapeHTML(intValue(collector.expected_instance_count))} / ${escapeHTML(intValue(collector.observed_instance_count))}</strong>
+              <small>${escapeHTML(intValue(collector.missing_instance_count))} missing</small>
+            </td>
             <td><span class="mono">${escapeHTML(bytes(rx + tx))}</span></td>
           </tr>`;
       }).join('');
@@ -348,7 +357,7 @@
             ${summaryCard('Samples', intValue(summary.sample_count), 'stored aggregate rows')}
             ${summaryCard('Clients', intValue(summary.client_count), 'with attributed samples')}
             ${summaryCard('Nodes', intValue(summary.node_count), 'reporting counters')}
-            ${summaryCard('Collectors', intValue(collectors.length), `${intValue(collectorCounts.active)} active / ${intValue(collectorCounts.degraded)} degraded / ${intValue(collectorCounts.inactive)} inactive`)}
+            ${summaryCard('Collectors', intValue(collectors.length), `${intValue(collectorCounts.active)} active / ${intValue(collectorCounts.degraded)} degraded / ${intValue(collectorCounts.missing)} missing / ${intValue(collectorCounts.inactive)} inactive`)}
             ${summaryCard('Received', bytes(summary.rx_bytes), 'client uplink / ingress')}
             ${summaryCard('Sent', bytes(summary.tx_bytes), 'client downlink / egress')}
           </div>
@@ -362,7 +371,7 @@
             </div>
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(collectors.length))} streams</span>
-              ${statusTag(collectorCounts.inactive || collectorCounts.degraded ? 'degraded' : collectors.length ? 'active' : 'planned')}
+              ${statusTag(collectorCounts.missing || collectorCounts.inactive || collectorCounts.degraded ? 'degraded' : collectors.length ? 'active' : 'planned')}
             </div>
           </div>
           <div class="table-wrap">
@@ -375,7 +384,7 @@
                   <th>Last report</th>
                   <th>Last bucket</th>
                   <th>Samples</th>
-                  <th>Clients</th>
+                  <th>Expected / observed</th>
                   <th>Traffic</th>
                 </tr>
               </thead>

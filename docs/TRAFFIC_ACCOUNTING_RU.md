@@ -1,6 +1,6 @@
 # Учет трафика
 
-**Релиз:** `7.1.0.10`
+**Релиз:** `7.1.0.11`
 
 Учет трафика хранит агрегированные счетчики для операционного аудита,
 capacity planning и диагностики инцидентов. Это не packet capture и не
@@ -64,10 +64,24 @@ Read response включает summary metadata для retention operations:
 Этот же response включает `collectors`: derived status rows, сгруппированные по
 node, collector source и protocol для выбранного retained dataset. Каждая строка
 содержит `status`, `last_received_at`, `last_received_age_seconds`,
-`last_bucket_end`, sample/client counts и aggregate byte counters. Status равен
-`active`, если samples пришли в нормальное reporting window, `degraded`, если
-stream запаздывает, и `inactive`, если stream молчит достаточно долго для
-operator validation.
+`last_bucket_end`, sample/client counts, expected/observed instance counts,
+missing instance count и aggregate byte counters. Status равен `active`, если
+samples пришли в нормальное reporting window, `degraded`, если stream
+запаздывает или виден только частично, `missing`, если ожидаемый collector stream
+не прислал samples, и `inactive`, если observed stream молчит достаточно долго
+для operator validation.
+
+Expected collector coverage строится из active/enabled managed
+Xray/WireGuard/OpenVPN instances, у которых current revision включает traffic
+accounting. Эти expected rows объединяются с retained samples по node, source и
+protocol, чтобы оператор видел expected, observed и missing streams в одной
+таблице. Под `client_id` filter expected coverage намеренно не показывается:
+per-client срез не может корректно доказать, что весь instance stream missing.
+Текущие agents отправляют aggregate samples, когда счетчики растут; поэтому
+expected row без retained samples может означать отсутствие наблюдаемого трафика,
+ошибку collector configuration или node-side reporting failure. Статус
+`missing` - diagnostic signal для live-node validation, а не самостоятельное
+доказательство потери traffic.
 
 Operator CSV export API:
 
