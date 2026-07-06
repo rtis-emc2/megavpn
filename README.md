@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.36`
+**Release:** `7.0.1.37`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,7 +55,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.36` is a hardening baseline for release stabilization. The codebase has
+`7.0.1.37` is a hardening baseline for release stabilization. The codebase has
 moved from feature expansion to controlled production-readiness work. The
 current focus is:
 
@@ -86,6 +86,10 @@ current focus is:
 - VLESS client identity is now stable across Xray/VLESS ingress instances:
   provisioning a client onto a new ingress reuses the existing client UUID and
   queues apply so the new server accepts the already issued client credential;
+- Xray UUID rotation now preserves the client's selected VLESS access group
+  instead of falling back to a stale implicit `route` value; stale implicit
+  group metadata falls back to an active catalog group while explicit invalid
+  operator choices still fail closed;
 - client provisioning action rows use compact, scoped buttons instead of
   inherited full-width modal bars;
 - resilient Nginx capability install for camouflage ingress with nginx.org to

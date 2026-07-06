@@ -280,7 +280,7 @@ func TestPostgresIntegrationXrayProvisioningReusesClientUUIDAcrossInstances(t *t
 	}
 
 	if _, err := store.ProvisionClientWithOptions(ctx, client.ID, []string{first.ID}, map[string]map[string]any{
-		first.ID: {"vless_group": "default"},
+		first.ID: {"vless_group": "out_usa_sf"},
 	}); err != nil {
 		t.Fatalf("provision first xray access: %v", err)
 	}
@@ -322,6 +322,9 @@ func TestPostgresIntegrationXrayProvisioningReusesClientUUIDAcrossInstances(t *t
 	rotatedUUID := firstString(rotatedMetadata["xray_uuid"])
 	if rotatedUUID == "" || rotatedUUID == firstUUID {
 		t.Fatalf("rotated xray uuid = %q, want a new uuid different from %q", rotatedUUID, firstUUID)
+	}
+	if got := firstString(rotatedMetadata["vless_group"], rotatedMetadata["xray_group"], rotatedMetadata["outbound_group"]); got != "out_usa_sf" {
+		t.Fatalf("rotated xray group = %q, want preserved out_usa_sf", got)
 	}
 	if xrayServiceAccessUUIDRotationRequested(rotatedMetadata) {
 		t.Fatalf("rotation marker was not cleared: %#v", rotatedMetadata)
@@ -1697,6 +1700,12 @@ func xraySharedClientIdentityTestSpec(host string) map[string]any {
 			map[string]any{
 				"key":          "default",
 				"label":        "Default access",
+				"egress_mode":  "default",
+				"outbound_tag": "direct",
+			},
+			map[string]any{
+				"key":          "out_usa_sf",
+				"label":        "Outgoing USA San Francisco",
 				"egress_mode":  "default",
 				"outbound_tag": "direct",
 			},

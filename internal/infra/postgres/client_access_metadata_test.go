@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
@@ -72,6 +73,65 @@ func TestApplyXrayPublicClientEndpointMetadataIgnoresPlainBackend(t *testing.T) 
 	}
 	if got := firstString(inbound["endpoint_kind"]); got != "" {
 		t.Fatalf("endpoint kind = %q, want empty for plain backend", got)
+	}
+}
+
+func TestSelectXrayProvisioningGroupPreservesExistingGroup(t *testing.T) {
+	t.Parallel()
+
+	groups := []xrayVLESSGroup{{Key: "default"}, {Key: "out_usa_sf"}}
+	allowed := map[string]struct{}{"default": {}, "out_usa_sf": {}}
+
+	got, err := selectXrayProvisioningGroup("", "out_usa_sf", "default", groups, allowed, false, "instance-1")
+	if err != nil {
+		t.Fatalf("selectXrayProvisioningGroup() error = %v", err)
+	}
+	if got != "out_usa_sf" {
+		t.Fatalf("selected group = %q, want existing out_usa_sf", got)
+	}
+}
+
+func TestSelectXrayProvisioningGroupRejectsInvalidExplicitGroup(t *testing.T) {
+	t.Parallel()
+
+	groups := []xrayVLESSGroup{{Key: "default"}, {Key: "out_usa_sf"}}
+	allowed := map[string]struct{}{"default": {}, "out_usa_sf": {}}
+
+	_, err := selectXrayProvisioningGroup("route", "out_usa_sf", "default", groups, allowed, true, "instance-1")
+	if err == nil {
+		t.Fatal("selectXrayProvisioningGroup() error = nil, want invalid explicit group error")
+	}
+	if !strings.Contains(err.Error(), `vless outbound group "route"`) {
+		t.Fatalf("error = %q, want invalid route group context", err.Error())
+	}
+}
+
+func TestSelectXrayProvisioningGroupFallsBackFromStaleImplicitGroup(t *testing.T) {
+	t.Parallel()
+
+	groups := []xrayVLESSGroup{{Key: "default"}, {Key: "out_usa_sf"}}
+	allowed := map[string]struct{}{"default": {}, "out_usa_sf": {}}
+
+	got, err := selectXrayProvisioningGroup("", "route", "route", groups, allowed, false, "instance-1")
+	if err != nil {
+		t.Fatalf("selectXrayProvisioningGroup() error = %v", err)
+	}
+	if got != "default" {
+		t.Fatalf("selected group = %q, want safe default fallback", got)
+	}
+}
+
+func TestXrayVLESSGroupFromOptionsDoesNotInventRoute(t *testing.T) {
+	t.Parallel()
+
+	if got := xrayVLESSGroupFromOptions(nil); got != "" {
+		t.Fatalf("nil options group = %q, want empty", got)
+	}
+	if got := xrayVLESSGroupFromOptions(map[string]any{}); got != "" {
+		t.Fatalf("empty options group = %q, want empty", got)
+	}
+	if got := xrayVLESSGroupFromMetadata(map[string]any{"inbound_service": map[string]any{"outbound_group": "out_usa_sf"}}); got != "out_usa_sf" {
+		t.Fatalf("metadata group = %q, want out_usa_sf", got)
 	}
 }
 

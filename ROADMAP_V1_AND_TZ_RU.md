@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.36`
+**Релиз:** `7.0.1.37`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.36
+Базовая версия кода: RTIS MegaVPN 7.0.1.37
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1082,9 +1082,9 @@ operator console.
 В релизе не менялся VPN runtime behavior. Database-изменения ограничены
 additive/idempotent catalog repair migrations.
 
-## 15. Release 7.0.1.36 Closure
+## 15. Release 7.0.1.37 Closure
 
-Цель релиза `7.0.1.36`: закрыть operator-facing дефект дизайна формы client
+Цель релиза `7.0.1.37`: закрыть operator-facing дефект дизайна формы client
 provisioning: primary/secondary actions выглядели как слишком широкие
 горизонтальные полосы, особенно в full-screen provisioning modal.
 

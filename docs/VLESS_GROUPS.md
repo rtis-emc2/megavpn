@@ -1,6 +1,6 @@
 # VLESS Access Groups
 
-**Release:** `7.0.1.36`
+**Release:** `7.0.1.37`
 
 Russian companion: [VLESS_GROUPS_RU.md](VLESS_GROUPS_RU.md).
 
@@ -89,6 +89,10 @@ domain data installed.
   UI while missing from the selected Xray instance revision.
 - Client provisioning stores the selected group key on the client access
   binding.
+- Reprovisioning and Xray UUID rotation preserve the existing client binding
+  group. Empty group input never becomes a synthetic `route` group; stale
+  implicit metadata falls back to an active catalog/default group, while an
+  explicitly selected invalid group remains a validation error.
 - Provisioning validates the chosen group after catalog sync. If a group is not
   active or selected egress cannot be resolved through active backhaul, the API
   returns the available group keys and the blocking resolution error.
@@ -114,7 +118,7 @@ domain data installed.
 | Risk | Control |
 | --- | --- |
 | Client unexpectedly exits from the ingress node | Use `Instance default route` plus instance-level remote egress, or force `Selected egress node`. |
-| Stale group after edit | Save/status/delete runs catalog sync and queues apply; inspect sync failures if a node did not receive the update. |
+| Stale group after edit | Save/status/delete runs catalog sync and queues apply; reprovision or rotate preserves the client binding group when it still exists and falls back only for stale implicit metadata. |
 | Broken target-only group | Target instance must have endpoint host and port; otherwise revision validation fails. |
 | Missing ad-block data | Keep Xray geosite data installed with the runtime artifact/package. |
 | Overly broad advanced JSON | Keep advanced rules collapsed by default and reserve them for reviewed exceptions. |

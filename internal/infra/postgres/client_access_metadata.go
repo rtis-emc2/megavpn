@@ -80,7 +80,7 @@ func (s *Store) clientInboundServiceMetadata(ctx context.Context, instanceID str
 		"available":         availability == "available",
 		"availability":      availability,
 		"service_code":      serviceCode,
-		"service_label":     firstNonEmptyRouteValue(serviceName, serviceCode),
+		"service_label":     firstString(serviceName, serviceCode),
 		"service_category":  strings.TrimSpace(serviceCategory),
 		"instance_id":       instanceID,
 		"instance_name":     strings.TrimSpace(instanceName),
@@ -109,7 +109,7 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, clientID,
 		return nil, err
 	}
 	inbound, _ := metadata["inbound_service"].(map[string]any)
-	if normalizeCapabilityCode(firstNonEmptyRouteValue(stringify(inbound["service_code"]))) != "xray-core" {
+	if normalizeCapabilityCode(firstString(inbound["service_code"])) != "xray-core" {
 		return metadata, nil
 	}
 	spec, err := s.latestInstanceSpec(ctx, instanceID)
@@ -136,17 +136,15 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, clientID,
 	}
 	groups := xrayVLESSGroups(spec)
 	defaultGroup := xrayDefaultVLESSGroupKey(spec, groups)
-	group := normalizeXrayVLESSGroupKey(firstNonEmptyRouteValue(
-		stringify(options["vless_group"]),
-		stringify(options["xray_group"]),
-		stringify(options["outbound_group"]),
-	))
-	if group == "" {
-		group = defaultGroup
-	}
 	allowed := xrayVLESSGroupKeySet(spec)
-	if _, ok := allowed[group]; !ok {
-		return nil, fmt.Errorf("vless outbound group %q is not available for service instance %s after catalog sync; available groups: %s", group, strings.TrimSpace(instanceID), strings.Join(sortedXrayVLESSGroupKeys(allowed), ", "))
+	requestedGroup := xrayVLESSGroupFromOptions(options)
+	existingGroup, err := s.existingClientXrayProvisioningGroup(ctx, clientID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	group, err := selectXrayProvisioningGroup(requestedGroup, existingGroup, defaultGroup, groups, allowed, requestedGroup != "", instanceID)
+	if err != nil {
+		return nil, err
 	}
 	metadata["vless_group"] = group
 	metadata["xray_group"] = group
@@ -159,6 +157,105 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, clientID,
 	inbound["outbound_group"] = group
 	metadata["inbound_service"] = inbound
 	return metadata, nil
+}
+
+func (s *Store) existingClientXrayProvisioningGroup(ctx context.Context, clientID, instanceID string) (string, error) {
+	clientID = strings.TrimSpace(clientID)
+	instanceID = strings.TrimSpace(instanceID)
+	if clientID == "" || instanceID == "" {
+		return "", nil
+	}
+	rows, err := s.db.Query(ctx, `select metadata_json,policy_json
+		from service_accesses
+		where client_account_id=$1 and instance_id=$2
+		order by updated_at desc
+		limit 1`, clientID, instanceID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", rows.Err()
+	}
+	var metadataRaw, policyRaw []byte
+	if err := rows.Scan(&metadataRaw, &policyRaw); err != nil {
+		return "", err
+	}
+	metadata := map[string]any{}
+	policy := map[string]any{}
+	_ = json.Unmarshal(metadataRaw, &metadata)
+	_ = json.Unmarshal(policyRaw, &policy)
+	return firstString(
+		xrayVLESSGroupFromMetadata(metadata),
+		xrayVLESSGroupFromMetadata(policy),
+	), rows.Err()
+}
+
+func xrayVLESSGroupFromOptions(options map[string]any) string {
+	if options == nil {
+		return ""
+	}
+	return normalizeXrayVLESSGroupKey(firstString(
+		options["vless_group"],
+		options["xray_group"],
+		options["outbound_group"],
+		options["group"],
+	))
+}
+
+func xrayVLESSGroupFromMetadata(metadata map[string]any) string {
+	if metadata == nil {
+		return ""
+	}
+	inbound := mapFromAny(metadata["inbound_service"])
+	return normalizeXrayVLESSGroupKey(firstString(
+		metadata["vless_group"],
+		metadata["xray_group"],
+		metadata["outbound_group"],
+		metadata["group"],
+		inbound["vless_group"],
+		inbound["xray_group"],
+		inbound["outbound_group"],
+		inbound["group"],
+	))
+}
+
+func selectXrayProvisioningGroup(requestedGroup, existingGroup, defaultGroup string, groups []xrayVLESSGroup, allowed map[string]struct{}, strictRequested bool, instanceID string) (string, error) {
+	requestedGroup = normalizeXrayVLESSGroupKey(requestedGroup)
+	existingGroup = normalizeXrayVLESSGroupKey(existingGroup)
+	defaultGroup = normalizeXrayVLESSGroupKey(defaultGroup)
+	group := firstString(requestedGroup, existingGroup, defaultGroup)
+	if _, ok := allowed[group]; ok && group != "" {
+		return group, nil
+	}
+	if strictRequested && requestedGroup != "" {
+		return "", fmt.Errorf("vless outbound group %q is not available for service instance %s after catalog sync; available groups: %s", requestedGroup, strings.TrimSpace(instanceID), strings.Join(sortedXrayVLESSGroupKeys(allowed), ", "))
+	}
+	if fallback := fallbackXrayVLESSGroupKey(defaultGroup, groups, allowed); fallback != "" {
+		return fallback, nil
+	}
+	return "", fmt.Errorf("no vless outbound groups are available for service instance %s after catalog sync", strings.TrimSpace(instanceID))
+}
+
+func fallbackXrayVLESSGroupKey(defaultGroup string, groups []xrayVLESSGroup, allowed map[string]struct{}) string {
+	for _, key := range []string{normalizeXrayVLESSGroupKey(defaultGroup), "default"} {
+		if key == "" {
+			continue
+		}
+		if _, ok := allowed[key]; ok {
+			return key
+		}
+	}
+	for _, group := range groups {
+		if _, ok := allowed[group.Key]; ok && group.Key != "" {
+			return group.Key
+		}
+	}
+	keys := sortedXrayVLESSGroupKeys(allowed)
+	if len(keys) > 0 {
+		return keys[0]
+	}
+	return ""
 }
 
 func sortedXrayVLESSGroupKeys(set map[string]struct{}) []string {

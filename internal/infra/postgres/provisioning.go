@@ -154,7 +154,7 @@ func (s *Store) EnsureXrayServiceAccessUUID(ctx context.Context, accessID string
 	}
 
 	forceNew := xrayServiceAccessUUIDRotationRequested(metadata)
-	uuid := firstNonEmptyRouteValue(stringify(metadata["xray_uuid"]), stringify(metadata["uuid"]))
+	uuid := firstString(metadata["xray_uuid"], metadata["uuid"])
 	if uuid == "" || forceNew {
 		if !forceNew {
 			reusableUUID, err := lookupReusableXrayClientUUIDTx(ctx, tx, clientID, accessID)

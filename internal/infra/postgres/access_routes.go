@@ -1839,7 +1839,7 @@ func firstNonEmptyRouteValue(values ...string) string {
 			return strings.TrimSpace(value)
 		}
 	}
-	return "route"
+	return ""
 }
 
 func isSafeRouteIdentifier(value string) bool {

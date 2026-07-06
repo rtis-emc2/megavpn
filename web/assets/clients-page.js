@@ -778,8 +778,8 @@
             <div><span>4</span><strong>Configs</strong><small>Artifacts appear after the worker succeeds.</small></div>
           </div>
           <div class="field full client-provision-actions client-provision-actions-success">
-            <button class="primary-btn" type="button" id="clientProvisionJobsBtn">Open jobs</button>
-            <button class="secondary-btn" type="button" id="clientProvisionAccessBtn">Open client access</button>
+            <button class="primary-btn" type="button" id="clientProvisionJobsBtn">Jobs</button>
+            <button class="secondary-btn" type="button" id="clientProvisionAccessBtn">Access</button>
             <button class="secondary-btn" type="button" id="clientProvisionCloseBtn">Close</button>
           </div>
         </section>`;

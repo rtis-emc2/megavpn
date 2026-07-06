@@ -6,6 +6,17 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
+func TestFirstNonEmptyRouteValueDoesNotInventRoute(t *testing.T) {
+	t.Parallel()
+
+	if got := firstNonEmptyRouteValue("", " "); got != "" {
+		t.Fatalf("firstNonEmptyRouteValue() = %q, want empty", got)
+	}
+	if got := firstNonEmptyRouteValue("", "explicit"); got != "explicit" {
+		t.Fatalf("firstNonEmptyRouteValue() = %q, want explicit", got)
+	}
+}
+
 func TestRouteEnforcementProjectionL3L4Candidate(t *testing.T) {
 	t.Parallel()
 

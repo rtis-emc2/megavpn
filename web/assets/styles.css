@@ -2168,6 +2168,11 @@ tr:hover td { background: #f8fafc; }
 .client-provision-actions-success {
   justify-content: flex-start;
 }
+.client-provision-actions-success .primary-btn,
+.client-provision-actions-success .secondary-btn {
+  min-width: 96px;
+  max-width: 160px;
+}
 .client-workflow-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2433,6 +2438,8 @@ tr:hover td { background: #f8fafc; }
 }
 .client-provision-queued-head > .tag {
   flex: 0 0 auto;
+  min-width: max-content;
+  overflow-wrap: normal;
   white-space: nowrap;
 }
 .client-provision-queued-head h3 {
@@ -2483,12 +2490,15 @@ tr:hover td { background: #f8fafc; }
 }
 .client-provision-next {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
 }
 .client-provision-next div {
   display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
   gap: 6px;
+  column-gap: 10px;
+  align-items: start;
   min-width: 0;
   padding: 12px;
   border: 1px solid var(--line);
@@ -2498,20 +2508,20 @@ tr:hover td { background: #f8fafc; }
 .client-provision-next span {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  justify-content: flex-start;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  color: var(--muted-2);
   font-size: 12px;
   font-weight: 800;
 }
 .client-provision-next strong {
+  min-width: 0;
   color: var(--text);
   font-size: 13px;
 }
 .client-provision-next small {
+  min-width: 0;
   color: var(--muted);
   line-height: 1.35;
 }
