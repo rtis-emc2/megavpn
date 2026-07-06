@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.5`
+**Release:** `7.1.0.6`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,8 +56,9 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.5` adds operator CSV export for traffic-accounting audit handoff while
-keeping release stabilization as the operating mode. The current focus is:
+`7.1.0.6` hardens traffic-accounting retention and query paths for production
+cardinality while keeping release stabilization as the operating mode. The
+current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;
@@ -84,6 +85,8 @@ keeping release stabilization as the operating mode. The current focus is:
   aggregate storage, 180-day retention cleanup, `traffic.read` RBAC, a
   dedicated operator UI page, managed Xray/WireGuard/OpenVPN byte-counter
   collectors and no-store CSV export for aggregate audit rows;
+- bounded batched traffic-accounting retention cleanup and PostgreSQL query
+  indexes for overview/export filters by bucket, client, node and protocol;
 - semantic service-pack deduplication in API/UI plus database repair for
   historical duplicate default pack rows;
 - VLESS client provisioning now syncs active access-group catalog entries into

@@ -1,6 +1,6 @@
 # Traffic Accounting
 
-**Release:** `7.1.0.5`
+**Release:** `7.1.0.6`
 
 Traffic accounting stores aggregate traffic counters for operational audit,
 capacity planning and incident diagnostics. It is not packet capture and it is
@@ -36,8 +36,10 @@ submits a deterministic `sample_key`, or the Control Plane derives one from the
 node, attribution fields and bucket timestamps. Re-sending the same sample is
 idempotent and updates the aggregate row instead of duplicating it.
 
-Default retention is 180 days. Every ingest path prunes samples older than the
-retention window.
+Default retention is 180 days. Overview and export queries always enforce the
+retention cutoff. Ingest also runs bounded batch pruning for rows older than
+the retention window, so cleanup work is capped per request and any large
+backlog is drained over subsequent ingests.
 
 ## API Model
 
@@ -125,11 +127,13 @@ explicit `status` directive if accounting is required for a raw config.
 - Operators need `traffic.read`; no interactive operator write API is exposed.
 - Agent writes are node-scoped and signed.
 - Invalid references fail closed.
-- Retention cleanup is automatic on ingest.
+- Retention cleanup is automatic on ingest and bounded to avoid large blocking
+  deletes.
 
 ## Current Limitation And Next Work
 
 The current collectors store byte aggregates, not per-destination flow logs.
-The next development step is partitioned long-term retention and live-node
-validation evidence across Xray, WireGuard and OpenVPN under reconnect/restart
-scenarios.
+The current storage path has query/export indexes and bounded retention
+cleanup, but still needs live-node validation evidence across Xray, WireGuard
+and OpenVPN under reconnect/restart scenarios. Declarative partitioning or
+cold archive tables should be added only if real cardinality requires it.

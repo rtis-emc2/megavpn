@@ -1,6 +1,6 @@
 # Учет трафика
 
-**Релиз:** `7.1.0.5`
+**Релиз:** `7.1.0.6`
 
 Учет трафика хранит агрегированные счетчики для операционного аудита,
 capacity planning и диагностики инцидентов. Это не packet capture и не
@@ -36,8 +36,10 @@ Control Plane строит его из node, attribution fields и bucket timest
 Повторная отправка того же sample идемпотентна: строка обновляется, а не
 дублируется.
 
-Retention по умолчанию - 180 дней. Каждый ingest path автоматически удаляет
-старые samples за пределами retention window.
+Retention по умолчанию - 180 дней. Overview и export queries всегда применяют
+retention cutoff. Ingest дополнительно запускает bounded batch pruning для
+строк старше retention window, поэтому cleanup work ограничен на один request,
+а большой backlog удаляется постепенно на следующих ingest.
 
 ## API
 
@@ -126,11 +128,13 @@ Raw operator-supplied OpenVPN configs не меняются автоматиче
 - Оператору нужен `traffic.read`; интерактивного operator write API нет.
 - Agent writes ограничены node identity и подписываются.
 - Неверные ссылки fail-closed.
-- Retention cleanup автоматический на ingest.
+- Retention cleanup автоматический на ingest и bounded, чтобы не запускать
+  большие блокирующие deletes.
 
 ## Текущее ограничение и следующий этап
 
 Текущие collectors хранят byte aggregates, а не per-destination flow logs.
-Следующий этап разработки - partitioned long-term retention и live-node
-validation evidence по Xray, WireGuard и OpenVPN при reconnect/restart
-сценариях.
+Storage path уже имеет indexes для query/export и bounded retention cleanup, но
+нужен live-node validation evidence по Xray, WireGuard и OpenVPN при
+reconnect/restart сценариях. Declarative partitioning или cold archive tables
+нужно добавлять только если реальная cardinality этого потребует.

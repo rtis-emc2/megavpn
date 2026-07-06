@@ -18,10 +18,12 @@ import (
 )
 
 const (
-	trafficAccountingMaxBatch      = 1000
-	trafficAccountingMaxRows       = 1000
-	trafficAccountingMaxExportRows = 50000
-	trafficAccountingMaxBucketSpan = 24 * time.Hour
+	trafficAccountingMaxBatch              = 1000
+	trafficAccountingMaxRows               = 1000
+	trafficAccountingMaxExportRows         = 50000
+	trafficAccountingMaxBucketSpan         = 24 * time.Hour
+	trafficAccountingPruneBatchSize        = 5000
+	trafficAccountingPruneBatchesPerIngest = 10
 )
 
 var trafficAccountingUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -460,11 +462,40 @@ func (s *Store) upsertTrafficAccountingSample(ctx context.Context, input traffic
 
 func (s *Store) pruneTrafficAccountingSamples(ctx context.Context) (int64, error) {
 	cutoff := time.Now().UTC().AddDate(0, 0, -domain.TrafficAccountingRetentionDays)
-	tag, err := s.db.Exec(ctx, `delete from traffic_accounting_samples where received_at < $1`, cutoff)
+	var total int64
+	for batch := 0; batch < trafficAccountingPruneBatchesPerIngest; batch++ {
+		affected, err := s.pruneTrafficAccountingSamplesBatch(ctx, cutoff, trafficAccountingPruneBatchSize)
+		if err != nil {
+			return total, err
+		}
+		total += affected
+		if affected < int64(trafficAccountingPruneBatchSize) {
+			break
+		}
+	}
+	return total, nil
+}
+
+func (s *Store) pruneTrafficAccountingSamplesBatch(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	tag, err := s.db.Exec(ctx, trafficAccountingPruneBatchQuery(), cutoff, limit)
 	if err != nil {
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+func trafficAccountingPruneBatchQuery() string {
+	return `delete from traffic_accounting_samples
+		where ctid in (
+			select ctid
+			from traffic_accounting_samples
+			where received_at < $1
+			order by received_at asc
+			limit $2
+		)`
 }
 
 func (s *Store) trafficAccountingInstanceBelongsToNode(ctx context.Context, instanceID, nodeID string) (bool, error) {
