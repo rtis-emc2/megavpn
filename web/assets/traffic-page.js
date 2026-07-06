@@ -6,6 +6,7 @@
       state,
       setTitle,
       el,
+      requestJSON,
       statusTag,
       escapeHTML,
       formatDate,
@@ -15,6 +16,7 @@
       !state ||
       typeof setTitle !== 'function' ||
       typeof el !== 'function' ||
+      typeof requestJSON !== 'function' ||
       typeof statusTag !== 'function' ||
       typeof escapeHTML !== 'function' ||
       typeof formatDate !== 'function' ||
@@ -97,14 +99,28 @@
       });
     }
 
-    function exportCSVURL(filters = trafficExportFilters()) {
+    function trafficAccountingQuery(path, filters = trafficExportFilters(), fallbackLimit = '250') {
       const params = new URLSearchParams();
-      params.set('limit', filters.limit || '10000');
+      params.set('limit', filters.limit || fallbackLimit);
       for (const key of ['from', 'to', 'protocol', 'client_id', 'node_id']) {
         const value = String(filters[key] || '').trim();
         if (value) params.set(key, value);
       }
-      return apiURL(`/api/v1/traffic/accounting/export?${params.toString()}`);
+      return `${path}?${params.toString()}`;
+    }
+
+    function exportCSVURL(filters = trafficExportFilters()) {
+      return apiURL(trafficAccountingQuery('/api/v1/traffic/accounting/export', filters, '10000'));
+    }
+
+    async function reloadTrafficAccounting(filters) {
+      const data = await requestJSON(trafficAccountingQuery('/api/v1/traffic/accounting', filters, '250'));
+      state.trafficAccounting = data && typeof data === 'object' && !Array.isArray(data)
+        ? {
+            summary: data.summary && typeof data.summary === 'object' ? data.summary : { retention_days: 180 },
+            samples: Array.isArray(data.samples) ? data.samples : [],
+          }
+        : { summary: { retention_days: 180 }, samples: [] };
     }
 
     function optionList(items, valueKey, labelFn, selected) {
@@ -160,11 +176,11 @@
         <section class="table-card">
           <div class="table-head">
             <div>
-              <h2>Audit export filters</h2>
-              <p>Use the same filters for recent-row preview and CSV export. The export is still capped and retention-scoped on the server.</p>
+              <h2>Accounting filters</h2>
+              <p>Use one server-side filter set for summary cards, recent rows and CSV export. Reads stay capped and retention-scoped on the server.</p>
             </div>
             <div class="table-tools">
-              <span class="tag">${escapeHTML(String(filterSamples(samples, filters).length))} recent matches</span>
+              <span class="tag">${escapeHTML(String(filterSamples(samples, filters).length))} server rows</span>
             </div>
           </div>
           <form id="trafficExportFilterForm" class="form-grid traffic-export-filter-form">
@@ -269,7 +285,7 @@
             </div>
             <div class="table-tools">
               ${statusTag(samples.length ? 'active' : 'planned')}
-              <span class="tag">${escapeHTML(String(previewSamples.length))} preview rows</span>
+              <span class="tag">${escapeHTML(String(previewSamples.length))} rows</span>
             </div>
           </div>
           <div class="pool-summary-grid">
@@ -288,7 +304,7 @@
         <section class="table-card">
           <div class="table-head">
             <h2>Recent traffic samples</h2>
-            <div class="table-tools"><span class="tag">${escapeHTML(String(previewSamples.length))} / ${escapeHTML(String(samples.length))} rows</span></div>
+            <div class="table-tools"><span class="tag">${escapeHTML(String(previewSamples.length))} retained rows</span></div>
           </div>
           <div class="table-wrap">
             <table>
@@ -326,12 +342,24 @@
           </div>
         </section>`;
       const form = document.getElementById('trafficExportFilterForm');
-      form?.addEventListener('change', () => {
-        saveTrafficExportFilters(trafficExportFiltersFromForm(form));
+      form?.addEventListener('change', async () => {
+        const current = trafficExportFiltersFromForm(form);
+        saveTrafficExportFilters(current);
+        try {
+          await reloadTrafficAccounting(current);
+        } catch (err) {
+          state.lastError = err;
+        }
         render();
       });
-      document.getElementById('trafficExportResetBtn')?.addEventListener('click', () => {
-        saveTrafficExportFilters({ limit: '10000' });
+      document.getElementById('trafficExportResetBtn')?.addEventListener('click', async () => {
+        const resetFilters = trafficExportFiltersFromObject({ limit: '10000' });
+        saveTrafficExportFilters(resetFilters);
+        try {
+          await reloadTrafficAccounting(resetFilters);
+        } catch (err) {
+          state.lastError = err;
+        }
         render();
       });
       document.getElementById('trafficExportBtn')?.addEventListener('click', () => {

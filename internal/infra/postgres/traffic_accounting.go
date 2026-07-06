@@ -49,18 +49,20 @@ type trafficAccountingSampleInput struct {
 	ObservedAt      time.Time
 }
 
-func (s *Store) TrafficAccountingOverview(ctx context.Context, limit int) (domain.TrafficAccountingOverview, error) {
-	if limit <= 0 || limit > trafficAccountingMaxRows {
-		limit = 200
-	}
+func (s *Store) TrafficAccountingOverview(ctx context.Context, filter domain.TrafficAccountingExportFilter) (domain.TrafficAccountingOverview, error) {
+	limit := trafficAccountingFilterLimit(filter.Limit, trafficAccountingMaxRows, 200)
 	cutoff := trafficAccountingRetentionCutoff(time.Now().UTC())
+	args, where, err := trafficAccountingFilterWhere(filter, cutoff)
+	if err != nil {
+		return domain.TrafficAccountingOverview{}, err
+	}
 	var out domain.TrafficAccountingOverview
 	out.Summary.RetentionDays = domain.TrafficAccountingRetentionDays
 	out.Summary.RetentionCutoff = &cutoff
 	out.Summary.PruneBatchSize = trafficAccountingPruneBatchSize
 	out.Summary.PruneBatchesPerIngest = trafficAccountingPruneBatchesPerIngest
 	out.Summary.MaxPrunePerIngest = trafficAccountingPruneBudget()
-	err := s.db.QueryRow(ctx, `select
+	summaryQuery := `select
 			count(*),
 			count(distinct client_account_id) filter(where client_account_id is not null),
 			count(distinct node_id),
@@ -69,8 +71,9 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, limit int) (domai
 			coalesce(sum(flow_count), 0),
 			min(bucket_start),
 			max(bucket_end)
-		from traffic_accounting_samples
-		where received_at >= $1`, cutoff).Scan(
+		from traffic_accounting_samples t
+		where ` + strings.Join(where, " and ")
+	err = s.db.QueryRow(ctx, summaryQuery, args...).Scan(
 		&out.Summary.SampleCount,
 		&out.Summary.ClientCount,
 		&out.Summary.NodeCount,
@@ -87,7 +90,8 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, limit int) (domai
 		return out, err
 	}
 
-	rows, err := s.db.Query(ctx, `select
+	args = append(args, limit)
+	rowsQuery := `select
 			t.id::text,
 			t.node_id::text,
 			coalesce(n.name, ''),
@@ -113,9 +117,10 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, limit int) (domai
 		left join nodes n on n.id=t.node_id
 		left join instances i on i.id=t.instance_id
 		left join client_accounts c on c.id=t.client_account_id
-		where t.received_at >= $1
+		where ` + strings.Join(where, " and ") + `
 		order by t.bucket_end desc, t.received_at desc
-		limit $2`, cutoff, limit)
+		limit $` + strconv.Itoa(len(args))
+	rows, err := s.db.Query(ctx, rowsQuery, args...)
 	if err != nil {
 		return out, err
 	}
@@ -134,37 +139,10 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, limit int) (domai
 }
 
 func (s *Store) TrafficAccountingSamples(ctx context.Context, filter domain.TrafficAccountingExportFilter) ([]domain.TrafficAccountingSample, error) {
-	limit := filter.Limit
-	if limit <= 0 || limit > trafficAccountingMaxExportRows {
-		limit = trafficAccountingMaxExportRows
-	}
-	args := []any{trafficAccountingRetentionCutoff(time.Now().UTC())}
-	where := []string{"t.received_at >= $1"}
-	if filter.From != nil && !filter.From.IsZero() {
-		args = append(args, filter.From.UTC())
-		where = append(where, fmt.Sprintf("t.bucket_end >= $%d", len(args)))
-	}
-	if filter.To != nil && !filter.To.IsZero() {
-		args = append(args, filter.To.UTC())
-		where = append(where, fmt.Sprintf("t.bucket_start <= $%d", len(args)))
-	}
-	if clientID := strings.TrimSpace(filter.ClientAccountID); clientID != "" {
-		if !trafficAccountingUUIDPattern.MatchString(clientID) {
-			return nil, fmt.Errorf("client_id must be a UUID")
-		}
-		args = append(args, clientID)
-		where = append(where, fmt.Sprintf("t.client_account_id = $%d::uuid", len(args)))
-	}
-	if nodeID := strings.TrimSpace(filter.NodeID); nodeID != "" {
-		if !trafficAccountingUUIDPattern.MatchString(nodeID) {
-			return nil, fmt.Errorf("node_id must be a UUID")
-		}
-		args = append(args, nodeID)
-		where = append(where, fmt.Sprintf("t.node_id = $%d::uuid", len(args)))
-	}
-	if protocol := normalizeTrafficAccountingToken(filter.Protocol, ""); protocol != "" {
-		args = append(args, protocol)
-		where = append(where, fmt.Sprintf("t.protocol = $%d", len(args)))
+	limit := trafficAccountingFilterLimit(filter.Limit, trafficAccountingMaxExportRows, trafficAccountingMaxExportRows)
+	args, where, err := trafficAccountingFilterWhere(filter, trafficAccountingRetentionCutoff(time.Now().UTC()))
+	if err != nil {
+		return nil, err
 	}
 	args = append(args, limit)
 	query := `select
@@ -213,6 +191,48 @@ func (s *Store) TrafficAccountingSamples(ctx context.Context, filter domain.Traf
 		out = []domain.TrafficAccountingSample{}
 	}
 	return out, rows.Err()
+}
+
+func trafficAccountingFilterLimit(limit, max, fallback int) int {
+	if limit <= 0 {
+		return fallback
+	}
+	if limit > max {
+		return max
+	}
+	return limit
+}
+
+func trafficAccountingFilterWhere(filter domain.TrafficAccountingExportFilter, cutoff time.Time) ([]any, []string, error) {
+	args := []any{cutoff}
+	where := []string{"t.received_at >= $1"}
+	if filter.From != nil && !filter.From.IsZero() {
+		args = append(args, filter.From.UTC())
+		where = append(where, fmt.Sprintf("t.bucket_end >= $%d", len(args)))
+	}
+	if filter.To != nil && !filter.To.IsZero() {
+		args = append(args, filter.To.UTC())
+		where = append(where, fmt.Sprintf("t.bucket_start <= $%d", len(args)))
+	}
+	if clientID := strings.TrimSpace(filter.ClientAccountID); clientID != "" {
+		if !trafficAccountingUUIDPattern.MatchString(clientID) {
+			return nil, nil, fmt.Errorf("client_id must be a UUID")
+		}
+		args = append(args, clientID)
+		where = append(where, fmt.Sprintf("t.client_account_id = $%d::uuid", len(args)))
+	}
+	if nodeID := strings.TrimSpace(filter.NodeID); nodeID != "" {
+		if !trafficAccountingUUIDPattern.MatchString(nodeID) {
+			return nil, nil, fmt.Errorf("node_id must be a UUID")
+		}
+		args = append(args, nodeID)
+		where = append(where, fmt.Sprintf("t.node_id = $%d::uuid", len(args)))
+	}
+	if protocol := normalizeTrafficAccountingToken(filter.Protocol, ""); protocol != "" {
+		args = append(args, protocol)
+		where = append(where, fmt.Sprintf("t.protocol = $%d", len(args)))
+	}
+	return args, where, nil
 }
 
 func (s *Store) SubmitAgentTrafficAccountingSamples(ctx context.Context, nodeID string, samples []domain.AgentTrafficAccountingSample) (domain.TrafficAccountingIngestResult, error) {

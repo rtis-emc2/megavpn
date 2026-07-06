@@ -14,6 +14,7 @@ import (
 	nethttp "net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -125,7 +126,7 @@ type Store interface {
 	UpdateFirewallRule(context.Context, string, string, domain.FirewallRule) (domain.FirewallRule, error)
 	DeleteFirewallRule(context.Context, string, string) (domain.FirewallRule, error)
 	CreateFirewallApplyJob(context.Context, string, string, bool) (domain.Job, error)
-	TrafficAccountingOverview(context.Context, int) (domain.TrafficAccountingOverview, error)
+	TrafficAccountingOverview(context.Context, domain.TrafficAccountingExportFilter) (domain.TrafficAccountingOverview, error)
 	TrafficAccountingSamples(context.Context, domain.TrafficAccountingExportFilter) ([]domain.TrafficAccountingSample, error)
 	SubmitAgentTrafficAccountingSamples(context.Context, string, []domain.AgentTrafficAccountingSample) (domain.TrafficAccountingIngestResult, error)
 	ListInstanceRuntimeStates(context.Context) ([]domain.InstanceRuntimeState, error)
@@ -216,6 +217,8 @@ type Store interface {
 	CompleteAgentJob(context.Context, string, string, string, map[string]any) error
 	AddJobLog(context.Context, string, string, string, map[string]any) error
 }
+
+var trafficAccountingFilterUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 type Server struct {
 	log                    *slog.Logger
@@ -776,8 +779,12 @@ func (s *Server) dashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (s *Server) trafficAccountingOverview(w nethttp.ResponseWriter, r *nethttp.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	x, err := s.store.TrafficAccountingOverview(r.Context(), limit)
+	filter, err := trafficAccountingExportFilterFromRequest(r)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	x, err := s.store.TrafficAccountingOverview(r.Context(), filter)
 	if err != nil {
 		writeErr(w, 500, "traffic accounting lookup failed")
 		return
@@ -831,14 +838,29 @@ func trafficAccountingExportFilterFromRequest(r *nethttp.Request) (domain.Traffi
 	if from != nil && to != nil && to.Before(*from) {
 		return domain.TrafficAccountingExportFilter{}, errors.New("to must be after from")
 	}
+	clientID := strings.TrimSpace(q.Get("client_id"))
+	if err := validateTrafficAccountingFilterUUID("client_id", clientID); err != nil {
+		return domain.TrafficAccountingExportFilter{}, err
+	}
+	nodeID := strings.TrimSpace(q.Get("node_id"))
+	if err := validateTrafficAccountingFilterUUID("node_id", nodeID); err != nil {
+		return domain.TrafficAccountingExportFilter{}, err
+	}
 	return domain.TrafficAccountingExportFilter{
 		Limit:           limit,
 		From:            from,
 		To:              to,
-		ClientAccountID: strings.TrimSpace(q.Get("client_id")),
-		NodeID:          strings.TrimSpace(q.Get("node_id")),
+		ClientAccountID: clientID,
+		NodeID:          nodeID,
 		Protocol:        strings.TrimSpace(q.Get("protocol")),
 	}, nil
+}
+
+func validateTrafficAccountingFilterUUID(name, value string) error {
+	if value == "" || trafficAccountingFilterUUIDPattern.MatchString(value) {
+		return nil
+	}
+	return errors.New(name + " must be a UUID")
 }
 
 func parseTrafficAccountingExportTime(value string) (*time.Time, error) {

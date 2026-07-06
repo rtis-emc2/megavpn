@@ -136,6 +136,20 @@
       return normalizeServicePackList(catalog).filter((pack) => String(pack.status || 'active').toLowerCase() === 'active');
     }
 
+    function trafficAccountingPath() {
+      const source = state.trafficExportFilters && typeof state.trafficExportFilters === 'object'
+        ? state.trafficExportFilters
+        : {};
+      const params = new URLSearchParams();
+      const limit = String(source.limit || '250').trim();
+      params.set('limit', limit || '250');
+      for (const key of ['from', 'to', 'protocol', 'client_id', 'node_id']) {
+        const value = String(source[key] || '').trim();
+        if (value) params.set(key, value);
+      }
+      return `/api/v1/traffic/accounting?${params.toString()}`;
+    }
+
     async function loadCore() {
       state.ready = await fetchJSON('/api/v1/ready', { status: 'not_ready' });
       state.versionInfo = await fetchJSON('/api/v1/version', null);
@@ -151,7 +165,7 @@
       const instanceRuntimeStates = hasPermission('instance.read') ? await fetchJSON('/api/v1/instances/runtime-states', []) : [];
       const addressPools = hasPermission('instance.read') ? await fetchJSON('/api/v1/address-pools', { spaces: [], allocations: [] }) : { spaces: [], allocations: [] };
       const firewallInventory = hasPermission('firewall.read') ? await fetchJSON('/api/v1/firewall', { address_lists: [], entries: [], policies: [], rules: [], node_states: [] }) : { address_lists: [], entries: [], policies: [], rules: [], node_states: [] };
-      const trafficAccounting = hasPermission('traffic.read') ? await fetchJSON('/api/v1/traffic/accounting?limit=250', { summary: { retention_days: 180 }, samples: [] }) : { summary: { retention_days: 180 }, samples: [] };
+      const trafficAccounting = hasPermission('traffic.read') ? await fetchJSON(trafficAccountingPath(), { summary: { retention_days: 180 }, samples: [] }) : { summary: { retention_days: 180 }, samples: [] };
       const clients = await fetchJSON('/api/v1/clients', []);
       const jobs = await fetchJSON('/api/v1/jobs?limit=50', []);
       const artifacts = await fetchJSON('/api/v1/artifacts', []);

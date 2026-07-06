@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.8`
+**Release:** `7.1.0.9`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.8`
+**Code baseline:** RTIS MegaVPN `7.1.0.9`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,13 +23,14 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.8` continues the production-hardening line after the firewall,
+`7.1.0.9` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
-documentation-gate and VLESS provisioning-sync releases. This release improves
-traffic-accounting audit handoff by adding operator-facing export filters and
-recent-row preview in the UI while keeping the next development path focused on
-live-node validation, measured cardinality and long-term storage decisions. The
-codebase already has a working control-plane foundation:
+documentation-gate and VLESS provisioning-sync releases. This release makes
+Traffic Accounting filters server-side for overview summary, recent rows and
+CSV export, so operator audit views use one retained-dataset query model while
+the next development path stays focused on live-node validation, measured
+cardinality and long-term storage decisions. The codebase already has a working
+control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -387,30 +388,30 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Release 7.1.0.8 Closure
+## 18. Release 7.1.0.9 Closure
 
-The goal of `7.1.0.8` is to make audited traffic-accounting export workflows
-usable from the operator UI without expanding the privacy boundary. The
-platform still stores aggregate byte counters, not payloads, URLs, DNS queries
-or per-destination browsing history.
+The goal of `7.1.0.9` is to make Traffic Accounting filters authoritative on
+the server for overview summary, recent rows and CSV export without expanding
+the privacy boundary. The platform still stores aggregate byte counters, not
+payloads, URLs, DNS queries or per-destination browsing history.
 
 Closed in this release:
 
-- Traffic Accounting UI now includes export filters for `from`, `to`,
-  `protocol`, `client_id`, `node_id` and `limit`.
-- Recent-row preview uses the same operator-selected filters before CSV export.
-- Export filter state is session-scoped so navigation does not silently reset
-  the operator's audit handoff context.
-- Regression tests cover export filter request parsing, inverted date ranges
-  and CSV header uniqueness.
-- The export filter form uses compact desktop layout and falls back to the
-  existing one-column responsive form behavior on small screens.
+- `/api/v1/traffic/accounting` now accepts the same retained-dataset filters as
+  CSV export: `from`, `to`, `protocol`, `client_id`, `node_id` and `limit`.
+- Overview summary and recent rows are filtered in PostgreSQL through the same
+  validated predicate builder used by CSV export.
+- Oversized overview limits clamp to the read maximum instead of falling back
+  to a smaller implicit value.
+- Traffic Accounting UI reloads the overview from the backend whenever filters
+  change and uses the same selected values for CSV export.
+- Regression tests cover shared SQL predicates, UUID validation, limit clamping,
+  export filter request parsing, inverted date ranges and CSV header uniqueness.
 - Web asset cache keys, release banners and release review artifacts were
-  advanced to `7.1.0.8`.
+  advanced to `7.1.0.9`.
 
-The API contract, agent runtime collector behavior and database schema did not
-change. The UI now uses the existing read-only export filters under the
-existing `traffic.read` permission.
+Agent runtime collector behavior and database schema did not change. The
+existing `traffic.read` permission still protects both overview and CSV export.
 
 ## 19. Immediate Next Actions
 

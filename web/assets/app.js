@@ -422,6 +422,7 @@
     state,
     setTitle,
     el,
+    requestJSON,
     statusTag,
     escapeHTML,
     formatDate,

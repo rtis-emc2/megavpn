@@ -59,6 +59,15 @@ func TestTrafficAccountingExportFilterRejectsInvertedRange(t *testing.T) {
 	}
 }
 
+func TestTrafficAccountingExportFilterRejectsInvalidUUIDs(t *testing.T) {
+	for _, query := range []string{"client_id=not-a-uuid", "node_id=not-a-uuid"} {
+		req := httptest.NewRequest("GET", "/api/v1/traffic/accounting/export?"+query, nil)
+		if _, err := trafficAccountingExportFilterFromRequest(req); err == nil {
+			t.Fatalf("expected invalid UUID filter %q to fail", query)
+		}
+	}
+}
+
 func TestTrafficAccountingCSVRowEscapesMetadata(t *testing.T) {
 	start := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 	row := trafficAccountingCSVRow(domain.TrafficAccountingSample{
