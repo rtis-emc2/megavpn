@@ -418,6 +418,16 @@
   });
   if (!firewallPage) throw new Error('MegaVPNFirewallPage is not loaded');
 
+  const trafficPage = window.MegaVPNTrafficPage?.create?.({
+    state,
+    setTitle,
+    el,
+    statusTag,
+    escapeHTML,
+    formatDate,
+  });
+  if (!trafficPage) throw new Error('MegaVPNTrafficPage is not loaded');
+
   const revisionsPage = window.MegaVPNRevisionsPage?.create?.({
     state,
     setTitle,
@@ -571,6 +581,7 @@
     instancesPage,
     addressPoolsPage,
     firewallPage,
+    trafficPage,
     servicesPage,
     clientsPage,
     jobWorkflows,

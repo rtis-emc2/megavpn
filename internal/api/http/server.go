@@ -123,6 +123,8 @@ type Store interface {
 	UpdateFirewallRule(context.Context, string, string, domain.FirewallRule) (domain.FirewallRule, error)
 	DeleteFirewallRule(context.Context, string, string) (domain.FirewallRule, error)
 	CreateFirewallApplyJob(context.Context, string, string, bool) (domain.Job, error)
+	TrafficAccountingOverview(context.Context, int) (domain.TrafficAccountingOverview, error)
+	SubmitAgentTrafficAccountingSamples(context.Context, string, []domain.AgentTrafficAccountingSample) (domain.TrafficAccountingIngestResult, error)
 	ListInstanceRuntimeStates(context.Context) ([]domain.InstanceRuntimeState, error)
 	GetInstanceRuntimeState(context.Context, string) (domain.InstanceRuntimeState, error)
 	ListInstanceRuntimeObservations(context.Context, string, int) ([]domain.InstanceRuntimeObservation, error)
@@ -426,6 +428,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("PUT /api/v1/firewall/policies/{id}/rules/{rule_id}", "firewall.manage", s.updateFirewallRule)
 	protected("DELETE /api/v1/firewall/policies/{id}/rules/{rule_id}", "firewall.manage", s.deleteFirewallRule)
 	protected("POST /api/v1/nodes/{id}/firewall/apply", "firewall.apply", s.applyNodeFirewallPolicy)
+	protected("GET /api/v1/traffic/accounting", "traffic.read", s.trafficAccountingOverview)
 	protected("POST /api/v1/instances", "instance.write", s.createInstance)
 	protected("POST /api/v1/service-packs/{key}/instances", "instance.write", s.createServicePackInstances)
 	protected("GET /api/v1/instances/{id}", "instance.read", s.getInstance)
@@ -496,6 +499,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	mux.HandleFunc("POST /agent/inventory", s.agentInventory)
 	mux.HandleFunc("GET /agent/runtime/instances", s.agentRuntimeTargets)
 	mux.HandleFunc("POST /agent/runtime/instances", s.agentRuntimeReport)
+	mux.HandleFunc("POST /agent/traffic/accounting", s.agentTrafficAccountingReport)
 	mux.HandleFunc("GET /agent/jobs/next", s.agentNextJob)
 	mux.HandleFunc("POST /agent/jobs/{id}/result", s.agentJobResult)
 	handler := nethttp.Handler(mux)
@@ -745,6 +749,7 @@ func (s *Server) versionHandler(w nethttp.ResponseWriter, r *nethttp.Request) {
 		"agent_job_result_url":   joinPublicURL(s.publicBaseURL, "/agent/jobs/{id}/result"),
 		"agent_inventory_url":    joinPublicURL(s.publicBaseURL, "/agent/inventory"),
 		"agent_runtime_url":      joinPublicURL(s.publicBaseURL, "/agent/runtime/instances"),
+		"agent_traffic_url":      joinPublicURL(s.publicBaseURL, "/agent/traffic/accounting"),
 		"agent_public_url_note":  "MEGAVPN_PUBLIC_BASE_URL must be reachable from every remote agent node, including custom ports.",
 		"time":                   time.Now().UTC().Format(time.RFC3339),
 	})
@@ -765,6 +770,20 @@ func (s *Server) dashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	writeJSON(w, 200, d)
 }
+
+func (s *Server) trafficAccountingOverview(w nethttp.ResponseWriter, r *nethttp.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	x, err := s.store.TrafficAccountingOverview(r.Context(), limit)
+	if err != nil {
+		writeErr(w, 500, "traffic accounting lookup failed")
+		return
+	}
+	if x.Samples == nil {
+		x.Samples = []domain.TrafficAccountingSample{}
+	}
+	writeJSON(w, 200, x)
+}
+
 func (s *Server) listServices(w nethttp.ResponseWriter, r *nethttp.Request) {
 	x, err := s.store.ListServiceDefinitions(r.Context())
 	if err != nil {
@@ -1773,6 +1792,10 @@ type agentRuntimeReportReq struct {
 	NodeID  string                              `json:"node_id"`
 	Reports []domain.AgentInstanceRuntimeReport `json:"reports"`
 }
+type agentTrafficAccountingReq struct {
+	NodeID  string                                `json:"node_id"`
+	Samples []domain.AgentTrafficAccountingSample `json:"samples"`
+}
 type agentResultReq struct {
 	Status string         `json:"status"`
 	Result map[string]any `json:"result"`
@@ -1927,6 +1950,27 @@ func (s *Server) agentRuntimeReport(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"status": "accepted", "states": states})
+}
+
+func (s *Server) agentTrafficAccountingReport(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req agentTrafficAccountingReq
+	if !decode(r, &req) || strings.TrimSpace(req.NodeID) == "" {
+		writeErr(w, 400, "invalid traffic accounting payload")
+		return
+	}
+	req.NodeID = strings.TrimSpace(req.NodeID)
+	if !s.authorizeAgentNode(r, req.NodeID) {
+		_ = s.store.RecordAgentAuthFailure(r.Context(), req.NodeID, "traffic accounting unauthorized")
+		writeErr(w, 401, "agent unauthorized")
+		return
+	}
+	result, err := s.store.SubmitAgentTrafficAccountingSamples(r.Context(), req.NodeID, req.Samples)
+	if err != nil {
+		s.log.Error("agent traffic accounting report failed", "node_id", req.NodeID, "samples", len(req.Samples), "error", err)
+		writeErr(w, 500, "submit traffic accounting failed")
+		return
+	}
+	writeSignedAgentJSON(w, r, bearerToken(r), 200, result)
 }
 
 func (s *Server) agentNextJob(w nethttp.ResponseWriter, r *nethttp.Request) {

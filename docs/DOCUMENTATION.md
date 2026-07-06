@@ -1,6 +1,6 @@
 # Documentation Index
 
-**Release:** `7.1.0.1`
+**Release:** `7.1.0.2`
 
 This document is the English entry point for RTIS MegaVPN documentation. It keeps
 the documentation map explicit so operators and engineers can quickly find the
@@ -22,12 +22,13 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | 8 | [Managed backhaul](BACKHAUL.md) | Ingress-to-egress transport model |
 | 9 | [Node map](NODE_MAP.md) | GeoIP node placement and backhaul topology overlay |
 | 10 | [Firewall policy catalog](FIREWALL.md) | Managed firewall policies, address lists, rules and node apply state |
-| 11 | [VLESS access groups](VLESS_GROUPS.md) | Reusable VLESS client routing groups |
-| 12 | [VLESS subscriptions](VLESS_SUBSCRIPTIONS.md) | Per-client VLESS subscription tokens and delivery workflow |
-| 13 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
-| 14 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
-| 15 | [Security review](SECURITY_REVIEW_7.1.0.1.md) | Security and release review artifact |
-| 16 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
+| 11 | [Traffic accounting](TRAFFIC_ACCOUNTING.md) | Aggregate traffic counters, privacy boundary and retention |
+| 12 | [VLESS access groups](VLESS_GROUPS.md) | Reusable VLESS client routing groups |
+| 13 | [VLESS subscriptions](VLESS_SUBSCRIPTIONS.md) | Per-client VLESS subscription tokens and delivery workflow |
+| 14 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
+| 15 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
+| 16 | [Security review](SECURITY_REVIEW_7.1.0.2.md) | Security and release review artifact |
+| 17 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
 
 ## Documentation Ownership
 
@@ -41,6 +42,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection and troubleshooting. |
 | Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP node placement, local static map, node owner metadata and backhaul overlay. |
 | Firewall | `docs/FIREWALL.md`, `docs/FIREWALL_RU.md` | Managed firewall catalog, address lists, rules and node apply state. |
+| Traffic accounting | `docs/TRAFFIC_ACCOUNTING.md`, `docs/TRAFFIC_ACCOUNTING_RU.md` | Aggregate counters, privacy boundary, signed agent ingest and retention. |
 | VLESS client routing | `docs/VLESS_GROUPS.md`, `docs/VLESS_GROUPS_RU.md` | Reusable access groups, default VLESS group selection and provisioning behavior. |
 | VLESS subscriptions | `docs/VLESS_SUBSCRIPTIONS.md`, `docs/VLESS_SUBSCRIPTIONS_RU.md` | Per-client bearer-token rotation, public feed behavior and operator delivery workflow. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic and tactical product planning. |
@@ -68,7 +70,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 - Avoid documenting manual node-side changes as the primary path when the Control
   Plane has a managed workflow.
 - Each maintained documentation file must show the current release banner:
-  `7.1.0.1`.
+  `7.1.0.2`.
 
 ## Current Documentation Gaps
 

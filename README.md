@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.1`
+**Release:** `7.1.0.2`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -33,6 +33,7 @@ Start here:
 - [RBAC matrix](docs/RBAC_MATRIX.md)
 - [Managed backhaul](docs/BACKHAUL.md)
 - [Node map](docs/NODE_MAP.md)
+- [Traffic accounting](docs/TRAFFIC_ACCOUNTING.md)
 - [VLESS access groups](docs/VLESS_GROUPS.md)
 - [Self-testing](docs/SELF_TESTING.md)
 - [Roadmap and technical specification](ROADMAP_V1_AND_TZ.md)
@@ -55,7 +56,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.1` is a firewall-clarity and release-planning baseline for release
+`7.1.0.2` is a firewall-clarity and release-planning baseline for release
 stabilization. The codebase has moved from feature expansion to controlled
 production-readiness work. The current focus is:
 
@@ -80,8 +81,10 @@ production-readiness work. The current focus is:
   policies, apply jobs and node state as one catalog-to-apply workflow;
 - firewall schema repair for upgraded installations and simplified address-list
   workflows without internal identity fields;
-- next engineering path fixed around user traffic accounting with at least
-  180-day retention before production traffic collection is enabled;
+- traffic-accounting foundation with signed agent ingest API, PostgreSQL
+  aggregate storage, 180-day retention cleanup, `traffic.read` RBAC and a
+  dedicated operator UI page; protocol collectors remain gated until runtime
+  validation on real nodes;
 - semantic service-pack deduplication in API/UI plus database repair for
   historical duplicate default pack rows;
 - VLESS client provisioning now syncs active access-group catalog entries into

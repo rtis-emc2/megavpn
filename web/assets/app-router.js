@@ -20,6 +20,7 @@
       instancesPage,
       addressPoolsPage,
       firewallPage,
+      trafficPage,
       servicesPage,
       clientsPage,
       jobWorkflows,
@@ -44,7 +45,9 @@
       !instanceWorkflows ||
       typeof instanceWorkflows.renderInstanceManagePage !== 'function' ||
       !firewallPage ||
-      typeof firewallPage.render !== 'function'
+      typeof firewallPage.render !== 'function' ||
+      !trafficPage ||
+      typeof trafficPage.render !== 'function'
     ) {
       throw new Error('MegaVPNAppRouter requires shell dependencies');
     }
@@ -56,6 +59,7 @@
       'instanceManage',
       'instances',
       'addressPools',
+      'traffic',
       'clients',
       'backhaul',
     ]);
@@ -76,6 +80,7 @@
       'instances',
       'addressPools',
       'firewall',
+      'traffic',
       'clients',
       'jobs',
       'artifacts',
@@ -111,6 +116,7 @@
       if (state.page === 'instances') return instancesPage.render();
       if (state.page === 'addressPools') return addressPoolsPage.render();
       if (state.page === 'firewall') return firewallPage.render();
+      if (state.page === 'traffic') return trafficPage.render();
       if (state.page === 'clients') return clientsPage.render();
       if (state.page === 'jobs') return jobWorkflows.renderJobs();
       if (state.page === 'artifacts') return artifactsPage.renderArtifacts();

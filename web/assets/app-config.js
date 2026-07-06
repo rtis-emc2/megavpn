@@ -22,6 +22,7 @@
       ]],
       ['Security', [
         ['firewall', 'Firewall', '▧'],
+        ['traffic', 'Traffic', '≋'],
         ['certificates', 'Certificates', '◈'],
         ['audit', 'Audit', '◇'],
       ]],

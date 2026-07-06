@@ -1,15 +1,16 @@
 # Следующие шаги
 
-**Релиз:** `7.1.0.1`
+**Релиз:** `7.1.0.2`
 
 Актуальный baseline: [`ROADMAP_V1_AND_TZ_RU.md`](../ROADMAP_V1_AND_TZ_RU.md).
 Английская версия: [`NEXT_STEPS.md`](NEXT_STEPS.md).
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`.
 
-1. Спроектировать и внедрить учет трафика пользователей с хранением минимум
-   180 дней: event schema, granularity агрегации, privacy boundary,
-   partitioning storage, retention cleanup, RBAC-доступ и audit trail экспорта
-   должны быть определены до сбора production traffic data.
+1. Включить валидированные protocol collectors поверх foundation учета
+   трафика: Xray/VLESS через Xray Stats API, OpenVPN/WireGuard через
+   interface/client counters, явная attribution к service access metadata,
+   export audit trail и load-tested retention behavior до включения production
+   collection по умолчанию.
 2. На реальных ingress/egress nodes повторить Backhaul Apply profiles после обновления API/UI/agent: re-apply должен остановить obsolete managed unit из предыдущего/sibling manifest, удалить предыдущий/целевой `mgbh*` interface, удалить stale managed WireGuard listener с конфликтующим endpoint port, корректно создать nft NAT rule с quoted comment, поднять новый runtime-state и показать одинаковый `/30` profile на ingress/egress. После Delete Backhaul убедиться, что link ушел из активного списка и отображается в `Recently Deleted Backhaul` с cleanup summary. Если OpenVPN profile снова упадет, Jobs/Backhaul summary должен показать unit name, active state и первую полезную строку `systemctl status`/OpenVPN error; эту строку использовать как root cause для следующего исправления.
 3. Запустить PostgreSQL integration suite с `MEGAVPN_TEST_DATABASE_DSN`; тест создает временную schema, применяет все migrations и проверяет jobs, locks, provisioning и baseline access routes.
 4. Проверить `/api/v1/service-drivers`, `/api/v1/instances/runtime-states`, `/api/v1/instances/{id}/runtime-state`, `/api/v1/instances/{id}/runtime-observations` и `/agent/runtime/instances` на тестовом control plane после реального `instance.apply`.

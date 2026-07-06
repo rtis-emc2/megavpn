@@ -1,6 +1,6 @@
 # Next Steps
 
-**Release:** `7.1.0.1`
+**Release:** `7.1.0.2`
 
 Current roadmap: [`ROADMAP_V1_AND_TZ.md`](../ROADMAP_V1_AND_TZ.md).
 Russian companion: [`NEXT_STEPS_RU.md`](NEXT_STEPS_RU.md).
@@ -8,10 +8,11 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
 
 ## Immediate Engineering Queue
 
-1. Design and implement user traffic accounting with at least 180 days of
-   retention: define the event schema, aggregation granularity, privacy
-   boundary, storage partitioning, retention cleanup, RBAC access and export
-   audit trail before collecting production traffic data.
+1. Enable validated protocol collectors on top of the traffic-accounting
+   foundation: Xray/VLESS via Xray Stats API, OpenVPN/WireGuard through
+   interface/client counters, explicit attribution to service access metadata,
+   export audit trail and load-tested retention behavior before production
+   collection is enabled by default.
 2. Re-run managed backhaul apply on real ingress/egress nodes after updating API,
    UI and agents. Re-apply must stop obsolete managed units, remove stale
    managed interfaces, remove conflicting managed WireGuard listeners, create

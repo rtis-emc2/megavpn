@@ -1,6 +1,6 @@
 # Индекс документации
 
-**Релиз:** `7.1.0.1`
+**Релиз:** `7.1.0.2`
 
 Этот документ - русская входная точка в документацию RTIS MegaVPN. Он фиксирует,
 где находится источник правды по каждому направлению: эксплуатация,
@@ -22,12 +22,13 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | 8 | [Managed backhaul](BACKHAUL.md) | Модель связи ingress -> egress |
 | 9 | [Карта нод](NODE_MAP_RU.md) | GeoIP-размещение нод и overlay managed backhaul |
 | 10 | [Каталог firewall-политик](FIREWALL_RU.md) | Managed firewall policies, address lists, rules и node apply state |
-| 11 | [VLESS access groups](VLESS_GROUPS_RU.md) | Reusable VLESS client routing groups |
-| 12 | [VLESS-подписки](VLESS_SUBSCRIPTIONS_RU.md) | Per-client VLESS subscription tokens и workflow доставки |
-| 13 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
-| 14 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
-| 15 | [Security review](SECURITY_REVIEW_7.1.0.1.md) | Security и release review artifact |
-| 16 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
+| 11 | [Учет трафика](TRAFFIC_ACCOUNTING_RU.md) | Aggregate counters, privacy boundary и retention |
+| 12 | [VLESS access groups](VLESS_GROUPS_RU.md) | Reusable VLESS client routing groups |
+| 13 | [VLESS-подписки](VLESS_SUBSCRIPTIONS_RU.md) | Per-client VLESS subscription tokens и workflow доставки |
+| 14 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
+| 15 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
+| 16 | [Security review](SECURITY_REVIEW_7.1.0.2.md) | Security и release review artifact |
+| 17 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
 
 ## Владение документацией
 
@@ -41,6 +42,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection и troubleshooting. |
 | Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP-размещение нод, локальная статичная карта, node owner metadata и backhaul overlay. |
 | Firewall | `docs/FIREWALL.md`, `docs/FIREWALL_RU.md` | Managed firewall catalog, address lists, rules и node apply state. |
+| Traffic accounting | `docs/TRAFFIC_ACCOUNTING.md`, `docs/TRAFFIC_ACCOUNTING_RU.md` | Aggregate counters, privacy boundary, signed agent ingest и retention. |
 | VLESS client routing | `docs/VLESS_GROUPS.md`, `docs/VLESS_GROUPS_RU.md` | Reusable access groups, default VLESS group selection и provisioning behavior. |
 | VLESS subscriptions | `docs/VLESS_SUBSCRIPTIONS.md`, `docs/VLESS_SUBSCRIPTIONS_RU.md` | Per-client bearer-token rotation, public feed behavior и operator delivery workflow. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic и tactical product planning. |
@@ -69,7 +71,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 - Если в Control Plane есть managed workflow, документация не должна предлагать
   ручное изменение node как основной путь.
 - Каждый поддерживаемый документационный файл должен содержать release banner:
-  `7.1.0.1`.
+  `7.1.0.2`.
 
 ## Текущие gaps документации
 

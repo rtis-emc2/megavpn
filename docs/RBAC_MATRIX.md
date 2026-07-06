@@ -1,6 +1,6 @@
 # RBAC Matrix
 
-**Release:** `7.1.0.1`
+**Release:** `7.1.0.2`
 
 ## Seeded Roles
 
@@ -33,6 +33,7 @@
 | `job.write` | Job | Non-privileged direct jobs only |
 | `job.cancel` | Job | Cancel pending/running jobs |
 | `audit.read` | Audit | Audit event list |
+| `traffic.read` | Traffic | Aggregate traffic accounting overview |
 | `secret.reveal` | Secret | Explicit secret reveal operations |
 | `settings.manage` | Global | Platform TLS/mail/settings |
 | `auth.manage` | Global | Users, roles, invites |

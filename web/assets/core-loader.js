@@ -27,6 +27,7 @@
       state.addressPoolSpaces = [];
       state.addressPoolAllocations = [];
       state.firewallInventory = { address_lists: [], entries: [], policies: [], rules: [], node_states: [] };
+      state.trafficAccounting = { summary: { retention_days: 180 }, samples: [] };
       state.clients = [];
       state.jobs = [];
       state.artifacts = [];
@@ -150,6 +151,7 @@
       const instanceRuntimeStates = hasPermission('instance.read') ? await fetchJSON('/api/v1/instances/runtime-states', []) : [];
       const addressPools = hasPermission('instance.read') ? await fetchJSON('/api/v1/address-pools', { spaces: [], allocations: [] }) : { spaces: [], allocations: [] };
       const firewallInventory = hasPermission('firewall.read') ? await fetchJSON('/api/v1/firewall', { address_lists: [], entries: [], policies: [], rules: [], node_states: [] }) : { address_lists: [], entries: [], policies: [], rules: [], node_states: [] };
+      const trafficAccounting = hasPermission('traffic.read') ? await fetchJSON('/api/v1/traffic/accounting?limit=250', { summary: { retention_days: 180 }, samples: [] }) : { summary: { retention_days: 180 }, samples: [] };
       const clients = await fetchJSON('/api/v1/clients', []);
       const jobs = await fetchJSON('/api/v1/jobs?limit=50', []);
       const artifacts = await fetchJSON('/api/v1/artifacts', []);
@@ -185,6 +187,12 @@
             node_states: Array.isArray(firewallInventory.node_states) ? firewallInventory.node_states : [],
           }
         : { address_lists: [], entries: [], policies: [], rules: [], node_states: [] };
+      state.trafficAccounting = trafficAccounting && typeof trafficAccounting === 'object' && !Array.isArray(trafficAccounting)
+        ? {
+            summary: trafficAccounting.summary && typeof trafficAccounting.summary === 'object' ? trafficAccounting.summary : { retention_days: 180 },
+            samples: Array.isArray(trafficAccounting.samples) ? trafficAccounting.samples : [],
+          }
+        : { summary: { retention_days: 180 }, samples: [] };
       state.clients = Array.isArray(clients) ? clients : [];
       state.jobs = Array.isArray(jobs) ? jobs : [];
       state.artifacts = Array.isArray(artifacts) ? artifacts : [];

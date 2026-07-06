@@ -31,6 +31,8 @@ required_release_artifacts=(
   docs/BACKHAUL.md
   docs/FIREWALL.md
   docs/FIREWALL_RU.md
+  docs/TRAFFIC_ACCOUNTING.md
+  docs/TRAFFIC_ACCOUNTING_RU.md
   docs/NODE_MAP.md
   docs/NODE_MAP_RU.md
   docs/VLESS_GROUPS.md

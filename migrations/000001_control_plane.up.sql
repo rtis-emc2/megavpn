@@ -147,6 +147,38 @@ create table if not exists share_links(
   created_at timestamptz not null default now()
 );
 
+create table if not exists traffic_accounting_samples(
+  id uuid primary key,
+  node_id uuid not null references nodes(id) on delete cascade,
+  instance_id uuid null references instances(id) on delete set null,
+  service_access_id uuid null references service_accesses(id) on delete set null,
+  client_account_id uuid null references client_accounts(id) on delete set null,
+  sample_key text not null default '',
+  source text not null default 'agent' check(source in ('agent','import','manual','system')),
+  protocol text not null default 'unknown',
+  direction text not null default 'bidirectional' check(direction in ('ingress','egress','bidirectional','unknown')),
+  bucket_start timestamptz not null,
+  bucket_end timestamptz not null,
+  rx_bytes bigint not null default 0 check(rx_bytes >= 0),
+  tx_bytes bigint not null default 0 check(tx_bytes >= 0),
+  rx_packets bigint not null default 0 check(rx_packets >= 0),
+  tx_packets bigint not null default 0 check(tx_packets >= 0),
+  flow_count bigint not null default 0 check(flow_count >= 0),
+  metadata_json jsonb not null default '{}'::jsonb,
+  observed_at timestamptz not null default now(),
+  received_at timestamptz not null default now(),
+  check(bucket_end > bucket_start)
+);
+
+create unique index if not exists idx_traffic_accounting_node_sample_key
+  on traffic_accounting_samples(node_id, sample_key)
+  where sample_key <> '';
+create index if not exists idx_traffic_accounting_received_at on traffic_accounting_samples(received_at);
+create index if not exists idx_traffic_accounting_bucket_start on traffic_accounting_samples(bucket_start);
+create index if not exists idx_traffic_accounting_node_bucket on traffic_accounting_samples(node_id, bucket_start);
+create index if not exists idx_traffic_accounting_client_bucket on traffic_accounting_samples(client_account_id, bucket_start);
+create index if not exists idx_traffic_accounting_instance_bucket on traffic_accounting_samples(instance_id, bucket_start);
+
 create table if not exists jobs(
   id uuid primary key,
   type text not null,
@@ -566,7 +598,7 @@ create table if not exists permissions(
   id uuid primary key,
   code text not null unique,
   name text not null,
-  scope_type text not null check(scope_type in ('global','node','instance','client','artifact','secret','job','audit','endpoint')),
+  scope_type text not null check(scope_type in ('global','node','instance','client','artifact','secret','job','audit','endpoint','traffic')),
   created_at timestamptz not null default now()
 );
 
@@ -575,7 +607,7 @@ alter table permissions
 
 alter table permissions
   add constraint permissions_scope_type_check
-  check(scope_type in ('global','node','instance','client','artifact','secret','job','audit','endpoint'));
+  check(scope_type in ('global','node','instance','client','artifact','secret','job','audit','endpoint','traffic'));
 
 create table if not exists role_permissions(
   role_id uuid not null references roles(id) on delete cascade,
@@ -633,6 +665,7 @@ values
   (gen_random_uuid(), 'job.write', 'Create jobs', 'job', now()),
   (gen_random_uuid(), 'job.cancel', 'Cancel jobs', 'job', now()),
   (gen_random_uuid(), 'audit.read', 'Read audit logs', 'audit', now()),
+  (gen_random_uuid(), 'traffic.read', 'Read traffic accounting', 'traffic', now()),
   (gen_random_uuid(), 'secret.reveal', 'Reveal secrets', 'secret', now()),
   (gen_random_uuid(), 'settings.manage', 'Manage platform settings', 'global', now()),
   (gen_random_uuid(), 'auth.manage', 'Manage auth and roles', 'global', now()),
@@ -652,6 +685,7 @@ join permissions p on p.code in (
   'artifact.read',
   'job.read',
   'audit.read',
+  'traffic.read',
   'endpoint.read'
 )
 where r.code = 'readonly'
@@ -673,6 +707,7 @@ join permissions p on p.code in (
   'share_link.manage',
   'job.read',
   'audit.read',
+  'traffic.read',
   'endpoint.read'
 )
 where r.code = 'engineer'
@@ -700,6 +735,7 @@ join permissions p on p.code in (
   'job.write',
   'job.cancel',
   'audit.read',
+  'traffic.read',
   'settings.manage',
   'endpoint.read',
   'endpoint.write'
