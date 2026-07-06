@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
@@ -41,6 +43,64 @@ func TestSystemdArgsForUnsupportedOperation(t *testing.T) {
 
 	if _, err := systemdArgsForOperation("destroy", "megavpn-test"); err == nil {
 		t.Fatal("expected unsupported operation error")
+	}
+}
+
+func TestEnsureInstanceRuntimeRecoversMissingNginxBinary(t *testing.T) {
+	oldInstall := installNginxForRuntime
+	oldResolve := resolveExecutableForRuntime
+	defer func() {
+		installNginxForRuntime = oldInstall
+		resolveExecutableForRuntime = oldResolve
+	}()
+
+	installed := false
+	installNginxForRuntime = func(context.Context, string, string) map[string]any {
+		installed = true
+		return map[string]any{"ok": false, "message": "nginx -t failed before managed config rewrite"}
+	}
+	resolveExecutableForRuntime = func(name string, candidates ...string) (string, bool) {
+		if name == "nginx" && installed {
+			return "/usr/sbin/nginx", true
+		}
+		return name, false
+	}
+
+	result, err := ensureInstanceRuntime(context.Background(), instanceJobPayload{ServiceCode: driver.Nginx})
+	if err != nil {
+		t.Fatalf("ensureInstanceRuntime() error = %v, result=%#v", err, result)
+	}
+	if result["binary_available_after_install"] != true {
+		t.Fatalf("binary_available_after_install = %#v, result=%#v", result["binary_available_after_install"], result)
+	}
+	if !strings.Contains(stringify(result["warning"]), "continuing to rendered config validation") {
+		t.Fatalf("expected rendered-config continuation warning, result=%#v", result)
+	}
+}
+
+func TestEnsureInstanceRuntimeDoesNotAutoInstallNonNginxBinary(t *testing.T) {
+	oldInstall := installNginxForRuntime
+	oldResolve := resolveExecutableForRuntime
+	defer func() {
+		installNginxForRuntime = oldInstall
+		resolveExecutableForRuntime = oldResolve
+	}()
+
+	installCalled := false
+	installNginxForRuntime = func(context.Context, string, string) map[string]any {
+		installCalled = true
+		return map[string]any{"ok": true}
+	}
+	resolveExecutableForRuntime = func(name string, candidates ...string) (string, bool) {
+		return name, false
+	}
+
+	result, err := ensureInstanceRuntime(context.Background(), instanceJobPayload{ServiceCode: driver.OpenVPN})
+	if err == nil {
+		t.Fatalf("expected missing OpenVPN binary error, result=%#v", result)
+	}
+	if installCalled {
+		t.Fatal("nginx installer must not be called for non-nginx runtime preflight")
 	}
 }
 

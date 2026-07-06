@@ -431,6 +431,8 @@ func installNginx(ctx context.Context, strategy, channel string) map[string]any 
 	return res
 }
 
+var installNginxForRuntime = installNginx
+
 func nginxOrgFallbackReason(res map[string]any) string {
 	if res == nil || res["ok"] == true {
 		return ""
@@ -1246,13 +1248,17 @@ func intFromInstallStep(raw any) (int, bool) {
 }
 
 func verifyNginx(ctx context.Context) map[string]any {
-	version := strings.TrimSpace(firstLine(runCombinedOutput("nginx", "-v")))
+	nginxPath, ok := resolveExecutable("nginx")
+	if !ok {
+		return map[string]any{"ok": false, "message": "nginx binary not found or version unavailable"}
+	}
+	version := strings.TrimSpace(firstLine(runCombinedOutput(nginxPath, "-v")))
 	if version == "" {
 		return map[string]any{"ok": false, "message": "nginx binary not found or version unavailable"}
 	}
-	code, out := runInstallCommand(ctx, "nginx", "-t")
+	code, out := runInstallCommand(ctx, nginxPath, "-t")
 	active := strings.TrimSpace(runOutput("systemctl", "is-active", "nginx"))
-	return map[string]any{"ok": code == 0, "message": "nginx capability verified", "version": version, "verify_output": truncate(out, 2000), "systemd_unit": "nginx", "active_state": normalizeSystemctlState(active)}
+	return map[string]any{"ok": code == 0, "message": "nginx capability verified", "version": version, "binary_path": nginxPath, "verify_output": truncate(out, 2000), "systemd_unit": "nginx", "active_state": normalizeSystemctlState(active)}
 }
 
 func verifyXrayCore(ctx context.Context) map[string]any {

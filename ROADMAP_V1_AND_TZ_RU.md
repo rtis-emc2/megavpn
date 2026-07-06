@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.42`
+**Релиз:** `7.0.1.43`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.42
+Базовая версия кода: RTIS MegaVPN 7.0.1.43
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1160,7 +1160,33 @@ pack.
 Database migration, API contract и node runtime behavior в релизе не менялись.
 Изменение относится к Web UI state management и operator-safety.
 
-## 18. Immediate Next Actions
+## 18. Release 7.0.1.43 Closure
+
+Цель релиза `7.0.1.43`: стабилизировать recovery Nginx runtime capability
+после переустановки агента, удаления package или systemd PATH, где `/usr/sbin`
+не виден процессу агента.
+
+Закрыто в этом релизе:
+
+- Agent executable resolver теперь проверяет canonical system runtime paths для
+  Nginx, systemd и VPN/proxy binaries дополнительно к `PATH`.
+- Inventory collection использует тот же resolver, поэтому `/usr/sbin/nginx`
+  репортится даже при урезанном PATH у agent service.
+- Nginx capability verification запускает resolved binary path для `nginx -v`
+  и `nginx -t`, а в result payload добавляется `binary_path`.
+- `instance.apply` для Nginx теперь пытается managed recovery через существующий
+  nginx.org-to-Ubuntu fallback installer, если preflight не видит binary.
+- Если installer сделал Nginx binary доступным, но `nginx -t` еще падает на
+  старом config, instance apply продолжает rendered-config validation, чтобы
+  новый managed config мог восстановить shared Nginx state.
+- Successful Nginx apply recovery сразу обновляет `node_capabilities` с source
+  `instance_apply_recovery`, не оставляя stale UI `missing` до следующего
+  inventory heartbeat.
+
+Database migration и public API contract не менялись. Это agent/runtime
+recovery hardening release с Control Plane side effect для capability state.
+
+## 19. Immediate Next Actions
 
 1. Прогнать clean-install procedure на свежем Ubuntu host и записать evidence.
 2. Прогнать disposable PostgreSQL migrations и integration tests.

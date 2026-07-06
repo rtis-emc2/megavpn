@@ -105,13 +105,13 @@ func collectInterfaces() []map[string]any {
 func collectBinaries(names []string) map[string]any {
 	out := map[string]any{}
 	for _, name := range names {
-		path, err := exec.LookPath(name)
-		if err != nil {
+		path, ok := resolveExecutable(name)
+		if !ok {
 			continue
 		}
-		version := strings.TrimSpace(firstLine(runOutput(name, "--version")))
+		version := strings.TrimSpace(firstLine(runOutput(path, "--version")))
 		if version == "" && name == "nginx" {
-			version = strings.TrimSpace(firstLine(runCombinedOutput(name, "-v")))
+			version = strings.TrimSpace(firstLine(runCombinedOutput(path, "-v")))
 		}
 		if version == "" {
 			version = path

@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.42`
+**Release:** `7.0.1.43`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,7 +55,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.42` is a hardening baseline for release stabilization. The codebase has
+`7.0.1.43` is a hardening baseline for release stabilization. The codebase has
 moved from feature expansion to controlled production-readiness work. The
 current focus is:
 
@@ -127,6 +127,9 @@ current focus is:
   redirects plain HTTP traffic to HTTPS before camouflage/fallback routing;
 - Nginx instance and emergency cleanup now reload shared Nginx when managed
   configs remain and stop it when all MegaVPN-managed edge configs are gone;
+- Nginx capability recovery is now agent-side: reduced systemd PATHs still find
+  `/usr/sbin/nginx`, and Nginx instance apply can recover a missing binary via
+  the managed nginx.org-to-Ubuntu fallback installer;
 - client VLESS camouflage UX that separates public client endpoints from local
   Xray backend endpoints and makes pending provisioning state actionable;
 - hard client deletion with PostgreSQL cleanup coverage for service access,

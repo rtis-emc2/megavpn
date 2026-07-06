@@ -2490,6 +2490,16 @@ func (s *Store) applyInstanceJobCompletionSideEffects(ctx context.Context, insta
 	if err != nil {
 		return err
 	}
+	if status == "succeeded" && jobType == "instance.apply" {
+		runtimePreflight := mapFromPath(result, "runtime_preflight")
+		recoveredCapability := runtimeCapabilityCodeForService(stringify(runtimePreflight["recovered_capability"]))
+		if recoveredCapability != "" && runtimePreflight["binary_available_after_install"] == true {
+			version := stringify(runtimePreflight["version"])
+			if err := upsertNodeCapabilityTx(ctx, tx, instance.NodeID, recoveredCapability, version, "available", "instance_apply_recovery"); err != nil {
+				return err
+			}
+		}
+	}
 	if err := s.upsertInstanceRuntimeStateForJobTx(ctx, tx, instance, jobID, jobType, status, result); err != nil {
 		return err
 	}

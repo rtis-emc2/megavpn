@@ -29,14 +29,19 @@ func (e instanceRuntimeExecutor) Execute(ctx context.Context, payload instanceJo
 
 func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobPayload) (string, map[string]any) {
 	started := time.Now()
-	if err := preflightInstanceRuntime(payload); err != nil {
-		return "failed", map[string]any{
+	runtimePreflight, err := ensureInstanceRuntime(ctx, payload)
+	if err != nil {
+		result := map[string]any{
 			"error":        err.Error(),
 			"instance_id":  payload.InstanceID,
 			"service_code": payload.ServiceCode,
 			"action":       payload.Action,
 			"duration_ms":  time.Since(started).Milliseconds(),
 		}
+		if len(runtimePreflight) > 0 {
+			result["runtime_preflight"] = runtimePreflight
+		}
+		return "failed", result
 	}
 	files, err := materializeInstanceSpec(payload)
 	if err != nil {
@@ -115,6 +120,9 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 		"enabled_desired": payload.Enabled,
 		"network_policy":  networkPolicy,
 	}
+	if len(runtimePreflight) > 0 {
+		result["runtime_preflight"] = runtimePreflight
+	}
 	if payload.SystemdUnit != "" {
 		action := driver.OperationRestart
 		if normalizeSystemctlState(strings.TrimSpace(runOutput("systemctl", "is-active", payload.SystemdUnit))) == "unknown" {
@@ -137,6 +145,35 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 	return status, result
 }
 
+func ensureInstanceRuntime(ctx context.Context, payload instanceJobPayload) (map[string]any, error) {
+	err := preflightInstanceRuntime(payload)
+	if err == nil {
+		return nil, nil
+	}
+	if driver.NormalizeCode(payload.ServiceCode) != driver.Nginx {
+		return nil, err
+	}
+	recovery := installNginxForRuntime(ctx, "nginx_org_repo", "stable")
+	if recovery == nil {
+		recovery = map[string]any{}
+	}
+	recovery["trigger"] = "instance_apply_preflight"
+	recovery["recovered_capability"] = "nginx"
+	if errAfterInstall := preflightInstanceRuntime(payload); errAfterInstall == nil {
+		recovery["binary_available_after_install"] = true
+		if recovery["ok"] != true {
+			recovery["warning"] = "nginx installer verification did not fully pass, but the nginx binary is available; continuing to rendered config validation"
+		}
+		return recovery, nil
+	}
+	if recoveryMessage := stringify(recovery["message"]); recoveryMessage != "" {
+		return recovery, fmt.Errorf("%w; managed nginx recovery failed: %s", err, recoveryMessage)
+	}
+	return recovery, err
+}
+
+var resolveExecutableForRuntime = resolveExecutable
+
 func preflightInstanceRuntime(payload instanceJobPayload) error {
 	type runtimeBinary struct {
 		name       string
@@ -158,7 +195,7 @@ func preflightInstanceRuntime(payload instanceJobPayload) error {
 		required = []runtimeBinary{{name: "nginx", candidates: []string{"/usr/sbin/nginx", "/usr/bin/nginx"}}}
 	}
 	for _, item := range required {
-		if _, ok := resolveExecutable(item.name, item.candidates...); !ok {
+		if _, ok := resolveExecutableForRuntime(item.name, item.candidates...); !ok {
 			return fmt.Errorf("capability missing: %s binary is not installed or not executable", item.name)
 		}
 	}

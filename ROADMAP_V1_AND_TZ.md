@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.42`
+**Release:** `7.0.1.43`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.42`
+**Code baseline:** RTIS MegaVPN `7.0.1.43`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.42` continues the production-hardening line after the firewall,
+`7.0.1.43` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. The codebase already
 has a working control-plane foundation:
@@ -356,7 +356,35 @@ No database migration, API contract or node runtime behavior changed in this
 release. The change is a Web UI state-management and operator-safety fix with
 asset cache-busting and documentation evidence.
 
-## 17. Immediate Next Actions
+## 17. Release 7.0.1.43 Closure
+
+The goal of `7.0.1.43` is to harden Nginx runtime capability recovery after
+agent reinstall, package removal or systemd PATH differences where `/usr/sbin`
+is not visible to the agent process.
+
+Closed in this release:
+
+- Agent executable resolution now checks canonical system runtime paths for
+  Nginx, systemd and VPN/proxy binaries in addition to `PATH`.
+- Inventory collection uses the same resolver, so `/usr/sbin/nginx` is reported
+  even when the agent service environment has a reduced PATH.
+- Nginx capability verification runs the resolved binary path for `nginx -v`
+  and `nginx -t`, and reports `binary_path` in the result payload.
+- `instance.apply` for Nginx now attempts managed Nginx recovery through the
+  existing nginx.org-to-Ubuntu fallback installer when preflight cannot find the
+  binary.
+- If the installer makes the Nginx binary available but `nginx -t` still fails
+  against old config, instance apply continues to rendered-config validation so
+  the new managed config can repair the shared Nginx state.
+- Successful Nginx apply recovery updates `node_capabilities` immediately with
+  source `instance_apply_recovery`, avoiding stale UI `missing` state until the
+  next inventory heartbeat.
+
+No database migration or public API contract changed. The change is an
+agent/runtime recovery hardening release with Control Plane capability-state
+side effects and regression coverage.
+
+## 18. Immediate Next Actions
 
 1. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
 2. Run disposable PostgreSQL migrations and integration tests.
