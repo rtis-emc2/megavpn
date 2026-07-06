@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.41`
+**Release:** `7.0.1.42`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,7 +55,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.41` is a hardening baseline for release stabilization. The codebase has
+`7.0.1.42` is a hardening baseline for release stabilization. The codebase has
 moved from feature expansion to controlled production-readiness work. The
 current focus is:
 
@@ -99,6 +99,9 @@ current focus is:
 - selective service-pack creation: operators can create only chosen components,
   override per-component listen ports and choose OpenVPN CA material without
   installing every service in a template;
+- service-pack creation now has an explicit completed state: the submitted
+  form is preserved and locked after success, while the operator gets direct
+  actions to open created instances or start a separate new rollout;
 - route-policy enforcement hardening: ingress client traffic and local
   Xray/VLESS system egress are marked through managed nftables chains and
   routed by `fwmark` into managed backhaul tables;

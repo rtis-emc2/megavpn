@@ -81,6 +81,7 @@
       state.instancesView = INSTANCE_TABS.some(([key]) => key === view) ? view : 'list';
       if (state.instancesView !== 'create-pack') {
         state.instancesCreateResult = null;
+        state.instancesCreatePackDraft = null;
       }
       render();
     }
@@ -940,9 +941,114 @@
       return '';
     }
 
-    function renderXrayEgressPackFields(pack) {
+    function servicePackCreateSucceeded() {
+      return String(state.instancesCreateResult?.status || '') === 'succeeded';
+    }
+
+    function servicePackCreateRunning() {
+      return String(state.instancesCreateResult?.status || '') === 'running';
+    }
+
+    function createPackDraft() {
+      const draft = state.instancesCreatePackDraft;
+      return draft && typeof draft === 'object' && !Array.isArray(draft) ? draft : {};
+    }
+
+    function createPackDraftComponentIndexes(draft) {
+      if (!Array.isArray(draft?.component_indexes)) return null;
+      return draft.component_indexes
+        .map((value) => Number.parseInt(String(value), 10))
+        .filter((value) => Number.isInteger(value) && value >= 0);
+    }
+
+    function createPackComponentSelected(draft, index) {
+      const indexes = createPackDraftComponentIndexes(draft);
+      return indexes === null || indexes.includes(index);
+    }
+
+    function createPackComponentDraft(draft, index) {
+      const settings = draft?.component_settings && typeof draft.component_settings === 'object' && !Array.isArray(draft.component_settings)
+        ? draft.component_settings
+        : {};
+      const entry = settings[String(index)];
+      return entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {};
+    }
+
+    function packDraftString(draft, key, fallback = '') {
+      if (!Object.prototype.hasOwnProperty.call(draft || {}, key)) return fallback;
+      return String(draft[key] ?? '');
+    }
+
+    function createPackDraftFromForm(form) {
+      const data = new FormData(form);
+      const componentIndexes = data.getAll('pack_component_indexes')
+        .map((value) => Number.parseInt(String(value), 10))
+        .filter((value) => Number.isInteger(value) && value >= 0);
+      const componentSettings = {};
+      form.querySelectorAll('.pack-component-toggle').forEach((toggle) => {
+        const index = Number.parseInt(String(toggle.dataset.packComponentIndex || toggle.value || ''), 10);
+        if (!Number.isInteger(index) || index < 0) return;
+        const endpointPort = form.elements[`component_${index}_endpoint_port`]?.value || '';
+        const openvpnPKIProfile = form.elements[`component_${index}_openvpn_pki_profile`]?.value || '';
+        componentSettings[String(index)] = {
+          endpoint_port: String(endpointPort || '').trim(),
+          openvpn_pki_profile: String(openvpnPKIProfile || '').trim(),
+        };
+      });
+      return {
+        service_pack_key: String(data.get('service_pack_key') || state.instancesCreatePackKey || '').trim(),
+        node_id: String(data.get('node_id') || '').trim(),
+        base_name: String(data.get('base_name') || '').trim(),
+        endpoint_host: String(data.get('endpoint_host') || '').trim(),
+        certificate_id: String(data.get('certificate_id') || '').trim(),
+        openvpn_pki_profile: String(data.get('openvpn_pki_profile') || '').trim(),
+        xray_egress_mode: String(data.get('xray_egress_mode') || '').trim(),
+        xray_egress_node_id: String(data.get('xray_egress_node_id') || '').trim(),
+        camouflage_path: String(data.get('camouflage_path') || '').trim(),
+        fallback_upstream_url: String(data.get('fallback_upstream_url') || '').trim(),
+        fallback_host_header: String(data.get('fallback_host_header') || '').trim(),
+        fallback_sni: String(data.get('fallback_sni') || '').trim(),
+        component_indexes: Array.from(new Set(componentIndexes)),
+        component_settings: componentSettings,
+      };
+    }
+
+    function servicePackCreateNodeLabel(draft) {
+      const nodeID = String(draft?.node_id || '').trim();
+      if (!nodeID) return '';
+      const node = (state.nodes || []).find((item) => String(item.id || '') === nodeID);
+      if (!node) return nodeID;
+      const role = String(node.role || 'node').trim() || 'node';
+      return `${node.name || nodeID} · ${role}`;
+    }
+
+    function renderCreatePackCompletionBanner(pack, draft) {
+      const result = state.instancesCreateResult;
+      if (String(result?.status || '') !== 'succeeded') return '';
+      const installJobs = Array.isArray(result.data?.runtime_install_jobs) ? result.data.runtime_install_jobs : [];
+      const applyJobs = Array.isArray(result.data?.apply_jobs) ? result.data.apply_jobs : [];
+      const createdInstances = Array.isArray(result.data?.created_instances) ? result.data.created_instances : [];
+      const nodeLabel = servicePackCreateNodeLabel(draft);
+      const packLabel = pack?.label || draft?.service_pack_key || 'Service pack';
+      return `
+        <section class="pack-create-completion" id="packCreateCompletionBanner">
+          <div class="pack-create-completion-copy">
+            <div class="mini-label">Service pack created</div>
+            <h3>${escapeHTML(packLabel)}</h3>
+            <p>${escapeHTML(String(createdInstances.length))} instance${createdInstances.length === 1 ? '' : 's'} created${nodeLabel ? ` on ${escapeHTML(nodeLabel)}` : ''}. ${escapeHTML(String(applyJobs.length))} apply job${applyJobs.length === 1 ? '' : 's'} queued${installJobs.length ? `, ${escapeHTML(String(installJobs.length))} runtime install job${installJobs.length === 1 ? '' : 's'} queued` : ''}.</p>
+            <span>The submitted form is locked to prevent duplicate rollout. Use "Create another" only for a new pack creation.</span>
+          </div>
+          <div class="pack-create-completion-actions">
+            <button class="primary-btn" id="openInstancesAfterPackCreateBtn" type="button">Open instances</button>
+            <button class="secondary-btn" id="createAnotherFromPackBtn" type="button">Create another</button>
+          </div>
+        </section>`;
+    }
+
+    function renderXrayEgressPackFields(pack, draft = {}) {
       if (!packUsesService(pack, 'xray-core')) return '';
-      const egressNodes = nodeOptions('', { roles: ['egress'], includeEmpty: true, emptyLabel: 'Select egress node' });
+      const mode = ['egress_node', 'local_breakout'].includes(String(draft.xray_egress_mode || '')) ? String(draft.xray_egress_mode) : 'auto';
+      const egressNodes = nodeOptions(draft.xray_egress_node_id || '', { roles: ['egress'], includeEmpty: true, emptyLabel: 'Select egress node' });
       return `
         <div class="field full pack-egress-control" data-pack-feature="xray-egress">
           <div class="instance-panel-label">VLESS routing</div>
@@ -950,15 +1056,15 @@
             <div class="field">
               <label>Egress mode</label>
               <select name="xray_egress_mode" data-pack-egress-mode>
-                <option value="auto" selected>Auto through managed backhaul</option>
-                <option value="egress_node">Use selected egress node</option>
-                <option value="local_breakout">Local breakout on ingress node</option>
+                <option value="auto"${mode === 'auto' ? ' selected' : ''}>Auto through managed backhaul</option>
+                <option value="egress_node"${mode === 'egress_node' ? ' selected' : ''}>Use selected egress node</option>
+                <option value="local_breakout"${mode === 'local_breakout' ? ' selected' : ''}>Local breakout on ingress node</option>
               </select>
               <div class="field-hint">Auto uses the active ingress-to-egress backhaul when the route is unambiguous.</div>
             </div>
             <div class="field">
               <label>Egress node</label>
-              <select name="xray_egress_node_id" data-pack-egress-node disabled>
+              <select name="xray_egress_node_id" data-pack-egress-node${mode === 'egress_node' ? '' : ' disabled'}>
                 ${egressNodes || '<option value="">No egress nodes available</option>'}
               </select>
               <div class="field-hint">Required only when a concrete egress node is selected.</div>
@@ -967,9 +1073,10 @@
         </div>`;
     }
 
-    function renderTrafficCamouflagePackFields(pack) {
+    function renderTrafficCamouflagePackFields(pack, draft = {}) {
       if (!packUsesTrafficCamouflage(pack)) return '';
       const usesConfigurablePath = packUsesConfigurableCamouflagePath(pack);
+      const camouflagePath = packDraftString(draft, 'camouflage_path', defaultCamouflagePath(pack));
       return `
         <div class="field full pack-camouflage-control" data-pack-feature="camouflage">
           <div class="instance-panel-label">Traffic camouflage</div>
@@ -977,21 +1084,21 @@
             ${usesConfigurablePath ? `
             <div class="field">
               <label>Hidden VLESS path</label>
-              <input name="camouflage_path" value="${escapeHTML(defaultCamouflagePath(pack))}" placeholder="/assets/site-sync" data-pack-required="true" required>
+              <input name="camouflage_path" value="${escapeHTML(camouflagePath)}" placeholder="/assets/site-sync" data-pack-required="true" required>
               <div class="field-hint">Nginx routes only this path to Xray; root traffic goes to the fallback website.</div>
             </div>` : ''}
             <div class="field">
               <label>Fallback website</label>
-              <input name="fallback_upstream_url" placeholder="https://target.example.com" data-pack-required="true" required>
+              <input name="fallback_upstream_url" value="${escapeHTML(packDraftString(draft, 'fallback_upstream_url', ''))}" placeholder="https://target.example.com" data-pack-required="true" required>
               <div class="field-hint">Ordinary browser requests are reverse-proxied to this upstream. It must be a separate website, not this ingress endpoint.</div>
             </div>
             <div class="field">
               <label>Fallback Host header</label>
-              <input name="fallback_host_header" placeholder="auto from fallback URL">
+              <input name="fallback_host_header" value="${escapeHTML(packDraftString(draft, 'fallback_host_header', ''))}" placeholder="auto from fallback URL">
             </div>
             <div class="field">
               <label>Fallback SNI</label>
-              <input name="fallback_sni" placeholder="auto for HTTPS upstream">
+              <input name="fallback_sni" value="${escapeHTML(packDraftString(draft, 'fallback_sni', ''))}" placeholder="auto for HTTPS upstream">
             </div>
           </div>
         </div>`;
@@ -1046,14 +1153,17 @@
       return parts.join('');
     }
 
-    function renderPackComponentSettings(component, index) {
+    function renderPackComponentSettings(component, index, draft = {}) {
       const port = Number(component?.endpoint_port || 0);
       const serviceCode = normalizeInstanceServiceCode(component?.service_code);
+      const componentDraft = createPackComponentDraft(draft, index);
+      const endpointPort = packDraftString(componentDraft, 'endpoint_port', port ? String(port) : '');
+      const openvpnPKIProfile = packDraftString(componentDraft, 'openvpn_pki_profile', '');
       const openVPNSettings = serviceCode === 'openvpn'
         ? `<label class="pack-component-setting">
             <span>OpenVPN CA</span>
             <select name="component_${index}_openvpn_pki_profile" data-pack-component-setting="${index}">
-              ${openVPNComponentPKIProfileOptions('')}
+              ${openVPNComponentPKIProfileOptions(openvpnPKIProfile)}
             </select>
           </label>`
         : '';
@@ -1061,37 +1171,38 @@
         <div class="pack-component-settings">
           <label class="pack-component-setting">
             <span>Listen port</span>
-            <input name="component_${index}_endpoint_port" type="number" min="1" max="65535" step="1" value="${port || ''}" data-pack-component-setting="${index}">
+            <input name="component_${index}_endpoint_port" type="number" min="1" max="65535" step="1" value="${escapeHTML(endpointPort)}" data-pack-component-setting="${index}">
           </label>
           ${openVPNSettings}
         </div>`;
     }
 
-    function renderPackComponent(component, index) {
+    function renderPackComponent(component, index, draft = {}) {
       const port = Number(component?.endpoint_port || 0);
       const serviceCode = normalizeInstanceServiceCode(component?.service_code);
       const usesCamouflage = servicePackComponentUsesTrafficCamouflage(component);
       const usesTLSEdge = servicePackUsesTLSEdgeCertificate({ components: [component] });
+      const selected = createPackComponentSelected(draft, index);
       const meta = [
         component?.service_code || 'service',
         component?.preset_key || 'default',
         port ? `port ${port}` : '',
       ].filter(Boolean).join(' · ');
       return `
-        <article class="pack-component-card selectable is-selected" data-pack-component-card="${escapeHTML(String(index))}" data-pack-component-service="${escapeHTML(serviceCode)}" data-pack-component-camouflage="${usesCamouflage ? 'true' : 'false'}" data-pack-component-tls-edge="${usesTLSEdge ? 'true' : 'false'}">
+        <article class="pack-component-card selectable ${selected ? 'is-selected' : ''}" data-pack-component-card="${escapeHTML(String(index))}" data-pack-component-service="${escapeHTML(serviceCode)}" data-pack-component-camouflage="${usesCamouflage ? 'true' : 'false'}" data-pack-component-tls-edge="${usesTLSEdge ? 'true' : 'false'}">
           <label class="pack-component-toggle-row">
-            <input class="pack-component-toggle" type="checkbox" name="pack_component_indexes" value="${escapeHTML(String(index))}" data-pack-component-index="${escapeHTML(String(index))}" checked>
+            <input class="pack-component-toggle" type="checkbox" name="pack_component_indexes" value="${escapeHTML(String(index))}" data-pack-component-index="${escapeHTML(String(index))}"${selected ? ' checked' : ''}>
             <span class="pack-component-copy">
               <strong>${escapeHTML(component?.label || component?.service_code || `Component ${index + 1}`)}</strong>
               <span>${escapeHTML(meta)}</span>
               <small class="pack-component-description">${escapeHTML(component?.description || 'Instance component generated from the selected pack template.')}</small>
             </span>
           </label>
-          ${renderPackComponentSettings(component, index)}
+          ${renderPackComponentSettings(component, index, draft)}
         </article>`;
     }
 
-    function renderPackDetails(pack) {
+    function renderPackDetails(pack, draft = {}) {
       if (!pack) {
         return '<div class="empty pack-create-empty">No service pack templates loaded.</div>';
       }
@@ -1120,7 +1231,7 @@
             </div>
           </div>
           <div class="pack-component-grid">
-            ${components.length ? components.map(renderPackComponent).join('') : '<div class="empty">No components in this pack.</div>'}
+            ${components.length ? components.map((component, index) => renderPackComponent(component, index, draft)).join('') : '<div class="empty">No components in this pack.</div>'}
           </div>
           ${recommendations.length || notes.length ? `
             <div class="pack-notes">
@@ -1170,7 +1281,7 @@
       if (countTag) countTag.textContent = `${selected} selected / ${toggles.length}`;
       const submit = form.querySelector('button[type="submit"]');
       const nodeSelect = form.querySelector('select[name="node_id"]');
-      if (submit) submit.disabled = !selected || !nodeSelect || nodeSelect.disabled;
+      if (submit) submit.disabled = servicePackCreateSucceeded() || servicePackCreateRunning() || !selected || !nodeSelect || nodeSelect.disabled;
     }
 
     function updatePackFeatureControls(form, feature, enabled) {
@@ -1203,10 +1314,6 @@
               <span class="tag ${applyJobs.length ? 'warn' : 'ok'}">${escapeHTML(String(applyJobs.length))} apply jobs</span>
               <span class="tag">${escapeHTML(String(createdInstances.length))} instances</span>
             </div>
-            <div class="inline-actions">
-              <button class="secondary-btn" id="openInstancesAfterPackCreateBtn" type="button">Open instances</button>
-              <button class="secondary-btn" id="createAnotherFromPackBtn" type="button">Create another</button>
-            </div>
           </div>`;
       }
       const details = result.payload && typeof result.payload === 'object' ? result.payload : {};
@@ -1226,6 +1333,7 @@
     function openCreateFromPackPage() {
       state.instancesView = 'create-pack';
       state.instancesCreateResult = null;
+      state.instancesCreatePackDraft = null;
       ensureCreatePackSelection(servicePackCatalogItems());
       render();
     }
@@ -1233,12 +1341,14 @@
     function openInstancesListPage() {
       state.instancesView = 'list';
       state.instancesCreateResult = null;
+      state.instancesCreatePackDraft = null;
       render();
     }
 
     function openManualInstancePage() {
       state.instancesView = 'manual';
       state.instancesCreateResult = null;
+      state.instancesCreatePackDraft = null;
       render();
     }
 
@@ -1246,18 +1356,23 @@
       setTitle('Create from pack');
       const packs = servicePackCatalogItems();
       const selectedPack = ensureCreatePackSelection(packs);
-      const nodeSelect = nodeOptions();
+      const draft = createPackDraft();
+      const completed = servicePackCreateSucceeded();
+      const running = servicePackCreateRunning();
+      const nodeSelect = nodeOptions(draft.node_id || '');
       const usesOpenVPN = packUsesService(selectedPack, 'openvpn');
       const usesXray = packUsesService(selectedPack, 'xray-core');
       const usesTLSEdgeCertificate = servicePackUsesTLSEdgeCertificate(selectedPack);
       const usesTrafficCamouflage = packUsesTrafficCamouflage(selectedPack);
-      const certificateSelect = certificateOptions(defaultLeafCertificateID(), true);
+      const certificateSelect = certificateOptions(draft.certificate_id || defaultLeafCertificateID(), true);
       const baseName = selectedPack?.base_name_template || 'edge-service-pack';
       const endpointHint = selectedPack?.endpoint_hint || 'edge.example.com';
       const endpointRequired = Boolean(selectedPack?.requires_endpoint_host);
+      const displayedBaseName = packDraftString(draft, 'base_name', baseName);
+      const displayedEndpointHost = packDraftString(draft, 'endpoint_host', '');
       el('content').innerHTML = `
         ${renderInstancesTabs('create-pack')}
-        <section class="table-card instance-create-page">
+        <section class="table-card instance-create-page ${completed ? 'is-create-complete' : ''}">
           <div class="table-head instance-create-head">
             <div>
               <h2>Create from pack</h2>
@@ -1276,9 +1391,10 @@
               </div>
             </aside>
             <div class="pack-create-main">
-              <form id="createServicePackPageForm" class="pack-create-form">
+              ${renderCreatePackCompletionBanner(selectedPack, draft)}
+              <form id="createServicePackPageForm" class="pack-create-form ${completed ? 'is-completed' : ''}"${completed ? ' aria-disabled="true"' : ''}>
                 <input type="hidden" name="service_pack_key" value="${escapeHTML(selectedPack?.key || '')}">
-                ${renderPackDetails(selectedPack)}
+                ${renderPackDetails(selectedPack, draft)}
                 <div class="pack-create-form-grid stable">
                   <div class="field">
                     <label>Node</label>
@@ -1288,11 +1404,11 @@
                   </div>
                   <div class="field">
                     <label>Base name</label>
-                    <input name="base_name" value="${escapeHTML(baseName)}" placeholder="${escapeHTML(baseName)}" required>
+                    <input name="base_name" value="${escapeHTML(displayedBaseName)}" placeholder="${escapeHTML(baseName)}" required>
                   </div>
                   <div class="field full">
                     <label>Endpoint host</label>
-                    <input name="endpoint_host" placeholder="${escapeHTML(endpointHint)}"${endpointRequired ? ' required' : ''}>
+                    <input name="endpoint_host" value="${escapeHTML(displayedEndpointHost)}" placeholder="${escapeHTML(endpointHint)}"${endpointRequired ? ' required' : ''}>
                   </div>
                   ${usesTLSEdgeCertificate ? `
                     <div class="field full" data-pack-feature="tls-edge">
@@ -1303,15 +1419,16 @@
                   ${usesOpenVPN ? `
                     <div class="field full" data-pack-feature="openvpn">
                       <label>OpenVPN CA profile</label>
-                      <select name="openvpn_pki_profile">${servicePKIProfileOptions('openvpn', 'default')}</select>
+                      <select name="openvpn_pki_profile">${servicePKIProfileOptions('openvpn', draft.openvpn_pki_profile || 'default')}</select>
                       <div class="field-hint">OpenVPN instances created with this profile trust the same service CA root, which is required for a shared endpoint fleet.</div>
                     </div>` : ''}
-                  ${usesTrafficCamouflage ? renderTrafficCamouflagePackFields(selectedPack) : ''}
-                  ${usesXray ? renderXrayEgressPackFields(selectedPack) : ''}
+                  ${usesTrafficCamouflage ? renderTrafficCamouflagePackFields(selectedPack, draft) : ''}
+                  ${usesXray ? renderXrayEgressPackFields(selectedPack, draft) : ''}
                 </div>
                 <div class="pack-create-actions">
-                  <button class="primary-btn" type="submit"${selectedPack && nodeSelect ? '' : ' disabled'}>Create instances</button>
-                  <button class="secondary-btn" id="resetPackCreateFormBtn" type="button">Reset form</button>
+                  <button class="primary-btn" type="submit"${selectedPack && nodeSelect && !completed && !running ? '' : ' disabled'}>${completed ? 'Created' : running ? 'Creating...' : 'Create instances'}</button>
+                  <button class="secondary-btn" id="resetPackCreateFormBtn" type="button"${completed || running ? ' disabled' : ''}>Reset form</button>
+                  ${completed ? '<span class="pack-create-lock-note">This completed rollout is locked against duplicate submission.</span>' : ''}
                 </div>
               </form>
               <div id="createServicePackPageResult">${renderCreatePackResult()}</div>
@@ -1327,12 +1444,15 @@
       document.getElementById('createInstanceBtn')?.addEventListener('click', openManualInstancePage);
       document.getElementById('resetPackCreateFormBtn')?.addEventListener('click', () => {
         state.instancesCreateResult = null;
+        state.instancesCreatePackDraft = null;
         renderCreateFromPackPage();
       });
       document.querySelectorAll('.pack-choice-btn').forEach((button) => {
         button.addEventListener('click', () => {
+          if (servicePackCreateSucceeded()) return;
           state.instancesCreatePackKey = button.dataset.packKey || '';
           state.instancesCreateResult = null;
+          state.instancesCreatePackDraft = null;
           renderCreateFromPackPage();
         });
       });
@@ -1350,10 +1470,24 @@
       document.getElementById('createServicePackPageForm')?.addEventListener('submit', submitCreateFromPackPage);
       bindPackEgressControls();
       updatePackComponentSelectionState();
+      if (servicePackCreateSucceeded()) {
+        lockCompletedCreatePackPage();
+      }
       document.getElementById('openInstancesAfterPackCreateBtn')?.addEventListener('click', openInstancesListPage);
       document.getElementById('createAnotherFromPackBtn')?.addEventListener('click', () => {
         state.instancesCreateResult = null;
+        state.instancesCreatePackDraft = null;
         renderCreateFromPackPage();
+      });
+    }
+
+    function lockCompletedCreatePackPage() {
+      const form = document.getElementById('createServicePackPageForm');
+      form?.querySelectorAll('input, select, textarea, button').forEach((control) => {
+        control.disabled = true;
+      });
+      document.querySelectorAll('.pack-choice-btn').forEach((button) => {
+        button.disabled = true;
       });
     }
 
@@ -1382,9 +1516,11 @@
 
     async function submitCreateFromPackPage(event) {
       event.preventDefault();
+      if (servicePackCreateSucceeded() || servicePackCreateRunning()) return;
       const form = event.currentTarget;
       const button = form.querySelector('button[type="submit"]');
       const data = new FormData(form);
+      state.instancesCreatePackDraft = createPackDraftFromForm(form);
       const packKey = String(data.get('service_pack_key') || state.instancesCreatePackKey || '').trim();
       const payload = {
         node_id: String(data.get('node_id') || '').trim(),
@@ -1442,6 +1578,9 @@
         state.instancesCreateResult = { status: 'succeeded', data: created };
         await refresh();
         renderCreateFromPackPage();
+        window.requestAnimationFrame(() => {
+          document.getElementById('packCreateCompletionBanner')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        });
       } catch (err) {
         state.instancesCreateResult = { status: 'failed', message: err.message || 'service pack create failed', payload: err.payload || null };
         renderCreateFromPackPage();

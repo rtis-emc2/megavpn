@@ -5057,6 +5057,11 @@ tr:hover td { background: #f8fafc; }
   background: #fff7f7;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
 }
+.pack-choice-btn:disabled {
+  cursor: default;
+  opacity: 0.68;
+  box-shadow: none;
+}
 .pack-choice-btn strong,
 .pack-choice-btn span,
 .pack-choice-btn small {
@@ -5087,6 +5092,45 @@ tr:hover td { background: #f8fafc; }
   gap: 14px;
   min-width: 0;
   padding: 18px;
+}
+.pack-create-completion {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+}
+.pack-create-completion-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.pack-create-completion h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.2;
+}
+.pack-create-completion p,
+.pack-create-completion span {
+  margin: 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.pack-create-completion span {
+  color: #047857;
+}
+.pack-create-completion-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 .pack-details-panel,
 .pack-create-form {
@@ -5271,6 +5315,16 @@ tr:hover td { background: #f8fafc; }
   border-radius: 12px;
   background: #ffffff;
 }
+.pack-create-form.is-completed {
+  border-color: rgba(16, 185, 129, 0.28);
+  background: #f8fafc;
+}
+.pack-create-form.is-completed input,
+.pack-create-form.is-completed select,
+.pack-create-form.is-completed textarea {
+  color: #334155;
+  opacity: 1;
+}
 .pack-create-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5297,9 +5351,16 @@ tr:hover td { background: #f8fafc; }
 }
 .pack-create-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-start;
   gap: 10px;
   flex-wrap: wrap;
+}
+.pack-create-lock-note {
+  color: #047857;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
 }
 .pack-create-empty {
   min-height: 180px;
@@ -6473,9 +6534,13 @@ samp,
   }
   .pack-details-head,
   .pack-component-toolbar,
+  .pack-create-completion-actions,
   .pack-create-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+  .pack-create-completion {
+    grid-template-columns: 1fr;
   }
   .pack-component-settings {
     padding-left: 0;
@@ -6485,6 +6550,7 @@ samp,
     align-items: flex-start;
     flex-direction: column;
   }
+  .pack-create-completion-actions button,
   .pack-create-actions button {
     width: 100%;
   }

@@ -73,6 +73,7 @@
       instanceManageDirty: false,
       instancesView: 'list',
       instancesCreatePackKey: '',
+      instancesCreatePackDraft: null,
       instancesCreateResult: null,
       refreshSeq: 0,
       refreshInFlight: false,

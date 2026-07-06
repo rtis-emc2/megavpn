@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.41`
+**Релиз:** `7.0.1.42`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.41
+Базовая версия кода: RTIS MegaVPN 7.0.1.42
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1137,7 +1137,30 @@ workflows вместо ручных действий на host.
 Database migration не требуется. Это Control Plane, agent и UI hardening release
 с renderer/job-schema regression coverage.
 
-## 17. Immediate Next Actions
+## 17. Release 7.0.1.42 Closure
+
+Цель релиза `7.0.1.42`: закрыть UX-дефект в создании service pack. После
+успешного create страница выглядела почти неизмененной, выбранная node могла
+визуально смениться после refresh, и оператор мог повторно отправить тот же
+pack.
+
+Закрыто в этом релизе:
+
+- Create-from-pack сохраняет отправленный draft формы после post-create refresh:
+  выбранную node, endpoint, routing, camouflage и per-component settings.
+- После успешного создания сверху формы показывается явный completion banner с
+  количеством созданных instances и queued apply/runtime-install jobs.
+- Отправленная форма и service-pack picker блокируются после success, чтобы тот
+  же payload нельзя было случайно отправить повторно.
+- Дальнейший action path стал явным: оператор может открыть instances или
+  нажать "Create another", чтобы осознанно сбросить страницу для нового rollout.
+- Component selection восстанавливается после validation failure и после
+  successful create, включая per-component port и OpenVPN CA overrides.
+
+Database migration, API contract и node runtime behavior в релизе не менялись.
+Изменение относится к Web UI state management и operator-safety.
+
+## 18. Immediate Next Actions
 
 1. Прогнать clean-install procedure на свежем Ubuntu host и записать evidence.
 2. Прогнать disposable PostgreSQL migrations и integration tests.

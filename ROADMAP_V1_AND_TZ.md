@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.41`
+**Release:** `7.0.1.42`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.41`
+**Code baseline:** RTIS MegaVPN `7.0.1.42`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.41` continues the production-hardening line after the firewall,
+`7.0.1.42` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. The codebase already
 has a working control-plane foundation:
@@ -331,7 +331,32 @@ Closed in this release:
 No database migration is required. The change is a Control Plane, agent and UI
 hardening release with renderer/job-schema regression coverage.
 
-## 16. Immediate Next Actions
+## 16. Release 7.0.1.42 Closure
+
+The goal of `7.0.1.42` is to close the operator UX defect in service-pack
+creation: after a successful create, the page looked unchanged, the selected
+node could visually move after refresh, and the operator could submit the same
+pack again.
+
+Closed in this release:
+
+- Create-from-pack now persists the submitted form draft through the post-create
+  refresh, including selected node, endpoint, routing, camouflage and
+  per-component settings.
+- A successful service-pack create renders a prominent completion banner above
+  the form with created instance count and queued apply/runtime-install jobs.
+- The submitted form and service-pack picker are locked after success, so the
+  same payload cannot be accidentally submitted again.
+- The result action path is explicit: operators can open instances or choose
+  "Create another" to intentionally reset the page for a new rollout.
+- The component selection state is restored after validation failures and after
+  successful creation, including per-component port and OpenVPN CA overrides.
+
+No database migration, API contract or node runtime behavior changed in this
+release. The change is a Web UI state-management and operator-safety fix with
+asset cache-busting and documentation evidence.
+
+## 17. Immediate Next Actions
 
 1. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
 2. Run disposable PostgreSQL migrations and integration tests.
