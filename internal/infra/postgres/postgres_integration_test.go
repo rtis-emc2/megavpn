@@ -767,6 +767,160 @@ func TestPostgresIntegrationBackhaulPromoteStandbyTransportRefreshesRoutePolicy(
 	}
 }
 
+func TestPostgresIntegrationBackhaulPromoteRefreshesXrayBeforeRoutePolicy(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	ingress, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-ingress-xray-promote-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "198.51.100.31",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create ingress node: %v", err)
+	}
+	egress, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-egress-xray-promote-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "203.0.113.31",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create egress node: %v", err)
+	}
+	if err := store.upsertNodeCapability(ctx, ingress.ID, "xray-core", "1.8.0", "available", "integration-test"); err != nil {
+		t.Fatalf("mark xray capability available: %v", err)
+	}
+	link, err := store.CreateBackhaulLink(ctx, domain.BackhaulLink{
+		Name:          "it-backhaul-xray-promote-" + suffix,
+		IngressNodeID: ingress.ID,
+		EgressNodeID:  egress.ID,
+		DesiredDriver: backhaul.DriverWireGuard,
+		RouteMetric:   30,
+		Metadata: map[string]any{
+			"endpoint_host": egress.Address,
+			"tunnel_cidr":   "10.240.252.4/30",
+			"drivers":       []any{backhaul.DriverWireGuard, backhaul.DriverOpenVPNUDP},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create backhaul link: %v", err)
+	}
+	var wireguardTransport, openVPNTransport *domain.BackhaulTransport
+	for idx := range link.Transports {
+		switch link.Transports[idx].Driver {
+		case backhaul.DriverWireGuard:
+			wireguardTransport = &link.Transports[idx]
+		case backhaul.DriverOpenVPNUDP:
+			openVPNTransport = &link.Transports[idx]
+		}
+	}
+	if wireguardTransport == nil || openVPNTransport == nil {
+		t.Fatalf("backhaul transports = %#v, want wireguard and openvpn", link.Transports)
+	}
+
+	oldSendThrough := hostAddress(wireguardTransport.IngressAddress)
+	newSendThrough := hostAddress(openVPNTransport.IngressAddress)
+	xraySpec := xraySharedClientIdentityTestSpec("portal.example.invalid")
+	xraySpec["xray_egress"] = map[string]any{
+		"mode":            "remote_egress",
+		"egress_node_id":  egress.ID,
+		"link_id":         link.ID,
+		"transport_id":    wireguardTransport.ID,
+		"driver":          wireguardTransport.Driver,
+		"interface":       wireguardTransport.InterfaceName,
+		"ingress_address": wireguardTransport.IngressAddress,
+		"send_through":    oldSendThrough,
+		"routing_table":   link.RoutingTable,
+		"route_metric":    link.RouteMetric,
+	}
+	xraySpec["xray_default_outbound"] = map[string]any{
+		"tag":         "egress-default",
+		"protocol":    "freedom",
+		"sendThrough": oldSendThrough,
+		"settings":    map[string]any{"domainStrategy": "UseIP"},
+	}
+	xray, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       ingress.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-xray-promote-" + suffix,
+		Slug:         "it-xray-promote-" + suffix,
+		Status:       "active",
+		EndpointHost: "portal.example.invalid",
+		EndpointPort: 7080,
+		Spec:         xraySpec,
+	})
+	if err != nil {
+		t.Fatalf("create xray instance: %v", err)
+	}
+
+	applyJobs, err := store.CreateBackhaulApplyJobs(ctx, link.ID)
+	if err != nil {
+		t.Fatalf("create backhaul apply jobs: %v", err)
+	}
+	for _, job := range applyJobs {
+		role := strings.TrimSpace(stringify(job.Payload["role"]))
+		transportID := strings.TrimSpace(stringify(job.Payload["transport_id"]))
+		driver := strings.TrimSpace(stringify(job.Payload["driver"]))
+		status := "succeeded"
+		health := map[string]any{"status": "healthy", "reason": "service active and interface present"}
+		if driver == backhaul.DriverWireGuard {
+			status = "failed"
+			health = map[string]any{"status": "unhealthy", "reason": "systemd unit is not active", "active_state": "unknown"}
+		}
+		if err := store.CompleteJob(ctx, job.ID, status, map[string]any{
+			"link_id":      link.ID,
+			"transport_id": transportID,
+			"role":         role,
+			"health":       health,
+		}); err != nil {
+			t.Fatalf("complete %s %s backhaul apply job: %v", driver, role, err)
+		}
+	}
+
+	promoted, jobs, err := store.PromoteBackhaulTransport(ctx, link.ID, openVPNTransport.ID)
+	if err != nil {
+		t.Fatalf("promote openvpn standby transport: %v", err)
+	}
+	if promoted.Status != "active" || promoted.SelectedTransportID == nil || *promoted.SelectedTransportID != openVPNTransport.ID {
+		t.Fatalf("promoted link = status:%s selected:%v, want active openvpn %s", promoted.Status, promoted.SelectedTransportID, openVPNTransport.ID)
+	}
+	if len(jobs) != 1 || jobs[0].Type != "instance.apply" || jobs[0].InstanceID == nil || *jobs[0].InstanceID != xray.ID {
+		t.Fatalf("promotion jobs = %#v, want xray instance apply before route policy", jobs)
+	}
+	revisions, err := store.ListInstanceRevisions(ctx, xray.ID, 1)
+	if err != nil {
+		t.Fatalf("list xray revisions: %v", err)
+	}
+	if len(revisions) != 1 {
+		t.Fatalf("xray revisions = %#v, want latest revision", revisions)
+	}
+	egressSpec := mapFromAny(revisions[0].Spec["xray_egress"])
+	if got := firstString(egressSpec["transport_id"]); got != openVPNTransport.ID {
+		t.Fatalf("xray egress transport_id = %q, want openvpn transport %s: %#v", got, openVPNTransport.ID, egressSpec)
+	}
+	if got := firstString(egressSpec["send_through"]); got != newSendThrough {
+		t.Fatalf("xray egress send_through = %q, want %s: %#v", got, newSendThrough, egressSpec)
+	}
+	outboundSpec := mapFromAny(revisions[0].Spec["xray_default_outbound"])
+	if got := firstString(outboundSpec["sendThrough"]); got != newSendThrough {
+		t.Fatalf("xray default outbound sendThrough = %q, want %s: %#v", got, newSendThrough, outboundSpec)
+	}
+}
+
 func TestPostgresIntegrationBinaryRepositoryTicketLifecycle(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 

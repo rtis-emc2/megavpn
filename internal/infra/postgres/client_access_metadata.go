@@ -546,6 +546,9 @@ func (s *Store) listXrayVLESSGroupSyncInstances(ctx context.Context) ([]domain.I
 func (s *Store) syncXrayVLESSGroupCatalogSpec(ctx context.Context, instance domain.Instance, spec map[string]any, catalog vlessGroupCatalogSnapshot) (map[string]any, bool, error) {
 	original := cloneMap(spec)
 	enriched, _ := specWithVLESSGroupCatalogSnapshot(spec, catalog)
+	if _, err := s.resolveXrayDefaultEgress(ctx, instance, enriched, "control-plane:vless-group-catalog-sync"); err != nil {
+		return nil, false, err
+	}
 	if _, err := s.resolveXrayVLESSGroupEgress(ctx, instance, enriched); err != nil {
 		return nil, false, err
 	}
@@ -576,8 +579,118 @@ func (s *Store) resolveXrayVLESSGroupEgress(ctx context.Context, instance domain
 	return resolveXrayVLESSGroupEgressWithResolver(ctx, instance, spec, s.ResolveXrayVLESSEgress, "control-plane:vless-group-catalog-sync")
 }
 
+func (s *Store) resolveXrayDefaultEgress(ctx context.Context, instance domain.Instance, spec map[string]any, resolvedBy string) (bool, error) {
+	return resolveXrayDefaultEgressWithResolver(ctx, instance, spec, s.ResolveXrayVLESSEgress, resolvedBy)
+}
+
+func resolveXrayDefaultEgressWithResolver(ctx context.Context, instance domain.Instance, spec map[string]any, resolver xrayVLESSEgressResolver, resolvedBy string) (bool, error) {
+	if spec == nil {
+		return false, nil
+	}
+	if resolver == nil {
+		return false, fmt.Errorf("xray default egress resolver is required")
+	}
+	egress, _ := cloneAny(spec["xray_egress"]).(map[string]any)
+	if egress == nil {
+		egress = map[string]any{}
+	}
+	mode := strings.ToLower(firstString(
+		spec["egress_mode"],
+		spec["xray_egress_mode"],
+		spec["vless_egress_mode"],
+		egress["mode"],
+		egress["egress_mode"],
+	))
+	egressNodeID := firstString(
+		spec["egress_node_id"],
+		spec["xray_egress_node_id"],
+		spec["vless_egress_node_id"],
+		egress["egress_node_id"],
+		egress["node_id"],
+	)
+	hasResolvedEgress := firstString(
+		egress["send_through"],
+		egress["sendThrough"],
+		egress["link_id"],
+		egress["transport_id"],
+	) != ""
+	if mode == "" && egressNodeID == "" && !hasResolvedEgress {
+		return false, nil
+	}
+	if mode == "" || mode == "auto" || mode == "node" || mode == "remote_node" || mode == "remote_egress" {
+		mode = "egress_node"
+	}
+	changed := false
+	switch mode {
+	case "local", "direct", "local_breakout", "current_node":
+		next := map[string]any{
+			"mode":            "local_breakout",
+			"current_node_id": instance.NodeID,
+		}
+		if setVLESSGroupMapValue(spec, "xray_egress", next) {
+			changed = true
+		}
+		if _, ok := spec["xray_default_outbound"]; ok {
+			delete(spec, "xray_default_outbound")
+			changed = true
+		}
+		if _, ok := spec["default_xray_outbound"]; ok {
+			delete(spec, "default_xray_outbound")
+			changed = true
+		}
+		return changed, nil
+	case "egress_node":
+	default:
+		return changed, fmt.Errorf("unsupported xray egress_mode %q", mode)
+	}
+	resolved, err := resolver(ctx, instance.ID, egressNodeID)
+	if err != nil {
+		return changed, fmt.Errorf("xray default egress resolution failed: %w", err)
+	}
+	if setVLESSGroupMapValue(spec, "xray_egress", resolved.Map()) {
+		changed = true
+	}
+	if resolved.Mode == "local_breakout" {
+		if _, ok := spec["xray_default_outbound"]; ok {
+			delete(spec, "xray_default_outbound")
+			changed = true
+		}
+		if _, ok := spec["default_xray_outbound"]; ok {
+			delete(spec, "default_xray_outbound")
+			changed = true
+		}
+		return changed, nil
+	}
+	if resolvedBy = strings.TrimSpace(resolvedBy); resolvedBy != "" {
+		next, _ := cloneAny(spec["xray_egress"]).(map[string]any)
+		if next == nil {
+			next = resolved.Map()
+		}
+		next["egress_resolved_by"] = resolvedBy
+		if setVLESSGroupMapValue(spec, "xray_egress", next) {
+			changed = true
+		}
+	}
+	outbound := map[string]any{
+		"tag":         "egress-default",
+		"protocol":    "freedom",
+		"sendThrough": resolved.SendThrough,
+		"settings": map[string]any{
+			"domainStrategy": "UseIP",
+		},
+	}
+	if setVLESSGroupMapValue(spec, "xray_default_outbound", outbound) {
+		changed = true
+	}
+	if _, ok := spec["default_xray_outbound"]; ok {
+		delete(spec, "default_xray_outbound")
+		changed = true
+	}
+	return changed, nil
+}
+
 func resolveXrayVLESSGroupEgressWithResolver(ctx context.Context, instance domain.Instance, spec map[string]any, resolver xrayVLESSEgressResolver, resolvedBy string) (bool, error) {
-	groups := sliceRuleItemsFromAny(spec["vless_groups"])
+	groupsKey, groups := xrayMutableSpecGroupItems(spec)
 	if len(groups) == 0 {
 		return false, nil
 	}
@@ -701,16 +814,31 @@ func resolveXrayVLESSGroupEgressWithResolver(ctx context.Context, instance domai
 		}
 		updated = append(updated, group)
 	}
-	if !reflect.DeepEqual(spec["vless_groups"], updated) {
-		spec["vless_groups"] = updated
+	if !reflect.DeepEqual(spec[groupsKey], updated) {
+		spec[groupsKey] = updated
 		changed = true
 	}
 	return changed, nil
 }
 
+func xrayMutableSpecGroupItems(spec map[string]any) (string, []any) {
+	if spec == nil {
+		return "vless_groups", nil
+	}
+	for _, key := range []string{"vless_groups", "xray_groups", "outbound_groups"} {
+		if items := sliceRuleItemsFromAny(spec[key]); len(items) > 0 {
+			return key, items
+		}
+	}
+	return "vless_groups", nil
+}
+
 func clearResolvedXrayVLESSGroupEgress(group map[string]any) bool {
 	resolvedBy := strings.ToLower(firstString(group["egress_resolved_by"]))
-	if resolvedBy != "worker:xray-group-egress" && resolvedBy != "worker:xray-egress" && resolvedBy != "control-plane:vless-group-catalog-sync" {
+	if resolvedBy != "worker:xray-group-egress" &&
+		resolvedBy != "worker:xray-egress" &&
+		!strings.HasPrefix(resolvedBy, "control-plane:") &&
+		!strings.HasPrefix(resolvedBy, "system:backhaul-") {
 		return false
 	}
 	changed := false

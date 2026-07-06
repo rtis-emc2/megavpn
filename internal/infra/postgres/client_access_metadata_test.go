@@ -204,3 +204,73 @@ func TestResolveXrayVLESSGroupEgressWithResolverMaterializesSelectedEgress(t *te
 		t.Fatalf("egress routing_table = %q, want 21001: %#v", got, egress)
 	}
 }
+
+func TestResolveXrayDefaultEgressWithResolverRefreshesSendThrough(t *testing.T) {
+	t.Parallel()
+
+	spec := map[string]any{
+		"xray_egress": map[string]any{
+			"mode":           "remote_egress",
+			"egress_node_id": "node-egress",
+			"transport_id":   "transport-old",
+			"send_through":   "10.240.254.237",
+			"routing_table":  "59714",
+			"interface":      "mgbh-old",
+		},
+		"xray_default_outbound": map[string]any{
+			"tag":         "egress-default",
+			"protocol":    "freedom",
+			"sendThrough": "10.240.254.237",
+		},
+	}
+	changed, err := resolveXrayDefaultEgressWithResolver(
+		context.Background(),
+		domain.Instance{ID: "instance-ingress", NodeID: "node-ingress"},
+		spec,
+		func(_ context.Context, instanceID, egressNodeID string) (XrayVLESSEgressResolution, error) {
+			if instanceID != "instance-ingress" {
+				t.Fatalf("instanceID = %q, want instance-ingress", instanceID)
+			}
+			if egressNodeID != "node-egress" {
+				t.Fatalf("egressNodeID = %q, want node-egress", egressNodeID)
+			}
+			return XrayVLESSEgressResolution{
+				Mode:           "remote_egress",
+				CurrentNodeID:  "node-ingress",
+				CurrentName:    "ingress",
+				CurrentRole:    "ingress",
+				EgressNodeID:   "node-egress",
+				EgressNodeName: "egress",
+				LinkID:         "backhaul-1",
+				TransportID:    "transport-new",
+				Driver:         "openvpn_udp",
+				InterfaceName:  "mgbh8ae211fbfb",
+				IngressAddress: "10.240.102.41/30",
+				SendThrough:    "10.240.102.41",
+				RoutingTable:   "59714",
+				RouteMetric:    50,
+			}, nil
+		},
+		"system:backhaul-transport-promote",
+	)
+	if err != nil {
+		t.Fatalf("resolveXrayDefaultEgressWithResolver() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("resolveXrayDefaultEgressWithResolver() changed = false, want true")
+	}
+	egress := mapFromAny(spec["xray_egress"])
+	if got := firstString(egress["transport_id"]); got != "transport-new" {
+		t.Fatalf("xray_egress transport_id = %q, want transport-new: %#v", got, egress)
+	}
+	if got := firstString(egress["send_through"]); got != "10.240.102.41" {
+		t.Fatalf("xray_egress send_through = %q, want 10.240.102.41: %#v", got, egress)
+	}
+	if got := firstString(egress["egress_resolved_by"]); got != "system:backhaul-transport-promote" {
+		t.Fatalf("xray_egress egress_resolved_by = %q, want system:backhaul-transport-promote: %#v", got, egress)
+	}
+	outbound := mapFromAny(spec["xray_default_outbound"])
+	if got := firstString(outbound["sendThrough"]); got != "10.240.102.41" {
+		t.Fatalf("xray_default_outbound sendThrough = %q, want 10.240.102.41: %#v", got, outbound)
+	}
+}

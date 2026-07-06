@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.38`
+**Release:** `7.0.1.39`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.38`
+**Code baseline:** RTIS MegaVPN `7.0.1.39`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.38` continues the production-hardening line after the firewall,
+`7.0.1.39` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. The codebase already
 has a working control-plane foundation:
@@ -278,26 +278,30 @@ Closed in this release:
 No VPN runtime behavior changed in this release. Database changes are limited to
 additive/idempotent catalog repair migrations.
 
-## 14. Release 7.0.1.38 Closure
+## 14. Release 7.0.1.39 Closure
 
-The goal of `7.0.1.38` is to close an operator-facing design defect in the
-client provisioning form: primary and secondary form actions rendered as
-over-wide horizontal bars, especially in the full-screen provisioning modal.
+The goal of `7.0.1.39` is to close the VLESS remote-egress convergence defect
+found during live ingress diagnostics: Xray could keep an old
+`freedom.sendThrough` address after a standby backhaul transport was promoted,
+while route-policy had already stopped using the stale interface.
 
 Closed in this release:
 
-- The `Provision client` form now uses a scoped `client-provision-actions`
-  footer instead of generic `inline-actions`, avoiding inherited full-width
-  mobile/button behavior.
-- Provisioning action buttons are compact, capped in width and aligned as a
-  proper action row on desktop.
-- The queued-provisioning success view uses the same compact action row for
-  `Open jobs`, `Open client access` and `Close`.
-- Responsive rules keep these buttons compact on smaller screens without
-  reverting to full-width bars.
+- Backhaul apply, route enable and standby transport promotion now share a
+  Control Plane convergence path.
+- If an active Xray/VLESS ingress instance references the affected egress node,
+  the Control Plane creates a fresh validated Xray revision before route-policy
+  refresh.
+- The refreshed revision updates instance-level `xray_egress`,
+  `xray_default_outbound` and group-level selected-egress outbounds to the
+  ingress-side address of the selected live backhaul transport.
+- If convergence queues `instance.apply`, route-policy refresh is deferred until
+  that apply succeeds, so nft/ip-rule generation uses current Xray metadata.
+- Regression coverage now checks default Xray egress refresh and standby
+  OpenVPN promotion after a failed selected WireGuard transport.
 
-No database migration or VPN runtime behavior changed in this release. The
-change is limited to Web UI markup, CSS and asset cache keys.
+No database migration is required. The change is a Control Plane desired-state
+convergence fix plus documentation and release evidence.
 
 ## 15. Immediate Next Actions
 

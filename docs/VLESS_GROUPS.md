@@ -1,6 +1,6 @@
 # VLESS Access Groups
 
-**Release:** `7.0.1.38`
+**Release:** `7.0.1.39`
 
 Russian companion: [VLESS_GROUPS_RU.md](VLESS_GROUPS_RU.md).
 
@@ -102,6 +102,10 @@ domain data installed.
   address. `node.route_policy.apply` also publishes a system route for that
   source address so locally generated Xray traffic leaves through the selected
   egress node instead of the ingress node default route.
+- When the active managed backhaul transport changes, the Control Plane
+  refreshes affected Xray instance revisions before route-policy apply. This
+  keeps the Xray outbound `sendThrough`, the selected backhaul interface and
+  the kernel policy route in the same convergence cycle.
 - Before applying route policy, open the ingress node diagnostics and run
   `Inspect route policy`. The preview shows whether the VLESS/Xray system
   route is active, which managed backhaul table/interface will be used, and any

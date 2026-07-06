@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.0.1.38`
+**Release:** `7.0.1.39`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -55,7 +55,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.0.1.38` is a hardening baseline for release stabilization. The codebase has
+`7.0.1.39` is a hardening baseline for release stabilization. The codebase has
 moved from feature expansion to controlled production-readiness work. The
 current focus is:
 
@@ -111,6 +111,10 @@ current focus is:
 - route-policy and netpolicy nft comments are rendered as nft string literals,
   and route-policy fails closed instead of marking traffic when no managed
   backhaul candidate is ready;
+- Xray/VLESS remote-egress convergence: when an active backhaul transport is
+  promoted, enabled or becomes active after apply, the Control Plane refreshes
+  affected Xray instance revisions first so `freedom.sendThrough` matches the
+  selected live backhaul interface before route-policy is queued;
 - explicit route-policy cleanup: operators can queue a typed node job that
   stops route-policy runtime, removes managed `fwmark` rules/chains and cleans
   stale destinations remembered in the previous node snapshot;

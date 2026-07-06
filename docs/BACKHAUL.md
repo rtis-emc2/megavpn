@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.38`
+**Release:** `7.0.1.39`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -58,7 +58,7 @@ The Backhaul create form has two related controls:
 | --- | --- | --- |
 | `Active backhaul transport` | The single active ingress-to-egress transport path. | Stored as `desired_driver`, rendered as the selected transport, used by apply/probe gating and route-policy projection. It is always included and cannot be unchecked in the create form. |
 | `Optional standby transports` | Extra internal profiles generated for this backhaul link. | Stored as `drivers` during create only when explicitly checked. They are generated backup profiles for controlled fallback, diagnostics or later promotion, but they are not active after create. |
-| `Promote to active` | Explicitly changes the selected active transport to a healthy standby transport. | Updates `selected_transport_id` and `desired_driver`, sets the link active when the promoted transport is active on both sides, and queues an ingress route-policy refresh. |
+| `Promote to active` | Explicitly changes the selected active transport to a healthy standby transport. | Updates `selected_transport_id` and `desired_driver`, sets the link active when the promoted transport is active on both sides, refreshes affected Xray/VLESS revisions first when needed, then queues route-policy refresh after the apply path is current. |
 
 These controls do not select client-facing VPN protocols. They define the
 internal node-to-node transport between ingress and egress. Client access
@@ -81,16 +81,23 @@ instances keep their own service drivers, client configs and route policies.
     on both sides, the operator can promote the standby transport. Promotion is
     explicit: the system does not silently move production traffic to a standby
     path without operator intent.
-13. `node.route_policy.apply` installs mark-based policy routing for IPv4 L3/L4
+13. If any active Xray/VLESS ingress instance on the ingress node references
+    the promoted egress node, the Control Plane first creates a fresh validated
+    Xray revision and queues `instance.apply`. The refreshed revision replaces
+    stale `freedom.sendThrough` values with the ingress-side address of the
+    selected live backhaul transport. The subsequent successful Xray apply then
+    queues route-policy refresh, preventing route-policy from being built from a
+    stale Xray outbound source address.
+14. `node.route_policy.apply` installs mark-based policy routing for IPv4 L3/L4
     `allow` candidates and Xray/VLESS system egress routes. For VLESS remote
     egress, the nft output mark is derived from Xray `sendThrough`; `ip rule
     fwmark` then selects the managed backhaul routing table.
-14. Operator can run `probe` from the Backhaul UI after the selected transport is `active` and both ingress/egress sides have applied timestamps. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
-15. Each probe waits for systemd active state, local interface presence, route lookup to the peer tunnel address through the expected backhaul interface and ICMP reachability with retries.
-16. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer route lookup, peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
-17. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; missing units/files/directories/interfaces are reported as `not found - skip`, and only after the cleanup batch succeeds does the link move to `deleted`.
-18. Before queueing a new cleanup batch and before Jobs API reads, the backend recovers stale `running` jobs whose lease has expired back to `retrying`. This prevents a dead agent request or interrupted process from blocking backhaul deletion indefinitely.
-19. Deleted links are excluded from active Backhaul operations but remain visible for a short operator-review window in the Backhaul UI `Recently Deleted Backhaul` table with per-transport ingress/egress cleanup summaries.
+15. Operator can run `probe` from the Backhaul UI after the selected transport is `active` and both ingress/egress sides have applied timestamps. The Control Plane queues two `node.backhaul.probe` jobs, one per side.
+16. Each probe waits for systemd active state, local interface presence, route lookup to the peer tunnel address through the expected backhaul interface and ICMP reachability with retries.
+17. Probe results are stored in `backhaul_transports.health_json.ingress` and `.egress`, including peer route lookup, peer address, packet loss, min/avg/max/stddev latency and exact agent reason. A failed probe preserves `degraded`/`unhealthy` health instead of replacing it with a generic error.
+18. Delete is a managed cleanup flow, not only a database soft-delete. The Control Plane queues `node.backhaul.cleanup` for every materialized transport on both nodes; missing units/files/directories/interfaces are reported as `not found - skip`, and only after the cleanup batch succeeds does the link move to `deleted`.
+19. Before queueing a new cleanup batch and before Jobs API reads, the backend recovers stale `running` jobs whose lease has expired back to `retrying`. This prevents a dead agent request or interrupted process from blocking backhaul deletion indefinitely.
+20. Deleted links are excluded from active Backhaul operations but remain visible for a short operator-review window in the Backhaul UI `Recently Deleted Backhaul` table with per-transport ingress/egress cleanup summaries.
 
 ## Security Model
 

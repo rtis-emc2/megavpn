@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.38`
+**Релиз:** `7.0.1.39`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.38
+Базовая версия кода: RTIS MegaVPN 7.0.1.39
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1082,26 +1082,30 @@ operator console.
 В релизе не менялся VPN runtime behavior. Database-изменения ограничены
 additive/idempotent catalog repair migrations.
 
-## 15. Release 7.0.1.38 Closure
+## 15. Release 7.0.1.39 Closure
 
-Цель релиза `7.0.1.38`: закрыть operator-facing дефект дизайна формы client
-provisioning: primary/secondary actions выглядели как слишком широкие
-горизонтальные полосы, особенно в full-screen provisioning modal.
+Цель релиза `7.0.1.39`: закрыть дефект convergence для VLESS remote egress,
+найденный на live ingress diagnostics. Xray мог сохранить старый
+`freedom.sendThrough` после promote standby backhaul transport, пока
+route-policy уже переставал использовать stale interface.
 
 Зафиксировано в этом релизе:
 
-- Форма `Provision client` теперь использует scoped footer
-  `client-provision-actions` вместо generic `inline-actions`, чтобы не
-  наследовать full-width mobile/button behavior.
-- Кнопки provisioning actions стали компактными, ограничены по width и
-  выровнены как нормальный action row на desktop.
-- Success view после queue provisioning использует тот же compact action row
-  для `Open jobs`, `Open client access` и `Close`.
-- Responsive rules сохраняют компактный вид на узких экранах и не возвращают
-  кнопки в full-width bars.
+- Backhaul apply, route enable и standby transport promotion теперь используют
+  общий Control Plane convergence path.
+- Если active Xray/VLESS ingress instance ссылается на affected egress node,
+  Control Plane создает fresh validated Xray revision до route-policy refresh.
+- Обновленная revision пересчитывает instance-level `xray_egress`,
+  `xray_default_outbound` и group-level selected-egress outbounds на
+  ingress-side address выбранного live backhaul transport.
+- Если convergence ставит `instance.apply`, route-policy refresh откладывается
+  до successful apply, чтобы nft/ip-rule generation использовал актуальные Xray
+  metadata.
+- Regression coverage проверяет default Xray egress refresh и standby OpenVPN
+  promotion после failed selected WireGuard transport.
 
-Database migration и VPN runtime behavior не менялись. Изменение ограничено Web
-UI markup, CSS и asset cache keys.
+Database migration не требуется. Изменение относится к Control Plane
+desired-state convergence, документации и release evidence.
 
 ## 16. Immediate Next Actions
 

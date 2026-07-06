@@ -337,16 +337,16 @@ func (s *Store) SetBackhaulRouteEnabled(ctx context.Context, linkID string, enab
 				where id=$1 and status <> 'deleted'`, link.ID, mustJSON(link.Metadata)); err != nil {
 				return domain.BackhaulLink{}, nil, err
 			}
-			routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID)
-			if err != nil {
-				return domain.BackhaulLink{}, nil, fmt.Errorf("queue route policy refresh after backhaul route enable: %w", err)
-			}
 			link, err = s.GetBackhaulLink(ctx, link.ID)
 			if err != nil {
-				return domain.BackhaulLink{}, []domain.Job{routeJob}, err
+				return domain.BackhaulLink{}, nil, err
+			}
+			jobs, err := s.queueBackhaulRouteRefreshOrXrayConvergence(ctx, link, "system:backhaul-route-enable")
+			if err != nil {
+				return domain.BackhaulLink{}, nil, fmt.Errorf("queue xray convergence or route policy refresh after backhaul route enable: %w", err)
 			}
 			_, _ = s.CreateAudit(ctx, "system", "backhaul.route.enable", "backhaul", &link.ID, "managed backhaul route enabled")
-			return link, []domain.Job{routeJob}, nil
+			return link, jobs, nil
 		}
 		jobs, err := s.CreateBackhaulApplyJobs(ctx, link.ID)
 		if err != nil {
@@ -448,16 +448,16 @@ func (s *Store) PromoteBackhaulTransport(ctx context.Context, linkID, transportI
 	if tag.RowsAffected() == 0 {
 		return domain.BackhaulLink{}, nil, fmt.Errorf("backhaul link is not promotable in its current status")
 	}
-	routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID)
-	if err != nil {
-		return domain.BackhaulLink{}, nil, fmt.Errorf("queue route policy refresh after backhaul transport promotion: %w", err)
-	}
 	link, err = s.GetBackhaulLink(ctx, link.ID)
 	if err != nil {
-		return domain.BackhaulLink{}, []domain.Job{routeJob}, err
+		return domain.BackhaulLink{}, nil, err
+	}
+	jobs, err := s.queueBackhaulRouteRefreshOrXrayConvergence(ctx, link, "system:backhaul-transport-promote")
+	if err != nil {
+		return domain.BackhaulLink{}, nil, fmt.Errorf("queue xray convergence or route policy refresh after backhaul transport promotion: %w", err)
 	}
 	_, _ = s.CreateAudit(ctx, "system", "backhaul.transport.promote", "backhaul", &link.ID, "managed backhaul active transport promoted to "+target.Driver)
-	return link, []domain.Job{routeJob}, nil
+	return link, jobs, nil
 }
 
 func (s *Store) CreateBackhaulApplyJobs(ctx context.Context, linkID string) ([]domain.Job, error) {
@@ -561,12 +561,12 @@ func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, stat
 }
 
 func (s *Store) queueBackhaulRoutePolicyRefresh(ctx context.Context, linkID string) {
-	var ingressNodeID, status string
-	if err := s.db.QueryRow(ctx, `select ingress_node_id::text, status from backhaul_links where id=$1`, strings.TrimSpace(linkID)).Scan(&ingressNodeID, &status); err != nil {
+	link, err := s.GetBackhaulLink(ctx, strings.TrimSpace(linkID))
+	if err != nil {
 		return
 	}
-	if strings.EqualFold(status, "active") {
-		_, _ = s.CreateNodeRoutePolicyApplyJob(ctx, ingressNodeID)
+	if _, err := s.queueBackhaulRouteRefreshOrXrayConvergence(ctx, link, "system:backhaul-apply"); err != nil {
+		_, _ = s.CreateAudit(ctx, "system", "backhaul.route_policy.queue_failed", "backhaul", &link.ID, err.Error())
 	}
 }
 
