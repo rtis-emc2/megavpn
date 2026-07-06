@@ -629,7 +629,7 @@
             <label>Service instances</label>
             <div class="client-provision-choice-grid" id="clientProvisionInstances">${renderProvisionInstanceChoices(instances)}</div>
           </div>
-          <div class="field full inline-actions">
+          <div class="field full client-provision-actions">
             <button class="primary-btn" type="submit"${instances.length ? '' : ' disabled'}>Queue provisioning</button>
             <button class="secondary-btn" id="cancelProvisionBtn" type="button">Cancel</button>
           </div>
@@ -777,7 +777,7 @@
             <div><span>3</span><strong>Apply</strong><small>Affected instances are queued for agent apply.</small></div>
             <div><span>4</span><strong>Configs</strong><small>Artifacts appear after the worker succeeds.</small></div>
           </div>
-          <div class="field full inline-actions">
+          <div class="field full client-provision-actions client-provision-actions-success">
             <button class="primary-btn" type="button" id="clientProvisionJobsBtn">Open jobs</button>
             <button class="secondary-btn" type="button" id="clientProvisionAccessBtn">Open client access</button>
             <button class="secondary-btn" type="button" id="clientProvisionCloseBtn">Close</button>

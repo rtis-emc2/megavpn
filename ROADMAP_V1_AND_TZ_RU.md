@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.34`
+**Релиз:** `7.0.1.35`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.34
+Базовая версия кода: RTIS MegaVPN 7.0.1.35
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1082,28 +1082,26 @@ operator console.
 В релизе не менялся VPN runtime behavior. Database-изменения ограничены
 additive/idempotent catalog repair migrations.
 
-## 15. Release 7.0.1.34 Closure
+## 15. Release 7.0.1.35 Closure
 
-Цель релиза `7.0.1.34`: закрыть дефект contract-а VLESS provisioning:
-`Clients -> Provision` мог показывать active access-group catalog entry, пока
-выбранный Xray service instance еще не materialized эту группу в current
-revision. API отклонял запрос ошибкой
-`vless outbound group "..." is not defined for service instance ...`.
+Цель релиза `7.0.1.35`: закрыть operator-facing дефект дизайна формы client
+provisioning: primary/secondary actions выглядели как слишком широкие
+горизонтальные полосы, особенно в full-screen provisioning modal.
 
 Зафиксировано в этом релизе:
 
-- Client provisioning теперь синхронизирует active VLESS access-group catalog в
-  выбранный Xray instance до validation выбранной группы.
-- Provisioning path использует ту же selected-egress materialization logic, что
-  и catalog sync: `egress_node` groups получают resolved egress metadata, Xray
-  `outbound` config и `sendThrough` source-route metadata до принятия revision.
-- Invalid или disabled groups теперь возвращают diagnostic со списком available
-  groups после catalog sync.
-- Regression coverage проверяет, что selected-egress group вроде `route`
-  превращается в `egress-route` с конкретным `sendThrough` outbound до apply.
+- Форма `Provision client` теперь использует scoped footer
+  `client-provision-actions` вместо generic `inline-actions`, чтобы не
+  наследовать full-width mobile/button behavior.
+- Кнопки provisioning actions стали компактными, ограничены по width и
+  выровнены как нормальный action row на desktop.
+- Success view после queue provisioning использует тот же compact action row
+  для `Open jobs`, `Open client access` и `Close`.
+- Responsive rules сохраняют компактный вид на узких экранах и не возвращают
+  кнопки в full-width bars.
 
-Database migration не требовалась. Изменение ограничено control-plane
-provisioning contract и не меняет wire format существующих client configs.
+Database migration и VPN runtime behavior не менялись. Изменение ограничено Web
+UI markup, CSS и asset cache keys.
 
 ## 16. Immediate Next Actions
 
@@ -1114,5 +1112,6 @@ provisioning contract и не меняет wire format существующих 
 5. Validate VLESS ingress с managed egress route policy, route-policy preview,
    route-policy telemetry, explicit cleanup, on-demand access-group catalog sync
    и Nginx HTTP-to-HTTPS redirect на реальных ingress/egress nodes.
-6. Продолжить traffic-camouflage ingress case: config preview/diff,
+6. Продолжить UI consistency review для оставшихся modal form action rows.
+7. Продолжить traffic-camouflage ingress case: config preview/diff,
    `nginx -t` evidence surface и live fallback-site smoke.

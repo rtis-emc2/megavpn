@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.34`
+**Release:** `7.0.1.35`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.34`
+**Code baseline:** RTIS MegaVPN `7.0.1.35`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,10 +23,10 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.34` continues the production-hardening line after the firewall,
-backhaul, VLESS routing, route-policy preview, traffic-camouflage and
-documentation-gate releases. The codebase already has a working control-plane
-foundation:
+`7.0.1.35` continues the production-hardening line after the firewall,
+backhaul, VLESS routing, route-policy preview, traffic-camouflage,
+documentation-gate and VLESS provisioning-sync releases. The codebase already
+has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -278,30 +278,26 @@ Closed in this release:
 No VPN runtime behavior changed in this release. Database changes are limited to
 additive/idempotent catalog repair migrations.
 
-## 14. Release 7.0.1.34 Closure
+## 14. Release 7.0.1.35 Closure
 
-The goal of `7.0.1.34` is to close a VLESS provisioning contract defect:
-`Clients -> Provision` could offer an active access-group catalog entry while
-the selected Xray service instance had not yet materialized that group in its
-current revision. The API then rejected the request with
-`vless outbound group "..." is not defined for service instance ...`.
+The goal of `7.0.1.35` is to close an operator-facing design defect in the
+client provisioning form: primary and secondary form actions rendered as
+over-wide horizontal bars, especially in the full-screen provisioning modal.
 
 Closed in this release:
 
-- Client provisioning now syncs the active VLESS access-group catalog into the
-  selected Xray instance before validating the requested group.
-- The provisioning path uses the same selected-egress materialization logic as
-  catalog sync: `egress_node` groups receive resolved egress metadata, Xray
-  `outbound` config and `sendThrough` source-route metadata before the revision
-  is accepted.
-- Invalid or disabled groups now return a diagnostic that includes the available
-  groups after catalog sync.
-- Regression coverage verifies that a selected-egress group such as `route`
-  becomes `egress-route` with a concrete `sendThrough` outbound before apply.
+- The `Provision client` form now uses a scoped `client-provision-actions`
+  footer instead of generic `inline-actions`, avoiding inherited full-width
+  mobile/button behavior.
+- Provisioning action buttons are compact, capped in width and aligned as a
+  proper action row on desktop.
+- The queued-provisioning success view uses the same compact action row for
+  `Open jobs`, `Open client access` and `Close`.
+- Responsive rules keep these buttons compact on smaller screens without
+  reverting to full-width bars.
 
-No database migration was required. The change is scoped to the control-plane
-provisioning contract and does not change the wire format of existing client
-configs.
+No database migration or VPN runtime behavior changed in this release. The
+change is limited to Web UI markup, CSS and asset cache keys.
 
 ## 15. Immediate Next Actions
 
@@ -315,5 +311,5 @@ configs.
    and Nginx HTTP-to-HTTPS redirect on real ingress/egress nodes.
 7. Validate VLESS subscription rotation, public feed import and revocation on a
    real client profile.
-8. Complete topology-map and node-link design before implementing the UI.
+8. Continue UI consistency review for remaining modal form action rows.
 9. Keep release banners and English/Russian documentation pairs synchronized.

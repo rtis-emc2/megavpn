@@ -2142,6 +2142,32 @@ tr:hover td { background: #f8fafc; }
 .client-provision-form .client-workflow-strip {
   grid-column: 1 / -1;
 }
+.client-provision-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.client-provision-actions .primary-btn,
+.client-provision-actions .secondary-btn {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 132px;
+  max-width: 240px;
+  min-height: 40px;
+  padding: 9px 16px;
+  white-space: nowrap;
+}
+.client-provision-actions .primary-btn {
+  min-width: 176px;
+}
+.client-provision-actions-success {
+  justify-content: flex-start;
+}
 .client-workflow-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -6296,6 +6322,16 @@ samp,
   }
   .client-provision-queued-head {
     display: grid;
+  }
+  .client-provision-actions {
+    justify-content: flex-start;
+  }
+  .client-provision-actions .primary-btn,
+  .client-provision-actions .secondary-btn {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 128px;
+    max-width: 100%;
   }
   .firewall-summary-grid,
   .firewall-policy-grid,
