@@ -18,11 +18,13 @@ import (
 
 func newClient(baseURL, token, statePath string) *client {
 	return &client{
-		baseURL:        strings.TrimRight(baseURL, "/"),
-		token:          token,
-		statePath:      statePath,
-		http:           &http.Client{Timeout: 10 * time.Second},
-		responseReplay: newResponseReplayCache(5 * time.Minute),
+		baseURL:                 strings.TrimRight(baseURL, "/"),
+		token:                   token,
+		statePath:               statePath,
+		http:                    &http.Client{Timeout: 10 * time.Second},
+		responseReplay:          newResponseReplayCache(5 * time.Minute),
+		trafficReportInterval:   time.Minute,
+		xrayTrafficCounterState: map[string]int64{},
 	}
 }
 
@@ -101,6 +103,13 @@ func (c client) listRuntimeTargets(ctx context.Context, nodeID string) ([]instan
 
 func (c client) submitRuntimeReports(ctx context.Context, nodeID string, reports []instanceRuntimeReport) error {
 	return c.post(ctx, "/agent/runtime/instances", map[string]any{"node_id": nodeID, "reports": reports}, nil)
+}
+
+func (c client) submitTrafficAccounting(ctx context.Context, nodeID string, samples []trafficAccountingSample) error {
+	if len(samples) == 0 {
+		return nil
+	}
+	return c.post(ctx, "/agent/traffic/accounting", map[string]any{"node_id": nodeID, "samples": samples}, nil)
 }
 
 func (c client) nextJob(ctx context.Context, nodeID string) (job, bool, error) {

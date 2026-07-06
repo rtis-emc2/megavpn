@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.2`
+**Release:** `7.1.0.3`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.2`
+**Code baseline:** RTIS MegaVPN `7.1.0.3`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.2` continues the production-hardening line after the firewall,
+`7.1.0.3` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. This release makes the
 managed firewall model operator-readable and fixes the next development path
@@ -386,9 +386,9 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Release 7.1.0.2 Closure
+## 18. Release 7.1.0.3 Closure
 
-The goal of `7.1.0.2` is to make managed firewall configuration understandable
+The goal of `7.1.0.3` is to make managed firewall configuration understandable
 before broader production rollout. The runtime enforcement model already exists;
 the operator issue was that the UI and docs did not show how address lists,
 rules, policies, apply jobs and node state relate to each other.
@@ -404,7 +404,7 @@ Closed in this release:
 - The documented development path puts user traffic accounting with at least
   180-day retention first, before production traffic collection is enabled.
 - Web asset cache keys, release banners and release review artifacts were
-  advanced to `7.1.0.2`.
+  advanced to `7.1.0.3`.
 
 No database migration, public API contract or node nftables runtime behavior
 changed. The default firewall seed and agent renderer remain covered by the

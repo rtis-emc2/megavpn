@@ -48,6 +48,19 @@ func TestDefaultServicePacksAreCreateReady(t *testing.T) {
 	}
 }
 
+func TestDefaultXrayServicePacksEnableTrafficAccounting(t *testing.T) {
+	for _, pack := range servicePackDefinitions() {
+		for _, component := range pack.Components {
+			if component.ServiceCode != "xray-core" {
+				continue
+			}
+			if component.Spec["traffic_accounting_enabled"] != true {
+				t.Fatalf("service pack %q component %q must enable Xray traffic accounting", pack.Key, component.Label)
+			}
+		}
+	}
+}
+
 func TestDefaultAccessSuiteHasExpectedComponentsWithoutInlineSecrets(t *testing.T) {
 	pack, found := findServicePack("default_access_suite")
 	if !found {

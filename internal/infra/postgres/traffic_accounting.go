@@ -262,6 +262,16 @@ func (s *Store) normalizeTrafficAccountingSample(ctx context.Context, nodeID str
 	if err := validateOptionalTrafficAccountingUUID("client_account_id", input.ClientAccountID); err != nil {
 		return input, err
 	}
+	if input.ClientAccountID == "" {
+		username := trafficAccountingMetadataString(input.Metadata, "client_user", "client_username", "xray_user", "user", "email")
+		if username != "" {
+			clientID, err := s.trafficAccountingClientIDByUsername(ctx, username)
+			if err != nil {
+				return input, err
+			}
+			input.ClientAccountID = clientID
+		}
+	}
 	if input.InstanceID != "" {
 		ok, err := s.trafficAccountingInstanceBelongsToNode(ctx, input.InstanceID, nodeID)
 		if err != nil {
@@ -291,6 +301,13 @@ func (s *Store) normalizeTrafficAccountingSample(ctx context.Context, nodeID str
 		} else if !ok {
 			return input, fmt.Errorf("service_access_id %s belongs to a different node", input.ServiceAccessID)
 		}
+	}
+	if input.ServiceAccessID == "" && input.InstanceID != "" && input.ClientAccountID != "" {
+		accessID, err := s.trafficAccountingServiceAccessID(ctx, input.ClientAccountID, input.InstanceID)
+		if err != nil {
+			return input, err
+		}
+		input.ServiceAccessID = accessID
 	}
 	input.SampleKey = trafficAccountingSampleKey(nodeID, input)
 	return input, nil
@@ -365,6 +382,51 @@ func (s *Store) trafficAccountingServiceAccessRefs(ctx context.Context, accessID
 		return "", "", fmt.Errorf("service_access_id %s is not active", accessID)
 	}
 	return instanceID, clientID, err
+}
+
+func (s *Store) trafficAccountingClientIDByUsername(ctx context.Context, username string) (string, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return "", nil
+	}
+	var clientID string
+	err := s.db.QueryRow(ctx, `select id::text from client_accounts where username=$1 and status <> 'deleted' order by created_at desc limit 1`, username).Scan(&clientID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return clientID, err
+}
+
+func (s *Store) trafficAccountingServiceAccessID(ctx context.Context, clientID, instanceID string) (string, error) {
+	clientID = strings.TrimSpace(clientID)
+	instanceID = strings.TrimSpace(instanceID)
+	if clientID == "" || instanceID == "" {
+		return "", nil
+	}
+	var accessID string
+	err := s.db.QueryRow(ctx, `select id::text
+		from service_accesses
+		where client_account_id=$1
+		  and instance_id=$2
+		  and status in ('active','pending')
+		order by case status when 'active' then 0 when 'pending' then 1 else 2 end, updated_at desc
+		limit 1`, clientID, instanceID).Scan(&accessID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return accessID, err
+}
+
+func trafficAccountingMetadataString(metadata map[string]any, keys ...string) string {
+	if metadata == nil {
+		return ""
+	}
+	for _, key := range keys {
+		if text := strings.TrimSpace(stringify(metadata[key])); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func validateOptionalTrafficAccountingUUID(name, value string) error {

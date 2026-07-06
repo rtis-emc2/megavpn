@@ -52,6 +52,67 @@ func TestBuildXrayServerConfigGRPCBackend(t *testing.T) {
 	}
 }
 
+func TestBuildXrayServerConfigEnablesLoopbackStatsAPI(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-xray-ws",
+		Slug:         "edge-xray-ws",
+		EndpointHost: "portal.example.com",
+		EndpointPort: 7080,
+	}, map[string]any{
+		"security":                   "none",
+		"network":                    "ws",
+		"path":                       "/assets/sync",
+		"traffic_accounting_enabled": true,
+		"managed_clients": []any{
+			map[string]any{
+				"id":    "11111111-1111-4111-8111-111111111111",
+				"email": "client-one",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	api, ok := cfg["api"].(map[string]any)
+	if !ok {
+		t.Fatalf("api object missing: %#v", cfg)
+	}
+	if got := stringify(api["tag"]); got != "api" {
+		t.Fatalf("api tag = %q, want api", got)
+	}
+	if services := stringList(api["services"]); len(services) != 1 || services[0] != "StatsService" {
+		t.Fatalf("api services = %#v, want StatsService", api["services"])
+	}
+	policy := cfg["policy"].(map[string]any)
+	levelZero := policy["levels"].(map[string]any)["0"].(map[string]any)
+	if !truthy(levelZero["statsUserUplink"]) || !truthy(levelZero["statsUserDownlink"]) {
+		t.Fatalf("stats user policy not enabled: %#v", levelZero)
+	}
+	inbounds := cfg["inbounds"].([]any)
+	var statsInbound map[string]any
+	for _, item := range inbounds {
+		inbound, _ := item.(map[string]any)
+		if stringify(inbound["tag"]) == "api" {
+			statsInbound = inbound
+		}
+	}
+	if statsInbound == nil {
+		t.Fatalf("loopback stats inbound missing from %#v", inbounds)
+	}
+	if got := stringify(statsInbound["listen"]); got != "127.0.0.1" {
+		t.Fatalf("stats listen = %q, want loopback", got)
+	}
+	if got := firstIntValue(statsInbound["port"]); got != 17080 {
+		t.Fatalf("stats port = %d, want deterministic endpoint+10000", got)
+	}
+	rules := cfg["routing"].(map[string]any)["rules"].([]any)
+	firstRule := rules[0].(map[string]any)
+	if got := stringify(firstRule["outboundTag"]); got != "api" {
+		t.Fatalf("first routing outboundTag = %q, want api", got)
+	}
+}
+
 func TestVLESSTemplateSpecGroupCarriesCatalogPolicy(t *testing.T) {
 	group := vlessTemplateSpecGroup(domain.VLESSGroupTemplate{
 		Key:          "ads_blocked",

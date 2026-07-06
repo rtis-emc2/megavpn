@@ -74,6 +74,9 @@ func syncWithCore(ctx context.Context, log agentLogger, c *client, st *agentStat
 	if err := c.reportInstanceRuntime(ctx, st.NodeID); err != nil {
 		log.Error("agent runtime report failed", "error", err)
 	}
+	if err := c.reportTrafficAccounting(ctx, st.NodeID); err != nil {
+		log.Error("agent traffic accounting report failed", "error", err)
+	}
 	j, ok, err := c.nextJob(ctx, st.NodeID)
 	if err != nil {
 		return fmt.Errorf("fetch job failed: %w", err)

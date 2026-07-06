@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.2`
+**Release:** `7.1.0.3`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,7 +56,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.2` is a firewall-clarity and release-planning baseline for release
+`7.1.0.3` is a firewall-clarity and release-planning baseline for release
 stabilization. The codebase has moved from feature expansion to controlled
 production-readiness work. The current focus is:
 

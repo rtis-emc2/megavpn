@@ -15,11 +15,14 @@ type agentLogger interface {
 }
 
 type client struct {
-	baseURL        string
-	token          string
-	statePath      string
-	http           httpDoer
-	responseReplay *responseReplayCache
+	baseURL                 string
+	token                   string
+	statePath               string
+	http                    httpDoer
+	responseReplay          *responseReplayCache
+	trafficReportInterval   time.Duration
+	lastTrafficReportAt     time.Time
+	xrayTrafficCounterState map[string]int64
 }
 
 type httpDoer interface {
@@ -85,6 +88,25 @@ type instanceRuntimeReport struct {
 	ListeningPorts     []map[string]any `json:"listening_ports"`
 	ErrorText          string           `json:"error_text"`
 	CheckedAt          *time.Time       `json:"checked_at,omitempty"`
+}
+
+type trafficAccountingSample struct {
+	SampleKey       string         `json:"sample_key,omitempty"`
+	InstanceID      string         `json:"instance_id,omitempty"`
+	ServiceAccessID string         `json:"service_access_id,omitempty"`
+	ClientAccountID string         `json:"client_account_id,omitempty"`
+	Source          string         `json:"source,omitempty"`
+	Protocol        string         `json:"protocol,omitempty"`
+	Direction       string         `json:"direction,omitempty"`
+	BucketStart     *time.Time     `json:"bucket_start,omitempty"`
+	BucketEnd       *time.Time     `json:"bucket_end,omitempty"`
+	RxBytes         int64          `json:"rx_bytes"`
+	TxBytes         int64          `json:"tx_bytes"`
+	RxPackets       int64          `json:"rx_packets,omitempty"`
+	TxPackets       int64          `json:"tx_packets,omitempty"`
+	FlowCount       int64          `json:"flow_count,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+	ObservedAt      *time.Time     `json:"observed_at,omitempty"`
 }
 
 type bootstrapConfig struct {

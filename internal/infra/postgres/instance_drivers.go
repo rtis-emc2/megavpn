@@ -788,6 +788,7 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 		inbounds[targetIdx] = inbound
 		cfg["inbounds"] = inbounds
 		applyXrayVLESSGroupRouting(cfg, spec, managedClients)
+		applyXrayStatsAPI(cfg, instance, spec)
 		return cfg, nil
 	}
 
@@ -885,6 +886,7 @@ func buildXrayServerConfig(instance domain.Instance, spec map[string]any) (map[s
 		"outbounds": xrayOutboundsForSpec(nil, spec),
 	}
 	applyXrayVLESSGroupRouting(cfg, spec, managedClients)
+	applyXrayStatsAPI(cfg, instance, spec)
 	if sniffing := truthy(spec["sniffing_enabled"]); sniffing || spec["sniffing_enabled"] == nil {
 		inbounds := cfg["inbounds"].([]any)
 		inbound := inbounds[0].(map[string]any)
@@ -2362,6 +2364,154 @@ func applyXrayVLESSGroupRouting(cfg map[string]any, spec map[string]any, clients
 	cfg["routing"] = routing
 }
 
+func applyXrayStatsAPI(cfg map[string]any, instance domain.Instance, spec map[string]any) {
+	if !xrayStatsAPIEnabled(spec) {
+		return
+	}
+	apiTag := normalizeXrayOutboundTag(firstString(spec["xray_stats_api_tag"], "api"))
+	if apiTag == "" {
+		apiTag = "api"
+	}
+	inboundTag := normalizeXrayOutboundTag(firstString(spec["xray_stats_inbound_tag"], apiTag))
+	if inboundTag == "" {
+		inboundTag = apiTag
+	}
+	port := xrayStatsAPIPort(instance, spec)
+	if port <= 0 || port > 65535 {
+		return
+	}
+
+	if _, ok := cfg["stats"].(map[string]any); !ok {
+		cfg["stats"] = map[string]any{}
+	}
+	applyXrayStatsPolicy(cfg)
+	applyXrayStatsAPIObject(cfg, apiTag)
+	applyXrayStatsInbound(cfg, inboundTag, port)
+	applyXrayStatsRoutingRule(cfg, inboundTag, apiTag, spec)
+}
+
+func xrayStatsAPIEnabled(spec map[string]any) bool {
+	if spec == nil {
+		return false
+	}
+	if explicitlyFalse(spec["traffic_accounting_enabled"]) ||
+		explicitlyFalse(spec["xray_stats_enabled"]) ||
+		explicitlyFalse(spec["stats_enabled"]) {
+		return false
+	}
+	return truthy(spec["traffic_accounting_enabled"]) ||
+		truthy(spec["xray_stats_enabled"]) ||
+		truthy(spec["stats_enabled"])
+}
+
+func xrayStatsAPIPort(instance domain.Instance, spec map[string]any) int {
+	if port := firstIntValue(spec["xray_stats_api_port"], spec["stats_api_port"]); port > 0 && port <= 65535 {
+		return port
+	}
+	basePort := firstIntValue(spec["server_port"], spec["port"], instance.EndpointPort)
+	if basePort > 0 && basePort <= 55535 {
+		return basePort + 10000
+	}
+	seed := firstString(spec["slug"], instance.Slug, instance.Name, instance.ID, "xray")
+	sum := sha1.Sum([]byte(seed))
+	return 18000 + ((int(sum[0])*256 + int(sum[1])) % 20000)
+}
+
+func applyXrayStatsPolicy(cfg map[string]any) {
+	policy, _ := cfg["policy"].(map[string]any)
+	if policy == nil {
+		policy = map[string]any{}
+	}
+	levels, _ := policy["levels"].(map[string]any)
+	if levels == nil {
+		levels = map[string]any{}
+	}
+	levelZero, _ := levels["0"].(map[string]any)
+	if levelZero == nil {
+		levelZero = map[string]any{}
+	}
+	levelZero["statsUserUplink"] = true
+	levelZero["statsUserDownlink"] = true
+	levels["0"] = levelZero
+	policy["levels"] = levels
+	cfg["policy"] = policy
+}
+
+func applyXrayStatsAPIObject(cfg map[string]any, apiTag string) {
+	api, _ := cfg["api"].(map[string]any)
+	if api == nil {
+		api = map[string]any{}
+	}
+	api["tag"] = apiTag
+	services := anyStringList(uniqueSortedStrings(append(stringList(api["services"]), "StatsService")))
+	if len(services) == 0 {
+		services = []any{"StatsService"}
+	}
+	api["services"] = services
+	cfg["api"] = api
+}
+
+func applyXrayStatsInbound(cfg map[string]any, inboundTag string, port int) {
+	inbounds, _ := cfg["inbounds"].([]any)
+	for _, item := range inbounds {
+		inbound, _ := item.(map[string]any)
+		if normalizeXrayOutboundTag(firstString(inbound["tag"])) == inboundTag {
+			inbound["listen"] = "127.0.0.1"
+			inbound["port"] = port
+			inbound["protocol"] = "dokodemo-door"
+			settings, _ := inbound["settings"].(map[string]any)
+			if settings == nil {
+				settings = map[string]any{}
+			}
+			settings["address"] = "127.0.0.1"
+			inbound["settings"] = settings
+			return
+		}
+	}
+	inbounds = append(inbounds, map[string]any{
+		"tag":      inboundTag,
+		"listen":   "127.0.0.1",
+		"port":     port,
+		"protocol": "dokodemo-door",
+		"settings": map[string]any{
+			"address": "127.0.0.1",
+		},
+	})
+	cfg["inbounds"] = inbounds
+}
+
+func applyXrayStatsRoutingRule(cfg map[string]any, inboundTag, apiTag string, spec map[string]any) {
+	routing, _ := cfg["routing"].(map[string]any)
+	if routing == nil {
+		routing = map[string]any{}
+	}
+	if firstString(routing["domainStrategy"]) == "" {
+		routing["domainStrategy"] = firstString(spec["routing_domain_strategy"], "AsIs")
+	}
+	existingRules, _ := routing["rules"].([]any)
+	for _, item := range existingRules {
+		rule, _ := item.(map[string]any)
+		if rule == nil {
+			continue
+		}
+		if firstString(rule["outboundTag"]) != apiTag {
+			continue
+		}
+		for _, tag := range stringList(rule["inboundTag"]) {
+			if normalizeXrayOutboundTag(tag) == inboundTag {
+				return
+			}
+		}
+	}
+	apiRule := map[string]any{
+		"type":        "field",
+		"inboundTag":  []any{inboundTag},
+		"outboundTag": apiTag,
+	}
+	routing["rules"] = append([]any{apiRule}, existingRules...)
+	cfg["routing"] = routing
+}
+
 func xrayVLESSGroupRoutingRules(spec map[string]any, groups []xrayVLESSGroup, clients []map[string]any) []any {
 	if len(groups) == 0 || len(clients) == 0 {
 		return nil
@@ -2746,6 +2896,15 @@ func stringList(raw any) []string {
 		out := make([]string, 0, len(x))
 		for _, item := range x {
 			if text := strings.TrimSpace(stringify(item)); text != "" {
+				out = append(out, text)
+			}
+		}
+		sort.Strings(out)
+		return out
+	case []string:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			if text := strings.TrimSpace(item); text != "" {
 				out = append(out, text)
 			}
 		}

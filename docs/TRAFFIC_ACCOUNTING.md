@@ -1,6 +1,6 @@
 # Traffic Accounting
 
-**Release:** `7.1.0.2`
+**Release:** `7.1.0.3`
 
 Traffic accounting stores aggregate traffic counters for operational audit,
 capacity planning and incident diagnostics. It is not packet capture and it is
@@ -70,6 +70,22 @@ flowchart LR
   E --> F["Traffic Accounting UI"]
 ```
 
+## Xray/VLESS Collector
+
+Managed Xray specs can enable `traffic_accounting_enabled`. When enabled, the
+rendered Xray config includes:
+
+- `stats` and user uplink/downlink policy;
+- a `dokodemo-door` Stats API inbound bound to `127.0.0.1`;
+- an `api` routing rule that is not reachable from the public service endpoint.
+
+`megavpn-agent` queries local Xray Stats API counters, keeps absolute counter
+baselines in memory and submits only deltas as aggregate buckets. Xray `uplink`
+is stored as `rx_bytes`; Xray `downlink` is stored as `tx_bytes`.
+
+Existing Xray instances must be re-applied after upgrading so the node receives
+the updated config with the loopback Stats API.
+
 ## Security Notes
 
 - Accounting samples are append/update aggregate records, not raw traffic.
@@ -80,7 +96,6 @@ flowchart LR
 
 ## Current Limitation
 
-This release adds the Control Plane storage/API/UI foundation. Runtime-specific
-collectors must be enabled per protocol after collector validation on real
-nodes. Xray/VLESS should use Xray Stats API counters; OpenVPN and WireGuard
-should use interface/client counters mapped through service access metadata.
+Xray/VLESS collection is implemented for managed Xray configs. OpenVPN and
+WireGuard collectors are still pending and should use interface/client counters
+mapped through service access metadata.

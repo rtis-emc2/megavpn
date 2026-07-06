@@ -1,6 +1,6 @@
 # Учет трафика
 
-**Релиз:** `7.1.0.2`
+**Релиз:** `7.1.0.3`
 
 Учет трафика хранит агрегированные счетчики для операционного аудита,
 capacity planning и диагностики инцидентов. Это не packet capture и не
@@ -70,6 +70,23 @@ flowchart LR
   E --> F["Traffic Accounting UI"]
 ```
 
+## Xray/VLESS collector
+
+Managed Xray specs могут включать `traffic_accounting_enabled`. В этом случае
+rendered Xray config содержит:
+
+- `stats` и policy для user uplink/downlink counters;
+- `dokodemo-door` Stats API inbound, привязанный только к `127.0.0.1`;
+- `api` routing rule, недоступный с публичного service endpoint.
+
+`megavpn-agent` читает локальные Xray Stats API counters, держит baseline
+абсолютных счетчиков в памяти и отправляет только дельты как aggregate buckets.
+Xray `uplink` записывается как `rx_bytes`; Xray `downlink` записывается как
+`tx_bytes`.
+
+Существующие Xray instances нужно повторно применить после upgrade, чтобы node
+получила обновленный config с loopback Stats API.
+
 ## Security notes
 
 - Accounting samples - агрегаты, а не raw traffic.
@@ -80,8 +97,6 @@ flowchart LR
 
 ## Текущее ограничение
 
-Этот релиз добавляет foundation в Control Plane: storage/API/UI. Runtime-specific
-collectors нужно включать отдельно по каждому протоколу после validation на
-реальных nodes. Для Xray/VLESS целевой источник - Xray Stats API counters; для
-OpenVPN и WireGuard - interface/client counters, связанные с service access
-metadata.
+Xray/VLESS collection реализован для managed Xray configs. OpenVPN и WireGuard
+collectors еще нужно реализовать отдельно через interface/client counters,
+связанные с service access metadata.
