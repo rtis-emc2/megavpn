@@ -3718,6 +3718,9 @@ tr:hover td { background: #f8fafc; }
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
+.traffic-export-filter-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
 .pool-summary-card {
   display: grid;
   gap: 5px;

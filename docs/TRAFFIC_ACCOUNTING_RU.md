@@ -1,6 +1,6 @@
 # Учет трафика
 
-**Релиз:** `7.1.0.7`
+**Релиз:** `7.1.0.8`
 
 Учет трафика хранит агрегированные счетчики для операционного аудита,
 capacity planning и диагностики инцидентов. Это не packet capture и не
@@ -96,6 +96,18 @@ no-store` и ограничен server-side cap. Export filters поддержи
 `from`, `to`, `client_id`, `node_id` и `protocol`. Time filters принимают
 RFC3339 или `YYYY-MM-DD`. Overview cards показывают active rows, retention
 cutoff, expired cleanup backlog и per-ingest prune budget.
+
+UI показывает те же export filters как form controls:
+
+- date range: `from` и `to`;
+- protocol;
+- client;
+- node;
+- row limit.
+
+Recent-sample table preview-фильтруется выбранными значениями, чтобы оператор
+мог проверить audit handoff context. CSV export все равно генерируется сервером
+из полного retained dataset, а не только из загруженных recent rows.
 
 ## Runtime collectors
 

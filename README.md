@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.7`
+**Release:** `7.1.0.8`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,7 +56,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.7` makes traffic-accounting retention observable in the API and UI while
+`7.1.0.8` improves traffic-accounting audit export workflows in the UI while
 keeping release stabilization as the operating mode. The current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
@@ -88,6 +88,8 @@ keeping release stabilization as the operating mode. The current focus is:
   indexes for overview/export filters by bucket, client, node and protocol;
 - traffic-accounting retention visibility: operator summary now shows cutoff,
   expired-row cleanup backlog and bounded prune budget per ingest;
+- traffic-accounting audit export filters in the UI for date range, protocol,
+  client, node and row limit, with recent-row preview before CSV download;
 - semantic service-pack deduplication in API/UI plus database repair for
   historical duplicate default pack rows;
 - VLESS client provisioning now syncs active access-group catalog entries into

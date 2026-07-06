@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.7`
+**Release:** `7.1.0.8`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.7`
+**Code baseline:** RTIS MegaVPN `7.1.0.8`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,14 +23,13 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.7` continues the production-hardening line after the firewall,
+`7.1.0.8` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
-documentation-gate and VLESS provisioning-sync releases. This release makes
-traffic-accounting retention visible to operators by exposing cutoff, expired
-backlog and prune-budget state in the overview API and UI while keeping the
-next development path focused on live-node validation, measured cardinality and
-long-term storage decisions. The codebase already has a working control-plane
-foundation:
+documentation-gate and VLESS provisioning-sync releases. This release improves
+traffic-accounting audit handoff by adding operator-facing export filters and
+recent-row preview in the UI while keeping the next development path focused on
+live-node validation, measured cardinality and long-term storage decisions. The
+codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
@@ -388,32 +387,30 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Release 7.1.0.7 Closure
+## 18. Release 7.1.0.8 Closure
 
-The goal of `7.1.0.7` is to make audited traffic-accounting retention behavior
-visible without expanding the privacy boundary. The platform still stores
-aggregate byte counters, not payloads, URLs, DNS queries or per-destination
-browsing history.
+The goal of `7.1.0.8` is to make audited traffic-accounting export workflows
+usable from the operator UI without expanding the privacy boundary. The
+platform still stores aggregate byte counters, not payloads, URLs, DNS queries
+or per-destination browsing history.
 
 Closed in this release:
 
-- Traffic-accounting overview summary now includes `retention_cutoff`,
-  `expired_sample_count`, `prune_batch_size`, `prune_batches_per_ingest` and
-  `max_prune_per_ingest`.
-- Traffic Accounting UI shows retention cutoff, expired cleanup backlog and
-  bounded prune budget beside existing sample/client/node counters.
-- The store uses one shared retention-cutoff helper for overview, export and
-  prune paths so API behavior stays consistent.
-- Regression tests cover the retention-cutoff helper and prune-budget
-  calculation.
-- Summary card text wrapping was hardened so long cutoff values cannot expand
-  the layout.
+- Traffic Accounting UI now includes export filters for `from`, `to`,
+  `protocol`, `client_id`, `node_id` and `limit`.
+- Recent-row preview uses the same operator-selected filters before CSV export.
+- Export filter state is session-scoped so navigation does not silently reset
+  the operator's audit handoff context.
+- Regression tests cover export filter request parsing, inverted date ranges
+  and CSV header uniqueness.
+- The export filter form uses compact desktop layout and falls back to the
+  existing one-column responsive form behavior on small screens.
 - Web asset cache keys, release banners and release review artifacts were
-  advanced to `7.1.0.7`.
+  advanced to `7.1.0.8`.
 
-The ingest/export contracts, agent runtime collector behavior and database
-schema did not change. The read-only overview response gained operational
-retention metadata under the existing `traffic.read` permission.
+The API contract, agent runtime collector behavior and database schema did not
+change. The UI now uses the existing read-only export filters under the
+existing `traffic.read` permission.
 
 ## 19. Immediate Next Actions
 

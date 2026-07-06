@@ -2,7 +2,7 @@
   'use strict';
 
   function createTrafficPage(ctx = {}) {
-      const {
+    const {
       state,
       setTitle,
       el,
@@ -52,8 +52,161 @@
         </div>`;
     }
 
-    function exportCSVURL() {
-      return apiURL('/api/v1/traffic/accounting/export?limit=10000');
+    function trafficExportFilters() {
+      const source = state.trafficExportFilters && typeof state.trafficExportFilters === 'object'
+        ? state.trafficExportFilters
+        : {};
+      return {
+        limit: String(source.limit || '10000'),
+        from: String(source.from || ''),
+        to: String(source.to || ''),
+        protocol: String(source.protocol || ''),
+        client_id: String(source.client_id || ''),
+        node_id: String(source.node_id || ''),
+      };
+    }
+
+    function saveTrafficExportFilters(filters) {
+      state.trafficExportFilters = trafficExportFiltersFromObject(filters);
+      try {
+        sessionStorage.setItem('megavpn.trafficExportFilters', JSON.stringify(state.trafficExportFilters));
+      } catch (_) {}
+    }
+
+    function trafficExportFiltersFromObject(source = {}) {
+      const limit = Number(source.limit || 10000);
+      return {
+        limit: String(Number.isFinite(limit) && limit > 0 ? Math.min(Math.trunc(limit), 50000) : 10000),
+        from: String(source.from || '').trim(),
+        to: String(source.to || '').trim(),
+        protocol: String(source.protocol || '').trim(),
+        client_id: String(source.client_id || '').trim(),
+        node_id: String(source.node_id || '').trim(),
+      };
+    }
+
+    function trafficExportFiltersFromForm(form) {
+      const data = new FormData(form);
+      return trafficExportFiltersFromObject({
+        limit: data.get('limit'),
+        from: data.get('from'),
+        to: data.get('to'),
+        protocol: data.get('protocol'),
+        client_id: data.get('client_id'),
+        node_id: data.get('node_id'),
+      });
+    }
+
+    function exportCSVURL(filters = trafficExportFilters()) {
+      const params = new URLSearchParams();
+      params.set('limit', filters.limit || '10000');
+      for (const key of ['from', 'to', 'protocol', 'client_id', 'node_id']) {
+        const value = String(filters[key] || '').trim();
+        if (value) params.set(key, value);
+      }
+      return apiURL(`/api/v1/traffic/accounting/export?${params.toString()}`);
+    }
+
+    function optionList(items, valueKey, labelFn, selected) {
+      const seen = new Set();
+      return items.map((item) => {
+        const value = String(item?.[valueKey] || '').trim();
+        if (!value || seen.has(value)) return '';
+        seen.add(value);
+        const label = labelFn(item);
+        return `<option value="${escapeHTML(value)}"${selected === value ? ' selected' : ''}>${escapeHTML(label)}</option>`;
+      }).join('');
+    }
+
+    function protocolOptions(samples, selected) {
+      const base = ['vless', 'xray', 'wireguard', 'openvpn', 'shadowsocks', 'ipsec', 'l2tp'];
+      const observed = samples.map((sample) => String(sample.protocol || '').trim()).filter(Boolean);
+      return Array.from(new Set([...base, ...observed])).sort()
+        .map((value) => `<option value="${escapeHTML(value)}"${selected === value ? ' selected' : ''}>${escapeHTML(value)}</option>`)
+        .join('');
+    }
+
+    function dateStart(value) {
+      if (!value) return 0;
+      const ms = Date.parse(`${value}T00:00:00Z`);
+      return Number.isFinite(ms) ? ms : 0;
+    }
+
+    function dateEnd(value) {
+      if (!value) return 0;
+      const ms = Date.parse(`${value}T23:59:59Z`);
+      return Number.isFinite(ms) ? ms : 0;
+    }
+
+    function filterSamples(samples, filters) {
+      const from = dateStart(filters.from);
+      const to = dateEnd(filters.to);
+      return samples.filter((sample) => {
+        if (filters.protocol && String(sample.protocol || '').trim() !== filters.protocol) return false;
+        if (filters.client_id && String(sample.client_account_id || '').trim() !== filters.client_id) return false;
+        if (filters.node_id && String(sample.node_id || '').trim() !== filters.node_id) return false;
+        const bucketStart = Date.parse(sample.bucket_start || '');
+        const bucketEnd = Date.parse(sample.bucket_end || '');
+        if (from && Number.isFinite(bucketEnd) && bucketEnd < from) return false;
+        if (to && Number.isFinite(bucketStart) && bucketStart > to) return false;
+        return true;
+      });
+    }
+
+    function renderExportFilters(filters, samples) {
+      const nodes = Array.isArray(state.nodes) ? state.nodes : [];
+      const clients = Array.isArray(state.clients) ? state.clients : [];
+      return `
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Audit export filters</h2>
+              <p>Use the same filters for recent-row preview and CSV export. The export is still capped and retention-scoped on the server.</p>
+            </div>
+            <div class="table-tools">
+              <span class="tag">${escapeHTML(String(filterSamples(samples, filters).length))} recent matches</span>
+            </div>
+          </div>
+          <form id="trafficExportFilterForm" class="form-grid traffic-export-filter-form">
+            <div class="field">
+              <label>From</label>
+              <input name="from" type="date" value="${escapeHTML(filters.from)}" />
+            </div>
+            <div class="field">
+              <label>To</label>
+              <input name="to" type="date" value="${escapeHTML(filters.to)}" />
+            </div>
+            <div class="field">
+              <label>Protocol</label>
+              <select name="protocol">
+                <option value="">Any protocol</option>
+                ${protocolOptions(samples, filters.protocol)}
+              </select>
+            </div>
+            <div class="field">
+              <label>Client</label>
+              <select name="client_id">
+                <option value="">Any client</option>
+                ${optionList(clients, 'id', (client) => client.username || client.email || client.id, filters.client_id)}
+              </select>
+            </div>
+            <div class="field">
+              <label>Node</label>
+              <select name="node_id">
+                <option value="">Any node</option>
+                ${optionList(nodes, 'id', (node) => node.name || node.id, filters.node_id)}
+              </select>
+            </div>
+            <div class="field">
+              <label>Limit</label>
+              <input name="limit" type="number" min="1" max="50000" step="1" value="${escapeHTML(filters.limit)}" />
+            </div>
+            <div class="field full inline-actions align-end">
+              <button class="secondary-btn" id="trafficExportResetBtn" type="button">Reset filters</button>
+              <button class="primary-btn" id="trafficExportBtn" type="button">Export CSV</button>
+            </div>
+          </form>
+        </section>`;
     }
 
     function sampleRows(samples) {
@@ -97,6 +250,8 @@
         : { summary: {}, samples: [] };
       const summary = data.summary || {};
       const samples = Array.isArray(data.samples) ? data.samples : [];
+      const filters = trafficExportFilters();
+      const previewSamples = filterSamples(samples, filters);
       const retention = Number(summary.retention_days || 180);
       const pruneBudget = Number(summary.max_prune_per_ingest || 0);
       const pruneBatch = Number(summary.prune_batch_size || 0);
@@ -114,7 +269,7 @@
             </div>
             <div class="table-tools">
               ${statusTag(samples.length ? 'active' : 'planned')}
-              <button class="secondary-btn" id="trafficExportBtn" type="button">Export CSV</button>
+              <span class="tag">${escapeHTML(String(previewSamples.length))} preview rows</span>
             </div>
           </div>
           <div class="pool-summary-grid">
@@ -129,10 +284,11 @@
             ${summaryCard('Sent', bytes(summary.tx_bytes), 'client downlink / egress')}
           </div>
         </section>
+        ${renderExportFilters(filters, samples)}
         <section class="table-card">
           <div class="table-head">
             <h2>Recent traffic samples</h2>
-            <div class="table-tools"><span class="tag">${escapeHTML(String(samples.length))} rows</span></div>
+            <div class="table-tools"><span class="tag">${escapeHTML(String(previewSamples.length))} / ${escapeHTML(String(samples.length))} rows</span></div>
           </div>
           <div class="table-wrap">
             <table>
@@ -148,7 +304,7 @@
                   <th>Bucket</th>
                 </tr>
               </thead>
-              <tbody>${sampleRows(samples)}</tbody>
+              <tbody>${sampleRows(previewSamples)}</tbody>
             </table>
           </div>
         </section>
@@ -169,8 +325,19 @@
             <div class="firewall-flow-step"><strong>4</strong><span>PostgreSQL stores aggregate history</span><small>180-day retention</small></div>
           </div>
         </section>`;
+      const form = document.getElementById('trafficExportFilterForm');
+      form?.addEventListener('change', () => {
+        saveTrafficExportFilters(trafficExportFiltersFromForm(form));
+        render();
+      });
+      document.getElementById('trafficExportResetBtn')?.addEventListener('click', () => {
+        saveTrafficExportFilters({ limit: '10000' });
+        render();
+      });
       document.getElementById('trafficExportBtn')?.addEventListener('click', () => {
-        window.open(exportCSVURL(), '_blank', 'noopener,noreferrer');
+        const current = form ? trafficExportFiltersFromForm(form) : trafficExportFilters();
+        saveTrafficExportFilters(current);
+        window.open(exportCSVURL(current), '_blank', 'noopener,noreferrer');
       });
     }
 
