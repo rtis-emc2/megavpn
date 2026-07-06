@@ -151,10 +151,31 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, filter domain.Tra
 }
 
 func (s *Store) trafficAccountingCollectorStatuses(ctx context.Context, args []any, where []string, filter domain.TrafficAccountingExportFilter, now time.Time) ([]domain.TrafficAccountingCollectorStatus, error) {
+	query, queryArgs := trafficAccountingCollectorStatusQuery(args, where, filter)
+	rows, err := s.db.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.TrafficAccountingCollectorStatus, 0)
+	for rows.Next() {
+		item, err := scanTrafficAccountingCollectorStatus(rows, now)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if out == nil {
+		out = []domain.TrafficAccountingCollectorStatus{}
+	}
+	return out, rows.Err()
+}
+
+func trafficAccountingCollectorStatusQuery(args []any, where []string, filter domain.TrafficAccountingExportFilter) (string, []any) {
 	queryArgs := append([]any{}, args...)
 	expectedWhere := []string{
 		"i.enabled=true",
-		"i.status not in ('deleted','disabled')",
+		"i.status in ('active','degraded')",
 		"sd.code in ('xray-core','wireguard','openvpn')",
 		`(
 			lower(coalesce(r.spec_json->>'traffic_accounting_enabled','')) in ('true','1','yes','on','enabled')
@@ -211,7 +232,7 @@ func (s *Store) trafficAccountingCollectorStatuses(ctx context.Context, args []a
 			count(distinct i.id) as expected_instance_count
 		from instances i
 		join service_definitions sd on sd.id=i.service_definition_id
-		join instance_revisions r on r.id=i.current_revision_id
+		join instance_revisions r on r.id=coalesce(i.last_applied_revision_id, i.current_revision_id)
 		left join nodes n on n.id=i.node_id
 		where ` + strings.Join(expectedWhere, " and ") + `
 		group by i.node_id, n.name, case
@@ -240,23 +261,7 @@ func (s *Store) trafficAccountingCollectorStatuses(ctx context.Context, args []a
 	full join expected e on e.node_id=o.node_id and e.source=o.source and e.protocol=o.protocol
 	order by coalesce(o.last_received_at, to_timestamp(0)) desc, coalesce(o.protocol, e.protocol) asc, coalesce(o.source, e.source) asc
 		limit $` + strconv.Itoa(len(queryArgs))
-	rows, err := s.db.Query(ctx, query, queryArgs...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]domain.TrafficAccountingCollectorStatus, 0)
-	for rows.Next() {
-		item, err := scanTrafficAccountingCollectorStatus(rows, now)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	if out == nil {
-		out = []domain.TrafficAccountingCollectorStatus{}
-	}
-	return out, rows.Err()
+	return query, queryArgs
 }
 
 func (s *Store) TrafficAccountingSamples(ctx context.Context, filter domain.TrafficAccountingExportFilter) ([]domain.TrafficAccountingSample, error) {

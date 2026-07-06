@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.11`
+**Release:** `7.1.0.12`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.11`
+**Code baseline:** RTIS MegaVPN `7.1.0.12`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.11` continues the production-hardening line after the firewall,
+`7.1.0.12` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. This release adds
 expected-vs-observed Traffic Accounting collector coverage on top of the
@@ -387,9 +387,9 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Release 7.1.0.11 Closure
+## 18. Release 7.1.0.12 Closure
 
-The goal of `7.1.0.11` is to make missing expected Traffic Accounting collector
+The goal of `7.1.0.12` is to make missing expected Traffic Accounting collector
 streams visible without expanding the privacy boundary. The platform still
 stores aggregate byte counters, not payloads, URLs, DNS queries or
 per-destination browsing history.
@@ -402,8 +402,8 @@ Closed in this release:
   report timestamp, last bucket timestamp, sample count, client count,
   expected/observed instance counts, missing instance count and aggregate
   byte/flow counters for the selected retained dataset.
-- Expected collector rows are derived from active/enabled managed
-  Xray/WireGuard/OpenVPN instances whose current revision has traffic
+- Expected collector rows are derived from enabled `active`/`degraded` managed
+  Xray/WireGuard/OpenVPN instances whose applied runtime revision has traffic
   accounting enabled, then full-joined with observed retained samples.
 - Traffic Accounting UI now shows expected/observed/missing collector coverage
   alongside overview cards, recent rows and CSV export filters.
@@ -411,11 +411,11 @@ Closed in this release:
   active within the normal reporting window, degraded when late or partially
   observed, missing when no expected stream has reported and inactive when an
   observed stream is silent long enough to require operator validation.
-- Regression tests cover collector freshness and missing-stream classification
-  in addition to the retained-dataset filter and CSV coverage from the previous
-  increment.
+- Regression tests cover collector freshness, missing-stream classification,
+  expected collector SQL lifecycle scope, applied-revision source and
+  placeholder ordering under client/node/protocol filters.
 - Web asset cache keys, release banners and release review artifacts were
-  advanced to `7.1.0.11`.
+  advanced to `7.1.0.12`.
 
 Agent runtime collector behavior, database schema and traffic privacy boundary
 did not change. Because current agents emit accounting rows only when counters

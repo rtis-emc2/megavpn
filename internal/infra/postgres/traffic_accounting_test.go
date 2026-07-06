@@ -109,6 +109,68 @@ func TestTrafficAccountingFilterWhereRejectsInvalidUUIDs(t *testing.T) {
 	}
 }
 
+func TestTrafficAccountingCollectorStatusQueryUsesAppliedActiveManagedInstances(t *testing.T) {
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	query, args := trafficAccountingCollectorStatusQuery([]any{cutoff}, []string{"t.received_at >= $1"}, domain.TrafficAccountingExportFilter{})
+	for _, want := range []string{
+		"i.enabled=true",
+		"i.status in ('active','degraded')",
+		"sd.code in ('xray-core','wireguard','openvpn')",
+		"r.id=coalesce(i.last_applied_revision_id, i.current_revision_id)",
+		"count(distinct i.id) as expected_instance_count",
+		"full join expected",
+		"limit $2",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("collector query missing %q:\n%s", want, query)
+		}
+	}
+	for _, banned := range []string{
+		"i.status not in",
+		"r.id=i.current_revision_id",
+	} {
+		if strings.Contains(query, banned) {
+			t.Fatalf("collector query contains stale predicate %q:\n%s", banned, query)
+		}
+	}
+	if len(args) != 2 || args[0] != cutoff || args[1] != trafficAccountingMaxCollectorRows {
+		t.Fatalf("collector args = %#v, want cutoff and limit", args)
+	}
+}
+
+func TestTrafficAccountingCollectorStatusQueryKeepsExpectedFiltersBounded(t *testing.T) {
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	filter := domain.TrafficAccountingExportFilter{
+		ClientAccountID: "00000000-0000-0000-0000-000000000001",
+		NodeID:          "00000000-0000-0000-0000-000000000002",
+		Protocol:        " WireGuard ",
+	}
+	baseArgs, where, err := trafficAccountingFilterWhere(filter, cutoff)
+	if err != nil {
+		t.Fatalf("build base filter: %v", err)
+	}
+	query, args := trafficAccountingCollectorStatusQuery(baseArgs, where, filter)
+	for _, want := range []string{
+		"t.client_account_id = $2::uuid",
+		"t.node_id = $3::uuid",
+		"t.protocol = $4",
+		"false",
+		"i.node_id = $5::uuid",
+		"end = $6",
+		"limit $7",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("collector filtered query missing %q:\n%s", want, query)
+		}
+	}
+	if len(args) != 7 {
+		t.Fatalf("collector filtered args len = %d, want 7: %#v", len(args), args)
+	}
+	if args[4] != filter.NodeID || args[5] != "wireguard" || args[6] != trafficAccountingMaxCollectorRows {
+		t.Fatalf("collector expected filter args = %#v", args)
+	}
+}
+
 func TestTrafficAccountingCollectorStatusClassifiesFreshness(t *testing.T) {
 	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 	activeAt := now.Add(-trafficAccountingCollectorActiveWindow)
