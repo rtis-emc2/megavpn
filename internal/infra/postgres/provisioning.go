@@ -244,7 +244,8 @@ func xrayServiceAccessUUIDRotationRequested(metadata map[string]any) bool {
 }
 
 func (s *Store) SaveArtifactContent(ctx context.Context, clientID string, serviceAccessID *string, artifactType, filename string, content []byte) (domain.Artifact, error) {
-	if strings.TrimSpace(clientID) == "" {
+	clientID = strings.TrimSpace(clientID)
+	if !safeArtifactPathSegment(clientID) {
 		return domain.Artifact{}, fmt.Errorf("client id is required")
 	}
 	artifactType = strings.TrimSpace(artifactType)
@@ -257,7 +258,12 @@ func (s *Store) SaveArtifactContent(ctx context.Context, clientID string, servic
 	}
 	storageDir := filepath.Join(s.ArtifactRoot(), clientID)
 	if serviceAccessID != nil && strings.TrimSpace(*serviceAccessID) != "" {
-		storageDir = filepath.Join(storageDir, *serviceAccessID)
+		accessID := strings.TrimSpace(*serviceAccessID)
+		if !safeArtifactPathSegment(accessID) {
+			return domain.Artifact{}, fmt.Errorf("service access id is invalid")
+		}
+		storageDir = filepath.Join(storageDir, accessID)
+		serviceAccessID = &accessID
 	}
 	if err := os.MkdirAll(storageDir, 0o755); err != nil {
 		return domain.Artifact{}, err
@@ -343,6 +349,31 @@ func (s *Store) SaveArtifactContent(ctx context.Context, clientID string, servic
 	}
 	_, _ = s.CreateAudit(ctx, "system", "artifact.create", "artifact", &artifact.ID, "artifact generated")
 	return artifact, nil
+}
+
+func safeArtifactPathSegment(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "." || value == ".." {
+		return false
+	}
+	if strings.Contains(value, "/") || strings.Contains(value, "\\") || strings.Contains(value, "..") {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			continue
+		case r >= 'A' && r <= 'Z':
+			continue
+		case r >= '0' && r <= '9':
+			continue
+		case r == '-' || r == '_' || r == '.':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func atomicWriteFile(path string, content []byte, mode os.FileMode) error {

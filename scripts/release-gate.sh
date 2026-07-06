@@ -32,6 +32,7 @@ RUN_RACE="${MEGAVPN_RELEASE_RUN_RACE:-1}"
 RUN_SERVICE_MATRIX="${MEGAVPN_RELEASE_RUN_SERVICE_MATRIX:-0}"
 ALLOW_SKIPS="${MEGAVPN_RELEASE_ALLOW_SKIPS:-0}"
 GOVULNCHECK_VERSION="${MEGAVPN_RELEASE_GOVULNCHECK_VERSION:-v1.5.0}"
+NODE_BIN="${MEGAVPN_RELEASE_NODE_BIN:-node}"
 
 passed=0
 skipped=0
@@ -107,6 +108,14 @@ require_shell_syntax() {
   while IFS= read -r file; do
     bash -n "$file"
   done < <(find scripts -type f -name '*.sh' -print | sort)
+}
+
+require_frontend_js_syntax() {
+  find web/assets -maxdepth 1 -name '*.js' -print0 | xargs -0 -n1 "$NODE_BIN" --check
+}
+
+run_frontend_bootstrap_smoke() {
+  "$NODE_BIN" scripts/frontend-bootstrap-smoke.js
 }
 
 require_binary_version_commands() {
@@ -214,6 +223,13 @@ run_gate "shell-syntax" require_shell_syntax
 run_gate "docs-consistency" require_docs_consistency
 run_gate "control-plane-install-validation" require_control_plane_install_validation
 run_gate "smoke-auth-coverage" require_smoke_auth_coverage
+if command -v "$NODE_BIN" >/dev/null 2>&1; then
+  run_gate "frontend-js-syntax" require_frontend_js_syntax
+  run_gate "frontend-bootstrap-smoke" run_frontend_bootstrap_smoke
+else
+  skip_gate "frontend-js-syntax" "set MEGAVPN_RELEASE_NODE_BIN or install node"
+  skip_gate "frontend-bootstrap-smoke" "set MEGAVPN_RELEASE_NODE_BIN or install node"
+fi
 run_gate "static-security-patterns" require_clean_static_scan
 
 if [[ -n "$RELEASE_DATABASE_DSN" ]]; then

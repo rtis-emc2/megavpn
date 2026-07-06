@@ -1341,7 +1341,7 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 		lines = append(lines,
 			"        grpc_set_header Host $host;",
 			"        grpc_set_header X-Real-IP $remote_addr;",
-			"        grpc_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+			"        grpc_set_header X-Forwarded-For $remote_addr;",
 			"        grpc_set_header X-Forwarded-Proto $scheme;",
 		)
 		if timeout := firstString(spec["grpc_read_timeout"]); timeout != "" {
@@ -1409,7 +1409,7 @@ func appendNginxReverseProxyLocation(lines []string, locationPath, upstreamURL s
 		lines = append(lines,
 			"        proxy_set_header Host $host;",
 			"        proxy_set_header X-Real-IP $remote_addr;",
-			"        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+			"        proxy_set_header X-Forwarded-For $remote_addr;",
 			"        proxy_set_header X-Forwarded-Proto $scheme;",
 		)
 	}
@@ -1444,7 +1444,7 @@ func appendNginxFallbackLocation(lines []string, primaryLocation string, spec ma
 	}
 	lines = append(lines,
 		"        proxy_set_header X-Real-IP $remote_addr;",
-		"        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+		"        proxy_set_header X-Forwarded-For $remote_addr;",
 		"        proxy_set_header X-Forwarded-Proto $scheme;",
 	)
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(fallbackURL)), "https://") {

@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -10,6 +11,18 @@ import (
 
 	"github.com/rtis-emc2/megavpn/internal/agentauth"
 )
+
+type agentAuthTestStore struct {
+	Store
+}
+
+func (agentAuthTestStore) ValidateAgentToken(_ context.Context, nodeID, token string) bool {
+	return nodeID == "node-1" && token == "node-token"
+}
+
+func (agentAuthTestStore) ValidateAgentTokenForJob(_ context.Context, jobID, token string) bool {
+	return jobID == "job-1" && token == "node-token"
+}
 
 func TestAuthorizeAgentBootstrapRequiresConfiguredToken(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/agent/register", nil)
@@ -34,36 +47,27 @@ func TestAuthorizeAgentBootstrapAcceptsBearerOrPayloadToken(t *testing.T) {
 	}
 }
 
-func TestGlobalAgentTokenFallbackRequiresAutoRegisterMode(t *testing.T) {
+func TestGlobalAgentTokenIsNotAcceptedForNodeOrJobAuthorization(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/agent/heartbeat", nil)
 	req.Header.Set("Authorization", "Bearer shared")
 
 	s := &Server{agentToken: "shared"}
 	if s.authorizeAgentNode(req, "node-1") {
-		t.Fatal("global agent token fallback should be disabled without auto-register mode")
+		t.Fatal("global agent token must not authorize node calls")
 	}
 	if s.authorizeAgentJob(req, "job-1") {
-		t.Fatal("global job token fallback should be disabled without auto-register mode")
-	}
-
-	s.allowAutoRegister = true
-	if !s.authorizeAgentNode(req, "node-1") {
-		t.Fatal("global agent token fallback should work in auto-register mode")
-	}
-	if !s.authorizeAgentJob(req, "job-1") {
-		t.Fatal("global job token fallback should work in auto-register mode")
+		t.Fatal("global agent token must not authorize job calls")
 	}
 }
 
 func TestAgentSignatureEnforcement(t *testing.T) {
 	body := []byte(`{"node_id":"node-1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/agent/heartbeat", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer shared")
-	signTestAgentRequest(req, "shared", body)
+	req.Header.Set("Authorization", "Bearer node-token")
+	signTestAgentRequest(req, "node-token", body)
 
 	s := &Server{
-		agentToken:            "shared",
-		allowAutoRegister:     true,
+		store:                 agentAuthTestStore{},
 		agentSignatureEnforce: true,
 		agentSignatureWindow:  time.Minute,
 		agentSignatureReplay:  newAgentSignatureReplayCache(time.Minute),
@@ -79,9 +83,9 @@ func TestAgentSignatureEnforcement(t *testing.T) {
 
 func TestAgentSignatureRejectsUnsignedWhenEnforced(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/agent/jobs/next?node_id=node-1", nil)
-	req.Header.Set("Authorization", "Bearer shared")
+	req.Header.Set("Authorization", "Bearer node-token")
 
-	s := &Server{agentToken: "shared", allowAutoRegister: true, agentSignatureEnforce: true}
+	s := &Server{store: agentAuthTestStore{}, agentSignatureEnforce: true}
 	if s.authorizeAgentNode(req, "node-1") {
 		t.Fatal("unsigned agent request should be rejected when enforcement is enabled")
 	}
@@ -89,16 +93,16 @@ func TestAgentSignatureRejectsUnsignedWhenEnforced(t *testing.T) {
 
 func TestAgentSignatureCompatibilityAllowsUnsignedButRejectsInvalidSigned(t *testing.T) {
 	unsigned := httptest.NewRequest(http.MethodGet, "/agent/jobs/next?node_id=node-1", nil)
-	unsigned.Header.Set("Authorization", "Bearer shared")
-	s := &Server{agentToken: "shared", allowAutoRegister: true}
+	unsigned.Header.Set("Authorization", "Bearer node-token")
+	s := &Server{store: agentAuthTestStore{}}
 	if !s.authorizeAgentNode(unsigned, "node-1") {
 		t.Fatal("unsigned agent request should be allowed before enforcement is enabled")
 	}
 
 	body := []byte(`{"node_id":"node-1"}`)
 	invalid := httptest.NewRequest(http.MethodPost, "/agent/heartbeat", bytes.NewReader([]byte(`{"node_id":"tampered"}`)))
-	invalid.Header.Set("Authorization", "Bearer shared")
-	signTestAgentRequest(invalid, "shared", body)
+	invalid.Header.Set("Authorization", "Bearer node-token")
+	signTestAgentRequest(invalid, "node-token", body)
 	if s.authorizeAgentNode(invalid, "node-1") {
 		t.Fatal("invalid signed agent request should be rejected even before enforcement")
 	}
@@ -106,12 +110,11 @@ func TestAgentSignatureCompatibilityAllowsUnsignedButRejectsInvalidSigned(t *tes
 
 func TestAgentSignatureRejectsReplay(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/agent/jobs/next?node_id=node-1", nil)
-	req.Header.Set("Authorization", "Bearer shared")
-	signTestAgentRequest(req, "shared", nil)
+	req.Header.Set("Authorization", "Bearer node-token")
+	signTestAgentRequest(req, "node-token", nil)
 
 	s := &Server{
-		agentToken:            "shared",
-		allowAutoRegister:     true,
+		store:                 agentAuthTestStore{},
 		agentSignatureEnforce: true,
 		agentSignatureWindow:  time.Minute,
 		agentSignatureReplay:  newAgentSignatureReplayCache(time.Minute),

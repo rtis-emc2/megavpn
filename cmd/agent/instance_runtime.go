@@ -139,6 +139,9 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 			}
 			return status, result
 		}
+		if !isAllowedInstanceUnit(payload, payload.SystemdUnit) {
+			return "failed", map[string]any{"error": "systemd_unit is not allowed for disabled instance apply", "instance_id": payload.InstanceID, "service_code": payload.ServiceCode, "systemd_unit": payload.SystemdUnit}
+		}
 		_, _ = runInstallCommand(ctx, "systemctl", "disable", payload.SystemdUnit)
 	}
 	result["active_state"] = currentUnitState(payload.SystemdUnit)

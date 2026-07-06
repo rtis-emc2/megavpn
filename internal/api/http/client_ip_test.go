@@ -24,8 +24,19 @@ func TestClientIPUsesForwardedForWhenTrusted(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "198.51.100.20, 198.51.100.30")
 
 	s := &Server{trustProxyHeaders: true}
-	if got := s.clientIP(req); got != "198.51.100.20" {
-		t.Fatalf("client ip = %q, want first forwarded ip", got)
+	if got := s.clientIP(req); got != "198.51.100.30" {
+		t.Fatalf("client ip = %q, want last forwarded ip", got)
+	}
+}
+
+func TestClientIPIgnoresSpoofedForwardedForPrefixWhenTrusted(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	req.RemoteAddr = "192.0.2.10:49152"
+	req.Header.Set("X-Forwarded-For", "203.0.113.99, 198.51.100.30")
+
+	s := &Server{trustProxyHeaders: true}
+	if got := s.clientIP(req); got != "198.51.100.30" {
+		t.Fatalf("client ip = %q, want trusted proxy hop", got)
 	}
 }
 
@@ -70,7 +81,7 @@ func TestClientIPFallsBackWhenForwardedForStartsWithInvalidValue(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "not-an-ip, 198.51.100.20")
 
 	s := &Server{trustProxyHeaders: true}
-	if got := s.clientIP(req); got != "192.0.2.10" {
-		t.Fatalf("client ip = %q, want remote addr fallback", got)
+	if got := s.clientIP(req); got != "198.51.100.20" {
+		t.Fatalf("client ip = %q, want last valid forwarded ip", got)
 	}
 }

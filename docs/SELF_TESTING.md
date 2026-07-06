@@ -29,6 +29,7 @@ Local gates:
 - `docs-consistency`
 - `control-plane-install-validation`
 - `frontend-js-syntax`, when `node` is installed
+- `frontend-bootstrap-smoke`, when `node` is installed
 - `static-security-patterns`
 - `smoke-auth-coverage`
 - `migration-sequence`

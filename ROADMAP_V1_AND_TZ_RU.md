@@ -1225,7 +1225,104 @@ counters, `missing` является diagnostic сигналом по retained s
 Существующее permission `traffic.read` защищает overview, collector status и
 CSV export.
 
-## 20. Immediate Next Actions
+## 20. MVP Production Readiness Snapshot
+
+Дата фиксации: 2026-07-07.
+
+Этот раздел является текущим source-of-truth по состоянию MVP перед
+production rollout. Он фиксирует не список желаний, а разницу между уже
+реализованным hardening baseline и тем, что еще должно быть доказано или
+доделано до controlled production MVP.
+
+Важно: security hardening pass от 2026-07-07 внесен в рабочую копию, но на
+момент фиксации этого snapshot еще не закоммичен, не протегирован и не
+запушен. До release promotion эти изменения должны стать отдельным release
+artifact.
+
+### 20.1 Реализовано к MVP baseline
+
+| Блок | Статус | Production смысл |
+| --- | --- | --- |
+| Control Plane API + PostgreSQL | Готово как baseline | API, migrations, jobs, locks, audit, RBAC, sessions, users и доменная модель уже являются рабочей основой MVP. |
+| Agent model | Почти готово | Enrollment, heartbeat, inventory, job polling/result и signed agent messages реализованы. После security pass global bootstrap token больше не авторизует обычные node/job calls. |
+| Service instances | Частично production-ready | Xray/VLESS, Nginx edge, OpenVPN, WireGuard, Shadowsocks, IPsec/L2TP, HTTP Proxy и MTProto есть в catalog/apply paths, но требуют полной smoke matrix на disposable node. |
+| VLESS camouflage | Почти готово | Nginx + Xray WS/gRPC, fallback website, HTTP-to-HTTPS redirect, subscriptions и VLESS groups реализованы. Остается live E2E evidence и config preview/diff. |
+| Backhaul ingress -> egress | Рабочий baseline | Managed links, WireGuard/OpenVPN transports, route projection, cleanup и fail-closed route policy реализованы. Требуется повторная проверка на реальных nodes после security hardening. |
+| Route policy | Базово готово | `fwmark`, nftables, `ip rule`, route table и Xray `sendThrough` работают как desired path. Остались MTU/MSS, conntrack visibility и live validation после reboot/reapply. |
+| Firewall | MVP-база есть | Address lists, rules, policies, default node firewall, nft table ownership, UI и docs реализованы. Нужно упростить operator UX и пройти production rollout evidence. |
+| Traffic accounting | Foundation готов | 180-day retention, signed ingest, aggregates, filters, collector status и expected/observed coverage реализованы. Нужно проверить collectors на живом трафике. |
+| Web UI | Рабочий operator baseline | Основные экраны есть и полезны для эксплуатации, но остаются UX debt: сложные формы, firewall mental model, service-pack clarity и client config lifecycle. |
+| Security | Существенно усилено | Закрыты root-exec через managed units, secret leakage в jobs/logs/API, share-link binding, XFF spoofing, global token fallback и installer temp race. |
+| Documentation | Хорошая база | RU/EN user guide, roadmap, release gates, threat model, firewall/backhaul/traffic docs есть. Нужно обновить docs под последний security pass и MVP checklist. |
+
+### 20.2 Обязательные MVP blockers
+
+До production MVP нельзя считать платформу готовой, пока не закрыты эти
+пункты evidence-driven способом:
+
+1. Зафиксировать security hardening pass отдельным release commit/tag.
+2. Прогнать `scripts/release-gate.sh` без unexplained skips.
+3. Прогнать `go test -race ./...`, `govulncheck ./...` и production build всех
+   binaries: `api`, `worker`, `agent`, `migrate`, `admin`.
+4. Прогнать disposable PostgreSQL migrations и integration suite с
+   `MEGAVPN_TEST_DATABASE_DSN` / `MEGAVPN_RELEASE_DATABASE_DSN`.
+5. Выполнить clean install на свежем Ubuntu host через
+   `scripts/control-plane-install.sh` или документированный manual path.
+6. Проверить production `/api/v1/ready` при `MEGAVPN_PRODUCTION_MODE=true`.
+7. Поднять минимум две disposable nodes: ingress и egress.
+8. Прогнать service smoke matrix:
+   - VLESS Reality;
+   - VLESS WebSocket camouflage + Nginx fallback;
+   - OpenVPN TCP/UDP;
+   - WireGuard;
+   - Shadowsocks;
+   - IPsec/L2TP;
+   - HTTP Proxy;
+   - MTProto;
+   - VLESS through managed backhaul.
+9. Проверить backhaul и route policy live:
+   - `mgbh*` interfaces создаются и удаляются;
+   - nft NAT/routing rules создаются только в managed scope;
+   - `ip rule` и route table совпадают с selected egress;
+   - client traffic реально выходит через egress;
+   - reboot/reapply не ломает state;
+   - cleanup удаляет managed units/configs и не трогает unrelated state.
+10. Проверить traffic accounting на живом трафике: Xray Stats API,
+    WireGuard transfer, OpenVPN status files, attribution к `service_accesses`,
+    retention и collector freshness.
+11. Провести backup/restore drill в отдельную disposable database.
+12. Обновить documentation/security review под фактический MVP candidate.
+
+### 20.3 Не блокирует MVP, но остается v1.0 hardening
+
+| Блок | Причина переноса после MVP |
+| --- | --- |
+| Mandatory mTLS agent transport | HMAC-signed messages уже закрывают критичный baseline; mTLS остается v1.0 identity hardening. |
+| MFA/2FA | Важно для enterprise rollout, но не должно блокировать controlled MVP при ограниченном operator set. |
+| ACME automation | Намеренно paused; MVP может работать на imported/managed certificates. |
+| Full Nginx edge profile catalog | Текущие templates и validation достаточны для MVP, catalog нужен для масштабируемой эксплуатации. |
+| Full OpenAPI/public API и internal agent API contracts | Нужны для v1.0 стабильности и интеграций, но могут идти параллельно после smoke stabilization. |
+| Traffic accounting partitioning/cold archive | Решение зависит от фактической cardinality живого трафика. |
+| Platform settings universal layer | Полезно для архитектурной чистоты, но не критично для первого production candidate. |
+
+### 20.4 MVP execution order
+
+Практический порядок доведения до production candidate:
+
+1. Закоммитить security fixes и оформить release review artifact.
+2. Прогнать local release gate и исправить все fail/skip, которые относятся к
+   MVP evidence.
+3. Прогнать disposable PostgreSQL migration/integration tests.
+4. Выполнить clean install Control Plane на свежем Ubuntu host.
+5. Поднять двухнодовый стенд ingress/egress.
+6. Прогнать VPN/backhaul/route/firewall smoke matrix.
+7. Проверить client provisioning, artifact preview/download, share-link publish
+   и VLESS subscription.
+8. Провести backup/restore drill.
+9. Обновить docs, troubleshooting matrix и security review.
+10. Только после этого помечать релиз как MVP production candidate.
+
+## 21. Immediate Next Actions
 
 1. Проверить traffic accounting на живых nodes: Xray Stats API,
    WireGuard/OpenVPN reconnect/restart, attribution к `service_accesses`,

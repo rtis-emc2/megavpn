@@ -270,7 +270,7 @@ func (s *Server) changePassword(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (s *Server) clientIP(r *nethttp.Request) string {
 	if s.trustProxyHeaders {
-		if host := firstForwardedIP(r.Header.Get("X-Forwarded-For")); host != "" {
+		if host := lastForwardedIP(r.Header.Get("X-Forwarded-For")); host != "" {
 			return host
 		}
 		if host := validIP(r.Header.Get("X-Real-IP")); host != "" {
@@ -288,12 +288,14 @@ func remoteIP(r *nethttp.Request) string {
 	return strings.TrimSpace(r.RemoteAddr)
 }
 
-func firstForwardedIP(header string) string {
+func lastForwardedIP(header string) string {
 	parts := strings.Split(header, ",")
-	if len(parts) == 0 {
-		return ""
+	for i := len(parts) - 1; i >= 0; i-- {
+		if host := validIP(parts[i]); host != "" {
+			return host
+		}
 	}
-	return validIP(parts[0])
+	return ""
 }
 
 func validIP(value string) string {

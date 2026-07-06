@@ -2100,6 +2100,7 @@ func (s *Store) ListJobLogs(ctx context.Context, jobID string, limit int) ([]dom
 			return nil, err
 		}
 		_ = json.Unmarshal(b, &l.Payload)
+		l.Payload = redactSensitiveMapForStorage(l.Payload)
 		out = append(out, l)
 	}
 	return out, rows.Err()
@@ -2186,10 +2187,11 @@ func (s *Store) completeJob(ctx context.Context, idv, owner string, requireLease
 	if result == nil {
 		result = map[string]any{}
 	}
-	b, err := json.Marshal(result)
+	storedResult := redactSensitiveMapForStorage(result)
+	b, err := json.Marshal(storedResult)
 	if err != nil {
-		result = map[string]any{"message": "result marshal failed", "error": err.Error()}
-		b, _ = json.Marshal(result)
+		storedResult = map[string]any{"message": "result marshal failed", "error": err.Error()}
+		b, _ = json.Marshal(storedResult)
 	}
 
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
@@ -2703,7 +2705,7 @@ func (s *Store) AddJobLog(ctx context.Context, jobID, level, msg string, payload
 	if payload == nil {
 		payload = map[string]any{}
 	}
-	b, _ := json.Marshal(payload)
+	b, _ := json.Marshal(redactSensitiveMapForStorage(payload))
 	_, err := s.db.Exec(ctx, `insert into job_logs(id,job_id,level,message,payload_json,created_at) values($1,$2,$3,$4,$5,now())`, id.New(), jobID, level, msg, b)
 	return err
 }
@@ -3397,6 +3399,11 @@ func redactSensitiveValueForStorage(value any) any {
 			out[i] = redactSensitiveValueForStorage(typed[i])
 		}
 		return out
+	case string:
+		if containsSensitiveStorageString(typed) {
+			return "[redacted]"
+		}
+		return typed
 	default:
 		return value
 	}
@@ -3414,22 +3421,50 @@ func isSensitiveStorageKey(key string) bool {
 	if strings.HasSuffix(normalized, "secret_ref_id") {
 		return false
 	}
+	compact := strings.ReplaceAll(normalized, "_", "")
 	switch normalized {
 	case "token", "agent_token", "new_agent_token", "new_agent_token_hash", "enrollment_token",
 		"password", "smtp_password", "private_key", "secret", "psk",
-		"agent_bootstrapenv", "agent_bootstrap_env", "bootstrap_env":
+		"agent_bootstrapenv", "agent_bootstrap_env", "bootstrap_env",
+		"content", "json", "config", "config_json", "config_content", "privatekey", "presharedkey",
+		"reality_private_key", "wireguard_private_key", "openvpn_private_key", "tls_private_key":
+		return true
+	}
+	switch compact {
+	case "privatekey", "presharedkey", "agentbootstrapenv", "bootstrapenv", "configjson", "configcontent":
 		return true
 	}
 	if strings.HasSuffix(normalized, "_token") || strings.HasSuffix(normalized, "_token_hash") {
 		return true
 	}
-	if strings.Contains(normalized, "password") || strings.Contains(normalized, "private_key") {
+	if strings.Contains(normalized, "password") || strings.Contains(normalized, "private_key") || strings.Contains(compact, "privatekey") {
 		return true
 	}
 	if strings.Contains(normalized, "secret") {
 		return true
 	}
 	return false
+}
+
+func containsSensitiveStorageString(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	switch {
+	case strings.Contains(normalized, "-----begin ") && strings.Contains(normalized, " private key-----"):
+		return true
+	case strings.Contains(normalized, "privatekey ="):
+		return true
+	case strings.Contains(normalized, "presharedkey ="):
+		return true
+	case strings.Contains(normalized, "megavpn_agent_enrollment_token="):
+		return true
+	case strings.Contains(normalized, "password:") || strings.Contains(normalized, `"password"`):
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeCapabilityCode(code string) string {

@@ -86,3 +86,35 @@ func TestRedactedBootstrapRunRemovesManualBundleSecret(t *testing.T) {
 		t.Fatalf("secret ref id should remain visible: %#v", got.ResultPayload)
 	}
 }
+
+func TestRedactedJobRemovesRuntimeFileSecrets(t *testing.T) {
+	job := domain.Job{
+		Result: map[string]any{
+			"files": []any{
+				map[string]any{"path": "/etc/wireguard/wg0.conf", "content": "PrivateKey = very-secret"},
+			},
+			"settings": map[string]any{
+				"privateKey":   "xray-reality-secret",
+				"content_hash": "safe-hash",
+				"pem":          "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----",
+			},
+		},
+	}
+
+	got := redactedJob(job)
+	files := got.Result["files"].([]any)
+	file := files[0].(map[string]any)
+	if file["content"] != redactedValue {
+		t.Fatalf("file content was not redacted: %#v", file)
+	}
+	config := got.Result["settings"].(map[string]any)
+	if config["privateKey"] != redactedValue {
+		t.Fatalf("camel-case privateKey was not redacted: %#v", config)
+	}
+	if config["pem"] != redactedValue {
+		t.Fatalf("PEM private key content was not redacted: %#v", config)
+	}
+	if config["content_hash"] != "safe-hash" {
+		t.Fatalf("content_hash should remain visible: %#v", config)
+	}
+}

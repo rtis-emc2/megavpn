@@ -46,7 +46,7 @@
     },
   });
   if (!apiClient) throw new Error('MegaVPNAPIClient is not loaded');
-  const { requestJSON, sendJSON, fetchJSON } = apiClient;
+  const { apiURL, requestJSON, sendJSON, fetchJSON } = apiClient;
 
   const appRuntime = window.MegaVPNAppRuntime?.create?.({ state, responseView });
   if (!appRuntime) throw new Error('MegaVPNAppRuntime is not loaded');

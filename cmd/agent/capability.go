@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -686,9 +687,17 @@ func installXrayCore(ctx context.Context, channel string) map[string]any {
 	if expectedSHA256 == "" {
 		return map[string]any{"ok": false, "message": "xray-core install requires MEGAVPN_XRAY_INSTALL_SCRIPT_SHA256 for pinned supply-chain verification", "steps": steps}
 	}
-	installerPath := "/tmp/megavpn-xray-install-release.sh"
+	installerDir, err := os.MkdirTemp("", "megavpn-xray-install-*")
+	if err != nil {
+		return map[string]any{"ok": false, "message": "xray-core installer workspace creation failed", "error": err.Error(), "steps": steps}
+	}
+	defer os.RemoveAll(installerDir)
+	installerPath := filepath.Join(installerDir, "install-release.sh")
 	if !run("curl", "-fsSL", "https://github.com/XTLS/Xray-install/raw/main/install-release.sh", "-o", installerPath) {
 		return map[string]any{"ok": false, "message": "xray-core install script download failed", "steps": steps}
+	}
+	if err := os.Chmod(installerPath, 0o700); err != nil {
+		return map[string]any{"ok": false, "message": "xray-core install script permission hardening failed", "error": err.Error(), "steps": steps}
 	}
 	if err := verifyFileSHA256(installerPath, expectedSHA256); err != nil {
 		return map[string]any{"ok": false, "message": "xray-core install script checksum verification failed", "error": err.Error(), "steps": steps}

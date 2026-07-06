@@ -332,21 +332,102 @@ func validateManagedDeletePathPolicy(payload instanceJobPayload, rawPath string)
 }
 
 func isAllowedManagedServiceFile(payload instanceJobPayload, content string) bool {
-	if containsShellCommandExecution(content) {
+	if strings.Contains(content, "\x00") || strings.Contains(content, "\\\n") || containsShellCommandExecution(content) {
 		return false
+	}
+	execLines := map[string][]string{}
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, "Exec") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return false
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			return false
+		}
+		execLines[key] = append(execLines[key], value)
 	}
 	switch driver.NormalizeCode(payload.ServiceCode) {
 	case driver.XrayCore, driver.MTProto:
-		return strings.Contains(content, "ExecStart=/usr/bin/env xray run -config ")
+		if !onlyAllowedExecDirectives(execLines, "ExecStart") || len(execLines["ExecStart"]) != 1 {
+			return false
+		}
+		return isAllowedExactExecFields(execLines["ExecStart"][0], []string{"/usr/bin/env", "xray", "run", "-config"}, []string{"/usr/local/etc/xray"})
 	case driver.HTTPProxy:
-		return strings.Contains(content, "ExecStart=/usr/bin/env squid -f ") &&
-			strings.Contains(content, "ExecReload=/usr/bin/env squid -k reconfigure -f ") &&
-			strings.Contains(content, "ExecStop=/usr/bin/env squid -k shutdown -f ")
+		if !onlyAllowedExecDirectives(execLines, "ExecStart", "ExecReload", "ExecStop") {
+			return false
+		}
+		if len(execLines["ExecStart"]) != 1 || len(execLines["ExecReload"]) != 1 || len(execLines["ExecStop"]) != 1 {
+			return false
+		}
+		return isAllowedExactExecFields(execLines["ExecStart"][0], []string{"/usr/bin/env", "squid", "-f"}, []string{"/etc/squid"}, "-N") &&
+			isAllowedExactExecFields(execLines["ExecReload"][0], []string{"/usr/bin/env", "squid", "-k", "reconfigure", "-f"}, []string{"/etc/squid"}) &&
+			isAllowedExactExecFields(execLines["ExecStop"][0], []string{"/usr/bin/env", "squid", "-k", "shutdown", "-f"}, []string{"/etc/squid"})
 	case driver.Shadowsocks:
-		return strings.Contains(content, "ExecStart=/usr/bin/env ss-server -c ")
+		if !onlyAllowedExecDirectives(execLines, "ExecStart") || len(execLines["ExecStart"]) != 1 {
+			return false
+		}
+		return isAllowedExactExecFields(execLines["ExecStart"][0], []string{"/usr/bin/env", "ss-server", "-c"}, []string{"/etc/shadowsocks-libev"})
 	default:
 		return false
 	}
+}
+
+func onlyAllowedExecDirectives(execLines map[string][]string, allowed ...string) bool {
+	allowedSet := map[string]struct{}{}
+	for _, key := range allowed {
+		allowedSet[key] = struct{}{}
+	}
+	for key, values := range execLines {
+		if _, ok := allowedSet[key]; !ok {
+			return false
+		}
+		if len(values) > 1 {
+			return false
+		}
+	}
+	return len(execLines) > 0
+}
+
+func isAllowedExactExecFields(command string, prefix []string, pathRoots []string, suffix ...string) bool {
+	fields := strings.Fields(command)
+	wantLen := len(prefix) + 1 + len(suffix)
+	if len(fields) != wantLen {
+		return false
+	}
+	for i, want := range prefix {
+		if fields[i] != want {
+			return false
+		}
+	}
+	path := cleanAbsPath(strings.Trim(fields[len(prefix)], "'\""))
+	if path == "" || hasUnsafePathToken(path) {
+		return false
+	}
+	rootOK := false
+	for _, root := range pathRoots {
+		if pathWithinRoot(path, root) {
+			rootOK = true
+			break
+		}
+	}
+	if !rootOK {
+		return false
+	}
+	for i, want := range suffix {
+		if fields[len(prefix)+1+i] != want {
+			return false
+		}
+	}
+	return true
 }
 
 func containsShellCommandExecution(content string) bool {

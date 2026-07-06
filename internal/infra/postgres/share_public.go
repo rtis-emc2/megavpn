@@ -28,8 +28,11 @@ func (s *Store) ResolveShareLinkArtifact(ctx context.Context, token string) (dom
 		_, _ = s.db.Exec(ctx, `update share_links set status='expired' where id=$1 and status='active'`, link.ID)
 		return domain.ShareLink{}, domain.Artifact{}, errors.New("share link has expired")
 	}
+	if link.TargetType != "artifact" {
+		return domain.ShareLink{}, domain.Artifact{}, errors.New("share link target is not an artifact")
+	}
 	var artifact domain.Artifact
-	err = s.db.QueryRow(ctx, `select id,client_account_id,service_access_id,artifact_type,storage_path,coalesce(content_hash,''),coalesce(size_bytes,0),status,created_at from artifacts where id=$1`, link.TargetID).
+	err = s.db.QueryRow(ctx, `select id,client_account_id,service_access_id,artifact_type,storage_path,coalesce(content_hash,''),coalesce(size_bytes,0),status,created_at from artifacts where id=$1 and client_account_id=$2 and status='ready'`, link.TargetID, link.ClientAccountID).
 		Scan(&artifact.ID, &artifact.ClientAccountID, &artifact.ServiceAccessID, &artifact.ArtifactType, &artifact.StoragePath, &artifact.ContentHash, &artifact.SizeBytes, &artifact.Status, &artifact.CreatedAt)
 	if err != nil {
 		return domain.ShareLink{}, domain.Artifact{}, err

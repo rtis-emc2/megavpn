@@ -36,6 +36,7 @@ RELEASE_CERTIFICATE_ID="${MEGAVPN_RELEASE_CERTIFICATE_ID:-}"
 RUN_RACE="${MEGAVPN_SELF_TEST_RUN_RACE:-${MEGAVPN_RELEASE_RUN_RACE:-1}}"
 RUN_SERVICE_MATRIX="${MEGAVPN_SELF_TEST_RUN_SERVICE_MATRIX:-${MEGAVPN_RELEASE_RUN_SERVICE_MATRIX:-0}}"
 NGINX_CONFIG="${MEGAVPN_SELF_TEST_NGINX_CONFIG:-}"
+NODE_BIN="${MEGAVPN_SELF_TEST_NODE_BIN:-${MEGAVPN_RELEASE_NODE_BIN:-node}}"
 
 passed=0
 failed=0
@@ -194,13 +195,21 @@ require_control_plane_install_validation() {
 
 require_frontend_js_syntax() {
   local file
-  if ! command -v node >/dev/null 2>&1; then
+  if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
     skip_check "node is unavailable; web/assets/*.js syntax check was not run"
     return 77
   fi
   for file in web/assets/*.js; do
-    node --check "$file"
+    "$NODE_BIN" --check "$file"
   done
+}
+
+require_frontend_bootstrap_smoke() {
+  if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
+    skip_check "node is unavailable; frontend bootstrap smoke was not run"
+    return 77
+  fi
+  "$NODE_BIN" scripts/frontend-bootstrap-smoke.js
 }
 
 require_frontend_asset_manifest() {
@@ -408,6 +417,7 @@ run_check "binary-version-commands" "All operational binaries print version and 
 run_check "shell-syntax" "Shell scripts parse under bash -n" require_shell_syntax
 run_check "control-plane-install-validation" "Control Plane installer validates non-interactive clean-install inputs" require_control_plane_install_validation
 run_check "frontend-js-syntax" "Static Web UI JavaScript parses under node --check" require_frontend_js_syntax
+run_check "frontend-bootstrap-smoke" "Static Web UI assets bootstrap with browser-like runtime dependencies" require_frontend_bootstrap_smoke
 run_check "frontend-asset-manifest" "Static Web UI index references only existing assets" require_frontend_asset_manifest
 run_check "frontend-page-module-exports" "Static Web UI page modules export the create contract expected by app.js" require_frontend_page_module_exports
 run_check "static-security-patterns" "No banned production command patterns are present" require_static_security_patterns

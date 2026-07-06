@@ -732,7 +732,6 @@ func (s *Server) ready(w nethttp.ResponseWriter, r *nethttp.Request) {
 			"version":          s.version,
 			"production_mode":  true,
 			"preflight_status": status,
-			"checks":           checks,
 			"time":             time.Now().UTC().Format(time.RFC3339),
 		})
 		return
@@ -1972,9 +1971,6 @@ func (s *Server) authorizeAgentNode(r *nethttp.Request, nodeID string) bool {
 	if s.store != nil && s.store.ValidateAgentToken(r.Context(), nodeID, tok) {
 		return s.verifyAgentSignature(r, "node:"+strings.TrimSpace(nodeID), tok)
 	}
-	if s.allowAutoRegister && s.agentToken != "" && tok == s.agentToken {
-		return s.verifyAgentSignature(r, "auto-node:"+strings.TrimSpace(nodeID), tok)
-	}
 	return false
 }
 
@@ -1985,9 +1981,6 @@ func (s *Server) authorizeAgentJob(r *nethttp.Request, jobID string) bool {
 	}
 	if s.store != nil && s.store.ValidateAgentTokenForJob(r.Context(), jobID, tok) {
 		return s.verifyAgentSignature(r, "job:"+strings.TrimSpace(jobID), tok)
-	}
-	if s.allowAutoRegister && s.agentToken != "" && tok == s.agentToken {
-		return s.verifyAgentSignature(r, "auto-job:"+strings.TrimSpace(jobID), tok)
 	}
 	return false
 }

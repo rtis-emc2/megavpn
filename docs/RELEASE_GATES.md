@@ -40,6 +40,8 @@ The baseline gate must pass:
   cache keys match the code release.
 - The Control Plane installer accepts non-interactive clean-install inputs in validate-only mode.
 - Smoke scripts that call `/api/v1` support `MEGAVPN_AUTH_TOKEN`.
+- Static Web UI JavaScript passes `node --check` and
+  `scripts/frontend-bootstrap-smoke.js` reaches `__MegaVPNBootReady`.
 - Static production scan finds no `/bin/sh -c`, `StrictHostKeyChecking=accept-new`, curl-to-shell, curl-to-gpg or apt-key trust bootstrap pattern outside tests.
 
 ## 2. Security Gate

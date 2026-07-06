@@ -99,6 +99,11 @@ func redactSensitiveValue(value any) any {
 			out[i] = redactSensitiveValue(typed[i])
 		}
 		return out
+	case string:
+		if containsSensitiveResponseString(typed) {
+			return redactedValue
+		}
+		return typed
 	default:
 		return value
 	}
@@ -116,20 +121,48 @@ func isSensitiveResponseKey(key string) bool {
 	if strings.HasSuffix(normalized, "secret_ref_id") {
 		return false
 	}
+	compact := strings.ReplaceAll(normalized, "_", "")
 	switch normalized {
 	case "token", "agent_token", "new_agent_token", "new_agent_token_hash", "enrollment_token",
 		"password", "smtp_password", "private_key", "secret", "psk",
-		"agent_bootstrapenv", "agent_bootstrap_env", "bootstrap_env":
+		"agent_bootstrapenv", "agent_bootstrap_env", "bootstrap_env",
+		"content", "json", "config", "config_json", "config_content", "privatekey", "presharedkey",
+		"reality_private_key", "wireguard_private_key", "openvpn_private_key", "tls_private_key":
+		return true
+	}
+	switch compact {
+	case "privatekey", "presharedkey", "agentbootstrapenv", "bootstrapenv", "configjson", "configcontent":
 		return true
 	}
 	if strings.HasSuffix(normalized, "_token") || strings.HasSuffix(normalized, "_token_hash") {
 		return true
 	}
-	if strings.Contains(normalized, "password") || strings.Contains(normalized, "private_key") {
+	if strings.Contains(normalized, "password") || strings.Contains(normalized, "private_key") || strings.Contains(compact, "privatekey") {
 		return true
 	}
 	if strings.Contains(normalized, "secret") {
 		return true
 	}
 	return false
+}
+
+func containsSensitiveResponseString(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	switch {
+	case strings.Contains(normalized, "-----begin ") && strings.Contains(normalized, " private key-----"):
+		return true
+	case strings.Contains(normalized, "privatekey ="):
+		return true
+	case strings.Contains(normalized, "presharedkey ="):
+		return true
+	case strings.Contains(normalized, "megavpn_agent_enrollment_token="):
+		return true
+	case strings.Contains(normalized, "password:") || strings.Contains(normalized, `"password"`):
+		return true
+	default:
+		return false
+	}
 }

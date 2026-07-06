@@ -216,6 +216,34 @@ func TestManagedFilePolicyAllowsShadowsocksConfigFlag(t *testing.T) {
 	}
 }
 
+func TestManagedFilePolicyRejectsExtraExecDirective(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{ServiceCode: driver.XrayCore, Slug: "edge", SystemdUnit: "megavpn-xray-edge"}
+	file := managedFileSpec{
+		Path:    "/etc/systemd/system/megavpn-xray-edge.service",
+		Content: "[Service]\nExecStart=/usr/bin/env xray run -config /usr/local/etc/xray/edge.json\nExecStartPre=/usr/bin/id\n",
+		Mode:    "0644",
+	}
+	if err := validateManagedFilePolicy(payload, file); err == nil {
+		t.Fatal("expected additional ExecStartPre directive to be rejected")
+	}
+}
+
+func TestManagedFilePolicyRejectsHTTPProxyUnexpectedExec(t *testing.T) {
+	t.Parallel()
+
+	payload := instanceJobPayload{ServiceCode: driver.HTTPProxy, Slug: "edge", SystemdUnit: "megavpn-http-proxy-edge"}
+	file := managedFileSpec{
+		Path:    "/etc/systemd/system/megavpn-http-proxy-edge.service",
+		Content: "[Service]\nExecStart=/usr/bin/env squid -f /etc/squid/edge.conf -N\nExecReload=/usr/bin/env squid -k reconfigure -f /etc/squid/edge.conf\nExecStop=/usr/bin/env squid -k shutdown -f /etc/squid/edge.conf\nExecStartPost=/usr/bin/id\n",
+		Mode:    "0644",
+	}
+	if err := validateManagedFilePolicy(payload, file); err == nil {
+		t.Fatal("expected additional ExecStartPost directive to be rejected")
+	}
+}
+
 func TestManagedDeletePathPolicyAllowsMalformedGeneratedUnitPath(t *testing.T) {
 	t.Parallel()
 
