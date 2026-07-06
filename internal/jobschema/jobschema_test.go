@@ -447,6 +447,35 @@ func TestNormalizeNodeRoutePolicyApplyAcceptsGoRouteObjects(t *testing.T) {
 	}
 }
 
+func TestNormalizeNodeRoutePolicyCleanupAcceptsOptionalSnapshots(t *testing.T) {
+	payload, err := Normalize("node.route_policy.cleanup", map[string]any{
+		"node_id":        " node-1 ",
+		"output_path":    "/etc/megavpn/client-access-routes.json",
+		"cleanup_reason": "operator_requested",
+		"routes": []map[string]any{
+			{"route_id": "route-1", "status": "active"},
+		},
+		"system_routes": []map[string]any{
+			{"system_route_id": "system-route-1", "status": "active"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := payload["node_id"]; got != "node-1" {
+		t.Fatalf("node_id = %v, want node-1", got)
+	}
+	if routes, ok := payload["routes"].([]any); !ok || len(routes) != 1 {
+		t.Fatalf("routes = %#v, want one normalized route", payload["routes"])
+	}
+	if systemRoutes, ok := payload["system_routes"].([]any); !ok || len(systemRoutes) != 1 {
+		t.Fatalf("system_routes = %#v, want one normalized system route", payload["system_routes"])
+	}
+	if _, err := Normalize("node.route_policy.cleanup", map[string]any{"node_id": "node-1", "routes": []any{"bad"}}); err == nil {
+		t.Fatal("expected non-object cleanup route item to be rejected")
+	}
+}
+
 func TestNormalizeArtifactBuild(t *testing.T) {
 	payload, err := Normalize("artifact.build", map[string]any{
 		"client_id":     " client-1 ",

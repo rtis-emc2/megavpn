@@ -266,3 +266,74 @@ func TestRenderRoutePolicyKernelScriptWithoutRulesStillCleansKernelState(t *test
 		t.Fatalf("empty cleanup should not enable forwarding, got:\n%s", plan.Script)
 	}
 }
+
+func TestRenderRoutePolicyKernelScriptCleansPreviousSnapshotDestinations(t *testing.T) {
+	t.Parallel()
+
+	previous := routePolicyCleanupSnapshot{
+		Routes: []any{
+			map[string]any{
+				"route_id":         "old-route",
+				"status":           "active",
+				"action":           "allow",
+				"destination_type": "cidr",
+				"destination":      "203.0.113.0/24",
+				"source_identity":  map[string]any{"type": "wireguard_ip", "value": "10.66.0.2/32"},
+				"egress":           map[string]any{"status": "candidate", "table": "21001"},
+				"enforcement":      map[string]any{"mode": "l3_l4_candidate"},
+			},
+		},
+		SystemRoutes: []any{
+			map[string]any{
+				"system_route_id": "old-system-route",
+				"status":          "active",
+				"destination":     "0.0.0.0/0",
+				"table":           "21002",
+			},
+		},
+	}
+	plan, err := renderRoutePolicyKernelScript(nil, nil, "rev-clean-old", previous)
+	if err != nil {
+		t.Fatalf("renderRoutePolicyKernelScript returned error: %v", err)
+	}
+	checks := []string{
+		"route_policy_flush_destination '203.0.113.0/24' '21001'",
+		"route_policy_flush_destination '0.0.0.0/0' '21002'",
+	}
+	for _, check := range checks {
+		if !strings.Contains(plan.Script, check) {
+			t.Fatalf("expected stale cleanup %q, got:\n%s", check, plan.Script)
+		}
+	}
+}
+
+func TestRenderRoutePolicyCleanupScript(t *testing.T) {
+	t.Parallel()
+
+	plan := renderRoutePolicyCleanupScript(routePolicyCleanupSnapshot{
+		Routes: []any{
+			map[string]any{
+				"status":           "active",
+				"action":           "allow",
+				"destination_type": "cidr",
+				"destination":      "198.51.100.0/24",
+				"egress":           map[string]any{"status": "candidate", "table": "22001"},
+				"enforcement":      map[string]any{"mode": "l3_l4_candidate"},
+			},
+		},
+	}, "cleanup-rev")
+	checks := []string{
+		"while ip rule delete priority \"$p\" >/dev/null 2>&1; do :; done",
+		"while ip route delete '198.51.100.0/24' table '22001' >/dev/null 2>&1; do :; done",
+		"nft list chain inet megavpn route_policy_prerouting >/dev/null 2>&1 && nft flush chain inet megavpn route_policy_prerouting || true",
+		"nft list chain inet megavpn route_policy_output >/dev/null 2>&1 && nft flush chain inet megavpn route_policy_output || true",
+	}
+	for _, check := range checks {
+		if !strings.Contains(plan.Script, check) {
+			t.Fatalf("expected cleanup script to contain %q, got:\n%s", check, plan.Script)
+		}
+	}
+	if plan.MarkedCount != 1 {
+		t.Fatalf("cleanup target count = %d, want 1", plan.MarkedCount)
+	}
+}

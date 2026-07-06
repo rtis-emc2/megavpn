@@ -366,6 +366,31 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else if ok {
 			normalized["active_system_route_count"] = v
 		}
+	case "node.route_policy.cleanup":
+		nodeID, err := requireString(payload, "node_id")
+		if err != nil {
+			return nil, err
+		}
+		normalized["node_id"] = nodeID
+		trimOptionalStrings(normalized, payload, "revision", "generated_at", "output_path", "cleanup_reason")
+		if rawRoutes, ok := payload["routes"]; ok {
+			routes, err := normalizeObjectArray(rawRoutes, "payload.routes")
+			if err != nil {
+				return nil, err
+			}
+			normalized["routes"] = routes
+		} else {
+			normalized["routes"] = []any{}
+		}
+		if rawRoutes, ok := payload["system_routes"]; ok {
+			routes, err := normalizeObjectArray(rawRoutes, "payload.system_routes")
+			if err != nil {
+				return nil, err
+			}
+			normalized["system_routes"] = routes
+		} else {
+			normalized["system_routes"] = []any{}
+		}
 	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe":
 		nodeID, err := requireString(payload, "node_id")
 		if err != nil {

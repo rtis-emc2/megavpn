@@ -60,6 +60,7 @@ type Store interface {
 	CreateNodeChannelProbeJob(context.Context, string) (domain.Job, error)
 	CreateNodeEmergencyCleanupJob(context.Context, string, bool, string, string) (domain.Job, error)
 	CreateNodeRoutePolicyApplyJob(context.Context, string) (domain.Job, error)
+	CreateNodeRoutePolicyCleanupJob(context.Context, string) (domain.Job, error)
 	PreviewNodeRoutePolicy(context.Context, string) (map[string]any, error)
 	RequeueNodeStuckJob(context.Context, string) (domain.Job, error)
 	ClearNodeStalePendingRotation(context.Context, string) ([]domain.Job, error)
@@ -366,6 +367,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/nodes/{id}/diagnostics/channel-probe", "node.write", s.probeNodeChannel)
 	protected("GET /api/v1/nodes/{id}/routes/preview", "node.read", s.previewNodeRoutePolicy)
 	protected("POST /api/v1/nodes/{id}/routes/apply", "node.write", s.applyNodeRoutePolicy)
+	protected("POST /api/v1/nodes/{id}/routes/cleanup", "node.write", s.cleanupNodeRoutePolicy)
 	protected("POST /api/v1/nodes/{id}/diagnostics/clear-stale-rotation", "node.bootstrap", s.clearNodeStaleRotation)
 	protected("GET /api/v1/nodes/{id}/access-methods", "node.read", s.listNodeAccessMethods)
 	protected("PUT /api/v1/nodes/{id}/access-methods", "node.bootstrap", s.replaceNodeAccessMethods)
@@ -1959,6 +1961,7 @@ func jobTypeMustUseTypedEndpoint(jobType string) bool {
 		"node.backhaul.probe",
 		"node.backhaul.cleanup",
 		"node.route_policy.apply",
+		"node.route_policy.cleanup",
 		"node.firewall.preview",
 		"node.firewall.apply",
 		"node.firewall.observe",
@@ -1993,7 +1996,7 @@ func requiredPermissionForJobType(jobType string) string {
 		return "settings.manage"
 	case "node.bootstrap", "node.agent.rotate_token", "node.emergency_cleanup":
 		return "node.bootstrap"
-	case "node.capability.install", "node.capability.verify", "node.inventory", "node.inventory.sync", "node.services.discover", "node.channel.probe", "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup", "node.route_policy.apply":
+	case "node.capability.install", "node.capability.verify", "node.inventory", "node.inventory.sync", "node.services.discover", "node.channel.probe", "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup", "node.route_policy.apply", "node.route_policy.cleanup":
 		return "node.write"
 	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe":
 		return "firewall.apply"

@@ -1,6 +1,6 @@
 # Следующие шаги
 
-**Релиз:** `7.0.1.31`
+**Релиз:** `7.0.1.32`
 
 Актуальный baseline: [`ROADMAP_V1_AND_TZ_RU.md`](../ROADMAP_V1_AND_TZ_RU.md).
 Английская версия: [`NEXT_STEPS.md`](NEXT_STEPS.md).
@@ -26,6 +26,6 @@
 16. Продолжить agent transport security: принять v1.0 решение по обязательному mTLS поверх уже реализованных HMAC-signed HTTP messages.
 17. Продолжить UI split: следующим отдельным шагом вынести node management workspace/bootstrap diagnostics из `app.js`.
 18. Довести revision flow от текущего `draft/validated/applied/failed` baseline с rollback/diff UX до полного `candidate -> validated -> applied -> rollback` с apply history и безопасным rollback engine.
-19. Продолжить routing hardening после baseline `Inspect route policy` и apply telemetry: добавить rollback/remove stage для retired/disabled route policies, conntrack visibility, MTU/MSS clamp и live telemetry validation на реальных nodes.
+19. Продолжить routing hardening после baseline `Inspect route policy`, apply telemetry и explicit cleanup: conntrack visibility, MTU/MSS clamp и live telemetry validation на реальных nodes.
 20. Довести managed backhaul до полного multi-driver enforcement: controlled Xray TUN activation, strongSwan/IKEv2 activation, OpenVPN certificate-mode P2P и traffic/latency health probes.
 21. После согласования окна обслуживания переписать Git history для удаления sensitive historical commits/tags, force-push текущей ветки и обновить серверные checkout через `MEGAVPN_DEPLOY_ALLOW_HISTORY_REWRITE=1`.

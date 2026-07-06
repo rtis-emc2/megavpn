@@ -1,6 +1,6 @@
 # RBAC Matrix
 
-**Release:** `7.0.1.31`
+**Release:** `7.0.1.32`
 
 ## Seeded Roles
 
@@ -49,7 +49,7 @@ The generic `POST /api/v1/jobs` endpoint is not an operator escape hatch. These 
 | `node.bootstrap` | `node.bootstrap` |
 | `node.agent.rotate_token` | `node.bootstrap` |
 | `node.backhaul.apply` / `probe` / `cleanup` | `node.write` |
-| `node.route_policy.apply` | `node.write` |
+| `node.route_policy.apply` / `cleanup` | `node.write` |
 | `node.capability.install` / `verify` | `node.write` |
 | `instance.apply` / lifecycle actions | `instance.apply` |
 

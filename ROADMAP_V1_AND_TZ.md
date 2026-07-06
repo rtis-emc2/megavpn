@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.31`
+**Release:** `7.0.1.32`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.31`
+**Code baseline:** RTIS MegaVPN `7.0.1.32`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.31` continues the production-hardening line after the firewall,
+`7.0.1.32` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview and documentation-gate releases.
 The codebase already has a working control-plane foundation:
 
@@ -277,25 +277,29 @@ Closed in this release:
 No VPN runtime behavior changed in this release. Database changes are limited to
 additive/idempotent catalog repair migrations.
 
-## 14. Release 7.0.1.31 Closure
+## 14. Release 7.0.1.32 Closure
 
-The goal of `7.0.1.31` is to make route-policy diagnostics and documentation
-release hygiene enforceable.
+The goal of `7.0.1.32` is to complete the first explicit route-policy lifecycle
+loop after preview/apply telemetry: operators can now inspect, sync and clean
+managed route-policy runtime from one node diagnostics surface.
 
 Closed in this release:
 
-- Maintained documentation, roadmap files and production env templates now share
-  the current release baseline.
-- `scripts/docs-consistency.sh` validates required docs, current security review
-  links, Web UI asset cache keys and generic firewall wording.
-- `scripts/release-gate.sh` runs `docs-consistency` as a fail-fast release gate.
-- `scripts/self-test.sh` delegates its documentation gate to the same script.
-- `node.route_policy.apply` job results include route-policy telemetry for
-  `systemctl is-active`, `ip rule show` and managed nftables route-policy
-  chains.
+- Added typed `node.route_policy.cleanup` jobs and
+  `POST /api/v1/nodes/{id}/routes/cleanup`.
+- The agent stops the managed route-policy timer/unit, removes managed
+  route-policy snapshot/script/unit files, deletes reserved `ip rule`
+  priorities and flushes managed nftables route-policy chains.
+- `node.route_policy.apply` now reads the previous on-node snapshot before
+  writing the new one, so retired client/system destinations can be removed
+  even after the control-plane payload no longer contains the old route.
+- The node diagnostics UI exposes `Clean route policy` with explicit
+  confirmation next to `Inspect route policy` and `Sync route policy`.
+- Job schema, typed job authorization tests, agent renderer tests and operator
+  documentation were updated for the cleanup path.
 
-No database migration or route-policy rendering behavior changed in this
-release. The telemetry is read-only evidence collected after managed apply.
+No database migration was required. The cleanup path is scoped to MegaVPN-owned
+route-policy files, nftables chains and reserved policy-rule priorities.
 
 ## 15. Immediate Next Actions
 
@@ -304,8 +308,8 @@ release. The telemetry is read-only evidence collected after managed apply.
 3. Verify runtime artifact upload/fetch/install for Xray and Shadowsocks.
 4. Validate service-pack creation, apply, runtime logs and cleanup on real nodes.
 5. Validate OpenVPN client config generation and customizable templates.
-6. Validate VLESS ingress with managed egress route policy, route-policy preview
-   and route-policy telemetry on real ingress/egress nodes.
+6. Validate VLESS ingress with managed egress route policy, route-policy preview,
+   route-policy telemetry and explicit cleanup on real ingress/egress nodes.
 7. Validate VLESS subscription rotation, public feed import and revocation on a
    real client profile.
 8. Complete topology-map and node-link design before implementing the UI.

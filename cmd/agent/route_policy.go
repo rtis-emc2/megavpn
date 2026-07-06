@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -33,6 +34,7 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 	if !ok {
 		systemRoutes = []any{}
 	}
+	previousSnapshot, previousSnapshotResult := readRoutePolicySnapshot(outputPath)
 	snapshot := cloneRoutePolicyPayload(j.Payload)
 	snapshot["node_id"] = nodeID
 	snapshot["output_path"] = outputPath
@@ -43,7 +45,7 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 	if err := writeManagedFile(managedFileSpec{Path: outputPath, Content: string(b) + "\n", Mode: "0640"}); err != nil {
 		return "failed", map[string]any{"error": err.Error(), "stage": "write_route_policy", "output_path": outputPath}
 	}
-	kernelPlan, err := renderRoutePolicyKernelScript(routes, systemRoutes, stringify(j.Payload["revision"]))
+	kernelPlan, err := renderRoutePolicyKernelScript(routes, systemRoutes, stringify(j.Payload["revision"]), previousSnapshot)
 	if err != nil {
 		return "failed", map[string]any{"error": err.Error(), "stage": "render_route_policy_enforcement", "output_path": outputPath}
 	}
@@ -54,6 +56,7 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		"marked_count":      kernelPlan.MarkedCount,
 		"skipped_count":     kernelPlan.SkippedCount,
 		"skipped_reasons":   kernelPlan.Reasons,
+		"previous_snapshot": previousSnapshotResult,
 	}
 	if strings.TrimSpace(kernelPlan.Script) != "" {
 		if !isSafeRoutePolicyManagedPath(routePolicyScriptPath) || !isSafeRoutePolicyManagedPath(routePolicyUnitPath) || !isSafeRoutePolicyManagedPath(routePolicyTimerPath) {
@@ -146,6 +149,85 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 	}
 }
 
+func (c client) cleanupRoutePolicy(ctx context.Context, j job, st agentState) (string, map[string]any) {
+	nodeID := stringify(j.Payload["node_id"])
+	if nodeID == "" {
+		nodeID = st.NodeID
+	}
+	if st.NodeID != "" && nodeID != "" && nodeID != st.NodeID {
+		return "failed", map[string]any{"error": "route policy cleanup node_id does not match enrolled agent", "payload_node_id": nodeID, "agent_node_id": st.NodeID}
+	}
+	outputPath := stringify(j.Payload["output_path"])
+	if outputPath == "" {
+		outputPath = defaultRoutePolicyPath
+	}
+	if !isSafeRoutePolicyPath(outputPath) {
+		return "failed", map[string]any{"error": "route policy output_path is outside /etc/megavpn", "output_path": outputPath}
+	}
+	payloadSnapshot := routePolicySnapshotFromPayload(j.Payload)
+	fileSnapshot, fileSnapshotResult := readRoutePolicySnapshot(outputPath)
+	combined := routePolicyCleanupSnapshot{
+		Routes:       append(append([]any{}, payloadSnapshot.Routes...), fileSnapshot.Routes...),
+		SystemRoutes: append(append([]any{}, payloadSnapshot.SystemRoutes...), fileSnapshot.SystemRoutes...),
+	}
+	plan := renderRoutePolicyCleanupScript(combined, stringify(j.Payload["revision"]))
+	result := map[string]any{
+		"message":           "route policy cleanup completed",
+		"node_id":           nodeID,
+		"output_path":       outputPath,
+		"unit":              routePolicyUnitName,
+		"timer":             routePolicyTimerName,
+		"script_path":       routePolicyCleanupScriptPath,
+		"cleanup_targets":   plan.MarkedCount,
+		"skipped_count":     plan.SkippedCount,
+		"skipped_reasons":   plan.Reasons,
+		"previous_snapshot": fileSnapshotResult,
+		"telemetry_before":  collectRoutePolicyKernelTelemetry(ctx),
+	}
+	stopCode, stopOut := runInstallCommand(ctx, "systemctl", "disable", "--now", routePolicyTimerName, routePolicyUnitName)
+	result["stop_output"] = truncate(strings.TrimSpace(stopOut), 2000)
+	if stopCode != 0 && !isMissingSystemdUnitOutput(stopOut) {
+		result["stop_warning"] = "route policy unit/timer stop returned non-zero"
+	}
+	if !isSafeRoutePolicyManagedPath(routePolicyCleanupScriptPath) {
+		return "failed", map[string]any{"error": "route policy cleanup script path is not allowed", "stage": "route_policy_cleanup_path"}
+	}
+	if err := writeManagedFile(managedFileSpec{Path: routePolicyCleanupScriptPath, Content: plan.Script, Mode: "0700"}); err != nil {
+		return "failed", map[string]any{"error": err.Error(), "stage": "write_route_policy_cleanup_script", "path": routePolicyCleanupScriptPath}
+	}
+	code, out := runInstallCommand(ctx, routePolicyCleanupScriptPath)
+	result["cleanup_output"] = truncate(strings.TrimSpace(out), 4000)
+	result["cleanup_exit_code"] = code
+	removed := []string{}
+	skipped := []string{}
+	warnings := []string{}
+	for _, path := range []string{outputPath, routePolicyScriptPath, routePolicyCleanupScriptPath, routePolicyUnitPath, routePolicyTimerPath} {
+		wasRemoved, err := removeManagedPath(path, false)
+		if err != nil {
+			warnings = append(warnings, path+": "+err.Error())
+			continue
+		}
+		if wasRemoved {
+			removed = append(removed, path)
+		} else {
+			skipped = append(skipped, path+": not found")
+		}
+	}
+	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+	_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", routePolicyUnitName, routePolicyTimerName)
+	result["removed_paths"] = removed
+	result["skipped_paths"] = skipped
+	if len(warnings) > 0 {
+		result["warnings"] = warnings
+	}
+	result["telemetry_after"] = collectRoutePolicyKernelTelemetry(ctx)
+	if code != 0 {
+		result["error"] = "route policy cleanup script failed"
+		return "failed", result
+	}
+	return "succeeded", result
+}
+
 func collectRoutePolicyKernelTelemetry(ctx context.Context) map[string]any {
 	steps := make([]any, 0, 5)
 	add := func(label, name string, args ...string) {
@@ -165,6 +247,45 @@ func collectRoutePolicyKernelTelemetry(ctx context.Context) map[string]any {
 	return map[string]any{
 		"collected_at": time.Now().UTC().Format(time.RFC3339),
 		"steps":        steps,
+	}
+}
+
+func readRoutePolicySnapshot(path string) (routePolicyCleanupSnapshot, map[string]any) {
+	result := map[string]any{"path": path, "found": false, "loaded": false}
+	if !isSafeRoutePolicyPath(path) {
+		result["error"] = "unsafe route policy snapshot path"
+		return routePolicyCleanupSnapshot{}, result
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return routePolicyCleanupSnapshot{}, result
+		}
+		result["error"] = err.Error()
+		return routePolicyCleanupSnapshot{}, result
+	}
+	result["found"] = true
+	var payload map[string]any
+	if err := json.Unmarshal(b, &payload); err != nil {
+		result["error"] = err.Error()
+		return routePolicyCleanupSnapshot{}, result
+	}
+	snapshot := routePolicySnapshotFromPayload(payload)
+	result["loaded"] = true
+	result["route_count"] = len(snapshot.Routes)
+	result["system_route_count"] = len(snapshot.SystemRoutes)
+	return snapshot, result
+}
+
+func routePolicySnapshotFromPayload(payload map[string]any) routePolicyCleanupSnapshot {
+	if payload == nil {
+		return routePolicyCleanupSnapshot{}
+	}
+	routes, _ := payload["routes"].([]any)
+	systemRoutes, _ := payload["system_routes"].([]any)
+	return routePolicyCleanupSnapshot{
+		Routes:       append([]any{}, routes...),
+		SystemRoutes: append([]any{}, systemRoutes...),
 	}
 }
 

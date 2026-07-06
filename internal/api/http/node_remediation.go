@@ -67,6 +67,19 @@ func (s *Server) applyNodeRoutePolicy(w nethttp.ResponseWriter, r *nethttp.Reque
 	})
 }
 
+func (s *Server) cleanupNodeRoutePolicy(w nethttp.ResponseWriter, r *nethttp.Request) {
+	job, err := s.store.CreateNodeRoutePolicyCleanupJob(r.Context(), idParam(r))
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 202, response{
+		"status":  "queued",
+		"message": "route policy cleanup queued",
+		"job":     redactedJob(job),
+	})
+}
+
 func (s *Server) previewNodeRoutePolicy(w nethttp.ResponseWriter, r *nethttp.Request) {
 	preview, err := s.store.PreviewNodeRoutePolicy(r.Context(), idParam(r))
 	if err != nil {

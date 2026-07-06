@@ -1156,6 +1156,7 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
                   <button class="secondary-btn" id="probeNodeChannelBtn" type="button">Channel probe</button>
                   <button class="secondary-btn" id="inspectRoutePolicyBtn" type="button">Inspect route policy</button>
                   <button class="secondary-btn" id="syncRoutePolicyBtn" type="button">Sync route policy</button>
+                  <button class="danger-btn" id="cleanupRoutePolicyBtn" type="button">Clean route policy</button>
                   <button class="secondary-btn" id="requeueStuckNodeJobBtn" type="button"${canRequeueStuckJob ? '' : ' disabled'}>Requeue stuck job</button>
                   <button class="secondary-btn" id="clearStaleRotationBtn" type="button"${canClearStaleRotation ? '' : ' disabled'}>Clear stale pending rotation</button>
                 </div>
@@ -1287,6 +1288,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       document.getElementById('probeNodeChannelBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'probe'));
       document.getElementById('inspectRoutePolicyBtn').addEventListener('click', () => inspectNodeRoutePolicy(node));
       document.getElementById('syncRoutePolicyBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'routes'));
+      document.getElementById('cleanupRoutePolicyBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'routes_cleanup'));
       document.getElementById('requeueStuckNodeJobBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'requeue'));
       document.getElementById('clearStaleRotationBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'clear_rotation'));
       document.getElementById('nodeMaintenanceToggleBtn').addEventListener('click', () => toggleNodeMaintenance(node));
@@ -1583,6 +1585,12 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
           path: `/api/v1/nodes/${node.id}/routes/apply`,
           flash: 'Route policy snapshot applied.',
         },
+        routes_cleanup: {
+          label: 'route policy cleanup',
+          path: `/api/v1/nodes/${node.id}/routes/cleanup`,
+          flash: 'Route policy cleanup queued.',
+          confirm: `Remove managed route-policy rules and runtime files from ${node.name || node.id}?`,
+        },
         requeue: {
           label: 'stuck job requeue',
           path: `/api/v1/nodes/${node.id}/diagnostics/requeue-stuck-job`,
@@ -1596,6 +1604,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       };
       const cfg = actions[action];
       if (!cfg) return;
+      if (cfg.confirm && !window.confirm(cfg.confirm)) return;
 
       target.innerHTML = `<span class="tag warn">running ${escapeHTML(cfg.label)}</span>`;
       try {

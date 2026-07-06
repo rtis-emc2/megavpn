@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.31`
+**Release:** `7.0.1.32`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -123,6 +123,11 @@ instances keep their own service drivers, client configs and route policies.
   `inet megavpn route_policy_output` / `route_policy_prerouting` chains. Use it
   before SSH inspection when VLESS traffic connects but does not leave through
   the expected egress node.
+- `node.route_policy.cleanup` is the explicit runtime rollback path. It stops
+  the route-policy timer/unit, removes managed snapshot/script/unit files,
+  deletes reserved `ip rule` priorities, flushes the managed nftables chains
+  and also removes stale destination/table entries from the previous on-node
+  route-policy snapshot.
 - Xray/IPsec profiles are not auto-enabled until transport-specific safety gates are implemented.
 
 ## Deployment Model

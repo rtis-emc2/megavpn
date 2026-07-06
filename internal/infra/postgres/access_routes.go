@@ -483,6 +483,34 @@ func (s *Store) CreateNodeRoutePolicyApplyJob(ctx context.Context, nodeID string
 	return j, err
 }
 
+func (s *Store) CreateNodeRoutePolicyCleanupJob(ctx context.Context, nodeID string) (domain.Job, error) {
+	node, err := s.GetNode(ctx, strings.TrimSpace(nodeID))
+	if err != nil {
+		return domain.Job{}, err
+	}
+	if strings.EqualFold(node.Status, "retired") {
+		return domain.Job{}, errors.New("node is retired")
+	}
+	payload, err := s.buildNodeRoutePolicyPayload(ctx, node.ID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	payload["cleanup_reason"] = "operator_requested"
+	payload["enforcement_mode"] = "kernel_policy_cleanup"
+	j, err := s.CreateJob(ctx, domain.Job{
+		Type:      "node.route_policy.cleanup",
+		ScopeType: "node",
+		ScopeID:   &node.ID,
+		NodeID:    &node.ID,
+		Priority:  85,
+		Payload:   payload,
+	})
+	if err == nil {
+		_, _ = s.CreateAudit(ctx, "system", "node.route_policy.cleanup", "node", &node.ID, "node route policy cleanup queued")
+	}
+	return j, err
+}
+
 func (s *Store) PreviewNodeRoutePolicy(ctx context.Context, nodeID string) (map[string]any, error) {
 	node, err := s.GetNode(ctx, strings.TrimSpace(nodeID))
 	if err != nil {

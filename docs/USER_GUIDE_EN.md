@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.31`
+**Release:** `7.0.1.32`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -585,6 +585,12 @@ Where to configure it:
   then sends the marked flow into the selected backhaul route table and `mgbh*`
   interface. The job result includes telemetry for the route-policy unit/timer,
   `ip rule show` and managed nftables chains.
+- `Nodes -> Manage -> Clean route policy`: explicit rollback for managed
+  route-policy runtime. Use it when a node was removed from the ingress path,
+  stale route-policy state is suspected after instance/client deletion, or a
+  previous apply must be cleared before rebuilding. It removes only MegaVPN
+  managed route-policy files, reserved `ip rule` priorities and managed nftables
+  route-policy chains.
 
 Minimal path for “enter through VLESS and exit through another node”:
 
