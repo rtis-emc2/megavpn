@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.4`
+**Release:** `7.1.0.5`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.4`
+**Code baseline:** RTIS MegaVPN `7.1.0.5`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.4` continues the production-hardening line after the firewall,
+`7.1.0.5` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. This release extends
 audited user traffic accounting beyond Xray/VLESS to managed WireGuard and
@@ -387,40 +387,35 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Release 7.1.0.4 Closure
+## 18. Release 7.1.0.5 Closure
 
-The goal of `7.1.0.4` is to extend audited user traffic accounting from
-Xray/VLESS to managed WireGuard and OpenVPN without crossing the privacy
-boundary: the platform stores aggregate byte counters, not payloads, URLs, DNS
-queries or per-destination browsing history.
+The goal of `7.1.0.5` is to make audited traffic-accounting data exportable for
+operator handoff without expanding the privacy boundary. The platform still
+stores aggregate byte counters, not payloads, URLs, DNS queries or
+per-destination browsing history.
 
 Closed in this release:
 
-- The agent collects Xray Stats API, WireGuard `wg show <interface> transfer`
-  and OpenVPN status-file counters as delta buckets.
-- Managed OpenVPN configs render `status-version 2`, a managed `status` path
-  and a managed `ifconfig-pool-persist` path.
-- Managed WireGuard configs render non-secret attribution comments for peer
-  diagnostics.
-- Control Plane ingest maps OpenVPN/WireGuard samples back to
-  `service_accesses` through existing metadata identity.
-- Default service-pack templates enable `traffic_accounting_enabled` for
-  managed OpenVPN/WireGuard, and migration `000015` updates existing default
-  templates.
+- Added `GET /api/v1/traffic/accounting/export` for CSV audit export under the
+  existing `traffic.read` permission.
+- Export filters support `limit`, `from`, `to`, `client_id`, `node_id` and
+  `protocol`, with server-side caps and retention cutoff enforcement.
+- CSV responses use `Cache-Control: no-store` and attachment disposition.
+- Traffic Accounting UI now includes an `Export CSV` action for operator
+  handoff.
+- Regression tests cover export time parsing and CSV row serialization.
 - Web asset cache keys, release banners and release review artifacts were
-  advanced to `7.1.0.4`.
+  advanced to `7.1.0.5`.
 
-No public API contract changed. The database migration only updates default
-service-pack templates. Existing instances must be re-applied after upgrade so
-nodes receive the managed OpenVPN status path and WireGuard attribution
-comments.
+No database migration or agent runtime behavior changed. The public API surface
+adds a read-only export endpoint protected by the existing traffic accounting
+RBAC permission.
 
 ## 19. Immediate Next Actions
 
 1. Validate traffic accounting on live nodes: Xray Stats API,
    WireGuard/OpenVPN reconnect and restart behavior, attribution to
-   `service_accesses`, export audit trail and partitioning/retention under real
-   cardinality.
+   `service_accesses` and partitioning/retention under real cardinality.
 2. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
 3. Run disposable PostgreSQL migrations and integration tests.
 4. Verify runtime artifact upload/fetch/install for Xray and Shadowsocks.

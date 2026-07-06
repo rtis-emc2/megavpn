@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	nethttp "net/http"
 	"os"
@@ -124,6 +126,7 @@ type Store interface {
 	DeleteFirewallRule(context.Context, string, string) (domain.FirewallRule, error)
 	CreateFirewallApplyJob(context.Context, string, string, bool) (domain.Job, error)
 	TrafficAccountingOverview(context.Context, int) (domain.TrafficAccountingOverview, error)
+	TrafficAccountingSamples(context.Context, domain.TrafficAccountingExportFilter) ([]domain.TrafficAccountingSample, error)
 	SubmitAgentTrafficAccountingSamples(context.Context, string, []domain.AgentTrafficAccountingSample) (domain.TrafficAccountingIngestResult, error)
 	ListInstanceRuntimeStates(context.Context) ([]domain.InstanceRuntimeState, error)
 	GetInstanceRuntimeState(context.Context, string) (domain.InstanceRuntimeState, error)
@@ -429,6 +432,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("DELETE /api/v1/firewall/policies/{id}/rules/{rule_id}", "firewall.manage", s.deleteFirewallRule)
 	protected("POST /api/v1/nodes/{id}/firewall/apply", "firewall.apply", s.applyNodeFirewallPolicy)
 	protected("GET /api/v1/traffic/accounting", "traffic.read", s.trafficAccountingOverview)
+	protected("GET /api/v1/traffic/accounting/export", "traffic.read", s.trafficAccountingExport)
 	protected("POST /api/v1/instances", "instance.write", s.createInstance)
 	protected("POST /api/v1/service-packs/{key}/instances", "instance.write", s.createServicePackInstances)
 	protected("GET /api/v1/instances/{id}", "instance.read", s.getInstance)
@@ -782,6 +786,127 @@ func (s *Server) trafficAccountingOverview(w nethttp.ResponseWriter, r *nethttp.
 		x.Samples = []domain.TrafficAccountingSample{}
 	}
 	writeJSON(w, 200, x)
+}
+
+func (s *Server) trafficAccountingExport(w nethttp.ResponseWriter, r *nethttp.Request) {
+	filter, err := trafficAccountingExportFilterFromRequest(r)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	samples, err := s.store.TrafficAccountingSamples(r.Context(), filter)
+	if err != nil {
+		writeErr(w, 500, "traffic accounting export failed")
+		return
+	}
+	filename := "megavpn-traffic-accounting-" + time.Now().UTC().Format("20060102T150405Z") + ".csv"
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.WriteHeader(200)
+	writer := csv.NewWriter(w)
+	if err := writer.Write(trafficAccountingCSVHeader()); err != nil {
+		return
+	}
+	for _, sample := range samples {
+		if err := writer.Write(trafficAccountingCSVRow(sample)); err != nil {
+			return
+		}
+	}
+	writer.Flush()
+}
+
+func trafficAccountingExportFilterFromRequest(r *nethttp.Request) (domain.TrafficAccountingExportFilter, error) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	from, err := parseTrafficAccountingExportTime(q.Get("from"))
+	if err != nil {
+		return domain.TrafficAccountingExportFilter{}, err
+	}
+	to, err := parseTrafficAccountingExportTime(q.Get("to"))
+	if err != nil {
+		return domain.TrafficAccountingExportFilter{}, err
+	}
+	if from != nil && to != nil && to.Before(*from) {
+		return domain.TrafficAccountingExportFilter{}, errors.New("to must be after from")
+	}
+	return domain.TrafficAccountingExportFilter{
+		Limit:           limit,
+		From:            from,
+		To:              to,
+		ClientAccountID: strings.TrimSpace(q.Get("client_id")),
+		NodeID:          strings.TrimSpace(q.Get("node_id")),
+		Protocol:        strings.TrimSpace(q.Get("protocol")),
+	}, nil
+}
+
+func parseTrafficAccountingExportTime(value string) (*time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			utc := parsed.UTC()
+			return &utc, nil
+		}
+	}
+	return nil, errors.New("time filters must use RFC3339 or YYYY-MM-DD")
+}
+
+func trafficAccountingCSVHeader() []string {
+	return []string{
+		"sample_id",
+		"node_id",
+		"node_name",
+		"instance_id",
+		"instance_name",
+		"service_access_id",
+		"client_account_id",
+		"client_username",
+		"source",
+		"protocol",
+		"direction",
+		"bucket_start",
+		"bucket_end",
+		"rx_bytes",
+		"tx_bytes",
+		"rx_packets",
+		"tx_packets",
+		"flow_count",
+		"observed_at",
+		"received_at",
+		"metadata_json",
+	}
+}
+
+func trafficAccountingCSVRow(sample domain.TrafficAccountingSample) []string {
+	metadata, _ := json.Marshal(sample.Metadata)
+	return []string{
+		sample.ID,
+		sample.NodeID,
+		sample.NodeName,
+		sample.InstanceID,
+		sample.InstanceName,
+		sample.ServiceAccessID,
+		sample.ClientAccountID,
+		sample.ClientUsername,
+		sample.Source,
+		sample.Protocol,
+		sample.Direction,
+		sample.BucketStart.UTC().Format(time.RFC3339Nano),
+		sample.BucketEnd.UTC().Format(time.RFC3339Nano),
+		strconv.FormatInt(sample.RxBytes, 10),
+		strconv.FormatInt(sample.TxBytes, 10),
+		strconv.FormatInt(sample.RxPackets, 10),
+		strconv.FormatInt(sample.TxPackets, 10),
+		strconv.FormatInt(sample.FlowCount, 10),
+		sample.ObservedAt.UTC().Format(time.RFC3339Nano),
+		sample.ReceivedAt.UTC().Format(time.RFC3339Nano),
+		string(metadata),
+	}
 }
 
 func (s *Server) listServices(w nethttp.ResponseWriter, r *nethttp.Request) {

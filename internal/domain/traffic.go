@@ -64,6 +64,15 @@ type TrafficAccountingOverview struct {
 	Samples []TrafficAccountingSample `json:"samples"`
 }
 
+type TrafficAccountingExportFilter struct {
+	Limit           int
+	From            *time.Time
+	To              *time.Time
+	ClientAccountID string
+	NodeID          string
+	Protocol        string
+}
+
 type TrafficAccountingIngestResult struct {
 	Status        string   `json:"status"`
 	Accepted      int      `json:"accepted"`

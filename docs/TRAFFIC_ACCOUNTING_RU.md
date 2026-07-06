@@ -1,6 +1,6 @@
 # Учет трафика
 
-**Релиз:** `7.1.0.4`
+**Релиз:** `7.1.0.5`
 
 Учет трафика хранит агрегированные счетчики для операционного аудита,
 capacity planning и диагностики инцидентов. Это не packet capture и не
@@ -47,6 +47,13 @@ Operator read API:
 GET /api/v1/traffic/accounting?limit=250
 ```
 
+Operator CSV export API:
+
+```text
+GET /api/v1/traffic/accounting/export?limit=10000
+GET /api/v1/traffic/accounting/export?from=2026-07-01T00:00:00Z&to=2026-07-06T23:59:59Z&protocol=wireguard
+```
+
 Требуемое permission: `traffic.read`.
 
 Agent ingest API:
@@ -69,6 +76,12 @@ flowchart LR
   D --> E["PostgreSQL aggregate samples"]
   E --> F["Traffic Accounting UI"]
 ```
+
+Traffic Accounting UI дает кнопку `Export CSV` для audit handoff. Export
+read-only, использует тот же permission `traffic.read`, отдает `Cache-Control:
+no-store` и ограничен server-side cap. Export filters поддерживают `limit`,
+`from`, `to`, `client_id`, `node_id` и `protocol`. Time filters принимают
+RFC3339 или `YYYY-MM-DD`.
 
 ## Runtime collectors
 
@@ -118,6 +131,6 @@ Raw operator-supplied OpenVPN configs не меняются автоматиче
 ## Текущее ограничение и следующий этап
 
 Текущие collectors хранят byte aggregates, а не per-destination flow logs.
-Следующий этап разработки - отдельный export/retention workflow для
-долгосрочного audit storage и live-node validation evidence по Xray, WireGuard
-и OpenVPN при reconnect/restart сценариях.
+Следующий этап разработки - partitioned long-term retention и live-node
+validation evidence по Xray, WireGuard и OpenVPN при reconnect/restart
+сценариях.

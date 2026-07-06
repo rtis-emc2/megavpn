@@ -1,6 +1,6 @@
 # Traffic Accounting
 
-**Release:** `7.1.0.4`
+**Release:** `7.1.0.5`
 
 Traffic accounting stores aggregate traffic counters for operational audit,
 capacity planning and incident diagnostics. It is not packet capture and it is
@@ -47,6 +47,13 @@ Operator read API:
 GET /api/v1/traffic/accounting?limit=250
 ```
 
+Operator CSV export API:
+
+```text
+GET /api/v1/traffic/accounting/export?limit=10000
+GET /api/v1/traffic/accounting/export?from=2026-07-01T00:00:00Z&to=2026-07-06T23:59:59Z&protocol=wireguard
+```
+
 Required permission: `traffic.read`.
 
 Agent ingest API:
@@ -69,6 +76,12 @@ flowchart LR
   D --> E["PostgreSQL aggregate samples"]
   E --> F["Traffic Accounting UI"]
 ```
+
+The Traffic Accounting UI provides `Export CSV` for audit handoff. Export is
+read-only, uses the same `traffic.read` permission, sets `Cache-Control:
+no-store` and is capped server-side. Export filters support `limit`, `from`,
+`to`, `client_id`, `node_id` and `protocol`. Time filters accept RFC3339 or
+`YYYY-MM-DD`.
 
 ## Runtime Collectors
 
@@ -117,6 +130,6 @@ explicit `status` directive if accounting is required for a raw config.
 ## Current Limitation And Next Work
 
 The current collectors store byte aggregates, not per-destination flow logs.
-The next development step is a dedicated export/retention workflow for long-term
-audit storage, plus live-node validation evidence across Xray, WireGuard and
-OpenVPN under reconnect/restart scenarios.
+The next development step is partitioned long-term retention and live-node
+validation evidence across Xray, WireGuard and OpenVPN under reconnect/restart
+scenarios.

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 const (
 	trafficAccountingMaxBatch      = 1000
 	trafficAccountingMaxRows       = 1000
+	trafficAccountingMaxExportRows = 50000
 	trafficAccountingMaxBucketSpan = 24 * time.Hour
 )
 
@@ -118,6 +120,88 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, limit int) (domai
 	}
 	if out.Samples == nil {
 		out.Samples = []domain.TrafficAccountingSample{}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) TrafficAccountingSamples(ctx context.Context, filter domain.TrafficAccountingExportFilter) ([]domain.TrafficAccountingSample, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > trafficAccountingMaxExportRows {
+		limit = trafficAccountingMaxExportRows
+	}
+	args := []any{time.Now().UTC().AddDate(0, 0, -domain.TrafficAccountingRetentionDays)}
+	where := []string{"t.received_at >= $1"}
+	if filter.From != nil && !filter.From.IsZero() {
+		args = append(args, filter.From.UTC())
+		where = append(where, fmt.Sprintf("t.bucket_end >= $%d", len(args)))
+	}
+	if filter.To != nil && !filter.To.IsZero() {
+		args = append(args, filter.To.UTC())
+		where = append(where, fmt.Sprintf("t.bucket_start <= $%d", len(args)))
+	}
+	if clientID := strings.TrimSpace(filter.ClientAccountID); clientID != "" {
+		if !trafficAccountingUUIDPattern.MatchString(clientID) {
+			return nil, fmt.Errorf("client_id must be a UUID")
+		}
+		args = append(args, clientID)
+		where = append(where, fmt.Sprintf("t.client_account_id = $%d::uuid", len(args)))
+	}
+	if nodeID := strings.TrimSpace(filter.NodeID); nodeID != "" {
+		if !trafficAccountingUUIDPattern.MatchString(nodeID) {
+			return nil, fmt.Errorf("node_id must be a UUID")
+		}
+		args = append(args, nodeID)
+		where = append(where, fmt.Sprintf("t.node_id = $%d::uuid", len(args)))
+	}
+	if protocol := normalizeTrafficAccountingToken(filter.Protocol, ""); protocol != "" {
+		args = append(args, protocol)
+		where = append(where, fmt.Sprintf("t.protocol = $%d", len(args)))
+	}
+	args = append(args, limit)
+	query := `select
+			t.id::text,
+			t.node_id::text,
+			coalesce(n.name, ''),
+			coalesce(t.instance_id::text, ''),
+			coalesce(i.name, ''),
+			coalesce(t.service_access_id::text, ''),
+			coalesce(t.client_account_id::text, ''),
+			coalesce(c.username, ''),
+			t.source,
+			t.protocol,
+			t.direction,
+			t.bucket_start,
+			t.bucket_end,
+			t.rx_bytes,
+			t.tx_bytes,
+			t.rx_packets,
+			t.tx_packets,
+			t.flow_count,
+			t.metadata_json,
+			t.observed_at,
+			t.received_at
+		from traffic_accounting_samples t
+		left join nodes n on n.id=t.node_id
+		left join instances i on i.id=t.instance_id
+		left join client_accounts c on c.id=t.client_account_id
+		where ` + strings.Join(where, " and ") + `
+		order by t.bucket_end desc, t.received_at desc
+		limit $` + strconv.Itoa(len(args))
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.TrafficAccountingSample, 0)
+	for rows.Next() {
+		item, err := scanTrafficAccountingSample(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if out == nil {
+		out = []domain.TrafficAccountingSample{}
 	}
 	return out, rows.Err()
 }

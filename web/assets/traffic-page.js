@@ -9,6 +9,7 @@
       statusTag,
       escapeHTML,
       formatDate,
+      apiURL,
     } = ctx;
     if (
       !state ||
@@ -16,7 +17,8 @@
       typeof el !== 'function' ||
       typeof statusTag !== 'function' ||
       typeof escapeHTML !== 'function' ||
-      typeof formatDate !== 'function'
+      typeof formatDate !== 'function' ||
+      typeof apiURL !== 'function'
     ) {
       throw new Error('MegaVPNTrafficPage requires page dependencies');
     }
@@ -48,6 +50,10 @@
           <strong>${escapeHTML(String(value))}</strong>
           <small>${escapeHTML(caption)}</small>
         </div>`;
+    }
+
+    function exportCSVURL() {
+      return apiURL('/api/v1/traffic/accounting/export?limit=10000');
     }
 
     function sampleRows(samples) {
@@ -99,7 +105,10 @@
               <h2>Traffic accounting</h2>
               <p>Aggregate client and node counters. The platform stores bytes, packets and flow counts only; URLs, payloads and request bodies are not collected.</p>
             </div>
-            ${statusTag(samples.length ? 'active' : 'planned')}
+            <div class="table-tools">
+              ${statusTag(samples.length ? 'active' : 'planned')}
+              <button class="secondary-btn" id="trafficExportBtn" type="button">Export CSV</button>
+            </div>
           </div>
           <div class="pool-summary-grid">
             ${summaryCard('Retention', `${retention} days`, 'automatic prune window')}
@@ -150,6 +159,9 @@
             <div class="firewall-flow-step"><strong>4</strong><span>PostgreSQL stores aggregate history</span><small>180-day retention</small></div>
           </div>
         </section>`;
+      document.getElementById('trafficExportBtn')?.addEventListener('click', () => {
+        window.open(exportCSVURL(), '_blank', 'noopener,noreferrer');
+      });
     }
 
     return { render };
