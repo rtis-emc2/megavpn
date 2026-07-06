@@ -103,7 +103,7 @@ func (s *Store) clientInboundServiceMetadata(ctx context.Context, instanceID str
 	}, nil
 }
 
-func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, instanceID string, options map[string]any) (map[string]any, error) {
+func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, clientID, instanceID string, options map[string]any) (map[string]any, error) {
 	metadata, err := s.clientInboundServiceMetadata(ctx, instanceID)
 	if err != nil {
 		return nil, err
@@ -121,6 +121,19 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, instanceI
 		return nil, err
 	}
 	applyXrayPublicClientEndpointMetadata(metadata, inbound, spec)
+	forceNewUUID, err := s.serviceAccessForcesNewXrayUUID(ctx, clientID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if !forceNewUUID {
+		reusableUUID, err := s.lookupReusableXrayClientUUID(ctx, clientID, "")
+		if err != nil {
+			return nil, err
+		}
+		if reusableUUID != "" {
+			metadata["xray_uuid"] = reusableUUID
+		}
+	}
 	groups := xrayVLESSGroups(spec)
 	defaultGroup := xrayDefaultVLESSGroupKey(spec, groups)
 	group := normalizeXrayVLESSGroupKey(firstNonEmptyRouteValue(

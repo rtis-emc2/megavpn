@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -127,6 +128,119 @@ func (s *Store) UpdateServiceAccessMetadata(ctx context.Context, accessID string
 	}
 	_, err := s.db.Exec(ctx, `update service_accesses set metadata_json=$2,updated_at=now() where id=$1`, accessID, mustJSON(metadata))
 	return err
+}
+
+func (s *Store) EnsureXrayServiceAccessUUID(ctx context.Context, accessID string) (map[string]any, error) {
+	accessID = strings.TrimSpace(accessID)
+	if accessID == "" {
+		return nil, fmt.Errorf("service access id is required")
+	}
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var clientID string
+	var metadataRaw []byte
+	if err := tx.QueryRow(ctx, `select client_account_id::text,metadata_json from service_accesses where id=$1 for update`, accessID).Scan(&clientID, &metadataRaw); err != nil {
+		return nil, err
+	}
+	metadata := map[string]any{}
+	_ = json.Unmarshal(metadataRaw, &metadata)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+
+	forceNew := xrayServiceAccessUUIDRotationRequested(metadata)
+	uuid := firstNonEmptyRouteValue(stringify(metadata["xray_uuid"]), stringify(metadata["uuid"]))
+	if uuid == "" || forceNew {
+		if !forceNew {
+			reusableUUID, err := lookupReusableXrayClientUUIDTx(ctx, tx, clientID, accessID)
+			if err != nil {
+				return nil, err
+			}
+			uuid = reusableUUID
+		}
+		if uuid == "" {
+			uuid = id.New()
+		}
+		metadata["xray_uuid"] = uuid
+		delete(metadata, "uuid")
+		delete(metadata, "rotate_credentials")
+		delete(metadata, "force_new_xray_uuid")
+		if _, err := tx.Exec(ctx, `update service_accesses set metadata_json=$2,updated_at=now() where id=$1`, accessID, mustJSON(metadata)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return metadata, nil
+}
+
+func (s *Store) serviceAccessForcesNewXrayUUID(ctx context.Context, clientID, instanceID string) (bool, error) {
+	clientID = strings.TrimSpace(clientID)
+	instanceID = strings.TrimSpace(instanceID)
+	if clientID == "" || instanceID == "" {
+		return false, nil
+	}
+	var metadataRaw []byte
+	err := s.db.QueryRow(ctx, `select metadata_json from service_accesses where client_account_id=$1 and instance_id=$2`, clientID, instanceID).Scan(&metadataRaw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	metadata := map[string]any{}
+	_ = json.Unmarshal(metadataRaw, &metadata)
+	return xrayServiceAccessUUIDRotationRequested(metadata), nil
+}
+
+func (s *Store) lookupReusableXrayClientUUID(ctx context.Context, clientID, excludedAccessID string) (string, error) {
+	return lookupReusableXrayClientUUIDTx(ctx, s.db, clientID, excludedAccessID)
+}
+
+type xrayClientUUIDQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func lookupReusableXrayClientUUIDTx(ctx context.Context, q xrayClientUUIDQuerier, clientID, excludedAccessID string) (string, error) {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" {
+		return "", nil
+	}
+	var uuid string
+	err := q.QueryRow(ctx, `select coalesce(nullif(sa.metadata_json->>'xray_uuid',''), nullif(sa.metadata_json->>'uuid',''), '') as client_uuid
+		from service_accesses sa
+		join instances i on i.id=sa.instance_id
+		join service_definitions sd on sd.id=i.service_definition_id
+		where sa.client_account_id=$1
+		  and ($2::uuid is null or sa.id <> $2::uuid)
+		  and sa.status in ('active','pending')
+		  and i.status <> 'deleted'
+		  and sd.code in ('xray-core','xray','xray_core')
+		  and coalesce(nullif(sa.metadata_json->>'xray_uuid',''), nullif(sa.metadata_json->>'uuid',''), '') <> ''
+		  and lower(coalesce(sa.metadata_json->>'rotate_credentials','false')) not in ('true','1','yes','on')
+		  and lower(coalesce(sa.metadata_json->>'force_new_xray_uuid','false')) not in ('true','1','yes','on')
+		order by case sa.status when 'active' then 0 when 'pending' then 1 else 2 end, sa.updated_at desc
+		limit 1`, clientID, nullIfEmpty(strings.TrimSpace(excludedAccessID))).Scan(&uuid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(uuid), nil
+}
+
+func xrayServiceAccessUUIDRotationRequested(metadata map[string]any) bool {
+	if metadata == nil {
+		return false
+	}
+	return truthy(metadata["rotate_credentials"]) || truthy(metadata["force_new_xray_uuid"])
 }
 
 func (s *Store) SaveArtifactContent(ctx context.Context, clientID string, serviceAccessID *string, artifactType, filename string, content []byte) (domain.Artifact, error) {

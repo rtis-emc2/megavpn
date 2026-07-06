@@ -384,7 +384,7 @@ func (s *Store) ensureBaselineClientAccessRoute(ctx context.Context, clientID, a
 	if err != nil {
 		return err
 	}
-	accessMeta, err := s.clientProvisioningServiceMetadata(ctx, instanceID, nil)
+	accessMeta, err := s.clientProvisioningServiceMetadata(ctx, clientID, instanceID, nil)
 	if err != nil {
 		return err
 	}

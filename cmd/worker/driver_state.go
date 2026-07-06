@@ -73,7 +73,15 @@ func ensureXrayInstanceDriverState(ctx context.Context, store *postgres.Store, i
 	for _, access := range accesses {
 		uuid := firstNonEmpty(stringify(access.Access.Metadata["xray_uuid"]), stringify(access.Access.Metadata["uuid"]))
 		if uuid == "" {
-			continue
+			metadata, err := store.EnsureXrayServiceAccessUUID(ctx, access.Access.ID)
+			if err != nil {
+				return err
+			}
+			access.Access.Metadata = metadata
+			uuid = firstNonEmpty(stringify(access.Access.Metadata["xray_uuid"]), stringify(access.Access.Metadata["uuid"]))
+			if uuid == "" {
+				continue
+			}
 		}
 		client := map[string]any{
 			"id":    uuid,

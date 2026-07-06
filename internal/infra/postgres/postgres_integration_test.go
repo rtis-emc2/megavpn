@@ -226,6 +226,108 @@ func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationXrayProvisioningReusesClientUUIDAcrossInstances(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-xray-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.10",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	first, err := store.CreateInstanceDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-xray-primary-" + suffix,
+		Slug:         "it-xray-primary-" + suffix,
+		EndpointHost: "portal1.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("portal1.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create first xray instance: %v", err)
+	}
+	second, err := store.CreateInstanceDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-xray-secondary-" + suffix,
+		Slug:         "it-xray-secondary-" + suffix,
+		EndpointHost: "portal2.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("portal2.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create second xray instance: %v", err)
+	}
+	client, err := store.CreateClient(ctx, domain.Client{
+		Username:    "it-xray-client-" + suffix,
+		DisplayName: "Xray Shared Identity Client",
+		Email:       "it-xray-client-" + suffix + "@example.invalid",
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	if _, err := store.ProvisionClientWithOptions(ctx, client.ID, []string{first.ID}, map[string]map[string]any{
+		first.ID: {"vless_group": "default"},
+	}); err != nil {
+		t.Fatalf("provision first xray access: %v", err)
+	}
+	firstAccess := xrayServiceAccessByInstance(t, ctx, store, client.ID, first.ID)
+	firstMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, firstAccess.ID)
+	if err != nil {
+		t.Fatalf("ensure first xray uuid: %v", err)
+	}
+	firstUUID := firstString(firstMetadata["xray_uuid"])
+	if firstUUID == "" {
+		t.Fatal("first xray uuid must be generated")
+	}
+
+	if _, err := store.ProvisionClientWithOptions(ctx, client.ID, []string{second.ID}, map[string]map[string]any{
+		second.ID: {"vless_group": "default"},
+	}); err != nil {
+		t.Fatalf("provision second xray access: %v", err)
+	}
+	secondAccess := xrayServiceAccessByInstance(t, ctx, store, client.ID, second.ID)
+	secondUUID := firstString(secondAccess.Metadata["xray_uuid"])
+	if secondUUID != firstUUID {
+		t.Fatalf("second xray uuid = %q, want reused client uuid %q", secondUUID, firstUUID)
+	}
+	secondMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, secondAccess.ID)
+	if err != nil {
+		t.Fatalf("ensure second xray uuid: %v", err)
+	}
+	if got := firstString(secondMetadata["xray_uuid"]); got != firstUUID {
+		t.Fatalf("second ensured xray uuid = %q, want %q", got, firstUUID)
+	}
+
+	if _, err := store.RotateServiceAccess(ctx, client.ID, firstAccess.ID, "xray-core"); err != nil {
+		t.Fatalf("rotate first xray uuid: %v", err)
+	}
+	rotatedMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, firstAccess.ID)
+	if err != nil {
+		t.Fatalf("ensure rotated xray uuid: %v", err)
+	}
+	rotatedUUID := firstString(rotatedMetadata["xray_uuid"])
+	if rotatedUUID == "" || rotatedUUID == firstUUID {
+		t.Fatalf("rotated xray uuid = %q, want a new uuid different from %q", rotatedUUID, firstUUID)
+	}
+	if xrayServiceAccessUUIDRotationRequested(rotatedMetadata) {
+		t.Fatalf("rotation marker was not cleared: %#v", rotatedMetadata)
+	}
+}
+
 func TestPostgresIntegrationDefaultFirewallBaseline(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 
@@ -1577,6 +1679,46 @@ func routePolicyPayloadEgress(t *testing.T, route map[string]any) map[string]any
 		t.Fatalf("route egress type = %T, want map[string]any; route=%#v", route["egress"], route)
 	}
 	return egress
+}
+
+func xraySharedClientIdentityTestSpec(host string) map[string]any {
+	return map[string]any{
+		"listen":              "127.0.0.1",
+		"security":            "none",
+		"network":             "ws",
+		"path":                "/assets/test-ws",
+		"public_security":     "tls",
+		"public_network":      "ws",
+		"public_path":         "/assets/test-ws",
+		"public_host_header":  host,
+		"public_port":         443,
+		"default_vless_group": "default",
+		"vless_groups": []any{
+			map[string]any{
+				"key":          "default",
+				"label":        "Default access",
+				"egress_mode":  "default",
+				"outbound_tag": "direct",
+			},
+		},
+		"config_mode": "0640",
+	}
+}
+
+func xrayServiceAccessByInstance(t *testing.T, ctx context.Context, store *Store, clientID, instanceID string) domain.ServiceAccess {
+	t.Helper()
+
+	accesses, err := store.ListServiceAccesses(ctx, clientID)
+	if err != nil {
+		t.Fatalf("list service accesses: %v", err)
+	}
+	for _, access := range accesses {
+		if access.InstanceID == instanceID {
+			return access
+		}
+	}
+	t.Fatalf("service access for instance %s not found: %#v", instanceID, accesses)
+	return domain.ServiceAccess{}
 }
 
 func setupPostgresIntegrationStore(t *testing.T) (*Store, context.Context) {

@@ -1773,7 +1773,7 @@ func (s *Store) ensureClientProvisioningAccesses(ctx context.Context, clientID s
 	}
 	for _, iid := range instanceIDs {
 		var accessID string
-		metadata, err := s.clientProvisioningServiceMetadata(ctx, iid, serviceOptions[iid])
+		metadata, err := s.clientProvisioningServiceMetadata(ctx, clientID, iid, serviceOptions[iid])
 		if err != nil {
 			return nil, err
 		}

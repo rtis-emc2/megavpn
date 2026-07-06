@@ -118,11 +118,11 @@ func handleClientProvisionJob(ctx context.Context, store *postgres.Store, job do
 			}
 			applyTargets[record.Instance.ID] = serviceCode
 		case "xray-core":
-			if xrayUUID := strings.TrimSpace(stringify(record.Access.Metadata["xray_uuid"])); xrayUUID == "" {
-				record.Access.Metadata["xray_uuid"] = id.New()
-			}
-			if updateErr := store.UpdateServiceAccessMetadata(ctx, record.Access.ID, record.Access.Metadata); updateErr != nil {
+			metadata, updateErr := store.EnsureXrayServiceAccessUUID(ctx, record.Access.ID)
+			if updateErr != nil {
 				err = updateErr
+			} else {
+				record.Access.Metadata = metadata
 			}
 			if err == nil {
 				if ensureErr := ensureXrayInstanceDriverState(ctx, store, record.Instance.ID); ensureErr != nil {

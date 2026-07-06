@@ -62,6 +62,7 @@ func (s *Store) RotateServiceAccess(ctx context.Context, clientID, accessID, dri
 		if normalizeInstanceRuntimeCode(serviceCode) != "xray-core" {
 			return domain.Job{}, fmt.Errorf("service access driver mismatch: %s", serviceCode)
 		}
+		access.Metadata["rotate_credentials"] = true
 		delete(access.Metadata, "xray_uuid")
 		delete(access.Metadata, "uuid")
 	case "wireguard":
