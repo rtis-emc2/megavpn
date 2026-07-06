@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.39`
+**Release:** `7.0.1.40`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.39`
+**Code baseline:** RTIS MegaVPN `7.0.1.40`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.39` continues the production-hardening line after the firewall,
+`7.0.1.40` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. The codebase already
 has a working control-plane foundation:
@@ -278,9 +278,9 @@ Closed in this release:
 No VPN runtime behavior changed in this release. Database changes are limited to
 additive/idempotent catalog repair migrations.
 
-## 14. Release 7.0.1.39 Closure
+## 14. Release 7.0.1.40 Closure
 
-The goal of `7.0.1.39` is to close the VLESS remote-egress convergence defect
+The goal of `7.0.1.40` is to close the VLESS remote-egress convergence defect
 found during live ingress diagnostics: Xray could keep an old
 `freedom.sendThrough` address after a standby backhaul transport was promoted,
 while route-policy had already stopped using the stale interface.
@@ -297,8 +297,12 @@ Closed in this release:
   ingress-side address of the selected live backhaul transport.
 - If convergence queues `instance.apply`, route-policy refresh is deferred until
   that apply succeeds, so nft/ip-rule generation uses current Xray metadata.
+- Re-running promote/enable for an already active selected backhaul transport
+  now triggers the same convergence path, giving operators a managed repair
+  action for stale Xray revisions created before this release.
 - Regression coverage now checks default Xray egress refresh and standby
-  OpenVPN promotion after a failed selected WireGuard transport.
+  OpenVPN promotion after a failed selected WireGuard transport, including the
+  idempotent promote repair path.
 
 No database migration is required. The change is a Control Plane desired-state
 convergence fix plus documentation and release evidence.

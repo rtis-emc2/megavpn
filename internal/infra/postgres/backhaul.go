@@ -318,7 +318,14 @@ func (s *Store) SetBackhaulRouteEnabled(ctx context.Context, linkID string, enab
 		return domain.BackhaulLink{}, nil, err
 	}
 	if enabled {
-		if link.Status == "active" || link.Status == "pending_apply" {
+		if link.Status == "active" {
+			jobs, err := s.queueBackhaulRouteRefreshOrXrayConvergence(ctx, link, "system:backhaul-route-enable")
+			if err != nil {
+				return domain.BackhaulLink{}, nil, fmt.Errorf("queue xray convergence or route policy refresh after idempotent backhaul route enable: %w", err)
+			}
+			return link, jobs, nil
+		}
+		if link.Status == "pending_apply" {
 			return link, nil, nil
 		}
 		if link.Status == "deleted" {
@@ -425,7 +432,11 @@ func (s *Store) PromoteBackhaulTransport(ctx context.Context, linkID, transportI
 		selectedID = strings.TrimSpace(*link.SelectedTransportID)
 	}
 	if selectedID == target.ID && link.Status == "active" && link.DesiredDriver == target.Driver {
-		return link, nil, nil
+		jobs, err := s.queueBackhaulRouteRefreshOrXrayConvergence(ctx, link, "system:backhaul-transport-promote")
+		if err != nil {
+			return domain.BackhaulLink{}, nil, fmt.Errorf("queue xray convergence or route policy refresh after idempotent backhaul transport promotion: %w", err)
+		}
+		return link, jobs, nil
 	}
 	if link.Metadata == nil {
 		link.Metadata = map[string]any{}

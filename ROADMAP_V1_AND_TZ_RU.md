@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.39`
+**Релиз:** `7.0.1.40`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.39
+Базовая версия кода: RTIS MegaVPN 7.0.1.40
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1082,9 +1082,9 @@ operator console.
 В релизе не менялся VPN runtime behavior. Database-изменения ограничены
 additive/idempotent catalog repair migrations.
 
-## 15. Release 7.0.1.39 Closure
+## 15. Release 7.0.1.40 Closure
 
-Цель релиза `7.0.1.39`: закрыть дефект convergence для VLESS remote egress,
+Цель релиза `7.0.1.40`: закрыть дефект convergence для VLESS remote egress,
 найденный на live ingress diagnostics. Xray мог сохранить старый
 `freedom.sendThrough` после promote standby backhaul transport, пока
 route-policy уже переставал использовать stale interface.
@@ -1101,8 +1101,12 @@ route-policy уже переставал использовать stale interfac
 - Если convergence ставит `instance.apply`, route-policy refresh откладывается
   до successful apply, чтобы nft/ip-rule generation использовал актуальные Xray
   metadata.
+- Повторный promote/enable уже active selected backhaul transport теперь
+  запускает тот же convergence path, то есть у оператора есть managed repair
+  action для stale Xray revisions, созданных до этого релиза.
 - Regression coverage проверяет default Xray egress refresh и standby OpenVPN
-  promotion после failed selected WireGuard transport.
+  promotion после failed selected WireGuard transport, включая idempotent
+  promote repair path.
 
 Database migration не требуется. Изменение относится к Control Plane
 desired-state convergence, документации и release evidence.

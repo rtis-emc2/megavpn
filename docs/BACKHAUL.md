@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.39`
+**Release:** `7.0.1.40`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -88,6 +88,8 @@ instances keep their own service drivers, client configs and route policies.
     selected live backhaul transport. The subsequent successful Xray apply then
     queues route-policy refresh, preventing route-policy from being built from a
     stale Xray outbound source address.
+    Re-running promote for the already selected active transport is therefore a
+    safe repair action for stale Xray `sendThrough` metadata after an upgrade.
 14. `node.route_policy.apply` installs mark-based policy routing for IPv4 L3/L4
     `allow` candidates and Xray/VLESS system egress routes. For VLESS remote
     egress, the nft output mark is derived from Xray `sendThrough`; `ip rule

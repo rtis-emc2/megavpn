@@ -919,6 +919,32 @@ func TestPostgresIntegrationBackhaulPromoteRefreshesXrayBeforeRoutePolicy(t *tes
 	if got := firstString(outboundSpec["sendThrough"]); got != newSendThrough {
 		t.Fatalf("xray default outbound sendThrough = %q, want %s: %#v", got, newSendThrough, outboundSpec)
 	}
+
+	if err := store.CompleteJob(ctx, jobs[0].ID, "succeeded", map[string]any{"active_state": "active"}); err != nil {
+		t.Fatalf("complete first xray convergence apply: %v", err)
+	}
+	staleSpec := cloneMap(revisions[0].Spec)
+	staleEgress := mapFromAny(staleSpec["xray_egress"])
+	staleEgress["transport_id"] = wireguardTransport.ID
+	staleEgress["driver"] = wireguardTransport.Driver
+	staleEgress["interface"] = wireguardTransport.InterfaceName
+	staleEgress["ingress_address"] = wireguardTransport.IngressAddress
+	staleEgress["send_through"] = oldSendThrough
+	staleSpec["xray_egress"] = staleEgress
+	staleOutbound := mapFromAny(staleSpec["xray_default_outbound"])
+	staleOutbound["sendThrough"] = oldSendThrough
+	staleSpec["xray_default_outbound"] = staleOutbound
+	if _, err := store.ReplaceInstanceSpec(ctx, xray.ID, "test:stale-xray-egress", staleSpec); err != nil {
+		t.Fatalf("restore stale xray egress revision: %v", err)
+	}
+
+	_, refreshJobs, err := store.PromoteBackhaulTransport(ctx, promoted.ID, openVPNTransport.ID)
+	if err != nil {
+		t.Fatalf("idempotent promote should refresh stale xray egress: %v", err)
+	}
+	if len(refreshJobs) != 1 || refreshJobs[0].Type != "instance.apply" || refreshJobs[0].InstanceID == nil || *refreshJobs[0].InstanceID != xray.ID {
+		t.Fatalf("idempotent promotion jobs = %#v, want xray instance apply", refreshJobs)
+	}
 }
 
 func TestPostgresIntegrationBinaryRepositoryTicketLifecycle(t *testing.T) {
