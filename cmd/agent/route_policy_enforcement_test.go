@@ -41,6 +41,7 @@ func TestRenderRoutePolicyKernelScriptWithManagedBackhaul(t *testing.T) {
 	checks := []string{
 		"route_policy_replace_route '203.0.113.0/24' '21001' 70 'mgbh123' '' ''",
 		"nft add rule inet megavpn route_policy_prerouting ip saddr 10.66.0.2/32 ip daddr 203.0.113.0/24 meta mark set 0x4d560001",
+		`comment '"megavpn:route-policy:route-1"'`,
 		"ip rule add fwmark 0x4d560001 table '21001' priority 22000",
 	}
 	for _, check := range checks {
@@ -93,6 +94,7 @@ func TestRenderRoutePolicyKernelScriptWithManagedBackhaulCandidates(t *testing.T
 		"route_policy_replace_route '203.0.113.0/24' '21001' 10 'mgbh-primary' '' '10.240.1.2'",
 		"route_policy_replace_route '203.0.113.0/24' '21001' 100 'mgbh-backup' '' '10.240.2.2'",
 		"nft add rule inet megavpn route_policy_prerouting ip saddr 10.66.0.2/32 ip daddr 203.0.113.0/24 meta mark set 0x4d560001",
+		`comment '"megavpn:route-policy:route-candidates"'`,
 		"ip rule add fwmark 0x4d560001 table '21001' priority 22000",
 	}
 	for _, check := range checks {
@@ -128,8 +130,11 @@ func TestRenderRoutePolicyKernelScriptWithXraySystemRoute(t *testing.T) {
 	}
 	checks := []string{
 		"route_policy_replace_route '0.0.0.0/0' '21001' 70 'mgbh1234567890' '' '10.240.35.246'",
+		"if route_policy_replace_route '0.0.0.0/0' '21001' 70 'mgbh1234567890' '' '10.240.35.246'; then route_policy_rule_ready=1; fi",
 		"nft add rule inet megavpn route_policy_output ip saddr 10.240.35.245/32 ip daddr 0.0.0.0/0 meta mark set 0x4d550001",
+		`comment '"megavpn:route-policy:system:xray-route-1"'`,
 		"ip rule add fwmark 0x4d550001 table '21001' priority 21900",
+		"route policy rule xray-route-1 has no ready managed backhaul candidate",
 	}
 	for _, check := range checks {
 		if !strings.Contains(plan.Script, check) {

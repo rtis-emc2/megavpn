@@ -194,7 +194,7 @@ func renderRoutePolicyKernelScript(routes []any, systemRoutes []any, revision st
 		"  dst=\"$1\"; table=\"$2\"; metric=\"$3\"; dev=\"$4\"; via=\"$5\"; peer=\"$6\"",
 		"  if ! route_policy_candidate_ready \"$dev\" \"$peer\"; then",
 		"    route_policy_delete_route \"$dst\" \"$table\" \"$metric\" \"$dev\" \"$via\"",
-		"    return 0",
+		"    return 1",
 		"  fi",
 		"  if [ -n \"$via\" ]; then",
 		"    ip route replace \"$dst\" via \"$via\" dev \"$dev\" table \"$table\" metric \"$metric\"",
@@ -209,16 +209,12 @@ func renderRoutePolicyKernelScript(routes []any, systemRoutes []any, revision st
 		lines = append(lines, "route_policy_flush_destination "+shellQuote(target.Destination)+" "+shellQuote(target.Table))
 	}
 	for _, rule := range systemRules {
-		lines = append(lines, ipRoutePolicyRouteCommands(rule)...)
 		marked++
-		lines = append(lines, nftRoutePolicyMarkCommand(rule, "route_policy_output"))
-		lines = append(lines, "ip rule add fwmark "+rule.Mark+" table "+shellQuote(rule.Table)+" priority "+strconv.Itoa(rule.Priority))
+		lines = append(lines, routePolicyRuleCommands(rule, "route_policy_output")...)
 	}
 	for _, rule := range rules {
-		lines = append(lines, ipRoutePolicyRouteCommands(rule)...)
 		marked++
-		lines = append(lines, nftRoutePolicyMarkCommand(rule, "route_policy_prerouting"))
-		lines = append(lines, "ip rule add fwmark "+rule.Mark+" table "+shellQuote(rule.Table)+" priority "+strconv.Itoa(rule.Priority))
+		lines = append(lines, routePolicyRuleCommands(rule, "route_policy_prerouting")...)
 	}
 	return routePolicyKernelPlan{
 		Script:          strings.Join(lines, "\n") + "\n",
@@ -645,6 +641,23 @@ func ipRoutePolicyRouteCommands(rule routePolicyKernelRule) []string {
 	return out
 }
 
+func routePolicyRuleCommands(rule routePolicyKernelRule, chain string) []string {
+	lines := []string{"route_policy_rule_ready=0"}
+	for _, command := range ipRoutePolicyRouteCommands(rule) {
+		lines = append(lines, "if "+command+"; then route_policy_rule_ready=1; fi")
+	}
+	lines = append(lines,
+		"if [ \"$route_policy_rule_ready\" -eq 1 ]; then",
+		"  "+nftRoutePolicyMarkCommand(rule, chain),
+		"  ip rule add fwmark "+rule.Mark+" table "+shellQuote(rule.Table)+" priority "+strconv.Itoa(rule.Priority),
+		"else",
+		"  echo "+shellQuote("route policy rule "+first(rule.RouteID, rule.Comment, rule.Mark)+" has no ready managed backhaul candidate")+" >&2",
+		"  exit 1",
+		"fi",
+	)
+	return lines
+}
+
 func nftRoutePolicyMarkCommand(rule routePolicyKernelRule, chain string) string {
 	parts := []string{
 		"nft", "add", "rule", "inet", "megavpn", chain,
@@ -661,7 +674,7 @@ func nftRoutePolicyMarkCommand(rule routePolicyKernelRule, chain string) string 
 	case "icmp":
 		parts = append(parts, "ip", "protocol", "icmp")
 	}
-	parts = append(parts, "meta", "mark", "set", rule.Mark, "comment", shellQuote(rule.Comment))
+	parts = append(parts, "meta", "mark", "set", rule.Mark, "comment", nftStringLiteral(rule.Comment))
 	return strings.Join(parts, " ")
 }
 

@@ -81,14 +81,16 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		kernelResult["timer_output"] = truncate(timerOut, 2000)
 		kernelResult["enforced"] = code == 0 && timerCode == 0
 		if timerCode != 0 {
-			kernelResult["error"] = "route policy refresh timer failed"
+			errText := routePolicyExecutionError("route policy refresh timer failed", timerOut)
+			kernelResult["error"] = errText
 			kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx)
-			return "failed", map[string]any{"error": "route policy refresh timer failed", "kernel": kernelResult}
+			return "failed", map[string]any{"error": errText, "kernel": kernelResult}
 		}
 		if code != 0 {
-			kernelResult["error"] = "route policy kernel enforcement failed"
+			errText := routePolicyExecutionError("route policy kernel enforcement failed", out)
+			kernelResult["error"] = errText
 			kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx)
-			return "failed", map[string]any{"error": "route policy kernel enforcement failed", "kernel": kernelResult}
+			return "failed", map[string]any{"error": errText, "kernel": kernelResult}
 		}
 		kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx)
 	}
@@ -147,6 +149,14 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		"system_route_count":        len(systemRoutes),
 		"active_system_route_count": activeSystemRouteCount,
 	}
+}
+
+func routePolicyExecutionError(prefix, output string) string {
+	detail := firstLine(strings.TrimSpace(output))
+	if detail == "" {
+		return prefix
+	}
+	return prefix + ": " + detail
 }
 
 func (c client) cleanupRoutePolicy(ctx context.Context, j job, st agentState) (string, map[string]any) {

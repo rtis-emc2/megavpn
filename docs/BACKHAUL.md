@@ -1,6 +1,6 @@
 # Managed Backhaul
 
-**Release:** `7.0.1.37`
+**Release:** `7.0.1.38`
 
 Managed backhaul connects an ingress node to an egress node so client access routes can target a remote exit without hardcoding ad-hoc next-hop values in every policy.
 
@@ -184,7 +184,11 @@ Minimum production path for the first ingress/egress pair:
   `ip route show table <backhaul_table>`; the expected path is source match ->
   `meta mark set <mark>` -> `ip rule fwmark <mark>` -> managed `mgbh*`
   interface. If the route is blocked, fix the selected managed backhaul
-  table/interface before re-applying the Xray instance.
+  table/interface before re-applying the Xray instance. If the job error says
+  `has no ready managed backhaul candidate`, the selected transport is not
+  present or not reachable on the ingress node; promote a healthy standby
+  transport or re-apply the selected backhaul, then re-apply the Xray instance
+  so `sendThrough` matches the live `mgbh*` source address.
 - Cleanup failed: link remains `failed`; inspect the cleanup job result. Stale `running` cleanup jobs are recovered automatically after lease expiry, but real failed/cancelled jobs still require operator retry. The agent will not remove paths outside the managed backhaul directory or managed systemd unit prefix.
 - Cleanup succeeded and link disappeared from the active list: expected lifecycle behavior. The link is now `deleted`; use the `Recently Deleted Backhaul` table and Jobs/Audit views for cleanup confirmation.
 - Xray/IPsec selected: config is written and status becomes `materialized`, but it is not enabled automatically; manual transport activation is required until the driver-specific safety gate exists.

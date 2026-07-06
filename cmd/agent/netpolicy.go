@@ -559,7 +559,7 @@ func nftRuleExpression(rule firewallRuleSpec, comment string) string {
 	if rule.Source != "" {
 		parts = append(parts, "ip", "saddr", rule.Source)
 	}
-	parts = append(parts, rule.Protocol, "dport", strconv.Itoa(rule.Port), nftVerdict(rule.Action), "comment", shellQuote(comment))
+	parts = append(parts, rule.Protocol, "dport", strconv.Itoa(rule.Port), nftVerdict(rule.Action), "comment", nftStringLiteral(comment))
 	return strings.Join(parts, " ")
 }
 
@@ -574,7 +574,7 @@ func nftNATRuleExpression(rule natRuleSpec, comment string) string {
 	} else {
 		parts = append(parts, "ip", sourceExpr, rule.Source)
 	}
-	parts = append(parts, "masquerade", "comment", shellQuote(comment))
+	parts = append(parts, "masquerade", "comment", nftStringLiteral(comment))
 	return strings.Join(parts, " ")
 }
 
@@ -697,4 +697,8 @@ func isSafeNetworkToken(value string) bool {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func nftStringLiteral(value string) string {
+	return shellQuote(strconv.Quote(value))
 }

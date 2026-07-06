@@ -46,7 +46,7 @@ func TestRenderNetworkPolicyScript(t *testing.T) {
 	checks := []string{
 		"sysctl -w 'net.ipv4.ip_forward=1'",
 		"nft add table inet megavpn",
-		"nft add rule inet megavpn input udp dport 51820 accept comment 'megavpn:edge-wg:input:udp:51820:allow'",
+		`nft add rule inet megavpn input udp dport 51820 accept comment '"megavpn:edge-wg:input:udp:51820:allow"'`,
 		"ip route replace '10.66.0.0/24' dev 'wg0' table 'main'",
 	}
 	for _, check := range checks {
@@ -87,7 +87,7 @@ func TestRenderNetworkPolicyScriptAddsNATRules(t *testing.T) {
 		"nft list table ip megavpn_nat >/dev/null 2>&1 || nft add table ip megavpn_nat",
 		"nft list chain ip megavpn_nat postrouting >/dev/null 2>&1 || nft add chain ip megavpn_nat postrouting '{ type nat hook postrouting priority srcnat; policy accept; }'",
 		"handles=$(nft -a list chain ip megavpn_nat postrouting 2>/dev/null | awk -v c='megavpn:edge-openvpn:nat:' 'index($0, c) > 0 {print $NF}')",
-		"nft add rule ip megavpn_nat postrouting oifname \"eth0\" ip saddr 10.82.7.0/24 masquerade comment 'megavpn:edge-openvpn:nat:masquerade:10.82.7.0_24:eth0'",
+		`nft add rule ip megavpn_nat postrouting oifname "eth0" ip saddr 10.82.7.0/24 masquerade comment '"megavpn:edge-openvpn:nat:masquerade:10.82.7.0_24:eth0"'`,
 	}
 	for _, check := range checks {
 		if !strings.Contains(script, check) {

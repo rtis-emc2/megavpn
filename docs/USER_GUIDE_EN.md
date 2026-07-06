@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.37`
+**Release:** `7.0.1.38`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -620,7 +620,10 @@ Minimal path for “enter through VLESS and exit through another node”:
    inconclusive, verify on the ingress node with `nft list chain inet megavpn
    route_policy_output`, `nft list chain inet megavpn
    route_policy_prerouting`, `ip rule show` and
-   `ip route show table <backhaul_table>`.
+   `ip route show table <backhaul_table>`. If the job says `has no ready
+   managed backhaul candidate`, promote a healthy standby transport or re-apply
+   the selected backhaul, then re-apply the Xray instance so `sendThrough`
+   points to the live `mgbh*` source address.
 
 See [VLESS access groups](VLESS_GROUPS.md) for the detailed group model,
 runtime behavior and validation rules.

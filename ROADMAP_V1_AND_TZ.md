@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.37`
+**Release:** `7.0.1.38`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.37`
+**Code baseline:** RTIS MegaVPN `7.0.1.38`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.37` continues the production-hardening line after the firewall,
+`7.0.1.38` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. The codebase already
 has a working control-plane foundation:
@@ -278,9 +278,9 @@ Closed in this release:
 No VPN runtime behavior changed in this release. Database changes are limited to
 additive/idempotent catalog repair migrations.
 
-## 14. Release 7.0.1.37 Closure
+## 14. Release 7.0.1.38 Closure
 
-The goal of `7.0.1.37` is to close an operator-facing design defect in the
+The goal of `7.0.1.38` is to close an operator-facing design defect in the
 client provisioning form: primary and secondary form actions rendered as
 over-wide horizontal bars, especially in the full-screen provisioning modal.
 
