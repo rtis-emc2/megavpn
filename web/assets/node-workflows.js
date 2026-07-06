@@ -803,6 +803,77 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
       }
     }
 
+    function openNodeRebootModal(node) {
+      if (!node?.id) return;
+      const confirmationName = String(node.name || node.id || '').trim();
+      openModal(`Reboot node: ${node.name || 'node'}`, 'Agent power operation', `
+        <section class="card">
+          <h2>Schedule node reboot</h2>
+          <p>This queues an agent job that schedules a host reboot after the job result is submitted to the control plane.</p>
+          <div class="code-block">node_id = ${escapeHTML(node.id)}
+name = ${escapeHTML(node.name || 'n/a')}
+address = ${escapeHTML(node.address || 'n/a')}
+agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
+          <div class="form-grid">
+            <div class="field full">
+              <label>Reason</label>
+              <input id="nodeRebootReason" autocomplete="off" spellcheck="false" value="operator requested reboot" />
+            </div>
+            <div class="field full">
+              <label>Type node name to confirm</label>
+              <input id="nodeRebootConfirm" autocomplete="off" spellcheck="false" placeholder="${escapeHTML(confirmationName)}" />
+              <div class="field-hint">Required value: <code>${escapeHTML(confirmationName)}</code></div>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button class="danger-btn" id="confirmNodeRebootBtn" type="button">Reboot now</button>
+            <button class="secondary-btn" id="cancelNodeRebootBtn" type="button">Cancel</button>
+          </div>
+          <div id="nodeRebootResult" class="form-result"></div>
+        </section>`);
+      document.getElementById('confirmNodeRebootBtn')?.addEventListener('click', () => queueNodeReboot(node));
+      document.getElementById('cancelNodeRebootBtn')?.addEventListener('click', closeModal);
+    }
+
+    async function queueNodeReboot(node) {
+      const target = document.getElementById('nodeRebootResult');
+      const button = document.getElementById('confirmNodeRebootBtn');
+      const confirmation = String(document.getElementById('nodeRebootConfirm')?.value || '').trim();
+      const expectedConfirmation = String(node.name || node.id || '').trim();
+      const reason = String(document.getElementById('nodeRebootReason')?.value || '').trim();
+      if (!target) return;
+      if (confirmation !== expectedConfirmation) {
+        target.innerHTML = `<span class="tag danger">type ${escapeHTML(expectedConfirmation)} to confirm</span>`;
+        return;
+      }
+      target.innerHTML = '<span class="tag warn">queueing reboot</span>';
+      if (button) button.disabled = true;
+      try {
+        const job = await sendJSON(`/api/v1/nodes/${node.id}/reboot`, 'POST', { confirmation, reason });
+        target.innerHTML = renderActionResponse(job, 'Node reboot queued');
+        if (job?.id) {
+          await watchJob(job.id, target, 'node reboot');
+        }
+        await refresh();
+      } catch (err) {
+        target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function queueNodeRuntimeReconcile(node, targetID = 'nodeDiagnosticsActionResult') {
+      const target = document.getElementById(targetID);
+      if (!target) return;
+      target.innerHTML = '<span class="tag warn">queueing runtime reconcile</span>';
+      try {
+        const data = await requestJSON(`/api/v1/nodes/${node.id}/diagnostics/reconcile-runtime`, { method: 'POST' });
+        target.innerHTML = renderActionResponse(data, 'Runtime reconcile queued');
+        await reloadNodeControlModal(node.id, 'Runtime reconcile queued for node runtime.');
+      } catch (err) {
+        target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
     function openNodeControlModal(nodeID) {
       closeModal();
       state.nodeManageID = nodeID;
@@ -1060,7 +1131,9 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
                       <button class="operator-action" id="openNodeInstancesBtn" type="button"><strong>Managed instances</strong><span>${escapeHTML(String(managedInstances.length))} workload(s) assigned to this node.</span></button>
                       <button class="operator-action" id="openNodeTerminalBtn" type="button"><strong>SSH terminal</strong><span>${escapeHTML(terminalEndpointLabel(terminalMethod))}</span></button>
                       <button class="operator-action" id="refreshNodeRuntimeBtn" type="button"><strong>Refresh diagnostics</strong><span>Reload current runtime state.</span></button>
+                      <button class="operator-action" id="reconcileNodeRuntimeBtn" type="button"><strong>Runtime reconcile</strong><span>Queue apply jobs for services, routes and firewall state.</span></button>
                       <button class="operator-action" id="nodeMaintenanceToggleBtn" type="button"><strong>${node.status === 'maintenance' ? 'Disable maintenance' : 'Enable maintenance'}</strong><span>Control scheduling state for this node.</span></button>
+                      <button class="operator-action danger-action" id="rebootNodeBtn" type="button"><strong>Reboot node</strong><span>Schedule reboot through the enrolled agent.</span></button>
                       <button class="operator-action danger-action" id="emergencyNodeCleanupBtn" type="button"><strong>Emergency cleanup</strong><span>Remove managed services and optionally remove the agent.</span></button>
                       <button class="operator-action danger-action" id="deleteNodeFromManageBtn" type="button"><strong>Delete node</strong><span>Retire node after instances are moved or removed.</span></button>
                     </div>
@@ -1154,6 +1227,7 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
                   <button class="secondary-btn" id="retryInventorySyncBtn" type="button">Retry inventory sync</button>
                   <button class="secondary-btn" id="retryDiscoverySyncBtn" type="button">Retry discovery sync</button>
                   <button class="secondary-btn" id="probeNodeChannelBtn" type="button">Channel probe</button>
+                  <button class="secondary-btn" id="reconcileRuntimeBtn" type="button">Runtime reconcile</button>
                   <button class="secondary-btn" id="inspectRoutePolicyBtn" type="button">Inspect route policy</button>
                   <button class="secondary-btn" id="syncRoutePolicyBtn" type="button">Sync route policy</button>
                   <button class="danger-btn" id="cleanupRoutePolicyBtn" type="button">Clean route policy</button>
@@ -1286,6 +1360,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       document.getElementById('retryInventorySyncBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'inventory'));
       document.getElementById('retryDiscoverySyncBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'discover'));
       document.getElementById('probeNodeChannelBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'probe'));
+      document.getElementById('reconcileRuntimeBtn').addEventListener('click', () => queueNodeRuntimeReconcile(node, 'nodeDiagnosticsActionResult'));
       document.getElementById('inspectRoutePolicyBtn').addEventListener('click', () => inspectNodeRoutePolicy(node));
       document.getElementById('syncRoutePolicyBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'routes'));
       document.getElementById('cleanupRoutePolicyBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'routes_cleanup'));
@@ -1300,6 +1375,8 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       document.getElementById('rotateAgentTokenBtn').addEventListener('click', () => rotateAgentToken(node));
       document.getElementById('revokeAgentIdentityBtn').addEventListener('click', () => revokeAgentIdentity(node));
       document.getElementById('refreshNodeRuntimeBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Node runtime state refreshed.'));
+      document.getElementById('reconcileNodeRuntimeBtn').addEventListener('click', () => queueNodeRuntimeReconcile(node, 'nodeRuntimeActionResult'));
+      document.getElementById('rebootNodeBtn').addEventListener('click', () => openNodeRebootModal(node));
       document.getElementById('refreshNodeBootstrapBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Bootstrap state refreshed.'));
       document.getElementById('editNodeFromManageBtn').addEventListener('click', () => openEditNodeModal(node.id));
       document.getElementById('openNodeInstancesBtn')?.addEventListener('click', () => switchNodeConsoleTab('instances'));

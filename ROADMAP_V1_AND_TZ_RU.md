@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `7.0.1.40`
+**Релиз:** `7.0.1.41`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 7.0.1.40
+Базовая версия кода: RTIS MegaVPN 7.0.1.41
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -1111,7 +1111,33 @@ route-policy уже переставал использовать stale interfac
 Database migration не требуется. Изменение относится к Control Plane
 desired-state convergence, документации и release evidence.
 
-## 16. Immediate Next Actions
+## 16. Release 7.0.1.41 Closure
+
+Цель релиза `7.0.1.41`: стабилизировать восстановление ноды после
+переустановки агента и перевести reboot/redirect операции в явные managed
+workflows вместо ручных действий на host.
+
+Закрыто в этом релизе:
+
+- После успешного SSH bootstrap/reinstall Control Plane ставит node runtime
+  reconcile: inventory sync, service discovery, apply активных instances,
+  apply managed backhaul, route-policy apply и apply существующей firewall
+  policy.
+- Тот же runtime reconcile доступен оператору из Node diagnostics без повторной
+  переустановки агента.
+- Reboot ноды оформлен как typed privileged job, который выполняется enrolled
+  agent. Агент планирует reboot после отправки результата job в Control Plane,
+  чтобы сохранить auditable success/failure evidence.
+- Nginx generated configs получили явный spec-флаг `http_to_https_redirect` и
+  опциональный redirect `server_name`, включая wildcard DNS names.
+- Agent/worker job whitelists теперь согласованно отправляют route-policy
+  cleanup, firewall jobs, backhaul jobs, emergency cleanup и reboot в node
+  agent.
+
+Database migration не требуется. Это Control Plane, agent и UI hardening release
+с renderer/job-schema regression coverage.
+
+## 17. Immediate Next Actions
 
 1. Прогнать clean-install procedure на свежем Ubuntu host и записать evidence.
 2. Прогнать disposable PostgreSQL migrations и integration tests.

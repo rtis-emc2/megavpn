@@ -234,8 +234,8 @@ func serviceCatalogProfiles() map[string]serviceCatalogProfile {
 			},
 			Presets: []serviceCatalogPreset{
 				{Key: "reverse_proxy", Label: "Reverse Proxy", Description: "Рекомендуемый edge profile для API/UI.", Recommended: true, Draft: map[string]any{"endpoint_port": 8080, "nginx_mode": "reverse_proxy", "nginx_index_files": "index.html index.htm", "config_mode": "0644"}},
-				{Key: "grpc_edge", Label: "Xray gRPC Edge", Description: "TLS edge для backend Xray gRPC. Требует cert/key и grpc upstream.", Draft: map[string]any{"endpoint_port": 443, "nginx_mode": "grpc_proxy", "nginx_location_path": "/vless-grpc", "nginx_upstream_url": "grpc://127.0.0.1:7443", "nginx_tls_enabled": "true", "config_mode": "0644"}},
-				{Key: "ws_edge", Label: "Xray HTTP/WebSocket Edge", Description: "TLS reverse-proxy для backend Xray HTTP/WebSocket transport.", Draft: map[string]any{"endpoint_port": 443, "nginx_mode": "reverse_proxy", "nginx_upstream_url": "http://127.0.0.1:7080", "nginx_tls_enabled": "true", "config_mode": "0644"}},
+				{Key: "grpc_edge", Label: "Xray gRPC Edge", Description: "TLS edge для backend Xray gRPC. Требует cert/key и grpc upstream.", Draft: map[string]any{"endpoint_port": 443, "nginx_mode": "grpc_proxy", "nginx_location_path": "/vless-grpc", "nginx_upstream_url": "grpc://127.0.0.1:7443", "nginx_tls_enabled": "true", "nginx_http_to_https_redirect": "true", "config_mode": "0644"}},
+				{Key: "ws_edge", Label: "Xray HTTP/WebSocket Edge", Description: "TLS reverse-proxy для backend Xray HTTP/WebSocket transport.", Draft: map[string]any{"endpoint_port": 443, "nginx_mode": "reverse_proxy", "nginx_upstream_url": "http://127.0.0.1:7080", "nginx_tls_enabled": "true", "nginx_http_to_https_redirect": "true", "config_mode": "0644"}},
 				{Key: "static_site", Label: "Static Site", Description: "Профиль для статической публикации контента.", Draft: map[string]any{"endpoint_port": 8080, "nginx_mode": "static", "nginx_index_files": "index.html index.htm", "config_mode": "0644"}},
 			},
 		},

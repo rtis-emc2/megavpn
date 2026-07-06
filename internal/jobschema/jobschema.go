@@ -134,6 +134,27 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		includeAgent, _ := normalized["include_agent"].(bool)
 		cleanupScope = normalizeNodeCleanupScope(cleanupScope, includeAgent)
 		normalized["cleanup_scope"] = cleanupScope
+	case "node.reboot":
+		nodeID, err := requireString(payload, "node_id")
+		if err != nil {
+			return nil, err
+		}
+		confirmation, err := requireString(payload, "confirmation")
+		if err != nil {
+			return nil, err
+		}
+		normalized["node_id"] = nodeID
+		normalized["confirmation"] = confirmation
+		if nodeName, err := optionalString(payload, "node_name"); err != nil {
+			return nil, err
+		} else if nodeName != "" {
+			normalized["node_name"] = nodeName
+		}
+		if reason, err := optionalString(payload, "reason"); err != nil {
+			return nil, err
+		} else if reason != "" {
+			normalized["reason"] = reason
+		}
 	case "node.backhaul.apply":
 		nodeID, err := requireString(payload, "node_id")
 		if err != nil {

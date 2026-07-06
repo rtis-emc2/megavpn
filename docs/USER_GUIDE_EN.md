@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.0.1.40`
+**Release:** `7.0.1.41`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -303,6 +303,12 @@ Production defaults:
 `ssh_host_key_sha256` protects bootstrap from MITM. It must match the real node
 host key fingerprint.
 
+After agent reinstall or host repair, use `Nodes -> Node -> Runtime reconcile`
+to queue desired-state recovery for managed services, backhaul, route policy and
+the existing firewall policy. Use `Reboot node` only for a controlled
+maintenance window; it is executed by the enrolled agent, requires typing the
+node name and records the reboot job in audit/job history.
+
 ## 9. Runtime Capabilities
 
 Before applying a service instance, the node must have the required runtime:
@@ -477,8 +483,11 @@ Xray backend bound to `127.0.0.1`. Nginx proxies only the hidden VLESS/gRPC path
 to Xray, while ordinary browser traffic on `/` is reverse-proxied to the
 fallback website. This masks ingress behavior deliberately, but it does not
 replace correct TLS/SNI, certificate and DNS configuration for the endpoint.
-Generated TLS-enabled Nginx edge configs also listen on HTTP port `80` and
-redirect plain HTTP requests to HTTPS before applying camouflage routing.
+Generated TLS-enabled Nginx edge configs can also listen on HTTP port `80` and
+redirect plain HTTP requests to HTTPS before applying camouflage routing. The
+instance form exposes this as `Redirect HTTP to HTTPS`; leave the redirect
+server name empty to reuse the primary `server_name`, or set a wildcard such as
+`*.example.com` when one edge should redirect a DNS wildcard.
 For repeatable smoke tests, pass the same fallback explicitly:
 `MEGAVPN_FALLBACK_UPSTREAM_URL=https://target.example.com
 scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>

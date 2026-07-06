@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
+	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
 const (
@@ -46,6 +47,9 @@ func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string
 	if err != nil {
 		return domain.Job{}, err
 	}
+	if strings.EqualFold(node.Status, "retired") {
+		return domain.Job{}, errors.New("node is retired")
+	}
 	expectedConfirmation := strings.TrimSpace(node.Name)
 	if expectedConfirmation == "" {
 		expectedConfirmation = strings.TrimSpace(nodeID)
@@ -80,6 +84,181 @@ func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string
 	}
 	_, _ = s.CreateAudit(ctx, "system", "node.emergency_cleanup", "node", &nodeID, "node emergency cleanup queued")
 	return job, nil
+}
+
+func (s *Store) CreateNodeRebootJob(ctx context.Context, nodeID, confirmation, reason string) (domain.Job, error) {
+	node, err := s.GetNode(ctx, nodeID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	expectedConfirmation := strings.TrimSpace(node.Name)
+	if expectedConfirmation == "" {
+		expectedConfirmation = strings.TrimSpace(nodeID)
+	}
+	if strings.TrimSpace(confirmation) != expectedConfirmation {
+		return domain.Job{}, fmt.Errorf("confirmation must match node name %q", expectedConfirmation)
+	}
+	payload := map[string]any{
+		"node_id":      nodeID,
+		"node_name":    expectedConfirmation,
+		"confirmation": strings.TrimSpace(confirmation),
+		"reason":       strings.TrimSpace(reason),
+		"requested_at": time.Now().UTC().Format(time.RFC3339),
+	}
+	job, err := s.CreateJob(ctx, domain.Job{
+		Type:      "node.reboot",
+		ScopeType: "node",
+		ScopeID:   &nodeID,
+		NodeID:    &nodeID,
+		Priority:  1,
+		Payload:   payload,
+	})
+	if err != nil {
+		return job, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "node.reboot", "node", &nodeID, "node reboot queued")
+	return job, nil
+}
+
+func (s *Store) QueueNodeRuntimeReconcile(ctx context.Context, nodeID, source string) ([]domain.Job, []string, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	node, err := s.GetNode(ctx, nodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if strings.EqualFold(node.Status, "retired") {
+		return nil, nil, errors.New("node is retired")
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "operator"
+	}
+	jobs := []domain.Job{}
+	warnings := []string{}
+	addJob := func(job domain.Job, err error, label string) {
+		if err != nil {
+			warnings = append(warnings, label+": "+err.Error())
+			return
+		}
+		jobs = append(jobs, job)
+	}
+
+	job, err := s.CreateNodeInventoryJob(ctx, nodeID)
+	addJob(job, err, "inventory sync")
+	job, err = s.CreateNodeServiceDiscoveryJob(ctx, nodeID)
+	addJob(job, err, "service discovery")
+
+	instanceIDs, err := s.reconcilableInstanceIDsForNode(ctx, nodeID)
+	if err != nil {
+		warnings = append(warnings, "list instances: "+err.Error())
+	} else {
+		for _, instanceID := range instanceIDs {
+			job, err := s.UpdateInstanceStatus(ctx, instanceID, driver.OperationApply)
+			if err == nil {
+				_ = s.setQueuedJobPriority(ctx, job.ID, 60)
+				job.Priority = 60
+			}
+			addJob(job, err, "instance apply "+instanceID)
+		}
+	}
+
+	backhaulIDs, err := s.reconcilableBackhaulLinkIDsForNode(ctx, nodeID)
+	if err != nil {
+		warnings = append(warnings, "list backhaul links: "+err.Error())
+	} else {
+		for _, linkID := range backhaulIDs {
+			queued, err := s.CreateBackhaulApplyJobs(ctx, linkID)
+			if err != nil {
+				warnings = append(warnings, "backhaul apply "+linkID+": "+err.Error())
+				continue
+			}
+			jobs = append(jobs, queued...)
+		}
+	}
+
+	if routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, nodeID); err != nil {
+		warnings = append(warnings, "route policy apply: "+err.Error())
+	} else {
+		jobs = append(jobs, routeJob)
+	}
+
+	if firewallPolicyID, err := s.lastFirewallPolicyIDForNode(ctx, nodeID); err != nil {
+		warnings = append(warnings, "firewall state lookup: "+err.Error())
+	} else if firewallPolicyID != "" {
+		job, err := s.CreateFirewallApplyJob(ctx, nodeID, firewallPolicyID, false)
+		addJob(job, err, "firewall apply")
+	}
+
+	if len(jobs) > 0 {
+		_, _ = s.CreateAudit(ctx, "system", "node.runtime_reconcile", "node", &nodeID, fmt.Sprintf("node runtime reconcile queued from %s", source))
+	}
+	return jobs, warnings, nil
+}
+
+func (s *Store) reconcilableInstanceIDsForNode(ctx context.Context, nodeID string) ([]string, error) {
+	rows, err := s.db.Query(ctx, `select i.id::text
+from instances i
+join instance_revisions r on r.id=i.current_revision_id
+where i.node_id=$1
+  and i.status <> 'deleted'
+  and (i.enabled=true or i.status in ('active','degraded','failed','provisioning'))
+  and r.status in ('validated','applied')
+order by i.created_at asc`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) reconcilableBackhaulLinkIDsForNode(ctx context.Context, nodeID string) ([]string, error) {
+	rows, err := s.db.Query(ctx, `select id::text
+from backhaul_links
+where status in ('active','failed','pending_apply')
+  and (ingress_node_id=$1 or egress_node_id=$1)
+order by created_at asc`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) lastFirewallPolicyIDForNode(ctx context.Context, nodeID string) (string, error) {
+	var policyID string
+	err := s.db.QueryRow(ctx, `select coalesce(policy_id::text,'')
+from firewall_node_state
+where node_id=$1 and policy_id is not null
+order by updated_at desc
+limit 1`, nodeID).Scan(&policyID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return strings.TrimSpace(policyID), err
+}
+
+func (s *Store) setQueuedJobPriority(ctx context.Context, jobID string, priority int) error {
+	if strings.TrimSpace(jobID) == "" || priority <= 0 {
+		return nil
+	}
+	_, err := s.db.Exec(ctx, `update jobs set priority=$2 where id=$1 and status='queued'`, jobID, priority)
+	return err
 }
 
 func normalizeNodeCleanupScope(value string, includeAgent bool) string {
@@ -373,6 +552,17 @@ func isAgentHandledJobType(jobType string) bool {
 		"node.capability.install",
 		"node.capability.verify",
 		"node.channel.probe",
+		"node.agent.rotate_token",
+		"node.emergency_cleanup",
+		"node.reboot",
+		"node.backhaul.apply",
+		"node.backhaul.probe",
+		"node.backhaul.cleanup",
+		"node.route_policy.apply",
+		"node.route_policy.cleanup",
+		"node.firewall.preview",
+		"node.firewall.apply",
+		"node.firewall.observe",
 		"instance.restart",
 		"instance.apply",
 		"instance.start",

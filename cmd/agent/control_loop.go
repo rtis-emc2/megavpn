@@ -177,6 +177,8 @@ func (c *client) execute(ctx context.Context, j job, st *agentState) (string, ma
 		return c.rotateAgentToken(ctx, j, st)
 	case "node.emergency_cleanup":
 		return c.emergencyCleanupNode(ctx, j, *st)
+	case "node.reboot":
+		return c.rebootNode(ctx, j, *st)
 	case "node.backhaul.apply":
 		return c.applyBackhaul(ctx, j, *st)
 	case "node.backhaul.probe":

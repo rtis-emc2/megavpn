@@ -131,6 +131,43 @@ func TestNormalizeNodeEmergencyCleanupRejectsEmptyConfirmation(t *testing.T) {
 	}
 }
 
+func TestNormalizeNodeRebootRequiresConfirmation(t *testing.T) {
+	payload, err := Normalize("node.reboot", map[string]any{
+		"node_id":      " node-1 ",
+		"node_name":    " edge-01 ",
+		"confirmation": " edge-01 ",
+		"reason":       " maintenance window ",
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := payload["node_id"]; got != "node-1" {
+		t.Fatalf("node_id = %v, want node-1", got)
+	}
+	if got := payload["node_name"]; got != "edge-01" {
+		t.Fatalf("node_name = %v, want edge-01", got)
+	}
+	if got := payload["confirmation"]; got != "edge-01" {
+		t.Fatalf("confirmation = %v, want edge-01", got)
+	}
+	if got := payload["reason"]; got != "maintenance window" {
+		t.Fatalf("reason = %v, want maintenance window", got)
+	}
+}
+
+func TestNormalizeNodeRebootRejectsEmptyConfirmation(t *testing.T) {
+	_, err := Normalize("node.reboot", map[string]any{
+		"node_id":      "node-1",
+		"confirmation": " ",
+	})
+	if err == nil {
+		t.Fatal("expected validation error for empty confirmation")
+	}
+	if !IsValidationError(err) {
+		t.Fatalf("expected validation error, got %T", err)
+	}
+}
+
 func TestNormalizeControlPlaneTLSApply(t *testing.T) {
 	payload, err := Normalize("platform.control_plane_tls.apply", map[string]any{
 		"public_base_url": "https://control.example.com:58765",

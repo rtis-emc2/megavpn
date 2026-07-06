@@ -263,6 +263,56 @@ func TestBuildNginxServerConfigRedirectsHTTPToNonStandardHTTPSPort(t *testing.T)
 	}
 }
 
+func TestBuildNginxServerConfigCanDisableHTTPRedirect(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"mode":                   "reverse_proxy",
+		"tls_enabled":            true,
+		"http_to_https_redirect": false,
+		"tls_cert_path":          "/etc/ssl/certs/enter.crt",
+		"tls_key_path":           "/etc/ssl/private/enter.key",
+		"location_path":          "/assets/rtis-sync",
+		"upstream_url":           "http://127.0.0.1:7080",
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	if strings.Contains(cfg, "listen 80;") || strings.Contains(cfg, "return 301 https://$host$request_uri;") {
+		t.Fatalf("expected HTTP redirect server block to be disabled, got:\n%s", cfg)
+	}
+}
+
+func TestBuildNginxServerConfigSupportsWildcardHTTPRedirectServerName(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "portal1.nlgate.ru",
+		EndpointPort: 443,
+	}, map[string]any{
+		"mode":                      "reverse_proxy",
+		"tls_enabled":               true,
+		"http_to_https_redirect":    true,
+		"http_redirect_server_name": "*.nlgate.ru",
+		"tls_cert_path":             "/etc/ssl/certs/enter.crt",
+		"tls_key_path":              "/etc/ssl/private/enter.key",
+		"location_path":             "/assets/rtis-sync",
+		"upstream_url":              "http://127.0.0.1:7080",
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	if !strings.Contains(cfg, "server_name *.nlgate.ru;") {
+		t.Fatalf("expected wildcard redirect server_name, got:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, "server_name portal1.nlgate.ru;") {
+		t.Fatalf("expected TLS server block to keep instance server_name, got:\n%s", cfg)
+	}
+}
+
 func TestBuildNginxServerConfigRejectsUnsafeLocationPath(t *testing.T) {
 	for _, path := range []string{
 		"/assets/rtis-sync; return 200",

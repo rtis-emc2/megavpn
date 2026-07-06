@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.0.1.40`
+**Release:** `7.0.1.41`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.0.1.40`
+**Code baseline:** RTIS MegaVPN `7.0.1.41`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.0.1.40` continues the production-hardening line after the firewall,
+`7.0.1.41` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. The codebase already
 has a working control-plane foundation:
@@ -307,7 +307,31 @@ Closed in this release:
 No database migration is required. The change is a Control Plane desired-state
 convergence fix plus documentation and release evidence.
 
-## 15. Immediate Next Actions
+## 15. Release 7.0.1.41 Closure
+
+The goal of `7.0.1.41` is to harden node recovery after agent reinstall and to
+make edge reboot/redirect operations explicit managed workflows instead of
+manual host-side interventions.
+
+Closed in this release:
+
+- SSH bootstrap/reinstall completion now queues node runtime reconcile:
+  inventory sync, service discovery, active instance apply, managed backhaul
+  apply, route-policy apply and existing firewall policy apply.
+- Operators can run the same runtime reconcile from Node diagnostics without
+  reinstalling the agent.
+- Node reboot is now a typed privileged job executed by the enrolled agent. The
+  agent schedules the reboot after submitting the job result, so the Control
+  Plane receives auditable success/failure evidence.
+- Nginx generated configs now expose an explicit `http_to_https_redirect` spec
+  flag and optional redirect `server_name`, including wildcard DNS names.
+- Agent/worker job whitelists now consistently route route-policy cleanup,
+  firewall jobs, backhaul jobs, emergency cleanup and reboot to the node agent.
+
+No database migration is required. The change is a Control Plane, agent and UI
+hardening release with renderer/job-schema regression coverage.
+
+## 16. Immediate Next Actions
 
 1. Run the clean-install procedure on a fresh Ubuntu host and record evidence.
 2. Run disposable PostgreSQL migrations and integration tests.

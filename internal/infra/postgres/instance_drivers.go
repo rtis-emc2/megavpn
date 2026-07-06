@@ -1247,7 +1247,13 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 	}
 	lines := []string{}
 	if truthy(spec["tls_enabled"]) {
-		lines = appendNginxHTTPRedirectServer(lines, serverName, listenPort)
+		if nginxHTTPRedirectEnabled(spec) {
+			redirectServerName := firstString(spec["http_redirect_server_name"], spec["redirect_server_name"], serverName)
+			if err := validateNginxServerName(redirectServerName); err != nil {
+				return "", err
+			}
+			lines = appendNginxHTTPRedirectServer(lines, redirectServerName, listenPort)
+		}
 		lines = append(lines, "server {")
 		certPath := firstString(spec["tls_cert_path"])
 		keyPath := firstString(spec["tls_key_path"])
@@ -1346,6 +1352,15 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 	lines = append(lines, extraIndentedLines(spec["server_extra_lines"], "    ")...)
 	lines = append(lines, "}")
 	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func nginxHTTPRedirectEnabled(spec map[string]any) bool {
+	for _, key := range []string{"http_to_https_redirect", "redirect_http_to_https", "http_redirect_enabled", "http_redirect"} {
+		if raw, ok := spec[key]; ok {
+			return truthy(raw)
+		}
+	}
+	return true
 }
 
 func appendNginxHTTPRedirectServer(lines []string, serverName string, httpsPort int) []string {

@@ -2138,7 +2138,7 @@ func (s *Store) CancelJob(ctx context.Context, jobID string) (domain.Job, error)
 }
 
 func (s *Store) ClaimJob(ctx context.Context, workerID string) (domain.Job, bool, error) {
-	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','node.firewall.preview','node.firewall.apply','node.firewall.observe','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`, nil)
+	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.reboot','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','node.route_policy.cleanup','node.firewall.preview','node.firewall.apply','node.firewall.observe','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`, nil)
 }
 
 func (s *Store) RecoverStaleJobLeases(ctx context.Context) (int, error) {
@@ -2315,6 +2315,19 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 					    agent_status='starting',
 					    updated_at=now()
 					where id=$1 and status <> 'retired'`, *scopeID)
+				jobs, warnings, err := s.QueueNodeRuntimeReconcile(ctx, *scopeID, "node.bootstrap")
+				if err != nil {
+					_ = s.AddJobLog(ctx, idv, "warn", "runtime reconcile was not queued after bootstrap", map[string]any{"error": err.Error()})
+				} else {
+					level := "info"
+					if len(warnings) > 0 {
+						level = "warn"
+					}
+					_ = s.AddJobLog(ctx, idv, level, "runtime reconcile queued after bootstrap", map[string]any{
+						"queued_jobs": len(jobs),
+						"warnings":    warnings,
+					})
+				}
 			}
 		case "node.agent.rotate_token":
 			if scopeID != nil {
@@ -2690,7 +2703,7 @@ func (s *Store) AgentNextJob(ctx context.Context, nodeRef string) (domain.Job, b
 	if err := s.db.QueryRow(ctx, `select id from nodes where (id::text=$1 or name=$1) and status <> 'retired'`, nodeRef).Scan(&nodeID); err != nil {
 		return domain.Job{}, false, err
 	}
-	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','node.firewall.preview','node.firewall.apply','node.firewall.observe','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`
+	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.reboot','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','node.route_policy.cleanup','node.firewall.preview','node.firewall.apply','node.firewall.observe','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`
 	job, ok, err := s.claimJob(ctx, "agent:"+nodeID, where, []any{nodeID})
 	if err != nil || !ok {
 		return job, ok, err
@@ -3064,7 +3077,7 @@ func jobLockTarget(j domain.Job) (resourceType string, resourceID string, lockKi
 
 func jobLeaseDurationForType(jobType string) time.Duration {
 	switch jobType {
-	case "node.capability.install", "node.emergency_cleanup", "node.backhaul.apply", "instance.apply", "instance.delete":
+	case "node.capability.install", "node.emergency_cleanup", "node.reboot", "node.backhaul.apply", "instance.apply", "instance.delete":
 		return longNodeJobLeaseDuration
 	default:
 		return jobLeaseDuration

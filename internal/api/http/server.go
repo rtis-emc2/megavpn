@@ -59,6 +59,8 @@ type Store interface {
 	CreateNodeAgentTokenRotateJob(context.Context, string) (domain.Job, error)
 	CreateNodeChannelProbeJob(context.Context, string) (domain.Job, error)
 	CreateNodeEmergencyCleanupJob(context.Context, string, bool, string, string) (domain.Job, error)
+	CreateNodeRebootJob(context.Context, string, string, string) (domain.Job, error)
+	QueueNodeRuntimeReconcile(context.Context, string, string) ([]domain.Job, []string, error)
 	CreateNodeRoutePolicyApplyJob(context.Context, string) (domain.Job, error)
 	CreateNodeRoutePolicyCleanupJob(context.Context, string) (domain.Job, error)
 	PreviewNodeRoutePolicy(context.Context, string) (map[string]any, error)
@@ -363,6 +365,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("GET /api/v1/nodes/{id}/diagnostics", "node.read", s.getNodeDiagnostics)
 	protected("POST /api/v1/nodes/{id}/diagnostics/retry-inventory", "node.write", s.retryNodeInventorySync)
 	protected("POST /api/v1/nodes/{id}/diagnostics/retry-discovery", "node.write", s.retryNodeDiscoverySync)
+	protected("POST /api/v1/nodes/{id}/diagnostics/reconcile-runtime", "node.write", s.reconcileNodeRuntime)
 	protected("POST /api/v1/nodes/{id}/diagnostics/requeue-stuck-job", "node.write", s.requeueNodeStuckJob)
 	protected("POST /api/v1/nodes/{id}/diagnostics/channel-probe", "node.write", s.probeNodeChannel)
 	protected("GET /api/v1/nodes/{id}/routes/preview", "node.read", s.previewNodeRoutePolicy)
@@ -379,6 +382,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/nodes/{id}/agent-token/rotate", "node.bootstrap", s.rotateNodeAgentToken)
 	protected("POST /api/v1/nodes/{id}/enrollment-token/rotate", "node.bootstrap", s.rotateNodeEnrollmentToken)
 	protected("POST /api/v1/nodes/{id}/agent-identity/revoke", "node.bootstrap", s.revokeNodeAgentIdentity)
+	protected("POST /api/v1/nodes/{id}/reboot", "node.bootstrap", s.createNodeRebootJob)
 	protected("POST /api/v1/nodes/{id}/emergency-cleanup", "node.bootstrap", s.createNodeEmergencyCleanupJob)
 	protected("GET /api/v1/nodes/{id}/inventory", "node.read", s.getNodeInventory)
 	protected("GET /api/v1/nodes/capabilities", "node.read", s.listAllNodeCapabilities)
@@ -563,6 +567,11 @@ type nodeEmergencyCleanupRequest struct {
 	IncludeAgent bool   `json:"include_agent"`
 	Confirmation string `json:"confirmation"`
 	CleanupScope string `json:"cleanup_scope"`
+}
+
+type nodeRebootRequest struct {
+	Confirmation string `json:"confirmation"`
+	Reason       string `json:"reason"`
 }
 
 type secretRefCreateRequest struct {
@@ -867,6 +876,33 @@ func (s *Server) createNodeEmergencyCleanupJob(w nethttp.ResponseWriter, r *neth
 		return
 	}
 	writeJSON(w, 202, redactedJob(job))
+}
+
+func (s *Server) createNodeRebootJob(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req nodeRebootRequest
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid reboot payload")
+		return
+	}
+	job, err := s.store.CreateNodeRebootJob(r.Context(), idParam(r), req.Confirmation, req.Reason)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 202, redactedJob(job))
+}
+
+func (s *Server) reconcileNodeRuntime(w nethttp.ResponseWriter, r *nethttp.Request) {
+	jobs, warnings, err := s.store.QueueNodeRuntimeReconcile(r.Context(), idParam(r), "operator")
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	out := make([]domain.Job, 0, len(jobs))
+	for _, job := range jobs {
+		out = append(out, redactedJob(job))
+	}
+	writeJSON(w, 202, response{"jobs": out, "queued": len(out), "warnings": warnings})
 }
 
 func (s *Server) listNodeBootstrapRuns(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -1957,6 +1993,7 @@ func jobTypeMustUseTypedEndpoint(jobType string) bool {
 		"node.bootstrap",
 		"node.agent.rotate_token",
 		"node.emergency_cleanup",
+		"node.reboot",
 		"node.backhaul.apply",
 		"node.backhaul.probe",
 		"node.backhaul.cleanup",
@@ -1994,7 +2031,7 @@ func requiredPermissionForJobType(jobType string) string {
 	switch strings.TrimSpace(jobType) {
 	case "platform.control_plane_tls.apply":
 		return "settings.manage"
-	case "node.bootstrap", "node.agent.rotate_token", "node.emergency_cleanup":
+	case "node.bootstrap", "node.agent.rotate_token", "node.emergency_cleanup", "node.reboot":
 		return "node.bootstrap"
 	case "node.capability.install", "node.capability.verify", "node.inventory", "node.inventory.sync", "node.services.discover", "node.channel.probe", "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup", "node.route_policy.apply", "node.route_policy.cleanup":
 		return "node.write"

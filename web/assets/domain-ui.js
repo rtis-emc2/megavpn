@@ -274,6 +274,13 @@
       return 0;
     }
 
+    function booleanValue(value, fallback = false) {
+      if (value === undefined || value === null || value === '') return Boolean(fallback);
+      if (typeof value === 'boolean') return value;
+      const text = String(value).trim().toLowerCase();
+      return ['1', 'true', 'yes', 'on', 'enabled'].includes(text);
+    }
+
     function slugPathPart(value, fallback = 'server') {
       const normalized = String(value || '').trim().toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
@@ -763,6 +770,9 @@
             config_body: spec.config_json ? JSON.stringify(spec.config_json, null, 2) : stringValue(spec.config_content),
           }, presetKey);
         case 'nginx':
+          const nginxRedirectRaw = spec.http_to_https_redirect !== undefined
+            ? spec.http_to_https_redirect
+            : (spec.redirect_http_to_https !== undefined ? spec.redirect_http_to_https : spec.http_redirect_enabled);
           return finalizeInstanceDraft(normalized, instance, spec, {
             endpoint_port: numberValue(instance?.endpoint_port, spec.listen_port, spec.server_port, 8080),
             config_path: stringValue(spec.config_path, '/etc/nginx/conf.d/megavpn-edge.conf'),
@@ -777,7 +787,9 @@
             nginx_fallback_sni: stringValue(spec.fallback_sni),
             nginx_root_dir: stringValue(spec.root_dir),
             nginx_index_files: stringValue(spec.index_files, 'index.html index.htm'),
-            nginx_tls_enabled: String(Boolean(spec.tls_enabled)),
+            nginx_tls_enabled: booleanValue(spec.tls_enabled) ? 'true' : 'false',
+            nginx_http_to_https_redirect: booleanValue(nginxRedirectRaw, true) ? 'true' : 'false',
+            nginx_http_redirect_server_name: stringValue(spec.http_redirect_server_name, spec.redirect_server_name),
             nginx_tls_cert_path: stringValue(spec.tls_cert_path),
             nginx_tls_key_path: stringValue(spec.tls_key_path),
             nginx_client_max_body_size: stringValue(spec.client_max_body_size),
@@ -979,6 +991,14 @@
               <option value="false"${draft.nginx_tls_enabled !== 'true' ? ' selected' : ''}>disabled</option>
               <option value="true"${draft.nginx_tls_enabled === 'true' ? ' selected' : ''}>enabled</option>
             </select></div>
+            <label class="choice-card full">
+              <input name="nginx_http_to_https_redirect" type="checkbox"${draft.nginx_http_to_https_redirect !== 'false' ? ' checked' : ''} />
+              <span>
+                <strong>Redirect HTTP to HTTPS</strong>
+                <small>Port 80 answers with a 301 redirect to the HTTPS listener.</small>
+              </span>
+            </label>
+            <div class="field"><label>HTTP redirect server name</label><input name="nginx_http_redirect_server_name" value="${escapeHTML(draft.nginx_http_redirect_server_name || '')}" placeholder="same as server name or *.example.com" /></div>
             <div class="field"><label>TLS cert path</label><input name="nginx_tls_cert_path" value="${escapeHTML(draft.nginx_tls_cert_path || '')}" placeholder="/etc/letsencrypt/live/example/fullchain.pem" /></div>
             <div class="field"><label>TLS key path</label><input name="nginx_tls_key_path" value="${escapeHTML(draft.nginx_tls_key_path || '')}" placeholder="/etc/letsencrypt/live/example/privkey.pem" /></div>
             <div class="field"><label>Body size</label><input name="nginx_client_max_body_size" value="${escapeHTML(draft.nginx_client_max_body_size || '')}" placeholder="20m" /></div>
@@ -1270,6 +1290,8 @@
         spec.root_dir = String(form.get('nginx_root_dir') || '').trim();
         spec.index_files = String(form.get('nginx_index_files') || '').trim();
         spec.tls_enabled = String(form.get('nginx_tls_enabled') || 'false') === 'true';
+        spec.http_to_https_redirect = Boolean(form.get('nginx_http_to_https_redirect'));
+        spec.http_redirect_server_name = String(form.get('nginx_http_redirect_server_name') || '').trim();
         spec.tls_cert_path = String(form.get('nginx_tls_cert_path') || '').trim();
         spec.tls_key_path = String(form.get('nginx_tls_key_path') || '').trim();
         spec.client_max_body_size = String(form.get('nginx_client_max_body_size') || '').trim();
