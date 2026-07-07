@@ -16,9 +16,10 @@ Firewall надо воспринимать как pipeline от каталога
 flowchart LR
   A["Address lists\nCIDR/IP/range groups"] --> B["Rules\npriority + chain + match + action"]
   B --> C["Policy\ninput/forward/output defaults"]
-  C --> D["Apply job\nsigned node job"]
-  D --> E["Node nftables\ninet megavpn_firewall"]
-  E --> F["Node state\nrevision, counts, failures"]
+  C --> D["Preview job\nrender + hash diff"]
+  D --> E["Apply job\nsigned node job"]
+  E --> F["Node nftables\ninet megavpn_firewall"]
+  F --> G["Node state\nrevision, counts, failures"]
 ```
 
 Рабочий порядок оператора:
@@ -28,7 +29,11 @@ flowchart LR
 2. Добавить entries в address lists. Тип можно оставить auto-detect для CIDR,
    одиночного IP или IP range.
 3. Создать ordered rules внутри policy. Меньший priority применяется раньше.
-4. Применить policy на node и проверить node firewall state.
+4. Запустить `Preview` для выбранной node. Preview рендерит тот же nftables
+   payload, что и apply, но не создает revision и не меняет desired node state.
+5. Проверить diff: текущий observed hash node против preview hash, warnings и
+   rendered nftables script.
+6. Только после этого нажать `Apply` и проверить node firewall state.
 
 Так редактирование отделено от rollout. Изменение каталога не меняет node, пока
 apply job не поставлен в очередь и не завершился.
@@ -53,10 +58,10 @@ migrations до `000009_firewall_schema_repair` перед созданием ad
 Откройте `Firewall` в control menu.
 
 - `Overview`: счетчики и общий posture.
-- `Policies`: карточки policy, metadata default chain и быстрый apply.
+- `Policies`: карточки policy, metadata default chain, preview и apply.
 - `Rules`: общий список правил по priority.
 - `Address lists`: управление lists и entries.
-- `Node state`: последнее состояние apply по каждой node.
+- `Node state`: последнее состояние apply по каждой node, быстрый preview/apply.
 
 Верхние workflow-кнопки переключают на нужный этап. В редакторе правил есть
 presets для SSH management, HTTPS control, WireGuard, OpenVPN TCP/UDP, IPsec
@@ -101,12 +106,23 @@ Apply dialog разделен на два явных режима:
 `Node state` показывает последний observed enforcement mode, число explicit
 rules и число system safety rules, которые вернул agent.
 
+Preview dialog использует те же режимы. Результат показывает:
+
+- `Preview hash`: hash рендера, который agent применит при apply.
+- `Current hash`: последний observed hash node из `firewall_node_state`.
+- `Diff`: `No changes`, `Changes pending` или `Not applied yet`.
+- `Rendered nftables script`: раскрываемый script для operator review.
+
+Кнопка `Apply this policy` появляется только после успешного preview с
+валидным rendered hash и сохраняет выбранный режим `Rules only` или
+`Strict defaults`.
+
 ## Security model
 
 - `firewall.read` разрешает просмотр.
 - `firewall.manage` разрешает менять policies, rules и address lists.
-- `firewall.apply` разрешает ставить node apply jobs.
-- Все create/update/delete/apply действия пишут audit events.
+- `firewall.apply` разрешает ставить node preview/apply jobs.
+- Все create/update/delete/preview/apply действия пишут audit events.
 - Rules хранятся как catalog data и рендерятся worker-ом в managed firewall
   payload для node.
 

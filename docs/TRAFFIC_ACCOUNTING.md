@@ -84,6 +84,13 @@ configuration problem or a node-side reporting failure. Treat `missing` as a
 diagnostic signal that requires live-node validation, not as standalone proof
 of packet loss.
 
+The response also includes `clients`: server-side aggregate usage counters for
+attributed client accounts in the same retained/filter dataset. These counters
+are computed over the full retention-scoped query, not from the recent rows
+shown at the bottom of the UI. Each row includes client id/name, sample count,
+node/instance/protocol coverage, rx/tx bytes, packets, flow count, first bucket
+and last bucket/received timestamps.
+
 Operator CSV export API:
 
 ```text
@@ -97,6 +104,9 @@ The overview and CSV export endpoints accept the same read filters: `limit`,
 `from`, `to`, `client_id`, `node_id` and `protocol`. The overview endpoint
 caps recent rows to the operator-safe read maximum; CSV export keeps the
 larger export cap. Invalid UUID filters and inverted time ranges fail closed.
+Each CSV export creates a `traffic.accounting.export` audit event with the
+operator id and exported retained-row count. Row contents and payload metadata
+are not copied into the audit event.
 
 Agent ingest API:
 
@@ -119,13 +129,13 @@ flowchart LR
   E --> F["Traffic Accounting UI"]
 ```
 
-The Traffic Accounting UI provides one filter form for overview cards, collector
-status, recent rows and `Export CSV`. Reads are server-side, use the same
-`traffic.read` permission, enforce retention cutoff and stay capped by endpoint
-type. CSV responses set `Cache-Control: no-store`. Time filters accept RFC3339
-or `YYYY-MM-DD`. The overview cards show active rows, retention cutoff, expired
-cleanup backlog, collector stream counts and per-ingest prune budget for the
-selected retained dataset.
+The Traffic Accounting UI provides one filter form for overview cards,
+per-client counters, collector status, recent rows and `Export CSV`. Reads are
+server-side, use the same `traffic.read` permission, enforce retention cutoff
+and stay capped by endpoint type. CSV responses set `Cache-Control: no-store`.
+Time filters accept RFC3339 or `YYYY-MM-DD`. The overview cards show active
+rows, retention cutoff, expired cleanup backlog, collector stream counts and
+per-ingest prune budget for the selected retained dataset.
 
 The UI exposes the same export filters as form controls:
 
@@ -135,9 +145,23 @@ The UI exposes the same export filters as form controls:
 - node;
 - row limit.
 
-Changing a filter reloads the overview, collector-status table and recent-sample
-table from the backend. CSV export uses the same selected values against the
-retained dataset, not a browser-side subset of already loaded rows.
+Changing a filter reloads the overview, collector-status table, per-client
+counters and recent-sample table from the backend. CSV export uses the same
+selected values against the retained dataset, not a browser-side subset of
+already loaded rows.
+
+## Observability Evidence
+
+The minimum MVP evidence set is:
+
+- per-client usage counters in `Traffic Accounting -> Per-client usage counters`;
+- collector coverage in `Traffic Accounting -> Collector status`;
+- operator auth/audit events in `Audit`, including login/logout, config changes
+  and `traffic.accounting.export`;
+- job evidence in `Jobs`: status, result payload and execution logs;
+- node health/runtime drift in node diagnostics and runtime state views;
+- retention metadata: `retention_days`, `retention_cutoff`,
+  `expired_sample_count`, prune batch size and max prune per ingest.
 
 ## Runtime Collectors
 

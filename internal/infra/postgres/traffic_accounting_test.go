@@ -171,6 +171,39 @@ func TestTrafficAccountingCollectorStatusQueryKeepsExpectedFiltersBounded(t *tes
 	}
 }
 
+func TestTrafficAccountingClientUsageQueryUsesRetentionScopedFilters(t *testing.T) {
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	filter := domain.TrafficAccountingExportFilter{
+		ClientAccountID: "00000000-0000-0000-0000-000000000001",
+		NodeID:          "00000000-0000-0000-0000-000000000002",
+		Protocol:        "OpenVPN",
+	}
+	baseArgs, where, err := trafficAccountingFilterWhere(filter, cutoff)
+	if err != nil {
+		t.Fatalf("build base filter: %v", err)
+	}
+	query, args := trafficAccountingClientUsageQuery(baseArgs, where)
+	for _, want := range []string{
+		"t.received_at >= $1",
+		"t.client_account_id = $2::uuid",
+		"t.node_id = $3::uuid",
+		"t.protocol = $4",
+		"t.client_account_id is not null",
+		"group by t.client_account_id, c.username",
+		"limit $5",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("client usage query missing %q:\n%s", want, query)
+		}
+	}
+	if len(args) != 5 {
+		t.Fatalf("client usage args len = %d, want 5: %#v", len(args), args)
+	}
+	if args[0] != cutoff || args[1] != filter.ClientAccountID || args[2] != filter.NodeID || args[3] != "openvpn" || args[4] != trafficAccountingMaxClientRows {
+		t.Fatalf("client usage args = %#v", args)
+	}
+}
+
 func TestTrafficAccountingCollectorStatusClassifiesFreshness(t *testing.T) {
 	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 	activeAt := now.Add(-trafficAccountingCollectorActiveWindow)

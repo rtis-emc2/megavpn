@@ -16,9 +16,10 @@ Use the firewall as a catalog-to-apply pipeline:
 flowchart LR
   A["Address lists\nCIDR/IP/range groups"] --> B["Rules\npriority + chain + match + action"]
   B --> C["Policy\ninput/forward/output defaults"]
-  C --> D["Apply job\nsigned node job"]
-  D --> E["Node nftables\ninet megavpn_firewall"]
-  E --> F["Node state\nrevision, counts, failures"]
+  C --> D["Preview job\nrender + hash diff"]
+  D --> E["Apply job\nsigned node job"]
+  E --> F["Node nftables\ninet megavpn_firewall"]
+  F --> G["Node state\nrevision, counts, failures"]
 ```
 
 The operator workflow is:
@@ -28,7 +29,12 @@ The operator workflow is:
 2. Add entries to address lists. Leave type on auto-detect for CIDR, single IP
    or IP range entries.
 3. Create ordered rules inside a policy. Lower priority is evaluated first.
-4. Apply the policy to a node and watch the node firewall state.
+4. Run `Preview` for the selected node. Preview renders the same nftables
+   payload as apply, but it does not create a revision or change desired node
+   state.
+5. Review the diff: current observed node hash versus preview hash, warnings
+   and the rendered nftables script.
+6. Only then run `Apply` and watch the node firewall state.
 
 This keeps editing separate from rollout. A catalog change does not alter a node
 until an apply job is queued and completed.
@@ -53,10 +59,10 @@ lists. If migrations are behind, the API can return
 Open `Firewall` from the control menu.
 
 - `Overview`: counters and posture.
-- `Policies`: policy cards, default chain metadata and quick apply.
+- `Policies`: policy cards, default chain metadata, preview and apply.
 - `Rules`: global ordered rule view.
 - `Address lists`: list and entry management.
-- `Node state`: last apply state per node.
+- `Node state`: last apply state per node, quick preview/apply.
 
 The top workflow buttons jump directly to the required stage. The rule editor
 contains presets for SSH management, HTTPS control, WireGuard, OpenVPN
@@ -102,12 +108,23 @@ The apply dialog is split into two explicit modes:
 `Node state` shows the last observed enforcement mode, explicit rule count and
 system safety rule count returned by the agent.
 
+The preview dialog uses the same modes. Its result shows:
+
+- `Preview hash`: the rendered policy hash the agent would apply.
+- `Current hash`: the last observed node hash from `firewall_node_state`.
+- `Diff`: `No changes`, `Changes pending` or `Not applied yet`.
+- `Rendered nftables script`: an expandable script for operator review.
+
+`Apply this policy` is shown only after a successful preview with a valid
+rendered hash and preserves the selected `Rules only` or `Strict defaults`
+mode.
+
 ## Security Model
 
 - `firewall.read` allows inspection.
 - `firewall.manage` allows policy, rule and address-list changes.
-- `firewall.apply` allows queueing node apply jobs.
-- All create/update/delete/apply actions produce audit events.
+- `firewall.apply` allows queueing node preview/apply jobs.
+- All create/update/delete/preview/apply actions produce audit events.
 - Rules are stored as catalog data and rendered by the worker into managed node
   firewall payloads.
 

@@ -1249,8 +1249,8 @@ artifact.
 | VLESS camouflage | Почти готово | Nginx + Xray WS/gRPC, fallback website, HTTP-to-HTTPS redirect, subscriptions и VLESS groups реализованы. Остается live E2E evidence и config preview/diff. |
 | Backhaul ingress -> egress | Рабочий baseline | Managed links, WireGuard/OpenVPN transports, route projection, cleanup и fail-closed route policy реализованы. Требуется повторная проверка на реальных nodes после security hardening. |
 | Route policy | Базово готово | `fwmark`, nftables, `ip rule`, route table и Xray `sendThrough` работают как desired path. Остались MTU/MSS, conntrack visibility и live validation после reboot/reapply. |
-| Firewall | MVP-база есть | Address lists, rules, policies, default node firewall, nft table ownership, UI и docs реализованы. Нужно упростить operator UX и пройти production rollout evidence. |
-| Traffic accounting | Foundation готов | 180-day retention, signed ingest, aggregates, filters, collector status и expected/observed coverage реализованы. Нужно проверить collectors на живом трафике. |
+| Firewall | MVP-база усилена | Address lists, rules, policies, default node firewall, nft table ownership, operator flow diagram, audited preview/apply и preview hash diff реализованы. Нужно пройти production rollout evidence на живых nodes. |
+| Traffic accounting / Observability | MVP-база усилена | 180-day retention, signed ingest, per-client usage counters, filters, collector status, expected/observed coverage, export audit, job evidence и node runtime drift visibility реализованы. Нужно проверить collectors на живом трафике. |
 | Web UI | Рабочий operator baseline | Основные экраны есть и полезны для эксплуатации, но остаются UX debt: сложные формы, firewall mental model, service-pack clarity и client config lifecycle. |
 | Security | Существенно усилено | Закрыты root-exec через managed units, secret leakage в jobs/logs/API, share-link binding, XFF spoofing, global token fallback и installer temp race. |
 | Documentation | Хорошая база | RU/EN user guide, roadmap, release gates, threat model, firewall/backhaul/traffic docs есть. Нужно обновить docs под последний security pass и MVP checklist. |

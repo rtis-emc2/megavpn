@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -433,6 +434,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/firewall/policies/{id}/rules", "firewall.manage", s.createFirewallRule)
 	protected("PUT /api/v1/firewall/policies/{id}/rules/{rule_id}", "firewall.manage", s.updateFirewallRule)
 	protected("DELETE /api/v1/firewall/policies/{id}/rules/{rule_id}", "firewall.manage", s.deleteFirewallRule)
+	protected("POST /api/v1/nodes/{id}/firewall/preview", "firewall.apply", s.previewNodeFirewallPolicy)
 	protected("POST /api/v1/nodes/{id}/firewall/apply", "firewall.apply", s.applyNodeFirewallPolicy)
 	protected("GET /api/v1/traffic/accounting", "traffic.read", s.trafficAccountingOverview)
 	protected("GET /api/v1/traffic/accounting/export", "traffic.read", s.trafficAccountingExport)
@@ -794,6 +796,9 @@ func (s *Server) trafficAccountingOverview(w nethttp.ResponseWriter, r *nethttp.
 	if x.Collectors == nil {
 		x.Collectors = []domain.TrafficAccountingCollectorStatus{}
 	}
+	if x.Clients == nil {
+		x.Clients = []domain.TrafficAccountingClientUsage{}
+	}
 	writeJSON(w, 200, x)
 }
 
@@ -807,6 +812,9 @@ func (s *Server) trafficAccountingExport(w nethttp.ResponseWriter, r *nethttp.Re
 	if err != nil {
 		writeErr(w, 500, "traffic accounting export failed")
 		return
+	}
+	if authCtx, ok := authFromRequest(r); ok {
+		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "traffic.accounting.export", "traffic", nil, fmt.Sprintf("traffic accounting CSV export: %d retained rows", len(samples)))
 	}
 	filename := "megavpn-traffic-accounting-" + time.Now().UTC().Format("20060102T150405Z") + ".csv"
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")

@@ -23,6 +23,7 @@ const (
 	trafficAccountingMaxRows               = 1000
 	trafficAccountingMaxExportRows         = 50000
 	trafficAccountingMaxCollectorRows      = 100
+	trafficAccountingMaxClientRows         = 200
 	trafficAccountingCollectorActiveWindow = 5 * time.Minute
 	trafficAccountingCollectorWarnWindow   = 30 * time.Minute
 	trafficAccountingMaxBucketSpan         = 24 * time.Hour
@@ -98,6 +99,10 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, filter domain.Tra
 	if err != nil {
 		return out, err
 	}
+	out.Clients, err = s.trafficAccountingClientUsage(ctx, args, where)
+	if err != nil {
+		return out, err
+	}
 
 	args = append(args, limit)
 	rowsQuery := `select
@@ -147,7 +152,58 @@ func (s *Store) TrafficAccountingOverview(ctx context.Context, filter domain.Tra
 	if out.Collectors == nil {
 		out.Collectors = []domain.TrafficAccountingCollectorStatus{}
 	}
+	if out.Clients == nil {
+		out.Clients = []domain.TrafficAccountingClientUsage{}
+	}
 	return out, rows.Err()
+}
+
+func (s *Store) trafficAccountingClientUsage(ctx context.Context, args []any, where []string) ([]domain.TrafficAccountingClientUsage, error) {
+	query, queryArgs := trafficAccountingClientUsageQuery(args, where)
+	rows, err := s.db.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.TrafficAccountingClientUsage, 0)
+	for rows.Next() {
+		item, err := scanTrafficAccountingClientUsage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if out == nil {
+		out = []domain.TrafficAccountingClientUsage{}
+	}
+	return out, rows.Err()
+}
+
+func trafficAccountingClientUsageQuery(args []any, where []string) (string, []any) {
+	queryArgs := append([]any{}, args...)
+	queryArgs = append(queryArgs, trafficAccountingMaxClientRows)
+	query := `select
+			t.client_account_id::text,
+			coalesce(c.username, ''),
+			count(*),
+			count(distinct t.node_id),
+			count(distinct t.instance_id) filter(where t.instance_id is not null),
+			count(distinct t.protocol),
+			coalesce(sum(t.rx_bytes), 0),
+			coalesce(sum(t.tx_bytes), 0),
+			coalesce(sum(t.rx_packets), 0),
+			coalesce(sum(t.tx_packets), 0),
+			coalesce(sum(t.flow_count), 0),
+			min(t.bucket_start),
+			max(t.bucket_end),
+			max(t.received_at)
+		from traffic_accounting_samples t
+		left join client_accounts c on c.id=t.client_account_id
+		where ` + strings.Join(where, " and ") + ` and t.client_account_id is not null
+		group by t.client_account_id, c.username
+		order by coalesce(sum(t.rx_bytes), 0) + coalesce(sum(t.tx_bytes), 0) desc, max(t.received_at) desc
+		limit $` + strconv.Itoa(len(queryArgs))
+	return query, queryArgs
 }
 
 func (s *Store) trafficAccountingCollectorStatuses(ctx context.Context, args []any, where []string, filter domain.TrafficAccountingExportFilter, now time.Time) ([]domain.TrafficAccountingCollectorStatus, error) {
@@ -469,6 +525,41 @@ func scanTrafficAccountingCollectorStatus(row interface{ Scan(dest ...any) error
 		item.LastReceivedAt = &lastReceivedAt.Time
 	}
 	item.Status, item.LastReceivedAgeSeconds = trafficAccountingCollectorStatus(now, item.LastReceivedAt, item.MissingInstanceCount)
+	return item, nil
+}
+
+func scanTrafficAccountingClientUsage(row interface{ Scan(dest ...any) error }) (domain.TrafficAccountingClientUsage, error) {
+	var item domain.TrafficAccountingClientUsage
+	var firstBucketStart sql.NullTime
+	var lastBucketEnd sql.NullTime
+	var lastReceivedAt sql.NullTime
+	if err := row.Scan(
+		&item.ClientAccountID,
+		&item.ClientUsername,
+		&item.SampleCount,
+		&item.NodeCount,
+		&item.InstanceCount,
+		&item.ProtocolCount,
+		&item.RxBytes,
+		&item.TxBytes,
+		&item.RxPackets,
+		&item.TxPackets,
+		&item.FlowCount,
+		&firstBucketStart,
+		&lastBucketEnd,
+		&lastReceivedAt,
+	); err != nil {
+		return domain.TrafficAccountingClientUsage{}, err
+	}
+	if firstBucketStart.Valid {
+		item.FirstBucketStart = &firstBucketStart.Time
+	}
+	if lastBucketEnd.Valid {
+		item.LastBucketEnd = &lastBucketEnd.Time
+	}
+	if lastReceivedAt.Valid {
+		item.LastReceivedAt = &lastReceivedAt.Time
+	}
 	return item, nil
 }
 

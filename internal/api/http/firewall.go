@@ -25,6 +25,7 @@ type firewallStore interface {
 	CreateFirewallRule(context.Context, string, domain.FirewallRule) (domain.FirewallRule, error)
 	UpdateFirewallRule(context.Context, string, string, domain.FirewallRule) (domain.FirewallRule, error)
 	DeleteFirewallRule(context.Context, string, string) (domain.FirewallRule, error)
+	CreateFirewallPreviewJob(context.Context, string, string, bool) (domain.Job, error)
 	CreateFirewallApplyJob(context.Context, string, string, bool) (domain.Job, error)
 }
 
@@ -336,6 +337,31 @@ func (s *Server) applyNodeFirewallPolicy(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	if authCtx, ok := authFromRequest(r); ok {
 		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "firewall.apply", "node", &nodeID, "firewall apply queued")
+	}
+	writeJSON(w, 202, job)
+}
+
+func (s *Server) previewNodeFirewallPolicy(w nethttp.ResponseWriter, r *nethttp.Request) {
+	store, ok := s.store.(firewallStore)
+	if !ok {
+		writeErr(w, 501, "firewall catalog is not supported")
+		return
+	}
+	nodeID := strings.TrimSpace(r.PathValue("id"))
+	var req firewallApplyRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decode(r, &req) {
+			writeErr(w, 400, "invalid firewall preview payload")
+			return
+		}
+	}
+	job, err := store.CreateFirewallPreviewJob(r.Context(), nodeID, req.PolicyID, req.EnforceDefaultPolicy)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if authCtx, ok := authFromRequest(r); ok {
+		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "firewall.preview", "node", &nodeID, "firewall preview queued")
 	}
 	writeJSON(w, 202, job)
 }

@@ -122,8 +122,9 @@
             summary: data.summary && typeof data.summary === 'object' ? data.summary : { retention_days: 180 },
             samples: Array.isArray(data.samples) ? data.samples : [],
             collectors: Array.isArray(data.collectors) ? data.collectors : [],
+            clients: Array.isArray(data.clients) ? data.clients : [],
           }
-        : { summary: { retention_days: 180 }, samples: [], collectors: [] };
+        : { summary: { retention_days: 180 }, samples: [], collectors: [], clients: [] };
     }
 
     function optionList(items, valueKey, labelFn, selected) {
@@ -318,6 +319,45 @@
       }).join('');
     }
 
+    function clientUsageRows(clients) {
+      if (!clients.length) {
+        return `
+          <tr>
+            <td colspan="8">
+              <div class="nodes-empty-state compact">
+                <strong>No attributed client usage yet</strong>
+                <span>Traffic samples are retained, but no retained rows are linked to client accounts for the selected filters.</span>
+              </div>
+            </td>
+          </tr>`;
+      }
+      return clients.map((client) => {
+        const rx = Number(client.rx_bytes || 0);
+        const tx = Number(client.tx_bytes || 0);
+        const total = rx + tx;
+        return `
+          <tr>
+            <td>
+              <strong>${escapeHTML(client.client_username || 'client')}</strong>
+              <small>${escapeHTML(client.client_account_id || 'unknown client')}</small>
+            </td>
+            <td><span class="mono">${escapeHTML(bytes(total))}</span></td>
+            <td><span class="mono">${escapeHTML(bytes(rx))}</span></td>
+            <td><span class="mono">${escapeHTML(bytes(tx))}</span></td>
+            <td>${escapeHTML(intValue(client.flow_count))}</td>
+            <td>
+              <strong>${escapeHTML(intValue(client.node_count))} nodes</strong>
+              <small>${escapeHTML(intValue(client.instance_count))} instances · ${escapeHTML(intValue(client.protocol_count))} protocols</small>
+            </td>
+            <td>
+              <strong>${escapeHTML(formatDate(client.last_bucket_end))}</strong>
+              <small>first ${escapeHTML(formatDate(client.first_bucket_start))}</small>
+            </td>
+            <td>${escapeHTML(intValue(client.sample_count))}</td>
+          </tr>`;
+      }).join('');
+    }
+
     function render() {
       setTitle('Traffic Accounting');
       const data = state.trafficAccounting && typeof state.trafficAccounting === 'object'
@@ -326,6 +366,7 @@
       const summary = data.summary || {};
       const samples = Array.isArray(data.samples) ? data.samples : [];
       const collectors = Array.isArray(data.collectors) ? data.collectors : [];
+      const clients = Array.isArray(data.clients) ? data.clients : [];
       const filters = trafficExportFilters();
       const previewSamples = filterSamples(samples, filters);
       const collectorCounts = collectorStatusCounts(collectors);
@@ -363,6 +404,32 @@
           </div>
         </section>
         ${renderExportFilters(filters, samples)}
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Per-client usage counters</h2>
+              <p>Server-side aggregate usage by client for the selected retained dataset. These counters use the full retention-scoped query, not only the recent sample table.</p>
+            </div>
+            <div class="table-tools"><span class="tag">${escapeHTML(String(clients.length))} clients</span></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th>Total</th>
+                  <th>Rx</th>
+                  <th>Tx</th>
+                  <th>Flows</th>
+                  <th>Coverage</th>
+                  <th>Window</th>
+                  <th>Samples</th>
+                </tr>
+              </thead>
+              <tbody>${clientUsageRows(clients)}</tbody>
+            </table>
+          </div>
+        </section>
         <section class="table-card">
           <div class="table-head">
             <div>

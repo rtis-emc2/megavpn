@@ -503,41 +503,44 @@ left join firewall_address_lists dl on dl.id=r.dst_list_id`, policyID, ruleID)
 	return deleted, nil
 }
 
-func (s *Store) CreateFirewallApplyJob(ctx context.Context, nodeID, policyID string, enforceDefaultPolicy bool) (domain.Job, error) {
+type firewallJobPayload struct {
+	policy      domain.FirewallPolicy
+	revisionID  string
+	revisionNo  int
+	rulePayload []any
+	payload     map[string]any
+}
+
+func (s *Store) buildFirewallJobPayload(ctx context.Context, nodeID, policyID string, enforceDefaultPolicy bool) (firewallJobPayload, error) {
 	nodeID = strings.TrimSpace(nodeID)
 	policyID = strings.TrimSpace(policyID)
 	if nodeID == "" {
-		return domain.Job{}, fmt.Errorf("node id is required")
+		return firewallJobPayload{}, fmt.Errorf("node id is required")
 	}
 	if policyID == "" {
 		policy, err := s.defaultFirewallPolicyForNode(ctx, nodeID)
 		if err != nil {
-			return domain.Job{}, err
+			return firewallJobPayload{}, err
 		}
 		policyID = policy.ID
 	}
 	policy, err := s.getFirewallPolicy(ctx, policyID)
 	if err != nil {
-		return domain.Job{}, err
+		return firewallJobPayload{}, err
 	}
 	rules, err := s.listFirewallRules(ctx, policyID)
 	if err != nil {
-		return domain.Job{}, err
+		return firewallJobPayload{}, err
 	}
 	rulePayload := firewallRulesPayload(rules)
 	addressListPayload, err := s.firewallAddressListsPayload(ctx)
 	if err != nil {
-		return domain.Job{}, err
+		return firewallJobPayload{}, err
 	}
 	revisionID := id.New()
 	revisionNo, err := s.nextFirewallRevisionNo(ctx, policy.ID)
 	if err != nil {
-		return domain.Job{}, err
-	}
-	_, err = s.db.Exec(ctx, `insert into firewall_revisions(id,policy_id,revision_no,rendered_hash,rules_json,status,created_at)
-values($1,$2,$3,'',$4,'active',now())`, revisionID, policy.ID, revisionNo, mustJSON(rulePayload))
-	if err != nil {
-		return domain.Job{}, err
+		return firewallJobPayload{}, err
 	}
 	payload := map[string]any{
 		"node_id":                nodeID,
@@ -552,14 +555,48 @@ values($1,$2,$3,'',$4,'active',now())`, revisionID, policy.ID, revisionNo, mustJ
 		"rules":                  rulePayload,
 		"address_lists":          addressListPayload,
 	}
-	job, err := s.CreateJob(ctx, domain.Job{Type: "node.firewall.apply", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Payload: payload})
+	return firewallJobPayload{
+		policy:      policy,
+		revisionID:  revisionID,
+		revisionNo:  revisionNo,
+		rulePayload: rulePayload,
+		payload:     payload,
+	}, nil
+}
+
+func (s *Store) CreateFirewallPreviewJob(ctx context.Context, nodeID, policyID string, enforceDefaultPolicy bool) (domain.Job, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	built, err := s.buildFirewallJobPayload(ctx, nodeID, policyID, enforceDefaultPolicy)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	job, err := s.CreateJob(ctx, domain.Job{Type: "node.firewall.preview", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Payload: built.payload})
+	if err != nil {
+		return domain.Job{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "firewall.preview", "node", &nodeID, "firewall preview queued")
+	return job, nil
+}
+
+func (s *Store) CreateFirewallApplyJob(ctx context.Context, nodeID, policyID string, enforceDefaultPolicy bool) (domain.Job, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	built, err := s.buildFirewallJobPayload(ctx, nodeID, policyID, enforceDefaultPolicy)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	_, err = s.db.Exec(ctx, `insert into firewall_revisions(id,policy_id,revision_no,rendered_hash,rules_json,status,created_at)
+values($1,$2,$3,'',$4,'active',now())`, built.revisionID, built.policy.ID, built.revisionNo, mustJSON(built.rulePayload))
+	if err != nil {
+		return domain.Job{}, err
+	}
+	job, err := s.CreateJob(ctx, domain.Job{Type: "node.firewall.apply", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Payload: built.payload})
 	if err != nil {
 		return domain.Job{}, err
 	}
 	_, err = s.db.Exec(ctx, `insert into firewall_node_state(id,node_id,policy_id,revision_id,desired_revision_id,status,observed_json,last_job_id,updated_at)
 values($1,$2,$3,null,$4,'pending','{}'::jsonb,$5,now())
 on conflict(node_id) do update set policy_id=excluded.policy_id, desired_revision_id=excluded.desired_revision_id, status='pending', last_job_id=excluded.last_job_id, updated_at=now()`,
-		id.New(), nodeID, policy.ID, revisionID, job.ID)
+		id.New(), nodeID, built.policy.ID, built.revisionID, job.ID)
 	if err != nil {
 		return domain.Job{}, err
 	}
@@ -568,6 +605,9 @@ on conflict(node_id) do update set policy_id=excluded.policy_id, desired_revisio
 }
 
 func (s *Store) ApplyFirewallJobResult(ctx context.Context, job domain.Job, status string, result map[string]any) error {
+	if strings.TrimSpace(job.Type) != "node.firewall.apply" {
+		return nil
+	}
 	nodeID := ""
 	if job.ScopeID != nil {
 		nodeID = strings.TrimSpace(*job.ScopeID)

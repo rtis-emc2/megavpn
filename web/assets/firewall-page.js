@@ -61,6 +61,10 @@
       return inventory().rules.find((rule) => rule.id === ruleID) || null;
     }
 
+    function nodeStateByID(nodeID) {
+      return inventory().nodeStates.find((row) => row.node_id === nodeID) || null;
+    }
+
     function rulesForPolicy(policyID) {
       return inventory().rules.filter((rule) => rule.policy_id === policyID);
     }
@@ -214,6 +218,7 @@
           <div class="pool-actions">
             <button class="secondary-btn firewall-edit-policy-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canManage ? '' : ' disabled'}>Edit policy</button>
             <button class="secondary-btn firewall-add-rule-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canManage ? '' : ' disabled'}>Add rule</button>
+            <button class="secondary-btn firewall-preview-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canApply ? '' : ' disabled'}>Preview</button>
             <button class="primary-btn firewall-apply-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canApply ? '' : ' disabled'}>Apply to node</button>
             <button class="danger-btn firewall-delete-policy-btn" type="button" data-policy-id="${escapeHTML(policy.id)}" data-policy-name="${escapeHTML(policy.label || policy.key)}"${canManage && !protectedPolicy ? '' : ' disabled'}>Delete</button>
           </div>
@@ -384,7 +389,12 @@
             <td>${escapeHTML(item?.policy_key || 'node_base')}<br><span class="metric-caption">${escapeHTML(enforcement)} · rules ${escapeHTML(ruleCount)} · system ${escapeHTML(systemRuleCount)}</span></td>
             <td>${statusTag(item?.status || 'unknown')}</td>
             <td>${escapeHTML(item?.updated_at ? formatDate(item.updated_at) : 'n/a')}</td>
-            <td><button class="secondary-btn firewall-node-apply-btn" type="button" data-node-id="${escapeHTML(node.id)}"${hasPermission('firewall.apply') ? '' : ' disabled'}>Apply</button></td>
+            <td>
+              <div class="compact-action-grid">
+                <button class="secondary-btn firewall-node-preview-btn" type="button" data-node-id="${escapeHTML(node.id)}"${hasPermission('firewall.apply') ? '' : ' disabled'}>Preview</button>
+                <button class="secondary-btn firewall-node-apply-btn" type="button" data-node-id="${escapeHTML(node.id)}"${hasPermission('firewall.apply') ? '' : ' disabled'}>Apply</button>
+              </div>
+            </td>
           </tr>`;
       });
       return rows.length ? rows.join('') : '<tr><td colspan="5"><div class="empty">No active nodes registered.</div></td></tr>';
@@ -450,6 +460,7 @@
         actionHTML.push('<button class="primary-btn" id="addFirewallRuleBtnTop" type="button">New rule</button>');
       }
       if (canApply && (active === 'overview' || active === 'policies' || active === 'nodeState')) {
+        actionHTML.push(`<button class="secondary-btn firewall-preview-quick-btn" type="button" data-policy-id="${escapeHTML(firstPolicy.id || '')}" data-node-id="${escapeHTML(firstNode.id || '')}"${applyDisabled ? ' disabled' : ''}>Preview</button>`);
         actionHTML.push(`<button class="secondary-btn firewall-apply-quick-btn" type="button" data-policy-id="${escapeHTML(firstPolicy.id || '')}" data-node-id="${escapeHTML(firstNode.id || '')}"${applyDisabled ? ' disabled' : ''}>Apply to node</button>`);
       }
       return `
@@ -718,11 +729,20 @@
       document.querySelectorAll('.firewall-apply-btn').forEach((button) => {
         button.addEventListener('click', () => openApplyModal(button.dataset.policyId || '', ''));
       });
+      document.querySelectorAll('.firewall-preview-btn').forEach((button) => {
+        button.addEventListener('click', () => openPreviewModal(button.dataset.policyId || '', ''));
+      });
       document.querySelectorAll('.firewall-node-apply-btn').forEach((button) => {
         button.addEventListener('click', () => openApplyModal('', button.dataset.nodeId || ''));
       });
+      document.querySelectorAll('.firewall-node-preview-btn').forEach((button) => {
+        button.addEventListener('click', () => openPreviewModal('', button.dataset.nodeId || ''));
+      });
       document.querySelectorAll('.firewall-apply-quick-btn').forEach((button) => {
         button.addEventListener('click', () => openApplyModal(button.dataset.policyId || '', button.dataset.nodeId || ''));
+      });
+      document.querySelectorAll('.firewall-preview-quick-btn').forEach((button) => {
+        button.addEventListener('click', () => openPreviewModal(button.dataset.policyId || '', button.dataset.nodeId || ''));
       });
     }
 
@@ -951,10 +971,11 @@
         </div>`;
     }
 
-    function openApplyModal(policyID, nodeID) {
+    function openApplyModal(policyID, nodeID, applyMode = 'observe') {
       const inv = inventory();
       const selectedPolicy = policyByID(policyID) || inv.policies.find((policy) => policy.key === 'node_base') || inv.policies[0] || {};
       const selectedNode = (state.nodes || []).find((node) => node.id === nodeID) || (state.nodes || [])[0] || {};
+      const strictMode = String(applyMode || 'observe') === 'strict';
       openModal('Apply firewall policy', 'Node firewall', `
         <form id="firewallApplyForm" class="form-grid">
           <div class="field"><label>Node</label><select name="node_id" required>${(state.nodes || []).map((node) => `<option value="${escapeHTML(node.id)}"${node.id === selectedNode.id ? ' selected' : ''}>${escapeHTML(node.name || node.id)} · ${escapeHTML(node.role || 'node')} · ${escapeHTML(node.address || 'n/a')}</option>`).join('')}</select></div>
@@ -962,12 +983,12 @@
           <div id="firewallApplyPolicyDetails" class="field full">${renderApplyPolicyDetails(selectedPolicy)}</div>
           <div class="firewall-apply-mode-grid field full">
             <label class="firewall-apply-mode-card">
-              <input name="apply_mode" type="radio" value="observe" checked />
+              <input name="apply_mode" type="radio" value="observe"${strictMode ? '' : ' checked'} />
               <span>Rules only</span>
               <small>Base chains stay accept; explicit catalog rules are installed.</small>
             </label>
             <label class="firewall-apply-mode-card">
-              <input name="apply_mode" type="radio" value="strict" />
+              <input name="apply_mode" type="radio" value="strict"${strictMode ? ' checked' : ''} />
               <span>Strict defaults</span>
               <small>Default input, forward and output policies are enforced.</small>
             </label>
@@ -979,6 +1000,39 @@
       document.getElementById('firewallApplyForm')?.addEventListener('submit', submitApply);
       document.getElementById('firewallApplyPolicySelect')?.addEventListener('change', (event) => {
         const details = document.getElementById('firewallApplyPolicyDetails');
+        const policy = policyByID(String(event.currentTarget?.value || '')) || {};
+        if (details) details.innerHTML = renderApplyPolicyDetails(policy);
+      });
+    }
+
+    function openPreviewModal(policyID, nodeID) {
+      const inv = inventory();
+      const selectedPolicy = policyByID(policyID) || inv.policies.find((policy) => policy.key === 'node_base') || inv.policies[0] || {};
+      const selectedNode = (state.nodes || []).find((node) => node.id === nodeID) || (state.nodes || [])[0] || {};
+      openModal('Preview firewall policy', 'Node firewall', `
+        <form id="firewallPreviewForm" class="form-grid">
+          <div class="field"><label>Node</label><select name="node_id" required>${(state.nodes || []).map((node) => `<option value="${escapeHTML(node.id)}"${node.id === selectedNode.id ? ' selected' : ''}>${escapeHTML(node.name || node.id)} · ${escapeHTML(node.role || 'node')} · ${escapeHTML(node.address || 'n/a')}</option>`).join('')}</select></div>
+          <div class="field"><label>Policy</label><select name="policy_id" id="firewallPreviewPolicySelect" required>${inv.policies.map((policy) => `<option value="${escapeHTML(policy.id)}"${policy.id === selectedPolicy.id ? ' selected' : ''}>${escapeHTML(policy.label || policy.key)}</option>`).join('')}</select></div>
+          <div id="firewallPreviewPolicyDetails" class="field full">${renderApplyPolicyDetails(selectedPolicy)}</div>
+          <div class="firewall-apply-mode-grid field full">
+            <label class="firewall-apply-mode-card">
+              <input name="apply_mode" type="radio" value="observe" checked />
+              <span>Rules only</span>
+              <small>Preview explicit catalog rules with accept base chain policies.</small>
+            </label>
+            <label class="firewall-apply-mode-card">
+              <input name="apply_mode" type="radio" value="strict" />
+              <span>Strict defaults</span>
+              <small>Preview enforced input, forward and output default policies.</small>
+            </label>
+          </div>
+          <div class="field full inline-actions"><button class="primary-btn" type="submit">Run preview</button><button class="secondary-btn" type="button" id="cancelFirewallPreviewBtn">Cancel</button></div>
+        </form>
+        <div id="firewallPreviewResult" class="form-result"></div>`, { wide: true });
+      document.getElementById('cancelFirewallPreviewBtn')?.addEventListener('click', closeModal);
+      document.getElementById('firewallPreviewForm')?.addEventListener('submit', submitPreview);
+      document.getElementById('firewallPreviewPolicySelect')?.addEventListener('change', (event) => {
+        const details = document.getElementById('firewallPreviewPolicyDetails');
         const policy = policyByID(String(event.currentTarget?.value || '')) || {};
         if (details) details.innerHTML = renderApplyPolicyDetails(policy);
       });
@@ -1232,6 +1286,90 @@
       } catch (err) {
         if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
         openActionOutcomeModal('Firewall apply', 'Apply queue failed', 'failed', err.message || 'Firewall apply failed.', [
+          { label: 'Node', value: nodeID || 'n/a' },
+          { label: 'Policy', value: policyID || 'n/a' },
+        ]);
+      }
+    }
+
+    function firewallPreviewDiff(job, nodeID) {
+      const result = job?.result || {};
+      const current = nodeStateByID(nodeID)?.observed || {};
+      const previewHash = String(result.rendered_hash || '').trim();
+      const currentHash = String(current.rendered_hash || '').trim();
+      if (!previewHash) {
+        return { status: 'unknown', label: 'No preview hash', detail: 'Agent did not return a rendered policy hash.', className: 'stub', currentHash, previewHash };
+      }
+      if (currentHash && previewHash === currentHash) {
+        return { status: 'same', label: 'No changes', detail: 'Rendered policy matches the last observed node firewall hash.', className: 'ok', currentHash, previewHash };
+      }
+      if (currentHash) {
+        return { status: 'changed', label: 'Changes pending', detail: 'Rendered policy differs from the last observed node firewall hash.', className: 'warn', currentHash, previewHash };
+      }
+      return { status: 'new', label: 'Not applied yet', detail: 'Node does not have a comparable observed firewall hash.', className: 'warn', currentHash, previewHash };
+    }
+
+    function renderFirewallPreviewResult(job, nodeID, policyID, applyMode) {
+      const result = job?.result || {};
+      const diff = firewallPreviewDiff(job, nodeID);
+      const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
+      const script = String(result.script || '').trim();
+      const canApplyPreview = String(job?.status || '').toLowerCase() === 'succeeded' && Boolean(diff.previewHash);
+      return `
+        <section class="firewall-preview-result">
+          <div class="firewall-preview-head">
+            <div>
+              <h3>Preview result</h3>
+              <p>${escapeHTML(diff.detail)}</p>
+            </div>
+            ${statusTag(diff.className === 'ok' ? 'ok' : diff.className === 'warn' ? 'pending' : 'unknown')}
+          </div>
+          <div class="firewall-diff-grid">
+            <div><span>Diff</span><strong>${escapeHTML(diff.label)}</strong><small>${escapeHTML(diff.status)}</small></div>
+            <div><span>Preview hash</span><code>${escapeHTML(diff.previewHash || 'n/a')}</code></div>
+            <div><span>Current hash</span><code>${escapeHTML(diff.currentHash || 'n/a')}</code></div>
+            <div><span>Rules</span><strong>${escapeHTML(String(result.rule_count ?? 'n/a'))}</strong><small>system ${escapeHTML(String(result.system_rule_count ?? 'n/a'))}</small></div>
+            <div><span>Defaults</span><strong>${escapeHTML(String(result.default_policy_enforcement || 'n/a'))}</strong><small>${String(result.applied) === 'true' ? 'applied' : 'preview only'}</small></div>
+          </div>
+          ${warnings.length ? `<div class="notice warn">${warnings.map((item) => escapeHTML(String(item))).join('<br>')}</div>` : ''}
+          ${script ? `<details class="firewall-script-details"><summary>Rendered nftables script</summary><pre class="firewall-script-preview"><code>${escapeHTML(script)}</code></pre></details>` : ''}
+          <div class="inline-actions">
+            ${canApplyPreview ? `<button class="primary-btn" id="applyPreviewedFirewallBtn" type="button" data-apply-mode="${escapeHTML(String(applyMode || 'observe'))}">Apply this policy</button>` : ''}
+            <button class="secondary-btn" type="button" id="closeFirewallPreviewBtn">Close</button>
+          </div>
+        </section>`;
+    }
+
+    function bindPreviewResultActions(nodeID, policyID, applyMode) {
+      document.getElementById('applyPreviewedFirewallBtn')?.addEventListener('click', () => openApplyModal(policyID, nodeID, applyMode));
+      document.getElementById('closeFirewallPreviewBtn')?.addEventListener('click', closeModal);
+    }
+
+    async function submitPreview(event) {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const nodeID = String(form.get('node_id') || '').trim();
+      const policyID = String(form.get('policy_id') || '').trim();
+      const applyMode = String(form.get('apply_mode') || 'observe') === 'strict' ? 'strict' : 'observe';
+      const result = document.getElementById('firewallPreviewResult');
+      if (result) result.innerHTML = '<span class="tag warn">queueing preview</span>';
+      try {
+        const job = await sendJSON(`/api/v1/nodes/${encodeURIComponent(nodeID)}/firewall/preview`, 'POST', {
+          policy_id: policyID,
+          enforce_default_policy: applyMode === 'strict',
+        });
+        if (result) result.innerHTML = `<span class="tag ok">preview queued</span> <code>${escapeHTML(job.id || '')}</code>`;
+        let finalJob = job;
+        if (typeof watchJob === 'function' && job?.id) {
+          finalJob = await watchJob(job.id, result, 'Firewall preview') || job;
+        }
+        if (result && finalJob?.result) {
+          result.innerHTML = renderFirewallPreviewResult(finalJob, nodeID, policyID, applyMode);
+          bindPreviewResultActions(nodeID, policyID, applyMode);
+        }
+      } catch (err) {
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        openActionOutcomeModal('Firewall preview', 'Preview failed', 'failed', err.message || 'Firewall preview failed.', [
           { label: 'Node', value: nodeID || 'n/a' },
           { label: 'Policy', value: policyID || 'n/a' },
         ]);

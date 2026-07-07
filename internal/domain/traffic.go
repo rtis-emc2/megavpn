@@ -83,10 +83,28 @@ type TrafficAccountingCollectorStatus struct {
 	LastReceivedAgeSeconds int64      `json:"last_received_age_seconds"`
 }
 
+type TrafficAccountingClientUsage struct {
+	ClientAccountID  string     `json:"client_account_id"`
+	ClientUsername   string     `json:"client_username"`
+	SampleCount      int64      `json:"sample_count"`
+	NodeCount        int64      `json:"node_count"`
+	InstanceCount    int64      `json:"instance_count"`
+	ProtocolCount    int64      `json:"protocol_count"`
+	RxBytes          int64      `json:"rx_bytes"`
+	TxBytes          int64      `json:"tx_bytes"`
+	RxPackets        int64      `json:"rx_packets"`
+	TxPackets        int64      `json:"tx_packets"`
+	FlowCount        int64      `json:"flow_count"`
+	FirstBucketStart *time.Time `json:"first_bucket_start,omitempty"`
+	LastBucketEnd    *time.Time `json:"last_bucket_end,omitempty"`
+	LastReceivedAt   *time.Time `json:"last_received_at,omitempty"`
+}
+
 type TrafficAccountingOverview struct {
 	Summary    TrafficAccountingSummary           `json:"summary"`
 	Samples    []TrafficAccountingSample          `json:"samples"`
 	Collectors []TrafficAccountingCollectorStatus `json:"collectors"`
+	Clients    []TrafficAccountingClientUsage     `json:"clients"`
 }
 
 type TrafficAccountingExportFilter struct {
