@@ -266,6 +266,54 @@
         </section>`;
     }
 
+    const trafficTabs = [
+      ['overview', 'Overview', 'Counters and status'],
+      ['clients', 'Clients', 'Per-client usage'],
+      ['collectors', 'Collectors', 'Agent streams'],
+      ['samples', 'Samples', 'Raw retained rows'],
+      ['export', 'Export', 'Filters and CSV'],
+    ];
+
+    function trafficAccountingActiveTab() {
+      if (!state.trafficAccountingTab) {
+        try {
+          state.trafficAccountingTab = localStorage.getItem('megavpn.trafficAccountingTab') || 'overview';
+        } catch (_) {
+          state.trafficAccountingTab = 'overview';
+        }
+      }
+      const current = String(state.trafficAccountingTab || '').trim();
+      const active = trafficTabs.some(([key]) => key === current) ? current : 'overview';
+      state.trafficAccountingTab = active;
+      return active;
+    }
+
+    function trafficTabBadge(key, summary, clients, collectors, samples) {
+      switch (key) {
+      case 'clients':
+        return intValue(clients.length || summary.client_count);
+      case 'collectors':
+        return intValue(collectors.length);
+      case 'samples':
+        return intValue(samples.length);
+      case 'export':
+        return 'CSV';
+      default:
+        return bytes(Number(summary.rx_bytes || 0) + Number(summary.tx_bytes || 0));
+      }
+    }
+
+    function renderTrafficTabs(active, summary, clients, collectors, samples) {
+      return `
+        <nav class="page-tabs control-tabs traffic-tabs" role="tablist" aria-label="Traffic accounting sections">
+          ${trafficTabs.map(([key, label, caption]) => `
+            <button class="page-tab ${active === key ? 'is-active' : ''}" type="button" data-traffic-tab="${escapeHTML(key)}" role="tab" aria-selected="${active === key ? 'true' : 'false'}">
+              <span>${escapeHTML(label)} <em>${escapeHTML(trafficTabBadge(key, summary, clients, collectors, samples))}</em></span>
+              <small>${escapeHTML(caption)}</small>
+            </button>`).join('')}
+        </nav>`;
+    }
+
     function sampleRows(samples) {
       if (!samples.length) {
         return `
@@ -395,23 +443,13 @@
       }).join('');
     }
 
-    function render() {
-      setTitle('Traffic Accounting');
-      const data = state.trafficAccounting && typeof state.trafficAccounting === 'object'
-        ? state.trafficAccounting
-        : { summary: {}, samples: [] };
-      const summary = data.summary || {};
-      const samples = Array.isArray(data.samples) ? data.samples : [];
-      const collectors = Array.isArray(data.collectors) ? data.collectors : [];
-      const clients = Array.isArray(data.clients) ? data.clients : [];
-      const filters = trafficExportFilters();
-      const previewSamples = filterSamples(samples, filters);
+    function renderOverviewSection(summary, samples, previewSamples, collectors, filters) {
       const collectorCounts = collectorStatusCounts(collectors);
       const retention = Number(summary.retention_days || 180);
       const hasTrafficRows = Number(summary.sample_count || 0) > 0 || samples.length > 0 || previewSamples.length > 0;
-      const hasVisibleTraffic = hasTrafficRows || collectors.length > 0 || clients.length > 0;
+      const hasVisibleTraffic = hasTrafficRows || collectors.length > 0 || Number(summary.client_count || 0) > 0;
       const collectorProblemCount = Number(collectorCounts.degraded || 0) + Number(collectorCounts.missing || 0) + Number(collectorCounts.inactive || 0);
-      el('content').innerHTML = `
+      return `
         <section class="table-card">
           <div class="table-head">
             <div>
@@ -434,9 +472,12 @@
             ${summaryCard('Retention', `${retention} days`, 'audit history')}
           </div>
         </section>
-        ${hasVisibleTraffic ? '' : renderTrafficEmptyState(filters, collectors)}
-        ${renderExportFilters(filters, samples)}
-        ${clients.length ? `<section class="table-card">
+        ${hasVisibleTraffic ? '' : renderTrafficEmptyState(filters, collectors)}`;
+    }
+
+    function renderClientUsageSection(clients) {
+      return `
+        <section class="table-card">
           <div class="table-head">
             <div>
               <h2>Client usage</h2>
@@ -461,8 +502,13 @@
               <tbody>${clientUsageRows(clients)}</tbody>
             </table>
           </div>
-        </section>` : ''}
-        ${collectors.length ? `<section class="table-card">
+        </section>`;
+    }
+
+    function renderCollectorStatusSection(collectors) {
+      const collectorCounts = collectorStatusCounts(collectors);
+      return `
+        <section class="table-card">
           <div class="table-head">
             <div>
               <h2>Collector status</h2>
@@ -490,11 +536,15 @@
               <tbody>${collectorRows(collectors)}</tbody>
             </table>
           </div>
-        </section>` : ''}
-        ${previewSamples.length ? `<section class="table-card">
+        </section>`;
+    }
+
+    function renderSampleSection(samples) {
+      return `
+        <section class="table-card">
           <div class="table-head">
             <h2>Recent traffic samples</h2>
-            <div class="table-tools"><span class="tag">${escapeHTML(String(previewSamples.length))} retained rows</span></div>
+            <div class="table-tools"><span class="tag">${escapeHTML(String(samples.length))} retained rows</span></div>
           </div>
           <div class="table-wrap">
             <table>
@@ -510,10 +560,52 @@
                   <th>Bucket</th>
                 </tr>
               </thead>
-              <tbody>${sampleRows(previewSamples)}</tbody>
+              <tbody>${sampleRows(samples)}</tbody>
             </table>
           </div>
-        </section>` : ''}`;
+        </section>`;
+    }
+
+    function renderTrafficPanel(activeTab, summary, samples, previewSamples, collectors, clients, filters) {
+      switch (activeTab) {
+      case 'clients':
+        return renderClientUsageSection(clients);
+      case 'collectors':
+        return renderCollectorStatusSection(collectors);
+      case 'samples':
+        return renderSampleSection(previewSamples);
+      case 'export':
+        return renderExportFilters(filters, samples);
+      default:
+        return renderOverviewSection(summary, samples, previewSamples, collectors, filters);
+      }
+    }
+
+    function render() {
+      setTitle('Traffic Accounting');
+      const data = state.trafficAccounting && typeof state.trafficAccounting === 'object'
+        ? state.trafficAccounting
+        : { summary: {}, samples: [] };
+      const summary = data.summary || {};
+      const samples = Array.isArray(data.samples) ? data.samples : [];
+      const collectors = Array.isArray(data.collectors) ? data.collectors : [];
+      const clients = Array.isArray(data.clients) ? data.clients : [];
+      const filters = trafficExportFilters();
+      const previewSamples = filterSamples(samples, filters);
+      const activeTab = trafficAccountingActiveTab();
+      el('content').innerHTML = `
+        ${renderTrafficTabs(activeTab, summary, clients, collectors, previewSamples)}
+        ${renderTrafficPanel(activeTab, summary, samples, previewSamples, collectors, clients, filters)}`;
+      document.querySelectorAll('[data-traffic-tab]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const tab = button.dataset.trafficTab || 'overview';
+          state.trafficAccountingTab = trafficTabs.some(([key]) => key === tab) ? tab : 'overview';
+          try {
+            localStorage.setItem('megavpn.trafficAccountingTab', state.trafficAccountingTab);
+          } catch (_) {}
+          render();
+        });
+      });
       const form = document.getElementById('trafficExportFilterForm');
       form?.addEventListener('change', async () => {
         const current = trafficExportFiltersFromForm(form);

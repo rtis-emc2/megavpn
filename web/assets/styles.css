@@ -3758,6 +3758,9 @@ tr:hover td { background: #f8fafc; }
 .traffic-filter-card .table-head p {
   max-width: 720px;
 }
+.traffic-tabs {
+  margin: 0 0 -2px;
+}
 .traffic-export-filter-form {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

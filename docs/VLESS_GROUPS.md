@@ -1,6 +1,6 @@
 # VLESS Access Groups
 
-**Release:** `7.1.0.16`
+**Release:** `7.1.0.17`
 
 Russian companion: [VLESS_GROUPS_RU.md](VLESS_GROUPS_RU.md).
 

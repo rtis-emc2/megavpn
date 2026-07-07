@@ -1,6 +1,6 @@
 # Traffic Accounting
 
-**Release:** `7.1.0.16`
+**Release:** `7.1.0.17`
 
 Traffic accounting stores aggregate traffic counters for operational audit,
 capacity planning and incident diagnostics. It is not packet capture and it is
@@ -129,14 +129,21 @@ flowchart LR
   E --> F["Traffic Accounting UI"]
 ```
 
-The Traffic Accounting UI provides one compact report-filter form for summary
-counters and CSV download. Reads are server-side, use the same `traffic.read`
-permission, enforce retention cutoff and stay capped by endpoint type. CSV
-responses set `Cache-Control: no-store`. Time filters accept RFC3339 or
-`YYYY-MM-DD`. The overview cards show operator-facing counters: total traffic,
-received/sent bytes, retained samples, clients, nodes, collector streams and
-retention. Backend prune internals are intentionally not shown on the primary
-operator screen.
+The Traffic Accounting UI is organized as top-level tabs:
+
+- `Overview`: aggregate counters and no-data diagnostics;
+- `Clients`: per-client usage;
+- `Collectors`: agent counter streams and expected/observed coverage;
+- `Samples`: raw retained aggregate rows;
+- `Export`: report filters and CSV download.
+
+The report-filter form lives in the `Export` tab. Reads are server-side, use
+the same `traffic.read` permission, enforce retention cutoff and stay capped by
+endpoint type. CSV responses set `Cache-Control: no-store`. Time filters accept
+RFC3339 or `YYYY-MM-DD`. The overview cards show operator-facing counters:
+total traffic, received/sent bytes, retained samples, clients, nodes, collector
+streams and retention. Backend prune internals are intentionally not shown on
+the primary operator screen.
 
 When no samples are retained for the selected dataset, the UI shows one
 diagnostic no-data state instead of empty tables. The state points the operator
