@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.1.0.20`
+**Релиз:** `7.1.0.21`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -856,6 +856,21 @@ Audit должен отвечать на вопросы:
 - может удалить только managed state;
 - опционально может удалить agent;
 - не должен ломать unrelated backhaul/routes за пределами managed scopes.
+
+Lost-node force retire:
+
+- использовать только если host или agent окончательно недоступен и обычный
+  `instance.delete` не может дождаться convergence;
+- требует точного подтверждения именем node в диалоге удаления node;
+- отменяет pending/running jobs по node, instances, backhaul и client
+  provisioning, если они ссылаются на потерянную node;
+- переводит локальные instances в `deleted`, удаляет client service access
+  rows, generated artifacts, share links, service-access secrets и runtime
+  states;
+- переводит backhaul links, связанные с потерянной node, в `deleted` и делает
+  revoke agent identity;
+- не чистит файлы на потерянном host. Если host позже вернулся, его нужно
+  очистить out-of-band и подключать как новую node.
 
 ## 21. Production checklist
 

@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.1.0.20`
+**Release:** `7.1.0.21`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -849,6 +849,20 @@ Emergency node cleanup:
 - removes only managed state;
 - can optionally remove the agent;
 - must not break unrelated backhaul/routes outside managed scopes.
+
+Lost-node force retire:
+
+- use only when the host or agent is permanently unavailable and normal
+  `instance.delete` convergence cannot finish;
+- requires exact node-name confirmation through the node delete dialog;
+- cancels pending/running node, instance, backhaul and client provisioning jobs
+  that reference the lost node;
+- marks node-local instances as `deleted`, removes client service access rows,
+  generated artifacts, share links, service-access secrets and runtime states;
+- marks backhaul links that touch the lost node as `deleted` and revokes the
+  node agent identity;
+- does not clean files on the lost host. If the host returns later, wipe it
+  out-of-band before re-enrolling it as a new node.
 
 ## 21. Production Checklist
 

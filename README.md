@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.20`
+**Release:** `7.1.0.21`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,13 +56,12 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.20` tightens the Firewall operator UI and lifecycle controls: Firewall
-buttons now share one visual system, Apply is marked as a high-impact action,
-applied node firewall state is visually distinct, Address group actions have a
-clear primary/secondary hierarchy, nodes can queue a scoped Firewall Disable
-job, SSH bootstrap/reinstall now preflights enforced node firewall state before
-queueing agent updates, and Web UI asset cache keys are advanced for reliable
-browser refresh after deployment. The current focus is:
+`7.1.0.21` adds a controlled lost-node force-retire path and keeps the current
+Firewall operator UI/lifecycle baseline: an unavailable node can now be
+removed from the active control-plane model only after explicit node-name
+confirmation, while the backend cancels pending/running node jobs, removes
+local instance bindings, clears generated client access artifacts, revokes the
+agent identity and hides affected backhaul links. The current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;

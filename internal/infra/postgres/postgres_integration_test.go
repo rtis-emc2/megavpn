@@ -1956,6 +1956,87 @@ func TestPostgresIntegrationInstanceDeleteRemovesClientServiceAccessRows(t *test
 	}
 }
 
+func TestPostgresIntegrationForceRetireLostNodeCleansControlPlaneState(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	store.SetArtifactRoot(t.TempDir())
+
+	fixture := createClientServiceAccessCleanupFixture(t, ctx, store, "force-retire")
+	if _, err := store.ForceRetireNode(ctx, fixture.node.ID, "wrong-node-name", "integration test"); err == nil {
+		t.Fatal("force retire should require exact node confirmation")
+	}
+	if _, err := store.DeleteInstance(ctx, fixture.instance.ID); err != nil {
+		t.Fatalf("queue instance delete before lost-node cleanup: %v", err)
+	}
+
+	egress, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-force-retire-egress-" + strings.ReplaceAll(id.New(), "-", "")[:10],
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "203.0.113.46",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create egress node: %v", err)
+	}
+	backhaulID := id.New()
+	if _, err := store.db.Exec(ctx, `insert into backhaul_links(id,name,ingress_node_id,egress_node_id,status,desired_driver)
+		values($1,$2,$3,$4,'active','wireguard')`, backhaulID, "it-force-retire-backhaul", fixture.node.ID, egress.ID); err != nil {
+		t.Fatalf("insert backhaul link: %v", err)
+	}
+	backhaulSecret, err := store.CreateSecretRef(ctx, "private_key", []byte("integration-backhaul-secret"), map[string]any{
+		"scope":   "backhaul",
+		"link_id": backhaulID,
+	})
+	if err != nil {
+		t.Fatalf("create backhaul secret: %v", err)
+	}
+
+	if _, err := store.RetireNode(ctx, fixture.node.ID); err == nil || !strings.Contains(err.Error(), "active instances") {
+		t.Fatalf("normal retire should block active/deleting instances, got %v", err)
+	}
+	retired, err := store.ForceRetireNode(ctx, fixture.node.ID, fixture.node.Name, "lost node integration test")
+	if err != nil {
+		t.Fatalf("force retire lost node: %v", err)
+	}
+	if retired.Status != "retired" || retired.AgentStatus != "offline" {
+		t.Fatalf("retired node state = %s/%s, want retired/offline", retired.Status, retired.AgentStatus)
+	}
+
+	var instanceStatus string
+	if err := store.db.QueryRow(ctx, `select status from instances where id=$1`, fixture.instance.ID).Scan(&instanceStatus); err != nil {
+		t.Fatalf("get instance status after force retire: %v", err)
+	}
+	if instanceStatus != "deleted" {
+		t.Fatalf("instance status after force retire = %q, want deleted", instanceStatus)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where id=$1`, 0, fixture.access.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from client_access_routes where service_access_id=$1`, 0, fixture.access.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from artifacts where id=$1`, 0, fixture.artifact.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from share_links where id=$1`, 0, fixture.share.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, fixture.secret.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from instance_runtime_states where instance_id=$1`, 0, fixture.instance.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from jobs where node_id=$1 and status in ('queued','running','retrying')`, 0, fixture.node.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from resource_locks rl join jobs j on j.id=rl.job_id where j.node_id=$1`, 0, fixture.node.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, backhaulSecret.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from jobs where type in ('client.provision','artifact.build') and status in ('queued','running','retrying') and payload_json->'instance_ids' ? $1`, 0, fixture.instance.ID)
+
+	var backhaulStatus string
+	if err := store.db.QueryRow(ctx, `select status from backhaul_links where id=$1`, backhaulID).Scan(&backhaulStatus); err != nil {
+		t.Fatalf("get backhaul status after force retire: %v", err)
+	}
+	if backhaulStatus != "deleted" {
+		t.Fatalf("backhaul status after force retire = %q, want deleted", backhaulStatus)
+	}
+	if _, err := os.Stat(fixture.artifact.StoragePath); !os.IsNotExist(err) {
+		t.Fatalf("artifact file after force retire error = %v, want not exist", err)
+	}
+}
+
 type clientServiceAccessCleanupFixture struct {
 	node     domain.Node
 	instance domain.Instance

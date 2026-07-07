@@ -86,6 +86,219 @@ func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string
 	return job, nil
 }
 
+func (s *Store) ForceRetireNode(ctx context.Context, nodeID, confirmation, reason string) (domain.Node, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return domain.Node{}, errors.New("node id is required")
+	}
+	node, err := s.GetNode(ctx, nodeID)
+	if err != nil {
+		return domain.Node{}, err
+	}
+	expectedConfirmation := strings.TrimSpace(node.Name)
+	if expectedConfirmation == "" {
+		expectedConfirmation = nodeID
+	}
+	if strings.TrimSpace(confirmation) != expectedConfirmation {
+		return domain.Node{}, fmt.Errorf("confirmation must match node name %q", expectedConfirmation)
+	}
+	if strings.EqualFold(node.Status, "retired") {
+		return node, nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "operator force retired lost node"
+	}
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Node{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	instanceIDs, err := nodeInstanceIDsForForceRetire(ctx, tx, nodeID)
+	if err != nil {
+		return domain.Node{}, err
+	}
+	backhaulLinkIDs, err := nodeBackhaulLinkIDsForForceRetire(ctx, tx, nodeID)
+	if err != nil {
+		return domain.Node{}, err
+	}
+
+	artifactCleanupPaths := make([]string, 0)
+	for _, instanceID := range instanceIDs {
+		cleanup, err := s.cleanupInstanceClientServiceAccesses(ctx, tx, instanceID)
+		if err != nil {
+			return domain.Node{}, err
+		}
+		artifactCleanupPaths = append(artifactCleanupPaths, cleanup.paths...)
+		if err := releaseInstanceAddressPoolAllocationsTx(ctx, tx, instanceID); err != nil && !isAddressPoolCatalogUnavailable(err) {
+			return domain.Node{}, err
+		}
+		if _, err := tx.Exec(ctx, `delete from instance_runtime_observations where instance_id=$1`, instanceID); err != nil {
+			return domain.Node{}, err
+		}
+		if _, err := tx.Exec(ctx, `delete from instance_runtime_states where instance_id=$1`, instanceID); err != nil {
+			return domain.Node{}, err
+		}
+		if _, err := tx.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, instanceID); err != nil {
+			return domain.Node{}, err
+		}
+	}
+
+	if len(backhaulLinkIDs) > 0 {
+		if _, err := tx.Exec(ctx, `delete from secret_refs
+			where meta_json->>'scope'='backhaul'
+			  and meta_json->>'link_id' = any($1::text[])`, backhaulLinkIDs); err != nil {
+			return domain.Node{}, err
+		}
+		if _, err := tx.Exec(ctx, `update backhaul_links
+			set status='deleted',
+			    selected_transport_id=null,
+			    updated_at=now()
+			where id = any($1::uuid[])`, backhaulLinkIDs); err != nil {
+			return domain.Node{}, err
+		}
+	}
+
+	now := time.Now().UTC()
+	cancelResult := mustJSON(map[string]any{
+		"message":          "job cancelled by force node retire",
+		"node_id":          nodeID,
+		"reason":           reason,
+		"force_retired_at": now.Format(time.RFC3339),
+	})
+	cancelledJobIDs, err := cancelNodeJobsForForceRetire(ctx, tx, nodeID, instanceIDs, backhaulLinkIDs, now, cancelResult)
+	if err != nil {
+		return domain.Node{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `update node_bootstrap_runs
+		set status='cancelled',
+		    result_payload_json=$2,
+		    finished_at=now()
+		where node_id=$1 and status in ('queued','running')`, nodeID, cancelResult); err != nil {
+		return domain.Node{}, err
+	}
+	if _, err := tx.Exec(ctx, `delete from firewall_node_state where node_id=$1`, nodeID); err != nil {
+		return domain.Node{}, err
+	}
+	if _, err := tx.Exec(ctx, `delete from resource_locks where resource_type='node' and resource_id=$1`, nodeID); err != nil {
+		return domain.Node{}, err
+	}
+	if _, err := tx.Exec(ctx, `update node_agents set status='revoked',revoked_at=now() where node_id=$1`, nodeID); err != nil {
+		return domain.Node{}, err
+	}
+	cmd, err := tx.Exec(ctx, `update nodes
+		set status='retired',
+		    agent_status='offline',
+		    last_heartbeat_at=null,
+		    updated_at=now()
+		where id=$1`, nodeID)
+	if err != nil {
+		return domain.Node{}, err
+	}
+	if cmd.RowsAffected() == 0 {
+		return domain.Node{}, pgx.ErrNoRows
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Node{}, err
+	}
+
+	if len(artifactCleanupPaths) > 0 {
+		_, fileErrors := s.removeManagedArtifactFiles(artifactCleanupPaths)
+		if len(fileErrors) > 0 {
+			_, _ = s.CreateAudit(ctx, "system", "node.force_retire.artifact_warning", "node", &nodeID, fmt.Sprintf("force retire left %d artifact file cleanup warnings", len(fileErrors)))
+		}
+	}
+	for _, jobID := range cancelledJobIDs {
+		_ = s.AddJobLog(ctx, jobID, "warn", "job cancelled by force node retire", map[string]any{"node_id": nodeID, "reason": reason})
+	}
+	_, _ = s.CreateAudit(ctx, "system", "node.force_retire", "node", &nodeID, fmt.Sprintf("node force retired; instances=%d jobs_cancelled=%d backhaul_links=%d", len(instanceIDs), len(cancelledJobIDs), len(backhaulLinkIDs)))
+	return s.GetNode(ctx, nodeID)
+}
+
+func nodeInstanceIDsForForceRetire(ctx context.Context, tx pgx.Tx, nodeID string) ([]string, error) {
+	rows, err := tx.Query(ctx, `select id::text from instances where node_id=$1 and status <> 'deleted' for update`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func nodeBackhaulLinkIDsForForceRetire(ctx context.Context, tx pgx.Tx, nodeID string) ([]string, error) {
+	rows, err := tx.Query(ctx, `select id::text
+from backhaul_links
+where status <> 'deleted'
+  and (ingress_node_id=$1 or egress_node_id=$1)
+for update`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func cancelNodeJobsForForceRetire(ctx context.Context, tx pgx.Tx, nodeID string, instanceIDs, backhaulLinkIDs []string, finishedAt time.Time, resultJSON []byte) ([]string, error) {
+	rows, err := tx.Query(ctx, `with target_jobs as (
+	select id
+	from jobs
+	where status in ('queued','running','retrying')
+	  and (
+	    node_id=$1
+	    or instance_id = any($2::uuid[])
+	    or (scope_type='backhaul' and scope_id = any($3::uuid[]))
+	    or (type in ('client.provision','artifact.build') and (payload_json->'instance_ids') ?| $4::text[])
+	  )
+	for update
+),
+deleted_locks as (
+	delete from resource_locks
+	where job_id in (select id from target_jobs)
+),
+updated_jobs as (
+	update jobs
+	set status='cancelled',
+	    finished_at=$5,
+	    locked_by=null,
+	    locked_until=null,
+	    result_json=$6
+	where id in (select id from target_jobs)
+	returning id::text
+)
+select id from updated_jobs`, nodeID, instanceIDs, backhaulLinkIDs, instanceIDs, finishedAt, resultJSON)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) CreateNodeRebootJob(ctx context.Context, nodeID, confirmation, reason string) (domain.Job, error) {
 	node, err := s.GetNode(ctx, nodeID)
 	if err != nil {

@@ -96,6 +96,7 @@ type Store interface {
 	UpdateNode(context.Context, string, domain.Node) (domain.Node, error)
 	UpdateNodeGeoIP(context.Context, string, domain.NodeGeoIP) (domain.Node, error)
 	RetireNode(context.Context, string) (domain.Node, error)
+	ForceRetireNode(context.Context, string, string, string) (domain.Node, error)
 	SetNodeMaintenance(context.Context, string, bool) (domain.Node, error)
 	ListServiceDefinitions(context.Context) ([]domain.ServiceDefinition, error)
 	EnsureDefaultVLESSGroupTemplates(context.Context, []domain.VLESSGroupTemplate) error
@@ -412,6 +413,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/nodes/{id}/services/discover", "node.write", s.createNodeServiceDiscoveryJob)
 	protected("POST /api/v1/nodes/{id}/inventory/sync", "node.write", s.createNodeInventoryJob)
 	protected("DELETE /api/v1/nodes/{id}", "node.write", s.retireNode)
+	protected("POST /api/v1/nodes/{id}/force-retire", "node.bootstrap", s.forceRetireNode)
 	protected("POST /api/v1/nodes/{id}/enrollment-token", "node.bootstrap", s.createNodeEnrollmentToken)
 	protected("GET /api/v1/nodes/{id}/enrollment-tokens", "node.read", s.listNodeEnrollmentTokens)
 	protected("POST /api/v1/nodes/{id}/maintenance/enable", "node.write", s.nodeMaintenanceEnable)
@@ -584,6 +586,11 @@ type nodeEmergencyCleanupRequest struct {
 	IncludeAgent bool   `json:"include_agent"`
 	Confirmation string `json:"confirmation"`
 	CleanupScope string `json:"cleanup_scope"`
+}
+
+type nodeForceRetireRequest struct {
+	Confirmation string `json:"confirmation"`
+	Reason       string `json:"reason"`
 }
 
 type nodeRebootRequest struct {
@@ -1348,6 +1355,20 @@ func (s *Server) retireNode(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	writeJSON(w, 200, x)
+}
+
+func (s *Server) forceRetireNode(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req nodeForceRetireRequest
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid force retire payload")
+		return
+	}
+	x, err := s.store.ForceRetireNode(r.Context(), idParam(r), req.Confirmation, req.Reason)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, response{"status": "retired", "node": x})
 }
 
 func (s *Server) createNodeEnrollmentToken(w nethttp.ResponseWriter, r *nethttp.Request) {

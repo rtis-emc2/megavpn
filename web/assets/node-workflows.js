@@ -677,21 +677,40 @@ snapshot: ${escapeHTML(kernel.managed_snapshot || data?.output_path || 'n/a')}</
     function openDeleteNodeModal(nodeID, nodeName) {
       const node = state.nodes.find((item) => item.id === nodeID) || { id: nodeID, name: nodeName };
       if (!node?.id) return;
+      const confirmationName = String(node.name || node.id || '').trim();
       openModal(`Delete node: ${node.name || 'node'}`, 'Lifecycle action', `
         <section class="card">
           <h2>Retire node</h2>
-          <p>This action removes the node from active operation and revokes its agent identity. The API will block deletion while active instances still exist on this node.</p>
+          <p>Normal retire removes an idle node from active operation and revokes its agent identity. It is blocked while instances or cleanup jobs still need the agent.</p>
           <div class="code-block">node_id = ${escapeHTML(node.id)}
 name = ${escapeHTML(node.name || 'n/a')}
 address = ${escapeHTML(node.address || 'n/a')}
 status = ${escapeHTML(node.status || 'n/a')}</div>
           <div class="modal-actions">
-            <button class="danger-btn" id="confirmDeleteNodeBtn" type="button">Delete node</button>
+            <button class="danger-btn" id="confirmDeleteNodeBtn" type="button">Retire idle node</button>
             <button class="secondary-btn" id="cancelDeleteNodeBtn" type="button">Cancel</button>
           </div>
           <div id="deleteNodeResult" class="form-result"></div>
+          <details class="details-block">
+            <summary>Lost node force retire</summary>
+            <p>Use this only when the host or agent is permanently unavailable. The control plane will cancel pending/running node jobs, mark local instances as deleted, remove client access bindings and hide the node. Files on the lost host cannot be cleaned remotely.</p>
+            <div class="field">
+              <label>Type node name to confirm</label>
+              <input id="forceRetireConfirm" autocomplete="off" spellcheck="false" placeholder="${escapeHTML(confirmationName)}" />
+              <div class="field-hint">Required value: <code>${escapeHTML(confirmationName)}</code></div>
+            </div>
+            <div class="field">
+              <label>Reason</label>
+              <input id="forceRetireReason" autocomplete="off" spellcheck="false" value="lost node; agent unavailable" />
+            </div>
+            <div class="modal-actions">
+              <button class="danger-btn" id="confirmForceRetireNodeBtn" type="button">Force retire lost node</button>
+            </div>
+            <div id="forceRetireNodeResult" class="form-result"></div>
+          </details>
         </section>`);
       document.getElementById('confirmDeleteNodeBtn').addEventListener('click', () => deleteNode(node.id));
+      document.getElementById('confirmForceRetireNodeBtn')?.addEventListener('click', () => forceRetireNode(node));
       document.getElementById('cancelDeleteNodeBtn').addEventListener('click', closeModal);
     }
 
@@ -704,6 +723,33 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
       try {
         await requestJSON(`/api/v1/nodes/${nodeID}`, { method: 'DELETE' });
         target.innerHTML = '<span class="tag ok">node retired</span>';
+        await refresh();
+        window.setTimeout(closeModal, 450);
+      } catch (err) {
+        target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function forceRetireNode(node) {
+      const target = document.getElementById('forceRetireNodeResult');
+      const button = document.getElementById('confirmForceRetireNodeBtn');
+      const confirmation = String(document.getElementById('forceRetireConfirm')?.value || '').trim();
+      const expectedConfirmation = String(node.name || node.id || '').trim();
+      const reason = String(document.getElementById('forceRetireReason')?.value || '').trim();
+      if (!target) return;
+      if (confirmation !== expectedConfirmation) {
+        target.innerHTML = `<span class="tag danger">type ${escapeHTML(expectedConfirmation)} to confirm</span>`;
+        return;
+      }
+      target.innerHTML = '<span class="tag warn">force retiring</span>';
+      if (button) button.disabled = true;
+      try {
+        await sendJSON(`/api/v1/nodes/${node.id}/force-retire`, 'POST', {
+          confirmation,
+          reason,
+        });
+        target.innerHTML = '<span class="tag ok">node force retired</span>';
         await refresh();
         window.setTimeout(closeModal, 450);
       } catch (err) {
