@@ -49,7 +49,7 @@
 
     function summaryCard(label, value, caption) {
       return `
-        <div class="pool-summary-card">
+        <div class="traffic-summary-card">
           <span>${escapeHTML(label)}</span>
           <strong>${escapeHTML(String(value))}</strong>
           <small>${escapeHTML(caption)}</small>
@@ -173,27 +173,32 @@
       });
     }
 
+    function hasActiveFilters(filters) {
+      return ['from', 'to', 'protocol', 'client_id', 'node_id'].some((key) => String(filters[key] || '').trim() !== '');
+    }
+
     function renderExportFilters(filters, samples) {
       const nodes = Array.isArray(state.nodes) ? state.nodes : [];
       const clients = Array.isArray(state.clients) ? state.clients : [];
+      const rowCount = filterSamples(samples, filters).length;
       return `
-        <section class="table-card">
+        <section class="table-card traffic-filter-card">
           <div class="table-head">
             <div>
-              <h2>Accounting filters</h2>
-              <p>Use one server-side filter set for summary cards, recent rows and CSV export. Reads stay capped and retention-scoped on the server.</p>
+              <h2>Report filters</h2>
+              <p>Filters apply to the counters below and to CSV download.</p>
             </div>
             <div class="table-tools">
-              <span class="tag">${escapeHTML(String(filterSamples(samples, filters).length))} server rows</span>
+              <span class="tag">${escapeHTML(String(rowCount))} rows selected</span>
             </div>
           </div>
           <form id="trafficExportFilterForm" class="form-grid traffic-export-filter-form">
             <div class="field">
-              <label>From</label>
+              <label>Start date</label>
               <input name="from" type="date" value="${escapeHTML(filters.from)}" />
             </div>
             <div class="field">
-              <label>To</label>
+              <label>End date</label>
               <input name="to" type="date" value="${escapeHTML(filters.to)}" />
             </div>
             <div class="field">
@@ -218,14 +223,46 @@
               </select>
             </div>
             <div class="field">
-              <label>Limit</label>
+              <label>Max rows</label>
               <input name="limit" type="number" min="1" max="50000" step="1" value="${escapeHTML(filters.limit)}" />
             </div>
             <div class="traffic-filter-actions">
-              <button class="secondary-btn" id="trafficExportResetBtn" type="button">Reset filters</button>
-              <button class="primary-btn" id="trafficExportBtn" type="button">Export CSV</button>
+              <button class="secondary-btn" id="trafficExportResetBtn" type="button">Reset</button>
+              <button class="primary-btn" id="trafficExportBtn" type="button"${rowCount ? '' : ' disabled'}>Download CSV</button>
             </div>
           </form>
+        </section>`;
+    }
+
+    function renderTrafficEmptyState(filters, collectors) {
+      const filtered = hasActiveFilters(filters);
+      const title = filtered ? 'No rows match the selected filters' : 'No traffic data yet';
+      const caption = filtered
+        ? 'Reset filters or choose a wider date range to see retained counters.'
+        : 'The control plane has not received accounting samples from node agents for this dataset.';
+      const collectorCaption = collectors.length
+        ? `${intValue(collectors.length)} collector streams are known, but no retained rows match the current view.`
+        : 'No collector streams are reporting yet.';
+      return `
+        <section class="table-card traffic-empty-card">
+          <div>
+            <h2>${escapeHTML(title)}</h2>
+            <p>${escapeHTML(caption)}</p>
+          </div>
+          <div class="traffic-empty-grid">
+            <div>
+              <strong>Collectors</strong>
+              <span>${escapeHTML(collectorCaption)}</span>
+            </div>
+            <div>
+              <strong>Managed services</strong>
+              <span>Traffic appears after managed Xray, WireGuard or OpenVPN instances are applied and agents submit counters.</span>
+            </div>
+            <div>
+              <strong>Retention</strong>
+              <span>Only aggregate bytes, packets and flow counts are stored. URLs and payload bodies are not collected.</span>
+            </div>
+          </div>
         </section>`;
     }
 
@@ -371,44 +408,39 @@
       const previewSamples = filterSamples(samples, filters);
       const collectorCounts = collectorStatusCounts(collectors);
       const retention = Number(summary.retention_days || 180);
-      const pruneBudget = Number(summary.max_prune_per_ingest || 0);
-      const pruneBatch = Number(summary.prune_batch_size || 0);
-      const pruneBatches = Number(summary.prune_batches_per_ingest || 0);
-      const pruneCaption = pruneBatch > 0 && pruneBatches > 0
-        ? `${intValue(pruneBatch)} x ${intValue(pruneBatches)} per ingest`
-        : 'bounded cleanup per ingest';
-      const cutoff = summary.retention_cutoff ? formatDate(summary.retention_cutoff) : 'not set';
+      const hasTrafficRows = Number(summary.sample_count || 0) > 0 || samples.length > 0 || previewSamples.length > 0;
+      const hasVisibleTraffic = hasTrafficRows || collectors.length > 0 || clients.length > 0;
+      const collectorProblemCount = Number(collectorCounts.degraded || 0) + Number(collectorCounts.missing || 0) + Number(collectorCounts.inactive || 0);
       el('content').innerHTML = `
         <section class="table-card">
           <div class="table-head">
             <div>
               <h2>Traffic accounting</h2>
-              <p>Aggregate client and node counters. The platform stores bytes, packets and flow counts only; URLs, payloads and request bodies are not collected.</p>
+              <p>Aggregate traffic counters for clients and nodes. Only bytes, packets and flow counts are stored.</p>
             </div>
             <div class="table-tools">
-              ${statusTag(samples.length ? 'active' : 'planned')}
-              <span class="tag">${escapeHTML(String(previewSamples.length))} rows</span>
+              ${samples.length ? statusTag('active') : '<span class="tag">no data</span>'}
+              <span class="tag">${escapeHTML(String(previewSamples.length))} visible rows</span>
             </div>
           </div>
-          <div class="pool-summary-grid">
-            ${summaryCard('Retention', `${retention} days`, 'automatic prune window')}
-            ${summaryCard('Cutoff', cutoff, 'old rows hidden from reads')}
-            ${summaryCard('Prune backlog', intValue(summary.expired_sample_count), 'expired rows pending cleanup')}
-            ${summaryCard('Prune budget', pruneBudget ? intValue(pruneBudget) : 'bounded', pruneCaption)}
-            ${summaryCard('Samples', intValue(summary.sample_count), 'stored aggregate rows')}
-            ${summaryCard('Clients', intValue(summary.client_count), 'with attributed samples')}
-            ${summaryCard('Nodes', intValue(summary.node_count), 'reporting counters')}
-            ${summaryCard('Collectors', intValue(collectors.length), `${intValue(collectorCounts.active)} active / ${intValue(collectorCounts.degraded)} degraded / ${intValue(collectorCounts.missing)} missing / ${intValue(collectorCounts.inactive)} inactive`)}
-            ${summaryCard('Received', bytes(summary.rx_bytes), 'client uplink / ingress')}
-            ${summaryCard('Sent', bytes(summary.tx_bytes), 'client downlink / egress')}
+          <div class="traffic-summary-grid">
+            ${summaryCard('Total traffic', bytes(Number(summary.rx_bytes || 0) + Number(summary.tx_bytes || 0)), 'received + sent')}
+            ${summaryCard('Received', bytes(summary.rx_bytes), 'client upload')}
+            ${summaryCard('Sent', bytes(summary.tx_bytes), 'client download')}
+            ${summaryCard('Samples', intValue(summary.sample_count), 'retained rows')}
+            ${summaryCard('Clients', intValue(summary.client_count), 'with traffic')}
+            ${summaryCard('Nodes', intValue(summary.node_count), 'reporting')}
+            ${summaryCard('Collectors', intValue(collectors.length), collectors.length ? `${intValue(collectorCounts.active)} active, ${intValue(collectorProblemCount)} need attention` : 'no streams')}
+            ${summaryCard('Retention', `${retention} days`, 'audit history')}
           </div>
         </section>
+        ${hasVisibleTraffic ? '' : renderTrafficEmptyState(filters, collectors)}
         ${renderExportFilters(filters, samples)}
-        <section class="table-card">
+        ${clients.length ? `<section class="table-card">
           <div class="table-head">
             <div>
-              <h2>Per-client usage counters</h2>
-              <p>Server-side aggregate usage by client for the selected retained dataset. These counters use the full retention-scoped query, not only the recent sample table.</p>
+              <h2>Client usage</h2>
+              <p>Aggregate traffic by client for the selected report filters.</p>
             </div>
             <div class="table-tools"><span class="tag">${escapeHTML(String(clients.length))} clients</span></div>
           </div>
@@ -429,12 +461,12 @@
               <tbody>${clientUsageRows(clients)}</tbody>
             </table>
           </div>
-        </section>
-        <section class="table-card">
+        </section>` : ''}
+        ${collectors.length ? `<section class="table-card">
           <div class="table-head">
             <div>
               <h2>Collector status</h2>
-              <p>Freshness by node, collector source and protocol for the selected retained dataset. Active means samples arrived within the normal reporting window.</p>
+              <p>Agent counter streams by node and protocol.</p>
             </div>
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(collectors.length))} streams</span>
@@ -458,8 +490,8 @@
               <tbody>${collectorRows(collectors)}</tbody>
             </table>
           </div>
-        </section>
-        <section class="table-card">
+        </section>` : ''}
+        ${previewSamples.length ? `<section class="table-card">
           <div class="table-head">
             <h2>Recent traffic samples</h2>
             <div class="table-tools"><span class="tag">${escapeHTML(String(previewSamples.length))} retained rows</span></div>
@@ -481,24 +513,7 @@
               <tbody>${sampleRows(previewSamples)}</tbody>
             </table>
           </div>
-        </section>
-        <section class="table-card">
-          <div class="table-head">
-            <div>
-              <h2>Collection model</h2>
-              <p>Agents submit normalized counters over the signed agent API. The control plane validates node ownership, links samples to known clients when service access is provided, and rejects malformed counters before storage.</p>
-            </div>
-          </div>
-          <div class="traffic-model-flow">
-            <div class="traffic-model-step"><span class="traffic-model-index">1</span><strong>Runtime collector reads local aggregate counters</strong><small>bytes, packets, flows</small></div>
-            <div class="traffic-model-arrow" aria-hidden="true">-></div>
-            <div class="traffic-model-step"><span class="traffic-model-index">2</span><strong>Agent signs accounting samples</strong><small>node identity required</small></div>
-            <div class="traffic-model-arrow" aria-hidden="true">-></div>
-            <div class="traffic-model-step"><span class="traffic-model-index">3</span><strong>Control plane validates bindings</strong><small>node, instance, client</small></div>
-            <div class="traffic-model-arrow" aria-hidden="true">-></div>
-            <div class="traffic-model-step"><span class="traffic-model-index">4</span><strong>PostgreSQL stores aggregate history</strong><small>180-day retention</small></div>
-          </div>
-        </section>`;
+        </section>` : ''}`;
       const form = document.getElementById('trafficExportFilterForm');
       form?.addEventListener('change', async () => {
         const current = trafficExportFiltersFromForm(form);

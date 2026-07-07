@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.15`
+**Release:** `7.1.0.16`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,10 +56,11 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.15` polishes the Traffic Accounting operator UI: filter actions no
-longer stretch across the whole form, the collection model uses a dedicated
-responsive diagram, and Web UI asset cache keys are advanced for reliable
-browser refresh after deployment. The current focus is:
+`7.1.0.16` simplifies the Traffic Accounting operator UI: storage-maintenance
+fields are replaced with traffic/client/node/collector counters, empty datasets
+show an actionable diagnostics state, filter actions stay compact, and Web UI
+asset cache keys are advanced for reliable browser refresh after deployment.
+The current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;
@@ -88,8 +89,9 @@ browser refresh after deployment. The current focus is:
   collectors and no-store CSV export for aggregate audit rows;
 - bounded batched traffic-accounting retention cleanup and PostgreSQL query
   indexes for overview/export filters by bucket, client, node and protocol;
-- traffic-accounting retention visibility: operator summary now shows cutoff,
-  expired-row cleanup backlog and bounded prune budget per ingest;
+- traffic-accounting operator visibility: the summary now prioritizes total
+  traffic, received/sent bytes, retained samples, clients, nodes, collectors and
+  retention instead of backend prune internals;
 - traffic-accounting filters for date range, protocol, client, node and row
   limit are now applied by the backend to overview summary, recent rows and
   no-store CSV export with one retained-dataset query model;

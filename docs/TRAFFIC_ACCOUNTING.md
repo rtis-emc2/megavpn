@@ -1,6 +1,6 @@
 # Traffic Accounting
 
-**Release:** `7.1.0.15`
+**Release:** `7.1.0.16`
 
 Traffic accounting stores aggregate traffic counters for operational audit,
 capacity planning and incident diagnostics. It is not packet capture and it is
@@ -129,13 +129,19 @@ flowchart LR
   E --> F["Traffic Accounting UI"]
 ```
 
-The Traffic Accounting UI provides one filter form for overview cards,
-per-client counters, collector status, recent rows and `Export CSV`. Reads are
-server-side, use the same `traffic.read` permission, enforce retention cutoff
-and stay capped by endpoint type. CSV responses set `Cache-Control: no-store`.
-Time filters accept RFC3339 or `YYYY-MM-DD`. The overview cards show active
-rows, retention cutoff, expired cleanup backlog, collector stream counts and
-per-ingest prune budget for the selected retained dataset.
+The Traffic Accounting UI provides one compact report-filter form for summary
+counters and CSV download. Reads are server-side, use the same `traffic.read`
+permission, enforce retention cutoff and stay capped by endpoint type. CSV
+responses set `Cache-Control: no-store`. Time filters accept RFC3339 or
+`YYYY-MM-DD`. The overview cards show operator-facing counters: total traffic,
+received/sent bytes, retained samples, clients, nodes, collector streams and
+retention. Backend prune internals are intentionally not shown on the primary
+operator screen.
+
+When no samples are retained for the selected dataset, the UI shows one
+diagnostic no-data state instead of empty tables. The state points the operator
+to collector streams, managed Xray/WireGuard/OpenVPN services and the fact that
+the first agent read establishes a baseline before later reads submit deltas.
 
 The UI exposes the same export filters as form controls:
 
@@ -146,9 +152,9 @@ The UI exposes the same export filters as form controls:
 - row limit.
 
 Changing a filter reloads the overview, collector-status table, per-client
-counters and recent-sample table from the backend. CSV export uses the same
-selected values against the retained dataset, not a browser-side subset of
-already loaded rows.
+counters and recent-sample table from the backend when rows exist. CSV export
+uses the same selected values against the retained dataset, not a browser-side
+subset of already loaded rows.
 
 ## Observability Evidence
 

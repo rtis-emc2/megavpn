@@ -1,6 +1,6 @@
 # Учет трафика
 
-**Релиз:** `7.1.0.15`
+**Релиз:** `7.1.0.16`
 
 Учет трафика хранит агрегированные счетчики для операционного аудита,
 capacity planning и диагностики инцидентов. Это не packet capture и не
@@ -130,14 +130,20 @@ flowchart LR
   E --> F["Traffic Accounting UI"]
 ```
 
-Traffic Accounting UI дает одну filter form для overview cards, per-client
-counters, collector status, recent rows и `Export CSV`. Reads выполняются
-server-side, используют тот же permission `traffic.read`, применяют retention
-cutoff и ограничиваются cap конкретного endpoint-а. CSV responses отдают
-`Cache-Control: no-store`. Time filters принимают RFC3339 или `YYYY-MM-DD`.
-Overview cards показывают active rows, retention cutoff, expired cleanup
-backlog, collector stream counts и per-ingest prune budget для выбранного
-retained dataset.
+Traffic Accounting UI дает одну компактную report-filter form для summary
+counters и CSV download. Reads выполняются server-side, используют тот же
+permission `traffic.read`, применяют retention cutoff и ограничиваются cap
+конкретного endpoint-а. CSV responses отдают `Cache-Control: no-store`. Time
+filters принимают RFC3339 или `YYYY-MM-DD`. Overview cards показывают
+operator-facing counters: total traffic, received/sent bytes, retained samples,
+clients, nodes, collector streams и retention. Внутренние prune-поля backend
+на основном operator screen намеренно не показываются.
+
+Если для выбранного dataset нет retained samples, UI показывает одно
+диагностическое no-data состояние вместо пустых таблиц. Оно направляет
+оператора к collector streams, managed Xray/WireGuard/OpenVPN services и
+объясняет, что первый agent read ставит baseline, а следующие reads отправляют
+дельты после роста counters.
 
 UI показывает те же export filters как form controls:
 
@@ -148,9 +154,9 @@ UI показывает те же export filters как form controls:
 - row limit.
 
 Изменение фильтра перезагружает overview, collector-status table, per-client
-counters и recent-sample table с backend-а. CSV export использует те же
-выбранные значения по retained dataset, а не browser-side subset уже
-загруженных строк.
+counters и recent-sample table с backend-а, когда есть строки. CSV export
+использует те же выбранные значения по retained dataset, а не browser-side
+subset уже загруженных строк.
 
 ## Observability evidence
 
