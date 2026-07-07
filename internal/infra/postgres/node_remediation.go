@@ -563,6 +563,7 @@ func isAgentHandledJobType(jobType string) bool {
 		"node.firewall.preview",
 		"node.firewall.apply",
 		"node.firewall.observe",
+		"node.firewall.disable",
 		"instance.restart",
 		"instance.apply",
 		"instance.start",

@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.18`
+**Release:** `7.1.0.19`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.18`
+**Code baseline:** RTIS MegaVPN `7.1.0.19`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,13 +23,14 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.18` continues the production-hardening line after the firewall,
+`7.1.0.19` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate, VLESS provisioning-sync, traffic-accounting collector
 coverage and firewall apply hardening releases. This release tightens the
-Firewall operator workspace layout, restores full-width tab panels, clarifies
-Address groups versus entries and advances Web UI asset cache keys so operator
-browsers consistently load the corrected page. The
+Firewall operator workspace layout, normalizes button hierarchy, clarifies
+Address groups versus entries, adds typed node firewall disable lifecycle and
+advances Web UI asset cache keys so operator browsers consistently load the
+corrected page. The
 codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.

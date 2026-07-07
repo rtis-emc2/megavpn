@@ -412,13 +412,13 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else {
 			normalized["system_routes"] = []any{}
 		}
-	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe":
+	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe", "node.firewall.disable":
 		nodeID, err := requireString(payload, "node_id")
 		if err != nil {
 			return nil, err
 		}
 		normalized["node_id"] = nodeID
-		trimOptionalStrings(normalized, payload, "policy_id", "policy_key", "revision_id")
+		trimOptionalStrings(normalized, payload, "policy_id", "policy_key", "revision_id", "disable_reason")
 		if v, ok, err := optionalInt(payload, "revision_no"); err != nil {
 			return nil, err
 		} else if ok {

@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.1.0.18`
+**Release:** `7.1.0.19`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -766,8 +766,8 @@ failure scenarios and public endpoint behavior.
 
 Recommended workflow:
 
-1. Open `Firewall -> Address lists` and create reusable source or destination
-   lists.
+1. Open `Firewall -> Address groups` and create reusable source or destination
+   groups.
 2. Add entries. Leave entry type on auto-detect unless you need to force CIDR,
    single IP, range or DNS.
 3. Open `Firewall -> Rules` and create ordered rules. Use presets for SSH,
@@ -775,7 +775,7 @@ Recommended workflow:
    Nginx edge or invalid-packet cases, then adjust source lists and ports. Use
    the rule filters when the catalog has multiple policies or chains.
 4. Open `Firewall -> Policies` to review defaults and rule count.
-5. Open `Firewall -> Node state` or policy apply action and queue apply for the
+5. Open `Firewall -> Node apply` or policy apply action and queue apply for the
    selected node.
 
 Catalog changes become effective only after `node.firewall.apply` completes.
@@ -792,6 +792,11 @@ IP-pinned control-plane URL or an explicit active output accept rule for the
 control-plane TCP port. If that guard is missing, the job fails during render
 before changing nftables.
 
+Use `Firewall -> Node apply -> Disable` to remove only the managed
+`inet megavpn_firewall` table from a node. This queues `node.firewall.disable`
+and does not stop instances, route policy, backhaul or service runtimes. Apply
+the intended policy again to recreate the managed firewall.
+
 ## 19. Jobs, Audit And Troubleshooting
 
 `Jobs` shows queue status, result and failure reason.
@@ -807,7 +812,7 @@ Common cases:
 | Shadowsocks config missing | Instance logs | generated config path, package install, password/spec |
 | VLESS does not use egress | Instance config, Backhaul, route policy | default outbound, active backhaul, policy projection |
 | Backhaul failed | Backhaul modal, Jobs | ingress/egress side, interface, route lookup, packet loss |
-| Firewall apply failed | Firewall -> Node state, Jobs | rendered policy, agent logs, nftables support |
+| Firewall apply failed | Firewall -> Node apply, Jobs | rendered policy, agent logs, nftables support |
 | Client config invalid | Clients -> Access/Artifacts | selected services, revision applied, artifact build result |
 
 Audit should answer:

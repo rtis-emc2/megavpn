@@ -588,3 +588,22 @@ func TestNormalizeNodeFirewallApplyRejectsInvalidRules(t *testing.T) {
 		t.Fatalf("expected validation error, got %T", err)
 	}
 }
+
+func TestNormalizeNodeFirewallDisable(t *testing.T) {
+	payload, err := Normalize("node.firewall.disable", map[string]any{
+		"node_id":        " node-1 ",
+		"disable_reason": " operator_requested ",
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := payload["node_id"]; got != "node-1" {
+		t.Fatalf("node_id = %v, want node-1", got)
+	}
+	if got := payload["disable_reason"]; got != "operator_requested" {
+		t.Fatalf("disable_reason = %v, want operator_requested", got)
+	}
+	if got := payload["enforce_default_policy"]; got != false {
+		t.Fatalf("enforce_default_policy = %v, want default false", got)
+	}
+}

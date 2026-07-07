@@ -1,6 +1,6 @@
 # Firewall Policy Catalog
 
-**Release:** `7.1.0.18`
+**Release:** `7.1.0.19`
 
 Firewall is the managed policy workspace for node and control-plane boundaries.
 It is intentionally modeled as a catalog before apply: operators prepare address
@@ -63,7 +63,7 @@ Open `Firewall` from the control menu.
 - `Policies`: policy cards, default chain metadata, preview and apply.
 - `Rules`: global ordered rule view.
 - `Address groups`: group and entry management.
-- `Node apply`: last apply state per node, row-scoped preview/apply.
+- `Node apply`: last apply state per node, row-scoped preview/apply/disable.
 
 The top workflow buttons jump directly to the required stage. The rule editor
 contains presets for SSH management, HTTPS control, WireGuard, OpenVPN
@@ -108,7 +108,10 @@ The apply dialog is split into two explicit modes:
   agent.
 
 `Node apply` shows the last observed enforcement mode, explicit rule count and
-system safety rule count returned by the agent.
+system safety rule count returned by the agent. `applied` means the selected
+node has accepted and installed the managed firewall payload. `disabled` means
+the node has removed the managed firewall table and no policy/revision is
+currently attached to that node.
 
 The preview dialog uses the same modes. Its result shows:
 
@@ -121,12 +124,18 @@ The preview dialog uses the same modes. Its result shows:
 rendered hash and preserves the selected `Rules only` or `Strict defaults`
 mode.
 
+`Disable` queues `node.firewall.disable` for the selected node. It deletes only
+the managed `inet megavpn_firewall` nftables table and leaves instances,
+backhaul, route policy and service runtimes untouched. Use it for staged
+rollback or emergency firewall removal. To enable firewall again, run Preview
+and Apply for the intended policy.
+
 ## Security Model
 
 - `firewall.read` allows inspection.
 - `firewall.manage` allows policy, rule and address-group changes.
-- `firewall.apply` allows queueing node preview/apply jobs.
-- All create/update/delete/preview/apply actions produce audit events.
+- `firewall.apply` allows queueing node preview/apply/disable jobs.
+- All create/update/delete/preview/apply/disable actions produce audit events.
 - Rules are stored as catalog data and rendered by the worker into managed node
   firewall payloads.
 

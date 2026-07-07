@@ -27,6 +27,7 @@ type firewallStore interface {
 	DeleteFirewallRule(context.Context, string, string) (domain.FirewallRule, error)
 	CreateFirewallPreviewJob(context.Context, string, string, bool) (domain.Job, error)
 	CreateFirewallApplyJob(context.Context, string, string, bool) (domain.Job, error)
+	CreateFirewallDisableJob(context.Context, string) (domain.Job, error)
 }
 
 type firewallApplyRequest struct {
@@ -337,6 +338,24 @@ func (s *Server) applyNodeFirewallPolicy(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	if authCtx, ok := authFromRequest(r); ok {
 		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "firewall.apply", "node", &nodeID, "firewall apply queued")
+	}
+	writeJSON(w, 202, job)
+}
+
+func (s *Server) disableNodeFirewall(w nethttp.ResponseWriter, r *nethttp.Request) {
+	store, ok := s.store.(firewallStore)
+	if !ok {
+		writeErr(w, 501, "firewall catalog is not supported")
+		return
+	}
+	nodeID := strings.TrimSpace(r.PathValue("id"))
+	job, err := store.CreateFirewallDisableJob(r.Context(), nodeID)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if authCtx, ok := authFromRequest(r); ok {
+		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "firewall.disable", "node", &nodeID, "firewall disable queued")
 	}
 	writeJSON(w, 202, job)
 }

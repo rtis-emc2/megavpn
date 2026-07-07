@@ -617,10 +617,57 @@ on conflict(node_id) do update set policy_id=excluded.policy_id, desired_revisio
 	return job, nil
 }
 
+func (s *Store) CreateFirewallDisableJob(ctx context.Context, nodeID string) (domain.Job, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return domain.Job{}, errors.New("node_id is required")
+	}
+	if _, err := s.GetNode(ctx, nodeID); err != nil {
+		return domain.Job{}, err
+	}
+	payload := map[string]any{
+		"node_id":        nodeID,
+		"disable_reason": "operator_requested",
+	}
+	job, payloadJSON, err := normalizeJobForInsert(domain.Job{Type: "node.firewall.disable", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Payload: payload})
+	if err != nil {
+		return domain.Job{}, err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := insertJobRow(ctx, tx, job, payloadJSON); err != nil {
+		return domain.Job{}, err
+	}
+	_, err = tx.Exec(ctx, `insert into firewall_node_state(id,node_id,policy_id,revision_id,desired_revision_id,status,observed_json,last_job_id,updated_at)
+values($1,$2,null,null,null,'pending_disable','{}'::jsonb,$3,now())
+on conflict(node_id) do update set policy_id=null, revision_id=null, desired_revision_id=null, status='pending_disable', last_job_id=excluded.last_job_id, updated_at=now()`,
+		id.New(), nodeID, job.ID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Job{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "job.create", "job", &job.ID, "job queued")
+	_, _ = s.CreateAudit(ctx, "system", "firewall.disable", "node", &nodeID, "firewall disable queued")
+	return job, nil
+}
+
 func (s *Store) ApplyFirewallJobResult(ctx context.Context, job domain.Job, status string, result map[string]any) error {
-	if strings.TrimSpace(job.Type) != "node.firewall.apply" {
+	switch strings.TrimSpace(job.Type) {
+	case "node.firewall.apply":
+		return s.applyFirewallApplyJobResult(ctx, job, status, result)
+	case "node.firewall.disable":
+		return s.applyFirewallDisableJobResult(ctx, job, status, result)
+	default:
 		return nil
 	}
+}
+
+func (s *Store) applyFirewallApplyJobResult(ctx context.Context, job domain.Job, status string, result map[string]any) error {
 	nodeID := ""
 	if job.ScopeID != nil {
 		nodeID = strings.TrimSpace(*job.ScopeID)
@@ -644,6 +691,31 @@ func (s *Store) ApplyFirewallJobResult(ctx context.Context, job domain.Job, stat
 values($1,$2,$3,$4,$4,$5,$6,$7,now())
 on conflict(node_id) do update set policy_id=excluded.policy_id, revision_id=case when $5='applied' then excluded.revision_id else firewall_node_state.revision_id end, desired_revision_id=excluded.desired_revision_id, status=excluded.status, observed_json=excluded.observed_json, last_job_id=excluded.last_job_id, updated_at=now()`,
 		id.New(), nodeID, nullIfEmpty(policyID), nullIfEmpty(revisionID), state, mustJSON(result), job.ID)
+	return err
+}
+
+func (s *Store) applyFirewallDisableJobResult(ctx context.Context, job domain.Job, status string, result map[string]any) error {
+	nodeID := ""
+	if job.ScopeID != nil {
+		nodeID = strings.TrimSpace(*job.ScopeID)
+	}
+	if nodeID == "" && job.NodeID != nil {
+		nodeID = strings.TrimSpace(*job.NodeID)
+	}
+	if nodeID == "" {
+		nodeID = strings.TrimSpace(stringify(job.Payload["node_id"]))
+	}
+	if nodeID == "" {
+		return nil
+	}
+	state := "failed"
+	if status == "succeeded" {
+		state = "disabled"
+	}
+	_, err := s.db.Exec(ctx, `insert into firewall_node_state(id,node_id,policy_id,revision_id,desired_revision_id,status,observed_json,last_job_id,updated_at)
+values($1,$2,null,null,null,$3,$4,$5,now())
+on conflict(node_id) do update set policy_id=null, revision_id=null, desired_revision_id=null, status=excluded.status, observed_json=excluded.observed_json, last_job_id=excluded.last_job_id, updated_at=now()`,
+		id.New(), nodeID, state, mustJSON(result), job.ID)
 	return err
 }
 

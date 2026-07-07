@@ -127,6 +127,7 @@ type Store interface {
 	UpdateFirewallRule(context.Context, string, string, domain.FirewallRule) (domain.FirewallRule, error)
 	DeleteFirewallRule(context.Context, string, string) (domain.FirewallRule, error)
 	CreateFirewallApplyJob(context.Context, string, string, bool) (domain.Job, error)
+	CreateFirewallDisableJob(context.Context, string) (domain.Job, error)
 	TrafficAccountingOverview(context.Context, domain.TrafficAccountingExportFilter) (domain.TrafficAccountingOverview, error)
 	TrafficAccountingSamples(context.Context, domain.TrafficAccountingExportFilter) ([]domain.TrafficAccountingSample, error)
 	SubmitAgentTrafficAccountingSamples(context.Context, string, []domain.AgentTrafficAccountingSample) (domain.TrafficAccountingIngestResult, error)
@@ -437,6 +438,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("DELETE /api/v1/firewall/policies/{id}/rules/{rule_id}", "firewall.manage", s.deleteFirewallRule)
 	protected("POST /api/v1/nodes/{id}/firewall/preview", "firewall.apply", s.previewNodeFirewallPolicy)
 	protected("POST /api/v1/nodes/{id}/firewall/apply", "firewall.apply", s.applyNodeFirewallPolicy)
+	protected("POST /api/v1/nodes/{id}/firewall/disable", "firewall.apply", s.disableNodeFirewall)
 	protected("GET /api/v1/traffic/accounting", "traffic.read", s.trafficAccountingOverview)
 	protected("GET /api/v1/traffic/accounting/export", "traffic.read", s.trafficAccountingExport)
 	protected("POST /api/v1/instances", "instance.write", s.createInstance)
@@ -2207,6 +2209,7 @@ func jobTypeMustUseTypedEndpoint(jobType string) bool {
 		"node.firewall.preview",
 		"node.firewall.apply",
 		"node.firewall.observe",
+		"node.firewall.disable",
 		"node.capability.install",
 		"node.capability.verify",
 		"instance.apply",
@@ -2240,7 +2243,7 @@ func requiredPermissionForJobType(jobType string) string {
 		return "node.bootstrap"
 	case "node.capability.install", "node.capability.verify", "node.inventory", "node.inventory.sync", "node.services.discover", "node.channel.probe", "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup", "node.route_policy.apply", "node.route_policy.cleanup":
 		return "node.write"
-	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe":
+	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe", "node.firewall.disable":
 		return "firewall.apply"
 	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable", "instance.delete":
 		return "instance.apply"

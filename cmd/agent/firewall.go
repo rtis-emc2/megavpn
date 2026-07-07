@@ -101,6 +101,12 @@ func (c *client) handleNodeFirewallJob(ctx context.Context, j job, st agentState
 			return "failed", result
 		}
 		return "succeeded", result
+	case "node.firewall.disable":
+		result := disableNodeFirewall(ctx)
+		if stringify(result["status"]) != "disabled" {
+			return "failed", result
+		}
+		return "succeeded", result
 	case "node.firewall.apply":
 		plan, err := renderNodeFirewallPlan(payload)
 		if err != nil {
@@ -130,6 +136,33 @@ func (c *client) handleNodeFirewallJob(ctx context.Context, j job, st agentState
 	default:
 		return "failed", map[string]any{"error": "unsupported firewall job type"}
 	}
+}
+
+func disableNodeFirewall(ctx context.Context) map[string]any {
+	result := map[string]any{
+		"message":                    "managed firewall disabled",
+		"status":                     "disabled",
+		"managed_table":              firewallNFTFamily + " " + firewallNFTTable,
+		"default_policy_enforcement": "disabled",
+		"rule_count":                 0,
+		"system_rule_count":          0,
+	}
+	if err := cleanupLegacyFirewallNFTChains(ctx); err != nil {
+		result["legacy_cleanup_warning"] = err.Error()
+	}
+	if code, out := runInstallCommand(ctx, "nft", "list", "table", firewallNFTFamily, firewallNFTTable); code != 0 {
+		result["already_disabled"] = true
+		result["output"] = truncate(out, 4000)
+		return result
+	}
+	code, out := runInstallCommand(ctx, "nft", "delete", "table", firewallNFTFamily, firewallNFTTable)
+	result["output"] = truncate(out, 4000)
+	result["delete_exit_code"] = code
+	if code != 0 {
+		result["status"] = "failed"
+		result["error"] = "managed firewall table delete failed: " + firstLine(out)
+	}
+	return result
 }
 
 func firewallPayloadWithAgentSafetyContext(payload map[string]any, st agentState) map[string]any {

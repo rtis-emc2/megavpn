@@ -131,6 +131,25 @@
       return `<span class="firewall-chain-chip">${escapeHTML(chain || 'input')}</span>`;
     }
 
+    function firewallNodeStatusTag(value) {
+      const normalized = String(value || 'unknown').toLowerCase();
+      const cls = {
+        applied: 'ok',
+        disabled: 'stub',
+        pending_disable: 'warn',
+        pending: 'warn',
+        stale: 'warn',
+        failed: 'danger',
+        unknown: 'stub',
+      }[normalized] || 'stub';
+      const label = {
+        applied: 'applied',
+        disabled: 'disabled',
+        pending_disable: 'disabling',
+      }[normalized] || normalized;
+      return `<span class="firewall-node-status ${escapeHTML(cls)}"><span class="dot ${cls === 'stub' ? 'unknown' : cls}"></span>${escapeHTML(label)}</span>`;
+    }
+
     function renderSummary() {
       const inv = inventory();
       const activePolicies = inv.policies.filter((policy) => policy.status === 'active').length;
@@ -219,7 +238,7 @@
             <button class="secondary-btn firewall-edit-policy-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canManage ? '' : ' disabled'}>Edit policy</button>
             <button class="secondary-btn firewall-add-rule-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canManage ? '' : ' disabled'}>Add rule</button>
             <button class="secondary-btn firewall-preview-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canApply ? '' : ' disabled'}>Preview</button>
-            <button class="primary-btn firewall-apply-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canApply ? '' : ' disabled'}>Apply to node</button>
+            <button class="primary-btn apply-btn firewall-apply-btn" type="button" data-policy-id="${escapeHTML(policy.id)}"${canApply ? '' : ' disabled'}>Apply to node</button>
             <button class="danger-btn firewall-delete-policy-btn" type="button" data-policy-id="${escapeHTML(policy.id)}" data-policy-name="${escapeHTML(policy.label || policy.key)}"${canManage && !protectedPolicy ? '' : ' disabled'}>Delete</button>
           </div>
         </article>`;
@@ -293,7 +312,7 @@
         const list = addressListByID(entry.list_id);
         return `
           <tr>
-            <td><strong>${escapeHTML(list?.label || entry.list_key || 'list')}</strong><br><code>${escapeHTML(entry.list_key || entry.list_id || '')}</code></td>
+            <td><strong>${escapeHTML(list?.label || entry.list_key || 'group')}</strong><br><code>${escapeHTML(entry.list_key || entry.list_id || '')}</code></td>
             <td><code>${escapeHTML(entry.value || '')}</code></td>
             <td>${escapeHTML(entry.value_type || 'auto')}</td>
             <td>${escapeHTML(entry.label || '')}</td>
@@ -379,20 +398,22 @@
       const inv = inventory();
       const rows = (state.nodes || []).map((node) => {
         const item = inv.nodeStates.find((row) => row.node_id === node.id);
+        const status = String(item?.status || 'unknown').toLowerCase();
         const observed = item?.observed || {};
         const enforcement = firstText(observed.default_policy_enforcement, 'not applied');
         const ruleCount = observed.rule_count === undefined ? 'n/a' : String(observed.rule_count);
         const systemRuleCount = observed.system_rule_count === undefined ? 'n/a' : String(observed.system_rule_count);
         return `
-          <tr>
+          <tr class="firewall-node-row is-${escapeHTML(status)}">
             <td><strong>${escapeHTML(node.name || node.id)}</strong><br><span class="metric-caption">${escapeHTML(node.role || 'node')} · ${escapeHTML(node.address || 'n/a')}</span></td>
             <td>${escapeHTML(item?.policy_key || 'node_base')}<br><span class="metric-caption">${escapeHTML(enforcement)} · rules ${escapeHTML(ruleCount)} · system ${escapeHTML(systemRuleCount)}</span></td>
-            <td>${statusTag(item?.status || 'unknown')}</td>
+            <td>${firewallNodeStatusTag(status)}</td>
             <td>${escapeHTML(item?.updated_at ? formatDate(item.updated_at) : 'n/a')}</td>
             <td>
               <div class="compact-action-grid">
                 <button class="secondary-btn firewall-node-preview-btn" type="button" data-node-id="${escapeHTML(node.id)}"${hasPermission('firewall.apply') ? '' : ' disabled'}>Preview</button>
-                <button class="secondary-btn firewall-node-apply-btn" type="button" data-node-id="${escapeHTML(node.id)}"${hasPermission('firewall.apply') ? '' : ' disabled'}>Apply</button>
+                <button class="primary-btn apply-btn firewall-node-apply-btn" type="button" data-node-id="${escapeHTML(node.id)}"${hasPermission('firewall.apply') ? '' : ' disabled'}>Apply</button>
+                <button class="danger-btn firewall-node-disable-btn" type="button" data-node-id="${escapeHTML(node.id)}" data-node-name="${escapeHTML(node.name || node.id)}"${hasPermission('firewall.apply') ? '' : ' disabled'}>Disable</button>
               </div>
             </td>
           </tr>`;
@@ -447,22 +468,22 @@
         policies: ['Policies', 'Create reusable node policy sets and attach ordered rules.'],
         rules: ['Rules', 'Add or edit ordered match/action rows. Lower priority numbers run first.'],
         addressLists: ['Address groups', 'Create named groups first, then add CIDR, IP or range entries to those groups.'],
-        nodeState: ['Node apply', 'Preview a policy for a concrete node before applying it. Use the row actions below.'],
+        nodeState: ['Node apply', 'Preview, apply or disable the managed firewall on a concrete node. Use the row actions below.'],
       }[active] || ['Firewall', 'Manage catalog objects and apply them to nodes.'];
       const actionHTML = [];
       if (canManage && (active === 'overview' || active === 'policies')) {
         actionHTML.push('<button class="secondary-btn" id="addFirewallPolicyBtnTop" type="button">New policy</button>');
       }
       if (canManage && (active === 'overview' || active === 'addressLists')) {
-        actionHTML.push('<button class="secondary-btn" id="addFirewallListBtnTop" type="button">New group</button>');
-        actionHTML.push('<button class="secondary-btn" id="addFirewallEntryBtnTop" type="button">Add entry</button>');
+        actionHTML.push('<button class="primary-btn toolbar-primary-action" id="addFirewallListBtnTop" type="button">New group</button>');
+        actionHTML.push('<button class="secondary-btn toolbar-secondary-action" id="addFirewallEntryBtnTop" type="button">Add entry</button>');
       }
       if (canManage && (active === 'overview' || active === 'policies' || active === 'rules')) {
         actionHTML.push('<button class="primary-btn" id="addFirewallRuleBtnTop" type="button">New rule</button>');
       }
       if (canApply && (active === 'overview' || active === 'policies')) {
         actionHTML.push(`<button class="secondary-btn firewall-preview-quick-btn" type="button" data-policy-id="${escapeHTML(firstPolicy.id || '')}" data-node-id="${escapeHTML(firstNode.id || '')}"${applyDisabled ? ' disabled' : ''}>Preview</button>`);
-        actionHTML.push(`<button class="secondary-btn firewall-apply-quick-btn" type="button" data-policy-id="${escapeHTML(firstPolicy.id || '')}" data-node-id="${escapeHTML(firstNode.id || '')}"${applyDisabled ? ' disabled' : ''}>Apply to node</button>`);
+        actionHTML.push(`<button class="primary-btn apply-btn firewall-apply-quick-btn" type="button" data-policy-id="${escapeHTML(firstPolicy.id || '')}" data-node-id="${escapeHTML(firstNode.id || '')}"${applyDisabled ? ' disabled' : ''}>Apply to node</button>`);
       }
       return `
         <section class="section-card firewall-toolbar">
@@ -580,10 +601,10 @@
       const filters = ensureFirewallFilters();
       return `
         <div class="firewall-filter-bar">
-          <input id="firewallAddressSearchInput" class="compact-search" value="${escapeHTML(filters.addressSearch || '')}" placeholder="Search list, CIDR, range, DNS, label">
+          <input id="firewallAddressSearchInput" class="compact-search" value="${escapeHTML(filters.addressSearch || '')}" placeholder="Search group, CIDR, range, DNS, label">
           <button class="secondary-btn" id="applyFirewallAddressFiltersBtn" type="button">Apply filters</button>
           <button class="secondary-btn" id="resetFirewallAddressFiltersBtn" type="button">Reset</button>
-          <span class="tag">${escapeHTML(String(listRows.length))} lists</span>
+          <span class="tag">${escapeHTML(String(listRows.length))} groups</span>
           <span class="tag">${escapeHTML(String(entryRows.length))} entries</span>
         </div>`;
     }
@@ -744,6 +765,9 @@
       document.querySelectorAll('.firewall-node-apply-btn').forEach((button) => {
         button.addEventListener('click', () => openApplyModal('', button.dataset.nodeId || ''));
       });
+      document.querySelectorAll('.firewall-node-disable-btn').forEach((button) => {
+        button.addEventListener('click', () => openDisableFirewallModal(button.dataset.nodeId || '', button.dataset.nodeName || 'node'));
+      });
       document.querySelectorAll('.firewall-node-preview-btn').forEach((button) => {
         button.addEventListener('click', () => openPreviewModal('', button.dataset.nodeId || ''));
       });
@@ -854,7 +878,7 @@
           </select></div>
           <div class="field"><label>Status</label><select name="status">${selectOption('active', list.status || 'active')}${selectOption('disabled', list.status || 'active')}</select></div>
           <div class="field full"><label>Description</label><textarea name="description" rows="3">${escapeHTML(list.description || '')}</textarea></div>
-          <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save list' : 'Create list'}</button><button class="secondary-btn" type="button" id="cancelFirewallListBtn">Cancel</button></div>
+          <div class="field full inline-actions"><button class="primary-btn" type="submit">${editing ? 'Save group' : 'Create group'}</button><button class="secondary-btn" type="button" id="cancelFirewallListBtn">Cancel</button></div>
         </form>
         <div id="firewallListResult" class="form-result"></div>`, { wide: true });
       document.getElementById('cancelFirewallListBtn')?.addEventListener('click', closeModal);
@@ -1002,7 +1026,7 @@
               <small>Default input, forward and output policies are enforced.</small>
             </label>
           </div>
-          <div class="field full inline-actions"><button class="primary-btn" type="submit">Queue apply</button><button class="secondary-btn" type="button" id="cancelFirewallApplyBtn">Cancel</button></div>
+          <div class="field full inline-actions"><button class="primary-btn apply-btn" type="submit">Queue apply</button><button class="secondary-btn" type="button" id="cancelFirewallApplyBtn">Cancel</button></div>
         </form>
         <div id="firewallApplyResult" class="form-result"></div>`, { wide: true });
       document.getElementById('cancelFirewallApplyBtn')?.addEventListener('click', closeModal);
@@ -1059,6 +1083,30 @@
       document.getElementById('confirmFirewallListDeleteBtn')?.addEventListener('click', () => deleteAddressList(listID));
     }
 
+    function openDisableFirewallModal(nodeID, nodeName) {
+      openModal(`Disable firewall: ${nodeName || nodeID}`, 'Node firewall', `
+        <div class="client-danger-summary">
+          <div>
+            <span>Scope</span>
+            <strong>Managed firewall table only</strong>
+            <small>Deletes <code>inet megavpn_firewall</code> on this node. Instances, route policy and service runtimes are not stopped.</small>
+          </div>
+          <div>
+            <span>Rollback</span>
+            <strong>Apply policy again</strong>
+            <small>Use Preview, then Apply, to recreate the managed firewall from the catalog.</small>
+          </div>
+        </div>
+        <p class="danger-text">Disable is intended for emergency rollback or staged testing. It removes the active managed firewall from the selected node.</p>
+        <div class="inline-actions">
+          <button class="danger-btn" id="confirmFirewallDisableBtn" type="button">Disable firewall</button>
+          <button class="secondary-btn" id="cancelFirewallDisableBtn" type="button">Cancel</button>
+        </div>
+        <div id="firewallDisableResult" class="form-result"></div>`, { wide: true });
+      document.getElementById('cancelFirewallDisableBtn')?.addEventListener('click', closeModal);
+      document.getElementById('confirmFirewallDisableBtn')?.addEventListener('click', () => disableFirewall(nodeID));
+    }
+
     function openDeletePolicyModal(policyID, label) {
       openModal(`Delete policy: ${label || policyID}`, 'Firewall', `
         <p class="danger-text">Policy deletion also removes its catalog rules. It is blocked while a node still references this policy state.</p>
@@ -1094,6 +1142,29 @@
         <div id="firewallDeleteResult" class="form-result"></div>`);
       document.getElementById('cancelFirewallRuleDeleteBtn')?.addEventListener('click', closeModal);
       document.getElementById('confirmFirewallRuleDeleteBtn')?.addEventListener('click', () => deleteRule(policyID, ruleID));
+    }
+
+    async function disableFirewall(nodeID) {
+      const result = document.getElementById('firewallDisableResult');
+      const button = document.getElementById('confirmFirewallDisableBtn');
+      if (button) button.disabled = true;
+      if (result) result.innerHTML = '<span class="tag warn">queueing disable</span>';
+      try {
+        const job = await sendJSON(`/api/v1/nodes/${encodeURIComponent(nodeID)}/firewall/disable`, 'POST', {});
+        if (result) result.innerHTML = `<span class="tag ok">disable queued</span> <code>${escapeHTML(job.id || '')}</code>`;
+        if (typeof watchJob === 'function' && job?.id) {
+          await watchJob(job.id, result, 'Firewall disable');
+        }
+        selectFirewallTab('nodeState');
+        closeModal();
+        await refresh();
+      } catch (err) {
+        if (button) button.disabled = false;
+        if (result) result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        openActionOutcomeModal('Firewall disable', 'Disable queue failed', 'failed', err.message || 'Firewall disable failed.', [
+          { label: 'Node', value: nodeID || 'n/a' },
+        ]);
+      }
     }
 
     async function deletePolicy(policyID) {
@@ -1343,7 +1414,7 @@
           ${warnings.length ? `<div class="notice warn">${warnings.map((item) => escapeHTML(String(item))).join('<br>')}</div>` : ''}
           ${script ? `<details class="firewall-script-details"><summary>Rendered nftables script</summary><pre class="firewall-script-preview"><code>${escapeHTML(script)}</code></pre></details>` : ''}
           <div class="inline-actions">
-            ${canApplyPreview ? `<button class="primary-btn" id="applyPreviewedFirewallBtn" type="button" data-apply-mode="${escapeHTML(String(applyMode || 'observe'))}">Apply this policy</button>` : ''}
+            ${canApplyPreview ? `<button class="primary-btn apply-btn" id="applyPreviewedFirewallBtn" type="button" data-apply-mode="${escapeHTML(String(applyMode || 'observe'))}">Apply this policy</button>` : ''}
             <button class="secondary-btn" type="button" id="closeFirewallPreviewBtn">Close</button>
           </div>
         </section>`;

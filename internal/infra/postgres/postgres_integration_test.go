@@ -506,6 +506,34 @@ func TestPostgresIntegrationFirewallApplyCreatesRevisionJobAndNodeState(t *testi
 	if appliedRevisionID != desiredRevisionID || status != "applied" {
 		t.Fatalf("applied firewall node state = revision:%q status:%q, want revision %s applied", appliedRevisionID, status, desiredRevisionID)
 	}
+
+	disableJob, err := store.CreateFirewallDisableJob(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("create firewall disable job: %v", err)
+	}
+	if disableJob.Type != "node.firewall.disable" || disableJob.NodeID == nil || *disableJob.NodeID != node.ID {
+		t.Fatalf("disable firewall job = %#v, want node.firewall.disable for node %s", disableJob, node.ID)
+	}
+	if err := store.db.QueryRow(ctx, `select coalesce(policy_id::text,''),coalesce(revision_id::text,''),coalesce(desired_revision_id::text,''),status,coalesce(last_job_id::text,'') from firewall_node_state where node_id=$1`, node.ID).
+		Scan(&revisionID, &appliedRevisionID, &desiredRevisionID, &status, &lastJobID); err != nil {
+		t.Fatalf("read pending disable firewall node state: %v", err)
+	}
+	if revisionID != "" || appliedRevisionID != "" || desiredRevisionID != "" || status != "pending_disable" || lastJobID != disableJob.ID {
+		t.Fatalf("pending disable firewall node state = policy:%q revision:%q desired:%q status:%q last_job:%q, want pending_disable for job %s",
+			revisionID, appliedRevisionID, desiredRevisionID, status, lastJobID, disableJob.ID)
+	}
+	if err := store.CompleteJob(ctx, disableJob.ID, "succeeded", map[string]any{"status": "disabled", "already_disabled": false}); err != nil {
+		t.Fatalf("complete firewall disable job: %v", err)
+	}
+	var observed map[string]any
+	if err := store.db.QueryRow(ctx, `select coalesce(policy_id::text,''),coalesce(revision_id::text,''),coalesce(desired_revision_id::text,''),status,observed_json from firewall_node_state where node_id=$1`, node.ID).
+		Scan(&revisionID, &appliedRevisionID, &desiredRevisionID, &status, &observed); err != nil {
+		t.Fatalf("read disabled firewall node state: %v", err)
+	}
+	if revisionID != "" || appliedRevisionID != "" || desiredRevisionID != "" || status != "disabled" || stringify(observed["status"]) != "disabled" {
+		t.Fatalf("disabled firewall node state = policy:%q revision:%q desired:%q status:%q observed:%#v, want disabled without policy/revision refs",
+			revisionID, appliedRevisionID, desiredRevisionID, status, observed)
+	}
 }
 
 func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T) {
