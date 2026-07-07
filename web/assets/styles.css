@@ -962,6 +962,16 @@ tr:hover td { background: rgba(148,163,184,0.04); }
 .compact-node-grid { gap: 14px; }
 .node-bootstrap-grid { grid-template-columns: 1fr; }
 .node-bootstrap-panel .form-grid { grid-template-columns: 1fr; }
+.ssh-host-key-scan-row {
+  align-items: stretch;
+}
+.ssh-host-key-scan-row input {
+  flex: 1 1 320px;
+  min-width: 220px;
+}
+.ssh-host-key-scan-row .secondary-btn {
+  flex: 0 0 auto;
+}
 .node-manage-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.72fr);

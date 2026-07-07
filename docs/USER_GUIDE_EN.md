@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.1.0.23`
+**Release:** `7.1.0.24`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -297,11 +297,16 @@ Production defaults:
    - `ssh_port`;
    - `ssh_host_key_sha256`;
    - private key secret.
-5. Start bootstrap or enrollment.
-6. Wait for heartbeat: the node should become `online`.
+5. Click `Scan host key` after `ssh_host` and `ssh_port` are correct. The UI
+   fills `ssh_host_key_sha256` from the discovered host key fingerprints.
+6. Verify the fingerprint out-of-band against the cloud/provider console or a
+   trusted provisioning record, then save SSH access.
+7. Start bootstrap or enrollment.
+8. Wait for heartbeat: the node should become `online`.
 
 `ssh_host_key_sha256` protects bootstrap from MITM. It must match the real node
-host key fingerprint.
+host key fingerprint. Do not bypass this field with an unverified value; a
+wrong fingerprint correctly blocks SSH bootstrap and web terminal access.
 
 After agent reinstall or host repair, use `Nodes -> Node -> Runtime reconcile`
 to queue desired-state recovery for managed services, backhaul, route policy and

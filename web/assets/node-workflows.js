@@ -1351,7 +1351,15 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
                         <div class="field"><label>Auth type</label><select name="auth_type"><option value="ssh_key"${sshMethod?.auth_type === 'ssh_key' ? ' selected' : ''}>ssh_key</option><option value="password"${sshMethod?.auth_type === 'password' ? ' selected' : ''}>password</option><option value="token"${sshMethod?.auth_type === 'token' ? ' selected' : ''}>token</option></select></div>
                         <div class="field"><label>Secret type</label><select name="secret_type"><option value="ssh_key">ssh_key</option><option value="password">password</option><option value="api_token">api_token</option><option value="opaque">opaque</option></select></div>
                         <div class="field"><label>Enabled</label><select name="is_enabled"><option value="true"${sshMethod?.is_enabled !== false ? ' selected' : ''}>true</option><option value="false"${sshMethod?.is_enabled === false ? ' selected' : ''}>false</option></select></div>
-                        <div class="field full"><label>SSH host key SHA256</label><input name="ssh_host_key_sha256" required value="${escapeHTML(sshMethod?.ssh_host_key_sha256 || '')}" placeholder="SHA256:..." /></div>
+                        <div class="field full">
+                          <label>SSH host key SHA256</label>
+                          <div class="inline-actions ssh-host-key-scan-row">
+                            <input name="ssh_host_key_sha256" required value="${escapeHTML(sshMethod?.ssh_host_key_sha256 || '')}" placeholder="SHA256:..." />
+                            <button class="secondary-btn" type="button" id="scanSshHostKeyBtn">Scan host key</button>
+                          </div>
+                          <div class="field-hint">Required for strict SSH bootstrap. Scan fills the current host/port fingerprint; verify it against your provider console before saving.</div>
+                          <div id="sshHostKeyScanResult" class="form-result"></div>
+                        </div>
                         <div class="field full"><label>Secret value</label><textarea name="secret_value" rows="5" placeholder="${sshMethod?.secret_ref_id ? 'Leave empty to keep existing secret_ref_id.' : 'Paste SSH private key, password or token.'}"></textarea></div>
                         <div class="field full inline-actions">
                           <button class="primary-btn" type="submit">Save SSH access</button>
@@ -1415,6 +1423,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       const sshAccessForm = document.getElementById('sshAccessForm');
       bindSSHAccessDirtyGuard(sshAccessForm);
       sshAccessForm?.addEventListener('submit', (event) => saveSSHAccess(event, node, methods));
+      document.getElementById('scanSshHostKeyBtn')?.addEventListener('click', (event) => scanSSHHostKey(node, event.currentTarget));
       document.getElementById('cancelSshAccessBtn').addEventListener('click', () => {
         setNodeManageDirty(false);
         reloadNodeControlModal(node.id, 'Unsaved SSH access changes discarded.');
@@ -1487,6 +1496,53 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       setPage('nodeManage');
     }
 
+    async function scanSSHHostKey(node, button) {
+      const form = document.getElementById('sshAccessForm');
+      const result = document.getElementById('sshHostKeyScanResult');
+      if (!form || !result) return;
+      const data = new FormData(form);
+      const sshHost = String(data.get('ssh_host') || node.address || '').trim();
+      const sshPort = Number(data.get('ssh_port') || 22);
+      if (!sshHost) {
+        result.innerHTML = '<span class="tag danger">ssh host is required before scan</span>';
+        return;
+      }
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Scanning...';
+      }
+      result.innerHTML = '<span class="tag warn">scanning host key</span>';
+      try {
+        const scan = await sendJSON(`/api/v1/nodes/${node.id}/ssh/host-key-scan`, 'POST', {
+          ssh_host: sshHost,
+          ssh_port: sshPort,
+        });
+        const entries = arrayOrEmpty(scan?.fingerprints);
+        if (!entries.length) {
+          throw new Error('ssh host key scan returned no fingerprints');
+        }
+        const preferred = entries.find((entry) => String(entry.algorithm || '').includes('ed25519')) || entries[0];
+        const input = form.elements.namedItem('ssh_host_key_sha256');
+        if (input) {
+          input.value = preferred.fingerprint || '';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        setNodeManageDirty(true);
+        result.innerHTML = `
+          <span class="tag ok">fingerprint detected</span>
+          <span class="tag">${escapeHTML(preferred.algorithm || 'ssh key')}</span>
+          <code>${escapeHTML(preferred.fingerprint || '')}</code>
+          <div class="field-hint">Verify this value out-of-band before saving SSH access.</div>`;
+      } catch (err) {
+        result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Scan host key';
+        }
+      }
+    }
+
     async function saveSSHAccess(event, node, methods) {
       event.preventDefault();
       const result = document.getElementById('sshAccessResult');
@@ -1511,6 +1567,10 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
         if (!secretRefID) {
           throw new Error('secret value is required for the first SSH access save');
         }
+        const hostKeySHA256 = String(form.get('ssh_host_key_sha256') || '').trim();
+        if (!hostKeySHA256) {
+          throw new Error('SSH host key SHA256 is required. Click Scan host key, verify the fingerprint, then save SSH access.');
+        }
         const sshMethod = {
           id: existingSSH?.id || '',
           method: 'ssh',
@@ -1518,7 +1578,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
           ssh_host: String(form.get('ssh_host') || '').trim(),
           ssh_port: Number(form.get('ssh_port') || 22),
           ssh_user: String(form.get('ssh_user') || '').trim(),
-          ssh_host_key_sha256: String(form.get('ssh_host_key_sha256') || '').trim(),
+          ssh_host_key_sha256: hostKeySHA256,
           auth_type: String(form.get('auth_type') || 'ssh_key'),
           secret_ref_id: secretRefID,
         };

@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.23`
+**Release:** `7.1.0.24`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,11 +56,13 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.23` hardens the stabilization baseline after the lost-node cleanup work:
-the Node management SSH bootstrap form now suppresses background auto-refresh
-while an operator is editing access credentials, and runtime accounting ignores
-stale agent reports for deleted instances while pruning orphan runtime
-state/observation rows. The current focus is:
+`7.1.0.24` hardens SSH bootstrap without weakening host-key pinning: the Node
+management form now has a controlled `Scan host key` action that reads the
+current SSH host/port, returns SHA256 fingerprints through the privileged API
+and fills `ssh_host_key_sha256` only after the operator can verify it. The
+previous stabilization baseline also keeps dirty-form auto-refresh suppression,
+deleted-instance runtime report filtering and orphan runtime state pruning. The
+current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;

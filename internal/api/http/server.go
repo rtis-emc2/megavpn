@@ -387,6 +387,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/nodes/{id}/diagnostics/clear-stale-rotation", "node.bootstrap", s.clearNodeStaleRotation)
 	protected("GET /api/v1/nodes/{id}/access-methods", "node.read", s.listNodeAccessMethods)
 	protected("PUT /api/v1/nodes/{id}/access-methods", "node.bootstrap", s.replaceNodeAccessMethods)
+	protected("POST /api/v1/nodes/{id}/ssh/host-key-scan", "node.bootstrap", s.scanNodeSSHHostKey)
 	protected("POST /api/v1/nodes/{id}/ssh/sessions", "node.bootstrap", s.createNodeSSHTerminalSession)
 	protected("GET /api/v1/nodes/{id}/ssh/terminal", "node.bootstrap", s.nodeSSHTerminal)
 	protected("POST /api/v1/nodes/{id}/bootstrap", "node.bootstrap", s.createNodeBootstrapJob)

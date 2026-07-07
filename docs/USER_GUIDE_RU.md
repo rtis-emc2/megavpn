@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.1.0.23`
+**Релиз:** `7.1.0.24`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -297,11 +297,17 @@ Production defaults:
    - `ssh_port`;
    - `ssh_host_key_sha256`;
    - private key secret.
-5. Запустите bootstrap или enrollment flow.
-6. Дождитесь heartbeat: node должна перейти в `online`.
+5. Нажмите `Scan host key` после того, как `ssh_host` и `ssh_port` указаны
+   корректно. UI заполнит `ssh_host_key_sha256` найденным fingerprint.
+6. Сверьте fingerprint внешним доверенным способом: через cloud/provider
+   console или provisioning record, затем сохраните SSH access.
+7. Запустите bootstrap или enrollment flow.
+8. Дождитесь heartbeat: node должна перейти в `online`.
 
 `ssh_host_key_sha256` защищает bootstrap от MITM. Fingerprint должен
-соответствовать реальному host key node.
+соответствовать реальному host key node. Не обходите это поле непроверенным
+значением: неправильный fingerprint должен блокировать SSH bootstrap и web
+terminal access.
 
 После переустановки агента или ремонта host используйте `Nodes -> Node ->
 Runtime reconcile`, чтобы поставить восстановление desired-state для managed

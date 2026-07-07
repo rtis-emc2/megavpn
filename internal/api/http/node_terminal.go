@@ -490,7 +490,7 @@ func writePinnedTerminalKnownHost(method domain.NodeAccessMethod, path string) e
 		return err
 	}
 	defer os.Remove(tmpPath)
-	fpOut, err := exec.Command("ssh-keygen", "-lf", tmpPath).CombinedOutput()
+	fpOut, err := exec.Command("ssh-keygen", "-lf", tmpPath, "-E", "sha256").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ssh host key fingerprint failed: %w: %s", err, strings.TrimSpace(string(fpOut)))
 	}
