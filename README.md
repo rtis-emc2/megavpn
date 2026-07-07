@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.27`
+**Release:** `7.1.0.28`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,17 +56,22 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.27` hotfixes VLESS client provisioning after the client-level identity
-registry rollout: the Xray UUID inserted into `client_service_identities` is
-now explicitly cast as text inside `jsonb_build_object`, so PostgreSQL prepared
-statements no longer fail with `could not determine data type of parameter $5`.
-The `7.1.0.26` baseline remains the durable model: VLESS identity is stored at
-the client level, replacement ingress nodes inherit the already issued client
-UUID during provisioning, and the migration backfills the identity registry
-from existing Xray/VLESS service accesses. The previous stabilization baseline
-also keeps strict SSH host-key bootstrap scanning, dirty-form auto-refresh
-suppression, deleted-instance runtime report filtering and orphan runtime state
-pruning. The current focus is:
+`7.1.0.28` clarifies active job diagnostics in the Web UI: agent-handled jobs
+such as `instance.apply` now show whether they are waiting for the target node
+agent to poll the queue, already claimed by an agent, or waiting for an agent
+result under a lease. This removes the previous ambiguous `n/a` result for
+queued/running runtime apply jobs and makes node/lock context visible in the
+expanded Jobs row. `7.1.0.27` remains the VLESS provisioning SQL hotfix:
+the Xray UUID inserted into `client_service_identities` is explicitly cast as
+text inside `jsonb_build_object`, so PostgreSQL prepared statements no longer
+fail with `could not determine data type of parameter $5`. The `7.1.0.26`
+baseline remains the durable model: VLESS identity is stored at the client
+level, replacement ingress nodes inherit the already issued client UUID during
+provisioning, and the migration backfills the identity registry from existing
+Xray/VLESS service accesses. The previous stabilization baseline also keeps
+strict SSH host-key bootstrap scanning, dirty-form auto-refresh suppression,
+deleted-instance runtime report filtering and orphan runtime state pruning. The
+current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;

@@ -79,6 +79,84 @@
       ].filter(Boolean).join(' · ');
     }
 
+    const agentJobTypes = new Set([
+      'node.inventory',
+      'node.inventory.sync',
+      'node.services.discover',
+      'node.capability.install',
+      'node.capability.verify',
+      'node.channel.probe',
+      'node.agent.rotate_token',
+      'node.emergency_cleanup',
+      'node.reboot',
+      'node.backhaul.apply',
+      'node.backhaul.probe',
+      'node.backhaul.cleanup',
+      'node.route_policy.apply',
+      'node.route_policy.cleanup',
+      'node.firewall.preview',
+      'node.firewall.apply',
+      'node.firewall.observe',
+      'node.firewall.disable',
+      'instance.restart',
+      'instance.apply',
+      'instance.start',
+      'instance.stop',
+      'instance.enable',
+      'instance.disable',
+      'instance.diagnose',
+      'instance.delete',
+    ]);
+
+    function isAgentJob(job) {
+      return agentJobTypes.has(String(job?.type || '').trim());
+    }
+
+    function instanceForJob(job) {
+      const instanceID = String(job?.instance_id || '').trim();
+      if (!instanceID) return null;
+      return (state.instances || []).find((instance) => instance.id === instanceID) || null;
+    }
+
+    function nodeForJob(job) {
+      const directNodeID = String(job?.node_id || '').trim();
+      const instance = directNodeID ? null : instanceForJob(job);
+      const nodeID = directNodeID || String(instance?.node_id || '').trim();
+      if (!nodeID) return null;
+      return (state.nodes || []).find((node) => node.id === nodeID) || { id: nodeID };
+    }
+
+    function nodeJobContextText(job) {
+      const node = nodeForJob(job);
+      if (!node) return '';
+      const parts = [
+        node.name || shortToken(node.id, 8, 4),
+        node.agent_status ? `agent ${node.agent_status}` : '',
+        node.status ? `node ${node.status}` : '',
+      ];
+      const lastSeen = node.agent_last_seen_at || node.last_heartbeat_at;
+      if (lastSeen) parts.push(`last seen ${formatDate(lastSeen)}`);
+      return parts.filter(Boolean).join(' · ');
+    }
+
+    function activeJobProgressText(job) {
+      const status = String(job?.status || '').trim().toLowerCase();
+      if (!['queued', 'running', 'retrying'].includes(status)) return '';
+      const context = nodeJobContextText(job);
+      if (!isAgentJob(job)) {
+        return status === 'running'
+          ? 'control-plane worker is running this job'
+          : 'waiting for control-plane worker';
+      }
+      if (status === 'running') {
+        const lease = job?.locked_until ? ` · lease until ${formatDate(job.locked_until)}` : '';
+        const owner = job?.locked_by ? `claimed by ${job.locked_by}` : 'claimed by node agent';
+        return `${owner}; waiting for agent result${lease}${context ? ` · ${context}` : ''}`;
+      }
+      const verb = status === 'retrying' ? 'waiting for node agent retry poll' : 'waiting for node agent poll';
+      return `${verb}${context ? ` · ${context}` : ''}`;
+    }
+
     function jobResultText(job) {
       const result = job?.result || {};
       const health = result.health || {};
@@ -95,7 +173,8 @@
         jobSystemdDiagnosticText(result, health),
         result.error,
         result.active_state,
-        result.message
+        result.message,
+        activeJobProgressText(job)
       );
     }
 
@@ -186,7 +265,7 @@
       const filtered = rows.filter((row) => {
         if (active !== 'all' && jobBucket(row.status) !== active) return false;
         if (!query) return true;
-        return [row.id, row.type, row.scope, row.createdFull, row.status, row.result]
+        return [row.id, row.type, row.scope, row.createdFull, row.status, row.result, row.nodeContext, row.lockContext]
           .some((value) => String(value || '').toLowerCase().includes(query));
       });
       filtered.sort((a, b) => {
@@ -246,8 +325,10 @@
                       <div class="job-result-body">
                         <div><span>ID</span><strong>${escapeHTML(row.id || 'n/a')}</strong></div>
                         <div><span>Scope</span><strong>${escapeHTML(row.scope || 'n/a')}</strong></div>
+                        <div><span>Node</span><strong>${escapeHTML(row.nodeContext || 'n/a')}</strong></div>
                         <div><span>Created</span><strong>${escapeHTML(row.createdFull || 'n/a')}</strong></div>
                         <div><span>Status</span><strong>${escapeHTML(row.status || 'unknown')}</strong></div>
+                        <div><span>Lock</span><strong>${escapeHTML(row.lockContext || 'n/a')}</strong></div>
                         <p>${escapeHTML(row.result || 'No result payload yet.')}</p>
                       </div>
                     </details>
@@ -280,6 +361,8 @@
         createdAt: job.created_at,
         status: job.status || 'queued',
         result: jobResultText(job),
+        nodeContext: nodeJobContextText(job),
+        lockContext: [job.locked_by || '', job.locked_until ? `until ${formatDate(job.locked_until)}` : ''].filter(Boolean).join(' · '),
       }));
       const activeTab = selectedJobsTab();
       const counts = jobCounts(rows);
