@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.14`
+**Release:** `7.1.0.15`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,10 +56,10 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.14` hardens Firewall apply on upgraded PostgreSQL installations: policy
-and address-list lookups now avoid mixed UUID/text prepared-statement typing,
-and migration `000017_firewall_apply_schema_hardening` aligns firewall
-constraints with the runtime catalog model. The current focus is:
+`7.1.0.15` polishes the Traffic Accounting operator UI: filter actions no
+longer stretch across the whole form, the collection model uses a dedicated
+responsive diagram, and Web UI asset cache keys are advanced for reliable
+browser refresh after deployment. The current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;

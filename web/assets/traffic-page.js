@@ -221,7 +221,7 @@
               <label>Limit</label>
               <input name="limit" type="number" min="1" max="50000" step="1" value="${escapeHTML(filters.limit)}" />
             </div>
-            <div class="field full inline-actions align-end">
+            <div class="traffic-filter-actions">
               <button class="secondary-btn" id="trafficExportResetBtn" type="button">Reset filters</button>
               <button class="primary-btn" id="trafficExportBtn" type="button">Export CSV</button>
             </div>
@@ -489,14 +489,14 @@
               <p>Agents submit normalized counters over the signed agent API. The control plane validates node ownership, links samples to known clients when service access is provided, and rejects malformed counters before storage.</p>
             </div>
           </div>
-          <div class="firewall-flow-diagram">
-            <div class="firewall-flow-step"><strong>1</strong><span>Runtime collector reads local aggregate counters</span><small>bytes, packets, flows</small></div>
-            <div class="firewall-flow-arrow" aria-hidden="true">-></div>
-            <div class="firewall-flow-step"><strong>2</strong><span>Agent signs accounting samples</span><small>node identity required</small></div>
-            <div class="firewall-flow-arrow" aria-hidden="true">-></div>
-            <div class="firewall-flow-step"><strong>3</strong><span>Control plane validates bindings</span><small>node, instance, client</small></div>
-            <div class="firewall-flow-arrow" aria-hidden="true">-></div>
-            <div class="firewall-flow-step"><strong>4</strong><span>PostgreSQL stores aggregate history</span><small>180-day retention</small></div>
+          <div class="traffic-model-flow">
+            <div class="traffic-model-step"><span class="traffic-model-index">1</span><strong>Runtime collector reads local aggregate counters</strong><small>bytes, packets, flows</small></div>
+            <div class="traffic-model-arrow" aria-hidden="true">-></div>
+            <div class="traffic-model-step"><span class="traffic-model-index">2</span><strong>Agent signs accounting samples</strong><small>node identity required</small></div>
+            <div class="traffic-model-arrow" aria-hidden="true">-></div>
+            <div class="traffic-model-step"><span class="traffic-model-index">3</span><strong>Control plane validates bindings</strong><small>node, instance, client</small></div>
+            <div class="traffic-model-arrow" aria-hidden="true">-></div>
+            <div class="traffic-model-step"><span class="traffic-model-index">4</span><strong>PostgreSQL stores aggregate history</strong><small>180-day retention</small></div>
           </div>
         </section>`;
       const form = document.getElementById('trafficExportFilterForm');
