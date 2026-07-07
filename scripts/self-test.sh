@@ -179,9 +179,14 @@ require_binary_version_commands() {
 
 require_shell_syntax() {
 	local file
-	while IFS= read -r file; do
+	while IFS= read -r -d '' file; do
 		bash -n "$file"
-	done < <(find scripts -type f -name '*.sh' -print | sort)
+	done < <(
+		{
+			find scripts deploy -type f -name '*.sh' -print0
+			[[ ! -f deploy-local.sh ]] || printf '%s\0' deploy-local.sh
+		} | sort -z
+	)
 }
 
 require_control_plane_install_validation() {

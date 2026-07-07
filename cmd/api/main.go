@@ -41,7 +41,17 @@ func main() {
 	defer db.Close()
 	store := postgres.New(db.Pool)
 	store.SetArtifactRoot(cfg.Artifacts.Root)
-	_ = store.SeedLocalInventory(context.Background())
+	seedCtx, seedCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := store.SeedLocalInventory(seedCtx); err != nil {
+		seedCancel()
+		if cfg.API.ProductionMode {
+			log.Error("local inventory seed failed", "error", err)
+			os.Exit(1)
+		}
+		log.Warn("local inventory seed failed; continuing outside production mode", "error", err)
+	} else {
+		seedCancel()
+	}
 	secretStorageReady := false
 	if strings.TrimSpace(cfg.Secrets.MasterKeyPath) != "" {
 		secretSvc, err := secrets.LoadFromFile(cfg.Secrets.MasterKeyPath, cfg.Secrets.MasterKeyVersion)
