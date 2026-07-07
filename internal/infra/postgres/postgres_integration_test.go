@@ -536,6 +536,97 @@ func TestPostgresIntegrationFirewallApplyCreatesRevisionJobAndNodeState(t *testi
 	}
 }
 
+func TestPostgresIntegrationBootstrapBlockedByEnforcedFirewallWithoutSSHAllow(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-fw-bootstrap-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "draft",
+		Address:       "10.50.9.10",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "ssh_bootstrap",
+		AgentStatus:   "unknown",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	secret, err := store.CreateSecretRef(ctx, "ssh_key", []byte("integration-ssh-key"), map[string]any{
+		"scope": "node_bootstrap_test",
+	})
+	if err != nil {
+		t.Fatalf("create ssh secret ref: %v", err)
+	}
+	secretID := secret.ID
+	if _, err := store.ReplaceNodeAccessMethods(ctx, node.ID, []domain.NodeAccessMethod{{
+		Method:           "ssh",
+		IsEnabled:        true,
+		SSHHost:          "203.0.113.10",
+		SSHPort:          22,
+		SSHUser:          "root",
+		SSHHostKeySHA256: "SHA256:abcdefghijklmnopqrstuvwxyzABCDEFGH1234567890+/=",
+		AuthType:         "ssh_key",
+		SecretRefID:      &secretID,
+	}}); err != nil {
+		t.Fatalf("replace node access methods: %v", err)
+	}
+
+	inventory, err := store.FirewallInventory(ctx)
+	if err != nil {
+		t.Fatalf("firewall inventory: %v", err)
+	}
+	var nodeBase domain.FirewallPolicy
+	for _, policy := range inventory.Policies {
+		if policy.Key == "node_base" {
+			nodeBase = policy
+			break
+		}
+	}
+	if nodeBase.ID == "" {
+		t.Fatal("node_base firewall policy was not seeded")
+	}
+	if _, err := store.db.Exec(ctx, `insert into firewall_node_state(id,node_id,policy_id,status,observed_json,updated_at)
+values($1,$2,$3,'applied','{"default_policy_enforcement":"enforced"}'::jsonb,now())`,
+		id.New(), node.ID, nodeBase.ID); err != nil {
+		t.Fatalf("insert enforced firewall state: %v", err)
+	}
+
+	_, _, err = store.CreateNodeBootstrapJob(ctx, node.ID, "ssh_bootstrap", map[string]any{"reinstall_agent": true})
+	if err == nil {
+		t.Fatal("expected enforced firewall without SSH allow to block bootstrap")
+	}
+	if !strings.Contains(err.Error(), "node firewall is enforced") || !strings.Contains(err.Error(), "22") {
+		t.Fatalf("unexpected bootstrap block error: %v", err)
+	}
+
+	_, err = store.CreateFirewallRule(ctx, nodeBase.ID, domain.FirewallRule{
+		Priority:   180,
+		Chain:      "input",
+		Action:     "accept",
+		Direction:  "in",
+		Protocol:   "tcp",
+		DstPorts:   "22",
+		StateMatch: []string{"new", "established"},
+		Comment:    "Allow SSH bootstrap from controlled source.",
+		Enabled:    true,
+		Status:     "active",
+	})
+	if err != nil {
+		t.Fatalf("create SSH allow firewall rule: %v", err)
+	}
+	job, run, err := store.CreateNodeBootstrapJob(ctx, node.ID, "ssh_bootstrap", map[string]any{"reinstall_agent": true})
+	if err != nil {
+		t.Fatalf("expected SSH allow rule to permit bootstrap: %v", err)
+	}
+	if job.Type != "node.bootstrap" || run.Status != "queued" {
+		t.Fatalf("bootstrap job/run = %#v / %#v, want queued node.bootstrap", job, run)
+	}
+}
+
 func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 

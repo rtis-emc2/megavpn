@@ -28,3 +28,28 @@ func TestShouldHandoffNodeBootstrapToAgentSkipsManualBundle(t *testing.T) {
 		t.Fatal("manual_bundle only prepares operator materials and must not switch channel")
 	}
 }
+
+func TestFirewallPortListContains(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name  string
+		ports string
+		port  int
+		want  bool
+	}{
+		{name: "empty means any", ports: "", port: 22, want: true},
+		{name: "single match", ports: "22", port: 22, want: true},
+		{name: "list match", ports: "80, 443, 2222", port: 2222, want: true},
+		{name: "range match", ports: "2200-2299", port: 2222, want: true},
+		{name: "miss", ports: "80,443", port: 22, want: false},
+		{name: "invalid ignored", ports: "abc,443", port: 22, want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := firewallPortListContains(tt.ports, tt.port); got != tt.want {
+				t.Fatalf("firewallPortListContains(%q,%d) = %v, want %v", tt.ports, tt.port, got, tt.want)
+			}
+		})
+	}
+}

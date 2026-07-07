@@ -1,6 +1,6 @@
 # Firewall Policy Catalog
 
-**Release:** `7.1.0.19`
+**Release:** `7.1.0.20`
 
 Firewall is the managed policy workspace for node and control-plane boundaries.
 It is intentionally modeled as a catalog before apply: operators prepare address
@@ -129,6 +129,13 @@ the managed `inet megavpn_firewall` nftables table and leaves instances,
 backhaul, route policy and service runtimes untouched. Use it for staged
 rollback or emergency firewall removal. To enable firewall again, run Preview
 and Apply for the intended policy.
+
+SSH bootstrap and agent reinstall/update use inbound SSH from the control plane
+to the node. When a node has an applied `Strict defaults` firewall, bootstrap is
+blocked before job creation unless the active policy contains an input accept
+rule for the configured SSH port. Disable the managed firewall first, or add a
+source-scoped SSH allow rule for `trusted_control_plane`/`trusted_operators`
+and apply the policy.
 
 ## Security Model
 

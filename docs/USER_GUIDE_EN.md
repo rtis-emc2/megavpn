@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.1.0.19`
+**Release:** `7.1.0.20`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -796,6 +796,11 @@ Use `Firewall -> Node apply -> Disable` to remove only the managed
 `inet megavpn_firewall` table from a node. This queues `node.firewall.disable`
 and does not stop instances, route policy, backhaul or service runtimes. Apply
 the intended policy again to recreate the managed firewall.
+
+`Update all agents` and SSH reinstall use the same SSH bootstrap path. If a
+node has an applied strict firewall, the platform refuses to queue bootstrap
+unless the active policy allows the configured SSH port on input. Disable the
+managed firewall first or add/apply a scoped SSH allow rule.
 
 ## 19. Jobs, Audit And Troubleshooting
 

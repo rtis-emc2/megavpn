@@ -1,6 +1,6 @@
 # Documentation Index
 
-**Release:** `7.1.0.19`
+**Release:** `7.1.0.20`
 
 This document is the English entry point for RTIS MegaVPN documentation. It keeps
 the documentation map explicit so operators and engineers can quickly find the
@@ -27,7 +27,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | 13 | [VLESS subscriptions](VLESS_SUBSCRIPTIONS.md) | Per-client VLESS subscription tokens and delivery workflow |
 | 14 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
 | 15 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
-| 16 | [Security review](SECURITY_REVIEW_7.1.0.19.md) | Security and release review artifact |
+| 16 | [Security review](SECURITY_REVIEW_7.1.0.20.md) | Security and release review artifact |
 | 17 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
 
 ## Documentation Ownership
@@ -70,7 +70,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 - Avoid documenting manual node-side changes as the primary path when the Control
   Plane has a managed workflow.
 - Each maintained documentation file must show the current release banner:
-  `7.1.0.19`.
+  `7.1.0.20`.
 
 ## Current Documentation Gaps
 

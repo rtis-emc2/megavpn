@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -183,6 +184,9 @@ func (s *Store) CreateNodeBootstrapJob(ctx context.Context, nodeID, bootstrapMod
 		if !ok {
 			return domain.Job{}, domain.NodeBootstrapRun{}, errors.New("enabled ssh access method is required for ssh_bootstrap")
 		}
+		if err := s.ensureFirewallAllowsSSHBootstrap(ctx, nodeID, methods); err != nil {
+			return domain.Job{}, domain.NodeBootstrapRun{}, err
+		}
 	}
 
 	payload := map[string]any{
@@ -248,6 +252,181 @@ func (s *Store) CreateNodeBootstrapJob(ctx context.Context, nodeID, bootstrapMod
 	}
 	_, _ = s.CreateAudit(ctx, "system", "node.bootstrap", "node", &nodeID, "node bootstrap queued")
 	return job, run, nil
+}
+
+func (s *Store) ensureFirewallAllowsSSHBootstrap(ctx context.Context, nodeID string, methods []domain.NodeAccessMethod) error {
+	ports := sshBootstrapPorts(methods)
+	if len(ports) == 0 {
+		return nil
+	}
+	status, enforcement, policyID, err := s.nodeFirewallApplyState(ctx, nodeID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("check node firewall state before bootstrap: %w", err)
+	}
+	if status != "applied" || enforcement != "enforced" {
+		return nil
+	}
+	if policyID == "" {
+		return fmt.Errorf("node firewall is enforced but has no policy reference; use Firewall -> Node apply -> Disable before SSH bootstrap or reinstall")
+	}
+	for _, port := range ports {
+		allowed, err := s.firewallPolicyAllowsInputTCPPort(ctx, policyID, port)
+		if err != nil {
+			return fmt.Errorf("check node firewall SSH allow rules before bootstrap: %w", err)
+		}
+		if allowed {
+			return nil
+		}
+	}
+	return fmt.Errorf("node firewall is enforced and does not include an active input accept rule for SSH bootstrap port(s) %s; use Firewall -> Node apply -> Disable before bootstrap/reinstall, or add a source-scoped SSH allow rule for trusted_control_plane/trusted_operators and apply the policy", joinIntList(ports))
+}
+
+func sshBootstrapPorts(methods []domain.NodeAccessMethod) []int {
+	seen := map[int]bool{}
+	out := []int{}
+	for _, method := range methods {
+		if !method.IsEnabled || method.Method != "ssh" {
+			continue
+		}
+		port := method.SSHPort
+		if port == 0 {
+			port = 22
+		}
+		if port < 1 || port > 65535 || seen[port] {
+			continue
+		}
+		seen[port] = true
+		out = append(out, port)
+	}
+	return out
+}
+
+func (s *Store) nodeFirewallApplyState(ctx context.Context, nodeID string) (status, enforcement, policyID string, err error) {
+	err = s.db.QueryRow(ctx, `select status,coalesce(observed_json->>'default_policy_enforcement',''),coalesce(policy_id::text,'') from firewall_node_state where node_id=$1`, nodeID).
+		Scan(&status, &enforcement, &policyID)
+	status = strings.ToLower(strings.TrimSpace(status))
+	enforcement = strings.ToLower(strings.TrimSpace(enforcement))
+	policyID = strings.TrimSpace(policyID)
+	return status, enforcement, policyID, err
+}
+
+func (s *Store) firewallPolicyAllowsInputTCPPort(ctx context.Context, policyID string, port int) (bool, error) {
+	rows, err := s.db.Query(ctx, `select protocol,coalesce(dst_ports,''),coalesce(src_cidr,''),coalesce(src_list_id::text,''),state_match
+from firewall_rules
+where policy_id=$1
+  and status='active'
+  and enabled=true
+  and chain='input'
+  and action='accept'
+  and protocol in ('tcp','any')`, policyID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var protocol, dstPorts, srcCIDR, srcListID string
+		var stateMatch []string
+		if err := rows.Scan(&protocol, &dstPorts, &srcCIDR, &srcListID, &stateMatch); err != nil {
+			return false, err
+		}
+		if !firewallRuleAllowsNewState(stateMatch) {
+			continue
+		}
+		if protocol == "tcp" && !firewallPortListContains(dstPorts, port) {
+			continue
+		}
+		if protocol == "any" && strings.TrimSpace(dstPorts) != "" {
+			continue
+		}
+		if strings.TrimSpace(srcListID) != "" {
+			hasEntries, err := s.firewallAddressListHasRenderableEntries(ctx, srcListID)
+			if err != nil {
+				return false, err
+			}
+			if !hasEntries {
+				continue
+			}
+		}
+		if strings.TrimSpace(srcCIDR) != "" {
+			if _, err := netip.ParsePrefix(strings.TrimSpace(srcCIDR)); err != nil {
+				continue
+			}
+		}
+		return true, nil
+	}
+	return false, rows.Err()
+}
+
+func firewallRuleAllowsNewState(values []string) bool {
+	if len(values) == 0 {
+		return true
+	}
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), "new") {
+			return true
+		}
+	}
+	return false
+}
+
+func firewallPortListContains(ports string, target int) bool {
+	if strings.TrimSpace(ports) == "" {
+		return true
+	}
+	for _, part := range strings.Split(ports, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "-") {
+			left, right, _ := strings.Cut(part, "-")
+			from, err := strconv.Atoi(strings.TrimSpace(left))
+			if err != nil {
+				continue
+			}
+			to, err := strconv.Atoi(strings.TrimSpace(right))
+			if err != nil {
+				continue
+			}
+			if from <= target && target <= to {
+				return true
+			}
+			continue
+		}
+		port, err := strconv.Atoi(part)
+		if err != nil {
+			continue
+		}
+		if port == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) firewallAddressListHasRenderableEntries(ctx context.Context, listID string) (bool, error) {
+	var ok bool
+	err := s.db.QueryRow(ctx, `select exists(
+	select 1
+	from firewall_address_entries e
+	join firewall_address_lists l on l.id=e.list_id
+	where e.list_id::text=$1
+	  and e.status='active'
+	  and l.status='active'
+	  and lower(coalesce(e.value_type,'auto')) <> 'dns'
+)`, strings.TrimSpace(listID)).Scan(&ok)
+	return ok, err
+}
+
+func joinIntList(values []int) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, strconv.Itoa(value))
+	}
+	return strings.Join(parts, ",")
 }
 
 func (s *Store) ListNodeBootstrapRuns(ctx context.Context, nodeID string, limit int) ([]domain.NodeBootstrapRun, error) {
