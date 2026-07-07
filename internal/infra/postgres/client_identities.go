@@ -98,7 +98,7 @@ func ensureXrayClientIdentityUUIDTx(ctx context.Context, q clientServiceIdentity
 	}
 	_, err := q.Exec(ctx, `insert into client_service_identities(
 			id, client_account_id, service_code, profile_key, credential_json, status, created_at, updated_at
-		) values($1,$2,$3,$4,jsonb_build_object('xray_uuid',$5),'active',now(),now())
+		) values($1,$2,$3,$4,jsonb_build_object('xray_uuid',$5::text),'active',now(),now())
 		on conflict(client_account_id, service_code, profile_key) do update set
 			credential_json=client_service_identities.credential_json || excluded.credential_json,
 			status='active',

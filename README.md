@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.26`
+**Release:** `7.1.0.27`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,13 +56,15 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.26` makes VLESS client identity persistent at the client level instead
-of treating the issued UUID as instance-scoped metadata. Replacement ingress
-nodes now inherit the already issued client UUID during provisioning, so a
-stable public endpoint can be moved to new nodes without forcing users to
-re-import client profiles. The migration backfills this identity registry from
-existing Xray/VLESS service accesses. The previous stabilization baseline also
-keeps strict SSH host-key bootstrap scanning, dirty-form auto-refresh
+`7.1.0.27` hotfixes VLESS client provisioning after the client-level identity
+registry rollout: the Xray UUID inserted into `client_service_identities` is
+now explicitly cast as text inside `jsonb_build_object`, so PostgreSQL prepared
+statements no longer fail with `could not determine data type of parameter $5`.
+The `7.1.0.26` baseline remains the durable model: VLESS identity is stored at
+the client level, replacement ingress nodes inherit the already issued client
+UUID during provisioning, and the migration backfills the identity registry
+from existing Xray/VLESS service accesses. The previous stabilization baseline
+also keeps strict SSH host-key bootstrap scanning, dirty-form auto-refresh
 suppression, deleted-instance runtime report filtering and orphan runtime state
 pruning. The current focus is:
 
