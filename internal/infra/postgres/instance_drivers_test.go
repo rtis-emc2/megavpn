@@ -318,6 +318,7 @@ func TestBuildNginxServerConfigReverseProxyWithWebsiteFallback(t *testing.T) {
 		EndpointHost: "enter.example.com",
 		EndpointPort: 443,
 	}, map[string]any{
+		"service_profile":       "ws_camouflage_edge",
 		"mode":                  "reverse_proxy",
 		"tls_enabled":           true,
 		"tls_cert_path":         "/etc/ssl/certs/enter.crt",
@@ -347,6 +348,12 @@ func TestBuildNginxServerConfigReverseProxyWithWebsiteFallback(t *testing.T) {
 		"location / {",
 		"proxy_pass https://example.com;",
 		"proxy_set_header Host example.com;",
+		"proxy_set_header X-Real-IP \"\";",
+		"proxy_set_header X-Forwarded-For \"\";",
+		"proxy_set_header Forwarded \"\";",
+		"proxy_set_header Connection \"\";",
+		"proxy_connect_timeout 10s;",
+		"proxy_read_timeout 60s;",
 		"proxy_ssl_server_name on;",
 		"proxy_ssl_name example.com;",
 	}
@@ -354,6 +361,37 @@ func TestBuildNginxServerConfigReverseProxyWithWebsiteFallback(t *testing.T) {
 		if !strings.Contains(cfg, check) {
 			t.Fatalf("expected config to contain %q, got:\n%s", check, cfg)
 		}
+	}
+	if strings.Contains(cfg, "proxy_set_header X-Forwarded-For $remote_addr;") {
+		t.Fatalf("camouflage config must not forward client IP by default:\n%s", cfg)
+	}
+}
+
+func TestBuildNginxServerConfigReverseProxyCanForwardClientIPWhenExplicitlyEnabled(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"service_profile":       "ws_camouflage_edge",
+		"mode":                  "reverse_proxy",
+		"tls_enabled":           true,
+		"tls_cert_path":         "/etc/ssl/certs/enter.crt",
+		"tls_key_path":          "/etc/ssl/private/enter.key",
+		"location_path":         "/assets/rtis-sync",
+		"upstream_url":          "http://127.0.0.1:7080",
+		"fallback_upstream_url": "https://example.com",
+		"fallback_host_header":  "example.com",
+		"fallback_sni":          "example.com",
+		"websocket_upgrade":     true,
+		"forward_client_ip":     true,
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	if !strings.Contains(cfg, "proxy_set_header X-Forwarded-For $remote_addr;") {
+		t.Fatalf("explicit forward_client_ip=true must preserve client IP forwarding:\n%s", cfg)
 	}
 }
 

@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.29`
+**Release:** `7.1.0.30`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,7 +56,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.29` makes service-pack rollout idempotent for already-created
+`7.1.0.30` makes service-pack rollout idempotent for already-created
 components: a repeated submit for the same node, endpoint host, service and
 listen port reuses the existing instance instead of creating a suffixed
 duplicate such as `xray-ws 2`. The API reports reused rows in

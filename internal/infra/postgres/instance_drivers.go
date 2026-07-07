@@ -1348,12 +1348,8 @@ func buildNginxServerConfig(instance domain.Instance, spec map[string]any) (stri
 		}
 		lines = append(lines, "    location "+locationPath+" {")
 		lines = append(lines, "        grpc_pass "+upstreamURL+";")
-		lines = append(lines,
-			"        grpc_set_header Host $host;",
-			"        grpc_set_header X-Real-IP $remote_addr;",
-			"        grpc_set_header X-Forwarded-For $remote_addr;",
-			"        grpc_set_header X-Forwarded-Proto $scheme;",
-		)
+		lines = append(lines, "        grpc_set_header Host $host;")
+		lines = appendNginxProxyIdentityHeaders(lines, "grpc_set_header", spec, false)
 		if timeout := firstString(spec["grpc_read_timeout"]); timeout != "" {
 			lines = append(lines, "        grpc_read_timeout "+timeout+";")
 		}
@@ -1416,12 +1412,8 @@ func appendNginxReverseProxyLocation(lines []string, locationPath, upstreamURL s
 		lines = append(lines, "        proxy_http_version "+firstString(spec["proxy_http_version"], "1.1")+";")
 	}
 	if truthy(spec["proxy_headers_enabled"]) || spec["proxy_headers_enabled"] == nil {
-		lines = append(lines,
-			"        proxy_set_header Host $host;",
-			"        proxy_set_header X-Real-IP $remote_addr;",
-			"        proxy_set_header X-Forwarded-For $remote_addr;",
-			"        proxy_set_header X-Forwarded-Proto $scheme;",
-		)
+		lines = append(lines, "        proxy_set_header Host $host;")
+		lines = appendNginxProxyIdentityHeaders(lines, "proxy_set_header", spec, false)
 	}
 	if truthy(spec["websocket_upgrade"]) || truthy(spec["websocket_upgrade_enabled"]) || truthy(spec["ws_upgrade"]) {
 		lines = append(lines,
@@ -1452,11 +1444,11 @@ func appendNginxFallbackLocation(lines []string, primaryLocation string, spec ma
 	} else {
 		lines = append(lines, "        proxy_set_header Host $host;")
 	}
-	lines = append(lines,
-		"        proxy_set_header X-Real-IP $remote_addr;",
-		"        proxy_set_header X-Forwarded-For $remote_addr;",
-		"        proxy_set_header X-Forwarded-Proto $scheme;",
-	)
+	lines = appendNginxProxyIdentityHeaders(lines, "proxy_set_header", spec, true)
+	lines = append(lines, "        proxy_set_header Connection \"\";")
+	lines = append(lines, "        proxy_connect_timeout "+firstString(spec["fallback_proxy_connect_timeout"], spec["proxy_connect_timeout"], "10s")+";")
+	lines = append(lines, "        proxy_send_timeout "+firstString(spec["fallback_proxy_send_timeout"], spec["proxy_send_timeout"], "30s")+";")
+	lines = append(lines, "        proxy_read_timeout "+firstString(spec["fallback_proxy_read_timeout"], spec["proxy_read_timeout"], "60s")+";")
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(fallbackURL)), "https://") {
 		lines = append(lines, "        proxy_ssl_server_name on;")
 		if fallbackSNI != "" {
@@ -1466,6 +1458,48 @@ func appendNginxFallbackLocation(lines []string, primaryLocation string, spec ma
 	lines = append(lines, extraIndentedLines(spec["fallback_location_extra_lines"], "        ")...)
 	lines = append(lines, "    }")
 	return lines
+}
+
+func appendNginxProxyIdentityHeaders(lines []string, directive string, spec map[string]any, fallback bool) []string {
+	if nginxForwardClientIPEnabled(spec, fallback) {
+		return append(lines,
+			"        "+directive+" X-Real-IP $remote_addr;",
+			"        "+directive+" X-Forwarded-For $remote_addr;",
+			"        "+directive+" X-Forwarded-Host $host;",
+			"        "+directive+" X-Forwarded-Proto $scheme;",
+		)
+	}
+	return append(lines,
+		"        "+directive+" X-Real-IP \"\";",
+		"        "+directive+" X-Forwarded-For \"\";",
+		"        "+directive+" X-Forwarded-Host \"\";",
+		"        "+directive+" X-Forwarded-Port \"\";",
+		"        "+directive+" Forwarded \"\";",
+		"        "+directive+" X-Forwarded-Proto $scheme;",
+	)
+}
+
+func nginxForwardClientIPEnabled(spec map[string]any, fallback bool) bool {
+	keys := []string{}
+	if fallback {
+		keys = append(keys, "fallback_forward_client_ip", "fallback_client_ip_headers")
+	}
+	keys = append(keys, "forward_client_ip", "client_ip_headers", "proxy_client_ip_headers")
+	for _, key := range keys {
+		if raw, ok := spec[key]; ok {
+			return truthy(raw)
+		}
+	}
+	return !nginxCamouflagePrivacyDefault(spec)
+}
+
+func nginxCamouflagePrivacyDefault(spec map[string]any) bool {
+	profile := strings.ToLower(strings.TrimSpace(firstString(spec["service_profile"], spec["edge_profile"], spec["profile"])))
+	switch profile {
+	case "ws_camouflage_edge", "grpc_edge":
+		return true
+	}
+	return truthy(spec["traffic_camouflage"])
 }
 
 func validateNginxLocationPath(path string) error {
