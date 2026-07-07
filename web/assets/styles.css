@@ -2122,12 +2122,12 @@ tr:hover td { background: #f8fafc; }
   vertical-align: top;
   white-space: normal;
 }
-.clients-col-client { width: 18%; }
-.clients-col-contact { width: 18%; }
-.clients-col-provisioning { width: 20%; }
-.clients-col-delivery { width: 20%; }
-.clients-col-state { width: 12%; }
-.clients-col-actions { width: 12%; }
+.clients-col-client { width: 17%; }
+.clients-col-contact { width: 16%; }
+.clients-col-provisioning { width: 18%; }
+.clients-col-delivery { width: 18%; }
+.clients-col-state { width: 13%; }
+.clients-col-actions { width: 18%; }
 .client-primary {
   display: block;
   overflow-wrap: anywhere;
@@ -2139,11 +2139,19 @@ tr:hover td { background: #f8fafc; }
   align-items: center;
 }
 .client-action-grid {
-  grid-template-columns: repeat(2, minmax(82px, 1fr));
-  min-width: 176px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  max-width: 220px;
+  min-width: 0;
 }
 .client-action-grid .danger-btn {
   grid-column: 1 / -1;
+}
+.client-action-grid .primary-btn,
+.client-action-grid .secondary-btn,
+.client-action-grid .danger-btn {
+  min-width: 0;
+  white-space: nowrap;
 }
 .client-provision-form {
   display: grid;
