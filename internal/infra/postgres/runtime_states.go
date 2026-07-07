@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -147,6 +148,9 @@ func (s *Store) SubmitAgentInstanceRuntimeReports(ctx context.Context, nodeID st
 		}
 		item, err := s.upsertInstanceRuntimeStateForAgentReport(ctx, nodeID, report)
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
 			return out, err
 		}
 		out = append(out, item)
@@ -154,7 +158,7 @@ func (s *Store) SubmitAgentInstanceRuntimeReports(ctx context.Context, nodeID st
 	if _, err := s.db.Exec(ctx, `update node_agents set last_runtime_sync_at=now(), last_seen_at=now(), status='active' where node_id=$1`, nodeID); err != nil {
 		return out, err
 	}
-	if len(out) > 0 {
+	if len(reports) > 0 {
 		if err := s.pruneInstanceRuntimeObservations(ctx); err != nil {
 			return out, err
 		}
@@ -849,7 +853,7 @@ func (s *Store) upsertInstanceRuntimeStateForAgentReport(ctx context.Context, no
 	if err != nil {
 		return domain.InstanceRuntimeState{}, err
 	}
-	if strings.TrimSpace(instance.NodeID) != nodeID {
+	if strings.EqualFold(instance.Status, "deleted") || strings.TrimSpace(instance.NodeID) != nodeID {
 		return domain.InstanceRuntimeState{}, pgx.ErrNoRows
 	}
 	if report.CheckedAt == nil {
@@ -1061,6 +1065,9 @@ func insertInstanceRuntimeObservation(ctx context.Context, tx pgx.Tx, obs domain
 }
 
 func (s *Store) pruneInstanceRuntimeObservations(ctx context.Context) error {
+	if err := s.deleteOrphanInstanceRuntimeRows(ctx); err != nil {
+		return err
+	}
 	cutoff := time.Now().UTC().Add(-instanceRuntimeObservationRetention)
 	if _, err := s.db.Exec(ctx, `delete from instance_runtime_observations where received_at < $1`, cutoff); err != nil {
 		return err
@@ -1072,6 +1079,26 @@ func (s *Store) pruneInstanceRuntimeObservations(ctx context.Context) error {
 		delete from instance_runtime_observations o
 		using ranked r
 		where o.id=r.id and r.rn > $1`, instanceRuntimeObservationMaxRowsPerInstance)
+	return err
+}
+
+func (s *Store) deleteOrphanInstanceRuntimeRows(ctx context.Context) error {
+	if _, err := s.db.Exec(ctx, `delete from instance_runtime_observations o
+		where not exists (
+			select 1
+			from instances i
+			where i.id=o.instance_id
+			  and i.status <> 'deleted'
+		)`); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(ctx, `delete from instance_runtime_states s
+		where not exists (
+			select 1
+			from instances i
+			where i.id=s.instance_id
+			  and i.status <> 'deleted'
+		)`)
 	return err
 }
 

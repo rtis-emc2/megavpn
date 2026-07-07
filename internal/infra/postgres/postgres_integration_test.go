@@ -226,6 +226,66 @@ func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationDeletedInstanceRuntimeReportsAreIgnored(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-runtime-deleted-node-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "10.50.0.11",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	instance, err := store.CreateInstance(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "wireguard",
+		Name:         "wg-runtime-deleted-" + suffix,
+		Slug:         "wg-runtime-deleted-" + suffix,
+		EndpointHost: "198.51.100.11",
+		EndpointPort: 51821,
+		Spec: map[string]any{
+			"config_content": "[Interface]\nAddress = 10.99.1.1/24\nListenPort = 51821\nPrivateKey = integration-test\n",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	deleted, err := store.ForceDeleteInstance(ctx, instance.ID, instance.Name, "integration stale runtime report")
+	if err != nil {
+		t.Fatalf("force delete instance: %v", err)
+	}
+	if deleted.Status != "deleted" {
+		t.Fatalf("force-deleted instance status = %q, want deleted", deleted.Status)
+	}
+
+	states, err := store.SubmitAgentInstanceRuntimeReports(ctx, node.ID, []domain.AgentInstanceRuntimeReport{{
+		InstanceID:     instance.ID,
+		ServiceCode:    "wireguard",
+		SystemdUnit:    instance.SystemdUnit,
+		ConfigHash:     "sha256:stale-after-delete",
+		ActiveState:    "active",
+		EnabledState:   "enabled",
+		ListeningPorts: []map[string]any{{"network": "udp", "state": "UNCONN", "local_address": "0.0.0.0:51821", "port": 51821}},
+	}})
+	if err != nil {
+		t.Fatalf("submit stale runtime report for deleted instance: %v", err)
+	}
+	if len(states) != 0 {
+		t.Fatalf("stale runtime report states len = %d, want 0", len(states))
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from instance_runtime_states where instance_id=$1`, 0, instance.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from instance_runtime_observations where instance_id=$1`, 0, instance.ID)
+}
+
 func TestPostgresIntegrationXrayProvisioningReusesClientUUIDAcrossInstances(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 

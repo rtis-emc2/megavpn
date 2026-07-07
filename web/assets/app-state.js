@@ -69,6 +69,7 @@
       nodeManageID: '',
       nodeManageData: null,
       nodeManageActiveTabs: readSessionObject('megavpn.nodeManageActiveTabs'),
+      nodeManageDirty: false,
       nodeTerminalActive: false,
       instanceManageID: '',
       instanceManageData: null,

@@ -622,6 +622,7 @@
       }
     }
     if (seq !== state.refreshSeq) return;
+    if (options.auto && !autoRefreshEnabledForCurrentPage()) return;
     render();
   }
 

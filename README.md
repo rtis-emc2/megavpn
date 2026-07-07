@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.22`
+**Release:** `7.1.0.23`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,11 +56,11 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.22` closes the lost-node instance cleanup gap: operators can now force
-delete a single instance when its node/agent is permanently unavailable. The
-backend requires exact instance-name confirmation, cancels pending jobs that
-reference the instance, removes client access/config rows and leaves normal
-agent-backed cleanup unchanged for live nodes. The current focus is:
+`7.1.0.23` hardens the stabilization baseline after the lost-node cleanup work:
+the Node management SSH bootstrap form now suppresses background auto-refresh
+while an operator is editing access credentials, and runtime accounting ignores
+stale agent reports for deleted instances while pruning orphan runtime
+state/observation rows. The current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;

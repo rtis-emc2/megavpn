@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.22`
+**Release:** `7.1.0.23`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.22`
+**Code baseline:** RTIS MegaVPN `7.1.0.23`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,15 +23,15 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.22` continues the production-hardening line after the firewall,
+`7.1.0.23` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate, VLESS provisioning-sync, traffic-accounting collector
-coverage and firewall apply hardening releases. This release adds explicit
-lost-node instance force-delete lifecycle for permanently unavailable agents:
-the control plane can now cancel stale instance/client-provision jobs, remove
-client access bindings and generated artifacts for one stuck instance, and keep
-the action auditable without changing the normal agent-backed cleanup path. The
-codebase already has a working control-plane foundation:
+coverage, firewall apply hardening and lost-node lifecycle releases. This
+release stabilizes operator workflows and runtime hygiene: Node management now
+blocks background auto-refresh while SSH bootstrap access credentials are being
+edited, stale runtime reports for deleted instances are ignored, and runtime
+state/observation pruning removes orphan rows. The codebase already has a
+working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.

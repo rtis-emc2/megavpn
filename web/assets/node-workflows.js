@@ -335,6 +335,18 @@ snapshot: ${escapeHTML(kernel.managed_snapshot || data?.output_path || 'n/a')}</
       return nodeManageTabIDs.has(fallback) ? fallback : 'overview';
     }
 
+    function setNodeManageDirty(value) {
+      state.nodeManageDirty = Boolean(value);
+    }
+
+    function bindSSHAccessDirtyGuard(form) {
+      if (!form) return;
+      const markDirty = () => setNodeManageDirty(true);
+      form.addEventListener('focusin', markDirty);
+      form.addEventListener('input', markDirty);
+      form.addEventListener('change', markDirty);
+    }
+
     let activeTerminalSocket = null;
     let activeTerminalView = null;
 
@@ -1400,8 +1412,13 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
         </div>`;
 
       bindNodeConsoleTabs((tabID) => setNodeManageActiveTab(node.id, tabID));
-      document.getElementById('sshAccessForm').addEventListener('submit', (event) => saveSSHAccess(event, node, methods));
-      document.getElementById('cancelSshAccessBtn').addEventListener('click', () => reloadNodeControlModal(node.id, 'Unsaved SSH access changes discarded.'));
+      const sshAccessForm = document.getElementById('sshAccessForm');
+      bindSSHAccessDirtyGuard(sshAccessForm);
+      sshAccessForm?.addEventListener('submit', (event) => saveSSHAccess(event, node, methods));
+      document.getElementById('cancelSshAccessBtn').addEventListener('click', () => {
+        setNodeManageDirty(false);
+        reloadNodeControlModal(node.id, 'Unsaved SSH access changes discarded.');
+      });
       document.getElementById('removeSshAccessBtn').addEventListener('click', () => removeSSHAccess(node, methods));
       document.getElementById('retryInventorySyncBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'inventory'));
       document.getElementById('retryDiscoverySyncBtn').addEventListener('click', () => runNodeDiagnosticsAction(node, 'discover'));
@@ -1461,10 +1478,12 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
         flash,
       };
       if (state.page === 'nodeManage' && state.nodeManageID === nodeID) {
+        setNodeManageDirty(false);
         renderNodeManagePage();
         return;
       }
       state.nodeManageID = nodeID;
+      setNodeManageDirty(false);
       setPage('nodeManage');
     }
 
@@ -1506,6 +1525,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
         const items = methods.filter((item) => item.method !== 'ssh').map((item) => ({ ...item }));
         items.push(sshMethod);
         await sendJSON(`/api/v1/nodes/${node.id}/access-methods`, 'PUT', { items });
+        setNodeManageDirty(false);
         await reloadNodeControlModal(node.id, 'SSH access updated.');
       } catch (err) {
         result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
@@ -1518,6 +1538,7 @@ result_status = ${escapeHTML(agent.last_job_result_status || 'n/a')}</div>
       try {
         const items = methods.filter((item) => item.method !== 'ssh').map((item) => ({ ...item }));
         await sendJSON(`/api/v1/nodes/${node.id}/access-methods`, 'PUT', { items });
+        setNodeManageDirty(false);
         await reloadNodeControlModal(node.id, 'SSH access removed.');
       } catch (err) {
         result.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;

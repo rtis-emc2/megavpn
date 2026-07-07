@@ -155,6 +155,7 @@
       if (page !== 'nodeManage') {
         state.nodeManageID = '';
         state.nodeManageData = null;
+        state.nodeManageDirty = false;
       }
       if (page !== 'instanceManage') {
         state.instanceManageID = '';
@@ -173,6 +174,7 @@
 
     function autoRefreshEnabledForCurrentPage() {
       if (state.page === 'nodeManage' && state.nodeTerminalActive) return false;
+      if (state.page === 'nodeManage' && state.nodeManageDirty) return false;
       if (state.page === 'instanceManage' && state.instanceManageDirty) return false;
       if (state.page === 'instances' && state.instancesView === 'create-pack') return false;
       return autoRefreshPages.has(state.page);
