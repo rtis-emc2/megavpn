@@ -1,6 +1,6 @@
 # RBAC Matrix
 
-**Release:** `7.1.0.21`
+**Release:** `7.1.0.22`
 
 ## Seeded Roles
 
@@ -21,7 +21,7 @@
 | `node.write` | Node | Node metadata, capability install/verify, backhaul, route-policy apply |
 | `node.bootstrap` | Node | SSH/manual bootstrap, agent token rotation |
 | `instance.read` | Instance | Instance list/detail/revisions |
-| `instance.write` | Instance | Desired spec/revision edits |
+| `instance.write` | Instance | Desired spec/revision edits, normal delete and lost-node force delete |
 | `instance.apply` | Instance | Apply/restart/start/stop/enable/disable |
 | `client.read` | Client | Client accounts/access |
 | `client.write` | Client | Client account mutation |

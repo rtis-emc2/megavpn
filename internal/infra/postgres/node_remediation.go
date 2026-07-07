@@ -127,23 +127,11 @@ func (s *Store) ForceRetireNode(ctx context.Context, nodeID, confirmation, reaso
 
 	artifactCleanupPaths := make([]string, 0)
 	for _, instanceID := range instanceIDs {
-		cleanup, err := s.cleanupInstanceClientServiceAccesses(ctx, tx, instanceID)
+		cleanupPaths, err := s.cleanupInstanceControlPlaneRows(ctx, tx, instanceID)
 		if err != nil {
 			return domain.Node{}, err
 		}
-		artifactCleanupPaths = append(artifactCleanupPaths, cleanup.paths...)
-		if err := releaseInstanceAddressPoolAllocationsTx(ctx, tx, instanceID); err != nil && !isAddressPoolCatalogUnavailable(err) {
-			return domain.Node{}, err
-		}
-		if _, err := tx.Exec(ctx, `delete from instance_runtime_observations where instance_id=$1`, instanceID); err != nil {
-			return domain.Node{}, err
-		}
-		if _, err := tx.Exec(ctx, `delete from instance_runtime_states where instance_id=$1`, instanceID); err != nil {
-			return domain.Node{}, err
-		}
-		if _, err := tx.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, instanceID); err != nil {
-			return domain.Node{}, err
-		}
+		artifactCleanupPaths = append(artifactCleanupPaths, cleanupPaths...)
 	}
 
 	if len(backhaulLinkIDs) > 0 {
@@ -156,7 +144,7 @@ func (s *Store) ForceRetireNode(ctx context.Context, nodeID, confirmation, reaso
 			set status='deleted',
 			    selected_transport_id=null,
 			    updated_at=now()
-			where id = any($1::uuid[])`, backhaulLinkIDs); err != nil {
+			where id::text = any($1::text[])`, backhaulLinkIDs); err != nil {
 			return domain.Node{}, err
 		}
 	}
@@ -218,6 +206,103 @@ func (s *Store) ForceRetireNode(ctx context.Context, nodeID, confirmation, reaso
 	return s.GetNode(ctx, nodeID)
 }
 
+func (s *Store) ForceDeleteInstance(ctx context.Context, instanceID, confirmation, reason string) (domain.Instance, error) {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return domain.Instance{}, errors.New("instance id is required")
+	}
+	instance, err := s.GetInstance(ctx, instanceID)
+	if err != nil {
+		return domain.Instance{}, err
+	}
+	expectedConfirmation := strings.TrimSpace(instance.Name)
+	if expectedConfirmation == "" {
+		expectedConfirmation = instanceID
+	}
+	if strings.TrimSpace(confirmation) != expectedConfirmation {
+		return domain.Instance{}, fmt.Errorf("confirmation must match instance name %q", expectedConfirmation)
+	}
+	if strings.EqualFold(instance.Status, "deleted") {
+		return instance, nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "operator force deleted instance without agent cleanup"
+	}
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Instance{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var lockedInstanceID string
+	if err := tx.QueryRow(ctx, `select id::text from instances where id=$1 for update`, instanceID).Scan(&lockedInstanceID); err != nil {
+		return domain.Instance{}, err
+	}
+	artifactCleanupPaths, err := s.cleanupInstanceControlPlaneRows(ctx, tx, instanceID)
+	if err != nil {
+		return domain.Instance{}, err
+	}
+
+	now := time.Now().UTC()
+	cancelResult := mustJSON(map[string]any{
+		"message":           "job cancelled by force instance delete",
+		"instance_id":       instanceID,
+		"node_id":           instance.NodeID,
+		"reason":            reason,
+		"force_deleted_at":  now.Format(time.RFC3339),
+		"remote_cleanup_ok": false,
+	})
+	cancelledJobIDs, err := cancelInstanceJobsForForceDelete(ctx, tx, instanceID, now, cancelResult)
+	if err != nil {
+		return domain.Instance{}, err
+	}
+	if _, err := tx.Exec(ctx, `delete from resource_locks where resource_type='instance' and resource_id::text=$1`, instanceID); err != nil {
+		return domain.Instance{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Instance{}, err
+	}
+
+	if len(artifactCleanupPaths) > 0 {
+		_, fileErrors := s.removeManagedArtifactFiles(artifactCleanupPaths)
+		if len(fileErrors) > 0 {
+			_, _ = s.CreateAudit(ctx, "system", "instance.force_delete.artifact_warning", "instance", &instanceID, fmt.Sprintf("force delete left %d artifact file cleanup warnings", len(fileErrors)))
+		}
+	}
+	for _, jobID := range cancelledJobIDs {
+		_ = s.AddJobLog(ctx, jobID, "warn", "job cancelled by force instance delete", map[string]any{"instance_id": instanceID, "node_id": instance.NodeID, "reason": reason})
+	}
+	_, _ = s.CreateAudit(ctx, "system", "instance.force_delete", "instance", &instanceID, fmt.Sprintf("instance force deleted without agent cleanup; jobs_cancelled=%d", len(cancelledJobIDs)))
+	return s.GetInstance(ctx, instanceID)
+}
+
+func (s *Store) cleanupInstanceControlPlaneRows(ctx context.Context, tx pgx.Tx, instanceID string) ([]string, error) {
+	cleanup, err := s.cleanupInstanceClientServiceAccesses(ctx, tx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := releaseInstanceAddressPoolAllocationsTx(ctx, tx, instanceID); err != nil && !isAddressPoolCatalogUnavailable(err) {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `delete from instance_runtime_observations where instance_id=$1`, instanceID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `delete from instance_runtime_states where instance_id=$1`, instanceID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `delete from secret_refs
+		where meta_json->>'scope'='instance'
+		  and meta_json->>'instance_id'=$1`, instanceID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, instanceID); err != nil {
+		return nil, err
+	}
+	return cleanup.paths, nil
+}
+
 func nodeInstanceIDsForForceRetire(ctx context.Context, tx pgx.Tx, nodeID string) ([]string, error) {
 	rows, err := tx.Query(ctx, `select id::text from instances where node_id=$1 and status <> 'deleted' for update`, nodeID)
 	if err != nil {
@@ -263,8 +348,8 @@ func cancelNodeJobsForForceRetire(ctx context.Context, tx pgx.Tx, nodeID string,
 	where status in ('queued','running','retrying')
 	  and (
 	    node_id=$1
-	    or instance_id = any($2::uuid[])
-	    or (scope_type='backhaul' and scope_id = any($3::uuid[]))
+	    or instance_id::text = any($2::text[])
+	    or (scope_type='backhaul' and scope_id::text = any($3::text[]))
 	    or (type in ('client.provision','artifact.build') and (payload_json->'instance_ids') ?| $4::text[])
 	  )
 	for update
@@ -284,6 +369,48 @@ updated_jobs as (
 	returning id::text
 )
 select id from updated_jobs`, nodeID, instanceIDs, backhaulLinkIDs, instanceIDs, finishedAt, resultJSON)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func cancelInstanceJobsForForceDelete(ctx context.Context, tx pgx.Tx, instanceID string, finishedAt time.Time, resultJSON []byte) ([]string, error) {
+	rows, err := tx.Query(ctx, `with target_jobs as (
+	select id
+	from jobs
+	where status in ('queued','running','retrying')
+	  and (
+	    instance_id::text=$1
+	    or (scope_type='instance' and scope_id::text=$1)
+	    or (type in ('client.provision','artifact.build') and (payload_json->'instance_ids') ? $1)
+	  )
+	for update
+),
+deleted_locks as (
+	delete from resource_locks
+	where job_id in (select id from target_jobs)
+),
+updated_jobs as (
+	update jobs
+	set status='cancelled',
+	    finished_at=$2,
+	    locked_by=null,
+	    locked_until=null,
+	    result_json=$3
+	where id in (select id from target_jobs)
+	returning id::text
+)
+select id from updated_jobs`, instanceID, finishedAt, resultJSON)
 	if err != nil {
 		return nil, err
 	}

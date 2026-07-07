@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.21`
+**Release:** `7.1.0.22`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,12 +56,11 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.21` adds a controlled lost-node force-retire path and keeps the current
-Firewall operator UI/lifecycle baseline: an unavailable node can now be
-removed from the active control-plane model only after explicit node-name
-confirmation, while the backend cancels pending/running node jobs, removes
-local instance bindings, clears generated client access artifacts, revokes the
-agent identity and hides affected backhaul links. The current focus is:
+`7.1.0.22` closes the lost-node instance cleanup gap: operators can now force
+delete a single instance when its node/agent is permanently unavailable. The
+backend requires exact instance-name confirmation, cancels pending jobs that
+reference the instance, removes client access/config rows and leaves normal
+agent-backed cleanup unchanged for live nodes. The current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;

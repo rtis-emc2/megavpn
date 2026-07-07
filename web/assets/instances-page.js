@@ -2287,6 +2287,7 @@
 
     function openDeleteInstanceModal(instanceID, instanceName) {
       const instance = (state.instances || []).find((item) => item.id === instanceID);
+      const confirmationName = String(instance?.name || instanceName || instanceID || '').trim();
       openModal(`Delete instance: ${instanceName || 'instance'}`, 'Instance lifecycle', `
         <div class="card">
           <div class="mini-label">Managed cleanup</div>
@@ -2302,9 +2303,27 @@
         <div class="inline-actions" style="margin-top:14px">
           <button class="secondary-btn" id="cancelDeleteInstanceBtn" type="button">Cancel</button>
           <button class="danger-btn" id="confirmDeleteInstanceBtn" type="button">Queue cleanup</button>
-        </div>`, { wide: true });
+        </div>
+        <details class="details-block" style="margin-top:14px">
+          <summary>Lost node force delete</summary>
+          <p>Use this only when the node or agent is permanently unavailable. The control plane will remove this instance, cancel pending jobs that reference it, and delete dependent client access/config records. Files on the lost host cannot be cleaned remotely.</p>
+          <div class="field">
+            <label>Type instance name to confirm</label>
+            <input id="forceDeleteInstanceConfirm" autocomplete="off" spellcheck="false" placeholder="${escapeHTML(confirmationName)}" />
+            <div class="field-hint">Required value: <code>${escapeHTML(confirmationName)}</code></div>
+          </div>
+          <div class="field">
+            <label>Reason</label>
+            <input id="forceDeleteInstanceReason" autocomplete="off" spellcheck="false" value="lost node; agent unavailable" />
+          </div>
+          <div class="inline-actions">
+            <button class="danger-btn" id="confirmForceDeleteInstanceBtn" type="button">Force delete instance</button>
+          </div>
+          <div id="forceDeleteInstanceResult" class="form-result"></div>
+        </details>`, { wide: true });
       document.getElementById('cancelDeleteInstanceBtn')?.addEventListener('click', closeModal);
       document.getElementById('confirmDeleteInstanceBtn')?.addEventListener('click', (event) => submitDeleteInstance(instanceID, instanceName, event.currentTarget));
+      document.getElementById('confirmForceDeleteInstanceBtn')?.addEventListener('click', (event) => submitForceDeleteInstance(instance, instanceID, instanceName, event.currentTarget));
     }
 
     async function submitDeleteInstance(instanceID, instanceName, button) {
@@ -2341,6 +2360,48 @@
         if (button) {
           button.disabled = false;
           button.textContent = 'Queue cleanup';
+        }
+      }
+    }
+
+    async function submitForceDeleteInstance(instance, instanceID, instanceName, button) {
+      const target = document.getElementById('forceDeleteInstanceResult');
+      const confirmation = String(document.getElementById('forceDeleteInstanceConfirm')?.value || '').trim();
+      const expectedConfirmation = String(instance?.name || instanceName || instanceID || '').trim();
+      const reason = String(document.getElementById('forceDeleteInstanceReason')?.value || '').trim();
+      if (!target) return;
+      if (confirmation !== expectedConfirmation) {
+        target.innerHTML = `<span class="tag danger">type ${escapeHTML(expectedConfirmation)} to confirm</span>`;
+        return;
+      }
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Force deleting...';
+      }
+      target.innerHTML = '<span class="tag warn">force deleting</span>';
+      try {
+        const result = await sendJSON(`/api/v1/instances/${instanceID}/force-delete`, 'POST', {
+          confirmation,
+          reason,
+        });
+        closeModal();
+        await refresh();
+        openActionOutcomeModal(
+          `Instance force deleted: ${instanceName || result?.instance?.name || instanceID}`,
+          'Lost node cleanup',
+          'succeeded',
+          'The control plane removed the instance and dependent client access/config records without waiting for the missing agent.',
+          [
+            { label: 'Instance', value: result?.instance?.name || instanceName || instanceID },
+            { label: 'Status', value: result?.instance?.status || 'deleted' },
+            { label: 'Remote host cleanup', value: 'not possible through missing agent' },
+          ],
+        );
+      } catch (err) {
+        target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Force delete instance';
         }
       }
     }

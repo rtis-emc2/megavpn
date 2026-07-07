@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.1.0.21`
+**Релиз:** `7.1.0.22`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -871,6 +871,19 @@ Lost-node force retire:
   revoke agent identity;
 - не чистит файлы на потерянном host. Если host позже вернулся, его нужно
   очистить out-of-band и подключать как новую node.
+
+Lost-node instance force delete:
+
+- использовать, когда завис только конкретный instance на окончательно
+  недоступной node;
+- открыть delete dialog instance, раскрыть `Lost node force delete` и ввести
+  точное имя instance;
+- Control Plane переводит instance в `deleted`, отменяет pending jobs, которые
+  ссылаются на instance, удаляет service access rows, routes, generated
+  artifacts, share links, service-access secrets, instance secrets и runtime
+  states;
+- это не останавливает systemd units и не удаляет файлы на missing host. Если
+  agent доступен, нужно использовать обычный `Queue cleanup`.
 
 ## 21. Production checklist
 

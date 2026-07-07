@@ -2037,6 +2037,52 @@ func TestPostgresIntegrationForceRetireLostNodeCleansControlPlaneState(t *testin
 	}
 }
 
+func TestPostgresIntegrationForceDeleteLostNodeInstanceCleansControlPlaneState(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	store.SetArtifactRoot(t.TempDir())
+
+	fixture := createClientServiceAccessCleanupFixture(t, ctx, store, "force-delete-instance")
+	instanceSecret, err := store.CreateSecretRef(ctx, "private_key", []byte("integration-instance-secret"), map[string]any{
+		"scope":       "instance",
+		"instance_id": fixture.instance.ID,
+	})
+	if err != nil {
+		t.Fatalf("create instance secret: %v", err)
+	}
+	if _, err := store.CreateArtifactBuildJob(ctx, fixture.client.ID, "all", []string{fixture.instance.ID}); err != nil {
+		t.Fatalf("queue artifact build job: %v", err)
+	}
+	if _, err := store.DeleteInstance(ctx, fixture.instance.ID); err != nil {
+		t.Fatalf("queue instance delete before force delete: %v", err)
+	}
+	if _, err := store.ForceDeleteInstance(ctx, fixture.instance.ID, "wrong-instance-name", "integration test"); err == nil {
+		t.Fatal("force delete should require exact instance confirmation")
+	}
+
+	deleted, err := store.ForceDeleteInstance(ctx, fixture.instance.ID, fixture.instance.Name, "lost node integration test")
+	if err != nil {
+		t.Fatalf("force delete lost-node instance: %v", err)
+	}
+	if deleted.Status != "deleted" || deleted.Enabled {
+		t.Fatalf("force-deleted instance state = %s/enabled:%v, want deleted/false", deleted.Status, deleted.Enabled)
+	}
+
+	assertPostgresCount(t, ctx, store, `select count(*) from client_accounts where id=$1`, 1, fixture.client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where id=$1`, 0, fixture.access.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from client_access_routes where service_access_id=$1`, 0, fixture.access.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from artifacts where id=$1`, 0, fixture.artifact.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from share_links where id=$1`, 0, fixture.share.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, fixture.secret.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, instanceSecret.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from instance_runtime_states where instance_id=$1`, 0, fixture.instance.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from jobs where instance_id=$1 and status in ('queued','running','retrying')`, 0, fixture.instance.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from jobs where type in ('client.provision','artifact.build') and status in ('queued','running','retrying') and payload_json->'instance_ids' ? $1`, 0, fixture.instance.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from resource_locks where resource_type='instance' and resource_id::text=$1`, 0, fixture.instance.ID)
+	if _, err := os.Stat(fixture.artifact.StoragePath); !os.IsNotExist(err) {
+		t.Fatalf("artifact file after force delete error = %v, want not exist", err)
+	}
+}
+
 type clientServiceAccessCleanupFixture struct {
 	node     domain.Node
 	instance domain.Instance

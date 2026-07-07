@@ -1,6 +1,6 @@
 # Threat Model
 
-**Release:** `7.1.0.21`
+**Release:** `7.1.0.22`
 
 ## Scope
 

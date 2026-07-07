@@ -147,6 +147,7 @@ type Store interface {
 	CreateInstanceDiagnosticsJob(context.Context, string) (domain.Job, error)
 	UpdateInstanceStatus(context.Context, string, string) (domain.Job, error)
 	DeleteInstance(context.Context, string) (domain.Instance, error)
+	ForceDeleteInstance(context.Context, string, string, string) (domain.Instance, error)
 	ListClients(context.Context) ([]domain.Client, error)
 	GetClient(context.Context, string) (domain.Client, error)
 	CreateClient(context.Context, domain.Client) (domain.Client, error)
@@ -452,6 +453,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("PUT /api/v1/instances/{id}/spec", "instance.write", s.replaceInstanceSpec)
 	protected("POST /api/v1/instances/{id}/rollback", "instance.write", s.rollbackInstanceRevision)
 	protected("DELETE /api/v1/instances/{id}", "instance.write", s.deleteInstance)
+	protected("POST /api/v1/instances/{id}/force-delete", "instance.write", s.forceDeleteInstance)
 	protected("POST /api/v1/instances/{id}/apply", "instance.apply", s.instanceAction("apply"))
 	protected("POST /api/v1/instances/{id}/restart", "instance.apply", s.instanceAction("restart"))
 	protected("POST /api/v1/instances/{id}/start", "instance.apply", s.instanceAction("start"))
@@ -589,6 +591,11 @@ type nodeEmergencyCleanupRequest struct {
 }
 
 type nodeForceRetireRequest struct {
+	Confirmation string `json:"confirmation"`
+	Reason       string `json:"reason"`
+}
+
+type instanceForceDeleteRequest struct {
 	Confirmation string `json:"confirmation"`
 	Reason       string `json:"reason"`
 }
@@ -1568,6 +1575,19 @@ func (s *Server) deleteInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	writeJSON(w, 200, x)
+}
+func (s *Server) forceDeleteInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req instanceForceDeleteRequest
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid force delete payload")
+		return
+	}
+	x, err := s.store.ForceDeleteInstance(r.Context(), idParam(r), req.Confirmation, req.Reason)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, response{"status": "deleted", "instance": x})
 }
 func (s *Server) diagnoseInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
 	j, err := s.store.CreateInstanceDiagnosticsJob(r.Context(), idParam(r))
