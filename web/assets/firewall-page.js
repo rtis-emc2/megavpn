@@ -141,18 +141,18 @@
         <div class="firewall-summary-grid">
           <div class="pool-summary-card"><span>Policies</span><strong>${escapeHTML(String(inv.policies.length))}</strong><small>${escapeHTML(String(activePolicies))} active</small></div>
           <div class="pool-summary-card"><span>Rules</span><strong>${escapeHTML(String(inv.rules.length))}</strong><small>ordered by policy priority</small></div>
-          <div class="pool-summary-card"><span>Address lists</span><strong>${escapeHTML(String(inv.lists.length))}</strong><small>${escapeHTML(String(inv.entries.length))} entries</small></div>
+          <div class="pool-summary-card"><span>Address groups</span><strong>${escapeHTML(String(inv.lists.length))}</strong><small>${escapeHTML(String(inv.entries.length))} entries</small></div>
           <div class="pool-summary-card"><span>Strict policies</span><strong>${escapeHTML(String(strictPolicies))}</strong><small>${escapeHTML(String(applied))} applied · ${escapeHTML(String(failed))} failed</small></div>
         </div>`;
     }
 
     function renderFirewallModelGuide() {
       const steps = [
-        ['Address lists', 'Reusable source and destination groups', 'CIDR · IP · range'],
+        ['Address groups', 'Reusable source and destination groups', 'CIDR · IP · range'],
         ['Rules', 'Priority, chain, protocol, ports and action', 'lower priority first'],
         ['Policy', 'Default input, forward and output posture', 'observe or strict'],
         ['Apply job', 'Signed node job renders nftables payload', 'node-scoped rollout'],
-        ['Node state', 'Observed revision, rule counts and failures', 'operator evidence'],
+        ['Node apply', 'Observed revision, rule counts and failures', 'operator evidence'],
       ];
       return `
         <section class="table-card firewall-model-card">
@@ -266,7 +266,7 @@
     function renderAddressLists(lists = filteredAddressLists()) {
       if (!lists.length) {
         const filtered = String(ensureFirewallFilters().addressSearch || '').trim() !== '';
-        return `<tr><td colspan="5"><div class="empty">${filtered ? 'No address lists match the current filter.' : `No address lists configured.${hasPermission('firewall.manage') ? ' Create a list before adding source or destination matchers.' : ''}`}</div></td></tr>`;
+        return `<tr><td colspan="5"><div class="empty">${filtered ? 'No address groups match the current filter.' : `No address groups configured.${hasPermission('firewall.manage') ? ' Create a group before adding source or destination matchers.' : ''}`}</div></td></tr>`;
       }
       return lists.map((list) => `
         <tr>
@@ -287,7 +287,7 @@
     function renderEntryRows(entries = filteredAddressEntries()) {
       if (!entries.length) {
         const filtered = String(ensureFirewallFilters().addressSearch || '').trim() !== '';
-        return `<tr><td colspan="6"><div class="empty">${filtered ? 'No address entries match the current filter.' : `No address entries configured.${hasPermission('firewall.manage') ? ' Add entries to reusable address lists.' : ''}`}</div></td></tr>`;
+        return `<tr><td colspan="6"><div class="empty">${filtered ? 'No address entries match the current filter.' : `No address entries configured.${hasPermission('firewall.manage') ? ' Add entries to reusable address groups.' : ''}`}</div></td></tr>`;
       }
       return entries.map((entry) => {
         const list = addressListByID(entry.list_id);
@@ -407,12 +407,13 @@
 
     function renderTabs(inv) {
       const failed = inv.nodeStates.filter((item) => item.status === 'failed').length;
+      const nodeCount = Array.isArray(state.nodes) ? state.nodes.length : 0;
       const tabs = [
         { key: 'overview', label: 'Overview', count: String(inv.policies.length), hint: 'Posture and counters' },
         { key: 'policies', label: 'Policies', count: String(inv.policies.length), hint: 'Node policy sets' },
         { key: 'rules', label: 'Rules', count: String(inv.rules.length), hint: 'Ordered firewall rules' },
-        { key: 'addressLists', label: 'Address lists', count: String(inv.entries.length), hint: 'Reusable address groups' },
-        { key: 'nodeState', label: 'Node state', count: failed ? `${failed} failed` : String(inv.nodeStates.length), hint: 'Apply status by node' },
+        { key: 'addressLists', label: 'Address groups', count: String(inv.lists.length), hint: `${inv.entries.length} reusable entries` },
+        { key: 'nodeState', label: 'Node apply', count: String(nodeCount), hint: failed ? `${failed} failed apply` : 'Preview and apply by node' },
       ];
       const active = selectedTab();
       return `
@@ -436,7 +437,7 @@
           <section class="section-card firewall-toolbar readonly">
             <div class="firewall-toolbar-copy">
               <h3>Read-only firewall catalog</h3>
-              <p>Your current role can inspect policies, rules and node state, but cannot change or apply firewall configuration.</p>
+              <p>Your current role can inspect policies, rules and node apply state, but cannot change or apply firewall configuration.</p>
             </div>
             <div class="tag">missing firewall.manage / firewall.apply</div>
           </section>`;
@@ -445,21 +446,21 @@
         overview: ['Overview', 'Review policy posture before changing node firewall state.'],
         policies: ['Policies', 'Create reusable node policy sets and attach ordered rules.'],
         rules: ['Rules', 'Add or edit ordered match/action rows. Lower priority numbers run first.'],
-        addressLists: ['Address lists', 'Manage reusable source and destination address groups.'],
-        nodeState: ['Node state', 'Apply selected policy snapshots to managed nodes.'],
+        addressLists: ['Address groups', 'Create named groups first, then add CIDR, IP or range entries to those groups.'],
+        nodeState: ['Node apply', 'Preview a policy for a concrete node before applying it. Use the row actions below.'],
       }[active] || ['Firewall', 'Manage catalog objects and apply them to nodes.'];
       const actionHTML = [];
       if (canManage && (active === 'overview' || active === 'policies')) {
         actionHTML.push('<button class="secondary-btn" id="addFirewallPolicyBtnTop" type="button">New policy</button>');
       }
       if (canManage && (active === 'overview' || active === 'addressLists')) {
-        actionHTML.push('<button class="secondary-btn" id="addFirewallListBtnTop" type="button">New address list</button>');
-        actionHTML.push('<button class="secondary-btn" id="addFirewallEntryBtnTop" type="button">Add address</button>');
+        actionHTML.push('<button class="secondary-btn" id="addFirewallListBtnTop" type="button">New group</button>');
+        actionHTML.push('<button class="secondary-btn" id="addFirewallEntryBtnTop" type="button">Add entry</button>');
       }
       if (canManage && (active === 'overview' || active === 'policies' || active === 'rules')) {
         actionHTML.push('<button class="primary-btn" id="addFirewallRuleBtnTop" type="button">New rule</button>');
       }
-      if (canApply && (active === 'overview' || active === 'policies' || active === 'nodeState')) {
+      if (canApply && (active === 'overview' || active === 'policies')) {
         actionHTML.push(`<button class="secondary-btn firewall-preview-quick-btn" type="button" data-policy-id="${escapeHTML(firstPolicy.id || '')}" data-node-id="${escapeHTML(firstNode.id || '')}"${applyDisabled ? ' disabled' : ''}>Preview</button>`);
         actionHTML.push(`<button class="secondary-btn firewall-apply-quick-btn" type="button" data-policy-id="${escapeHTML(firstPolicy.id || '')}" data-node-id="${escapeHTML(firstNode.id || '')}"${applyDisabled ? ' disabled' : ''}>Apply to node</button>`);
       }
@@ -594,19 +595,27 @@
         <section class="table-card">
           <div class="table-head">
             <div>
-              <h2>Address lists</h2>
-              <div class="metric-caption">Named groups for source and destination matching.</div>
+              <h2>Address groups</h2>
+              <div class="metric-caption">Create named groups, then use them in rule source or destination matchers.</div>
             </div>
             <div class="table-tools">
+              <span class="tag">${escapeHTML(String(inv.lists.length))} groups</span>
               <span class="tag">${escapeHTML(String(inv.entries.length))} entries</span>
             </div>
           </div>
           ${renderAddressFilters(listRows, entryRows)}
           <div class="table-wrap">
-            <table class="firewall-address-list-table"><thead><tr><th>List</th><th>Scope</th><th>Entries</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderAddressLists(listRows)}</tbody></table>
+            <table class="firewall-address-list-table"><thead><tr><th>Group</th><th>Scope</th><th>Entries</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderAddressLists(listRows)}</tbody></table>
+          </div>
+          <div class="firewall-subtable-head">
+            <div>
+              <h3>Address entries</h3>
+              <span>Concrete CIDR, IP, range or catalog DNS values inside the groups above.</span>
+            </div>
+            <span class="tag">${escapeHTML(String(entryRows.length))} shown</span>
           </div>
           <div class="table-wrap firewall-entry-wrap">
-            <table class="firewall-address-entry-table"><thead><tr><th>List</th><th>Value</th><th>Type</th><th>Label</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderEntryRows(entryRows)}</tbody></table>
+            <table class="firewall-address-entry-table"><thead><tr><th>Group</th><th>Value</th><th>Type</th><th>Label</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderEntryRows(entryRows)}</tbody></table>
           </div>
         </section>`;
     }
@@ -653,7 +662,7 @@
           <div class="firewall-overview-grid">
             <div class="pool-summary-card"><span>Active policies</span><strong>${escapeHTML(String(activePolicies))}</strong><small>available for node apply</small></div>
             <div class="pool-summary-card"><span>Enabled rules</span><strong>${escapeHTML(String(activeRules))}</strong><small>${escapeHTML(String(inv.rules.length - activeRules))} disabled or inactive</small></div>
-            <div class="pool-summary-card"><span>Apply drift</span><strong>${escapeHTML(String(stale))}</strong><small>pending or stale node states</small></div>
+            <div class="pool-summary-card"><span>Apply drift</span><strong>${escapeHTML(String(stale))}</strong><small>pending or stale node reports</small></div>
             <div class="pool-summary-card"><span>Failures</span><strong>${escapeHTML(String(failed))}</strong><small>requires operator action</small></div>
           </div>
         </section>
@@ -712,7 +721,7 @@
         button.addEventListener('click', () => openAddressListModal(button.dataset.listId || ''));
       });
       document.querySelectorAll('.firewall-delete-list-btn').forEach((button) => {
-        button.addEventListener('click', () => openDeleteAddressListModal(button.dataset.listId || '', button.dataset.listName || 'address list'));
+        button.addEventListener('click', () => openDeleteAddressListModal(button.dataset.listId || '', button.dataset.listName || 'address group'));
       });
       document.querySelectorAll('.firewall-edit-entry-btn').forEach((button) => {
         button.addEventListener('click', () => openAddressEntryModal(button.dataset.listId || '', button.dataset.entryId || ''));
@@ -833,7 +842,7 @@
     function openAddressListModal(listID = '') {
       const list = addressListByID(listID) || {};
       const editing = Boolean(list.id);
-      openModal(editing ? `Edit address list: ${list.label || list.key}` : 'Add address list', 'Firewall', `
+      openModal(editing ? `Edit address group: ${list.label || list.key}` : 'Add address group', 'Firewall', `
         <form id="firewallAddressListForm" class="form-grid" data-list-id="${escapeHTML(list.id || '')}">
           <div class="field"><label>Name</label><input name="label" required placeholder="Trusted operators" value="${escapeHTML(list.label || '')}" /></div>
           <div class="field"><label>Scope</label><select name="scope">
@@ -855,10 +864,10 @@
     function openAddressEntryModal(listID, entryID = '') {
       const lists = inventory().lists;
       if (!lists.length) {
-        openModal('Create address list first', 'Firewall address list', `
-          <p class="notice">Address entries belong to a named address list. Create the list, then add CIDR, IP range, address or DNS entries to it.</p>
+        openModal('Create address group first', 'Firewall address group', `
+          <p class="notice">Address entries belong to a named address group. Create the group, then add CIDR, IP range, address or DNS entries to it.</p>
           <div class="inline-actions">
-            <button class="primary-btn" id="createFirewallListFromEntryBtn" type="button">Create address list</button>
+            <button class="primary-btn" id="createFirewallListFromEntryBtn" type="button">Create address group</button>
             <button class="secondary-btn" id="cancelFirewallEntryBtn" type="button">Cancel</button>
           </div>`);
         document.getElementById('createFirewallListFromEntryBtn')?.addEventListener('click', () => openAddressListModal(''));
@@ -868,9 +877,9 @@
       const entry = entryByID(entryID) || {};
       const editing = Boolean(entry.id);
       const selected = addressListByID(listID) || lists[0] || {};
-      openModal(editing ? `Edit address entry: ${entry.value || entry.id}` : 'Add address entry', 'Firewall address list', `
+      openModal(editing ? `Edit address entry: ${entry.value || entry.id}` : 'Add address entry', 'Firewall address group', `
         <form id="firewallAddressEntryForm" class="form-grid" data-entry-id="${escapeHTML(entry.id || '')}">
-          <div class="field"><label>Address list</label><select name="list_id"${editing ? ' disabled' : ''} required>${lists.map((list) => `<option value="${escapeHTML(list.id)}"${list.id === selected.id ? ' selected' : ''}>${escapeHTML(list.label || list.key)}</option>`).join('')}</select>${editing ? `<input type="hidden" name="list_id" value="${escapeHTML(selected.id || '')}" />` : ''}</div>
+          <div class="field"><label>Address group</label><select name="list_id"${editing ? ' disabled' : ''} required>${lists.map((list) => `<option value="${escapeHTML(list.id)}"${list.id === selected.id ? ' selected' : ''}>${escapeHTML(list.label || list.key)}</option>`).join('')}</select>${editing ? `<input type="hidden" name="list_id" value="${escapeHTML(selected.id || '')}" />` : ''}</div>
           <div class="field"><label>Type</label><select name="value_type">${selectOption('', entry.value_type || '', 'auto detect')}${selectOption('cidr', entry.value_type || '')}${selectOption('address', entry.value_type || '')}${selectOption('range', entry.value_type || '')}${selectOption('dns', entry.value_type || '', 'dns (stored only)')}</select><small>Use CIDR, address or range for node nftables apply. DNS values are stored for catalog context and are not rendered into rules.</small></div>
           <div class="field"><label>Value</label><input name="value" required placeholder="203.0.113.0/24" value="${escapeHTML(entry.value || '')}" /></div>
           <div class="field"><label>Label</label><input name="label" placeholder="office range" value="${escapeHTML(entry.label || '')}" /></div>
@@ -1039,10 +1048,10 @@
     }
 
     function openDeleteAddressListModal(listID, label) {
-      openModal(`Delete address list: ${label || listID}`, 'Firewall', `
-        <p class="danger-text">Address list deletion is blocked while active rules reference it.</p>
+      openModal(`Delete address group: ${label || listID}`, 'Firewall', `
+        <p class="danger-text">Address group deletion is blocked while active rules reference it.</p>
         <div class="inline-actions">
-          <button class="danger-btn" id="confirmFirewallListDeleteBtn" type="button">Delete list</button>
+          <button class="danger-btn" id="confirmFirewallListDeleteBtn" type="button">Delete group</button>
           <button class="secondary-btn" id="cancelFirewallListDeleteBtn" type="button">Cancel</button>
         </div>
         <div id="firewallDeleteResult" class="form-result"></div>`);
@@ -1064,7 +1073,7 @@
 
     function openDeleteAddressEntryModal(listID, entryID, value) {
       openModal(`Delete address entry: ${value || entryID}`, 'Firewall', `
-        <p class="danger-text">Rules that use this address list will no longer match this value after the next apply.</p>
+        <p class="danger-text">Rules that use this address group will no longer match this value after the next apply.</p>
         <div class="inline-actions">
           <button class="danger-btn" id="confirmFirewallEntryDeleteBtn" type="button">Delete entry</button>
           <button class="secondary-btn" id="cancelFirewallEntryDeleteBtn" type="button">Cancel</button>

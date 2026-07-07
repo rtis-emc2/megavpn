@@ -3982,7 +3982,24 @@ tr:hover td { background: #f8fafc; }
   gap: 12px;
 }
 .firewall-page-shell {
-  max-width: 1560px;
+  width: 100%;
+  max-width: none;
+}
+.firewall-tab-panel.bounded-stack {
+  width: 100%;
+  max-width: none;
+}
+.firewall-page-shell .page-tab.is-active {
+  border-color: rgba(37, 99, 235, 0.42);
+  background: #eff6ff;
+}
+.firewall-page-shell .page-tab:hover:not(.is-active) {
+  border-color: rgba(15, 23, 42, 0.18);
+  background: #f8fafc;
+}
+.firewall-page-shell .page-tab:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.42);
+  outline-offset: 2px;
 }
 .firewall-policy-grid {
   display: grid;
@@ -4544,6 +4561,25 @@ tr:hover td { background: #f8fafc; }
 .firewall-entry-wrap {
   border-top: 1px solid var(--line);
 }
+.firewall-subtable-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px 12px;
+  border-top: 1px solid var(--line);
+  background: #ffffff;
+}
+.firewall-subtable-head h3 {
+  margin: 0 0 3px;
+  color: var(--text);
+  font-size: 16px;
+}
+.firewall-subtable-head span:not(.tag) {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
 .firewall-rules-table,
 .firewall-address-list-table,
 .firewall-address-entry-table,
@@ -4562,29 +4598,29 @@ tr:hover td { background: #f8fafc; }
 .firewall-rules-table th:nth-child(7) { width: 230px; }
 .firewall-rules-table th:nth-child(9) { width: 190px; }
 .firewall-address-list-table {
-  min-width: 880px;
+  min-width: 980px;
 }
 .firewall-address-list-table th:nth-child(1) { width: 280px; }
 .firewall-address-list-table th:nth-child(2) { width: 140px; }
 .firewall-address-list-table th:nth-child(3) { width: 110px; }
 .firewall-address-list-table th:nth-child(4) { width: 130px; }
-.firewall-address-list-table th:nth-child(5) { width: 210px; }
+.firewall-address-list-table th:nth-child(5) { width: 280px; }
 .firewall-address-entry-table {
-  min-width: 1040px;
+  min-width: 1120px;
 }
 .firewall-address-entry-table th:nth-child(1) { width: 260px; }
 .firewall-address-entry-table th:nth-child(2) { width: 260px; }
 .firewall-address-entry-table th:nth-child(3) { width: 120px; }
 .firewall-address-entry-table th:nth-child(5) { width: 130px; }
-.firewall-address-entry-table th:nth-child(6) { width: 170px; }
+.firewall-address-entry-table th:nth-child(6) { width: 210px; }
 .firewall-node-state-table {
-  min-width: 920px;
+  min-width: 1080px;
 }
 .firewall-node-state-table th:nth-child(1) { width: 320px; }
-.firewall-node-state-table th:nth-child(2) { width: 210px; }
+.firewall-node-state-table th:nth-child(2) { width: 260px; }
 .firewall-node-state-table th:nth-child(3) { width: 140px; }
 .firewall-node-state-table th:nth-child(4) { width: 190px; }
-.firewall-node-state-table th:nth-child(5) { width: 120px; }
+.firewall-node-state-table th:nth-child(5) { width: 170px; }
 .firewall-rules-table td,
 .firewall-address-list-table td,
 .firewall-address-entry-table td,
@@ -4594,18 +4630,24 @@ tr:hover td { background: #f8fafc; }
   vertical-align: top;
 }
 .compact-action-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(84px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 7px;
-  min-width: 170px;
+  min-width: 0;
 }
 .compact-action-grid .danger-btn,
 .compact-action-grid .secondary-btn {
+  flex: 0 0 auto;
+  min-width: 84px;
   min-height: 34px;
   padding: 7px 10px;
   border-radius: 8px;
   font-size: 13px;
   line-height: 1.15;
+}
+.firewall-node-state-table .compact-action-grid {
+  flex-wrap: nowrap;
 }
 .empty.compact {
   min-height: 44px;

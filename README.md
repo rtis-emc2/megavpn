@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.17`
+**Release:** `7.1.0.18`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,12 +56,11 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.17` restores the Traffic Accounting top-tab workflow while keeping the
-operator UI simplified: storage-maintenance fields are replaced with
-traffic/client/node/collector counters, empty datasets show an actionable
-diagnostics state, report filters live behind the Export tab, and Web UI asset
-cache keys are advanced for reliable browser refresh after deployment. The
-current focus is:
+`7.1.0.18` tightens the Firewall operator UI: Firewall panels now use the full
+workspace width, active tabs have a single unambiguous selected style, address
+list wording is simplified into address groups and entries, node apply actions
+are row-scoped, and Web UI asset cache keys are advanced for reliable browser
+refresh after deployment. The current focus is:
 
 - clean install and upgrade path on a new Ubuntu host;
 - PostgreSQL migrations on disposable databases;
@@ -80,10 +79,13 @@ current focus is:
 - default node firewall baseline with strict input/forward deny, HTTP/HTTPS
   edge allow rules, ICMP/ICMPv6 diagnostics, VPN client forwarding ranges and a
   dedicated `inet megavpn_firewall` table;
-- operator-facing firewall model diagram that shows address lists, rules,
-  policies, apply jobs and node state as one catalog-to-apply workflow;
-- firewall schema repair for upgraded installations and simplified address-list
+- operator-facing firewall model diagram that shows address groups, rules,
+  policies, apply jobs and node apply status as one catalog-to-apply workflow;
+- firewall schema repair for upgraded installations and simplified address-group
   workflows without internal identity fields;
+- firewall workspace layout hardening: full-width tab panels, clearer Address
+  groups versus entries separation, corrected tab counters and row-scoped node
+  preview/apply actions;
 - traffic-accounting foundation with signed agent ingest API, PostgreSQL
   aggregate storage, 180-day retention cleanup, `traffic.read` RBAC, a
   dedicated operator UI page, managed Xray/WireGuard/OpenVPN byte-counter

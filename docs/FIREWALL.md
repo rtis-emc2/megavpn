@@ -1,10 +1,11 @@
 # Firewall Policy Catalog
 
-**Release:** `7.1.0.17`
+**Release:** `7.1.0.18`
 
 Firewall is the managed policy workspace for node and control-plane boundaries.
 It is intentionally modeled as a catalog before apply: operators prepare address
-lists, ordered rules and policies, then queue an apply job for a selected node.
+groups, ordered rules and policies, then queue an apply job for a selected
+node.
 
 Russian companion: [FIREWALL_RU.md](FIREWALL_RU.md).
 
@@ -14,19 +15,19 @@ Use the firewall as a catalog-to-apply pipeline:
 
 ```mermaid
 flowchart LR
-  A["Address lists\nCIDR/IP/range groups"] --> B["Rules\npriority + chain + match + action"]
+  A["Address groups\nCIDR/IP/range groups"] --> B["Rules\npriority + chain + match + action"]
   B --> C["Policy\ninput/forward/output defaults"]
   C --> D["Preview job\nrender + hash diff"]
   D --> E["Apply job\nsigned node job"]
   E --> F["Node nftables\ninet megavpn_firewall"]
-  F --> G["Node state\nrevision, counts, failures"]
+  F --> G["Node apply\nrevision, counts, failures"]
 ```
 
 The operator workflow is:
 
-1. Create reusable address lists for operators, trusted networks, VPN pools or
+1. Create reusable address groups for operators, trusted networks, VPN pools or
    blocked destinations.
-2. Add entries to address lists. Leave type on auto-detect for CIDR, single IP
+2. Add entries to address groups. Leave type on auto-detect for CIDR, single IP
    or IP range entries.
 3. Create ordered rules inside a policy. Lower priority is evaluated first.
 4. Run `Preview` for the selected node. Preview renders the same nftables
@@ -61,8 +62,8 @@ Open `Firewall` from the control menu.
 - `Overview`: counters and posture.
 - `Policies`: policy cards, default chain metadata, preview and apply.
 - `Rules`: global ordered rule view.
-- `Address lists`: list and entry management.
-- `Node state`: last apply state per node, quick preview/apply.
+- `Address groups`: group and entry management.
+- `Node apply`: last apply state per node, row-scoped preview/apply.
 
 The top workflow buttons jump directly to the required stage. The rule editor
 contains presets for SSH management, HTTPS control, WireGuard, OpenVPN
@@ -72,8 +73,9 @@ Nginx edge HTTP(S) and invalid-packet drop.
 The `Policies` view shows each policy posture, default input/forward/output
 actions and a short rule preview. The `Rules` view includes local filters for
 policy, chain, action and text search across CIDR/list/port/comment fields.
-The `Address lists` view includes local search across list metadata and entry
-values.
+The `Address groups` view includes local search across group metadata and entry
+values. The top table manages named groups; the second table shows concrete
+entries inside those groups.
 
 The built-in `Default node firewall` policy is the recommended minimal
 baseline for production nodes. In strict mode it denies unsolicited input and
@@ -105,7 +107,7 @@ The apply dialog is split into two explicit modes:
 - `Strict defaults`: default input/forward/output policies are enforced by the
   agent.
 
-`Node state` shows the last observed enforcement mode, explicit rule count and
+`Node apply` shows the last observed enforcement mode, explicit rule count and
 system safety rule count returned by the agent.
 
 The preview dialog uses the same modes. Its result shows:
@@ -122,7 +124,7 @@ mode.
 ## Security Model
 
 - `firewall.read` allows inspection.
-- `firewall.manage` allows policy, rule and address-list changes.
+- `firewall.manage` allows policy, rule and address-group changes.
 - `firewall.apply` allows queueing node preview/apply jobs.
 - All create/update/delete/preview/apply actions produce audit events.
 - Rules are stored as catalog data and rendered by the worker into managed node
@@ -156,7 +158,7 @@ the agent must preserve control-plane egress. It does this by either:
 If neither condition is true, render fails before touching nftables. This keeps
 strict output rollout from silently isolating a node.
 
-Address-list entries with DNS type are stored for catalog context only in this
+Address-group entries with DNS type are stored for catalog context only in this
 release. Node-side nftables apply renders CIDR, single IP address and IP range
 entries; a DNS-only list cannot be used as an active rule matcher. The rule
 protocol model supports `any`, `tcp`, `udp`, `icmp` and `icmpv6`.
@@ -171,7 +173,7 @@ deleting the table.
 
 If apply fails:
 
-1. Open `Firewall -> Node state`.
+1. Open `Firewall -> Node apply`.
 2. Find the failed node and last policy.
 3. Open `Jobs` for the corresponding `node.firewall.apply` job.
 4. Check agent logs and rendered payload details.
