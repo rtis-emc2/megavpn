@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -102,9 +101,15 @@ func (s *Store) ListProvisioningAccesses(ctx context.Context, clientID string) (
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(policyRaw, &rec.Access.Policy)
-		_ = json.Unmarshal(metadataRaw, &rec.Access.Metadata)
-		_ = json.Unmarshal(specRaw, &rec.Instance.Spec)
+		if err := decodeJSONField(policyRaw, &rec.Access.Policy, "service_accesses.policy_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(metadataRaw, &rec.Access.Metadata, "service_accesses.metadata_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(specRaw, &rec.Instance.Spec, "instance_revisions.spec_json"); err != nil {
+			return nil, err
+		}
 		if rec.Access.Policy == nil {
 			rec.Access.Policy = map[string]any{}
 		}
@@ -148,7 +153,9 @@ func (s *Store) EnsureXrayServiceAccessUUID(ctx context.Context, accessID string
 		return nil, err
 	}
 	metadata := map[string]any{}
-	_ = json.Unmarshal(metadataRaw, &metadata)
+	if err := decodeJSONField(metadataRaw, &metadata, "service_accesses.metadata_json"); err != nil {
+		return nil, err
+	}
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
@@ -199,7 +206,9 @@ func (s *Store) serviceAccessForcesNewXrayUUID(ctx context.Context, clientID, in
 		return false, err
 	}
 	metadata := map[string]any{}
-	_ = json.Unmarshal(metadataRaw, &metadata)
+	if err := decodeJSONField(metadataRaw, &metadata, "service_accesses.metadata_json"); err != nil {
+		return false, err
+	}
 	return xrayServiceAccessUUIDRotationRequested(metadata), nil
 }
 

@@ -284,7 +284,7 @@ func (s *Store) CreateClientAccessRoute(ctx context.Context, clientID string, ro
 	_, _ = s.CreateAudit(ctx, "system", "client.route.create", "client", &clientID, "client access route created")
 	created, err := s.GetClientAccessRoute(ctx, clientID, route.ID)
 	if err == nil {
-		s.queueRoutePolicyForRoute(ctx, created)
+		err = s.queueRoutePolicyForRoute(ctx, created)
 	}
 	return created, err
 }
@@ -351,7 +351,9 @@ func (s *Store) DeleteClientAccessRoute(ctx context.Context, clientID, routeID s
 	_, _ = s.CreateAudit(ctx, "system", "client.route.delete", "client", &clientID, "client access route revoked")
 	route.Status = "revoked"
 	route.UpdatedAt = time.Now().UTC()
-	s.queueRoutePolicyForRoute(ctx, route)
+	if err := s.queueRoutePolicyForRoute(ctx, route); err != nil {
+		return domain.ClientAccessRoute{}, err
+	}
 	return route, nil
 }
 
@@ -612,9 +614,15 @@ func (s *Store) buildNodeRoutePolicyPayload(ctx context.Context, nodeID string) 
 		policy := map[string]any{}
 		metadata := map[string]any{}
 		accessMetadata := map[string]any{}
-		_ = json.Unmarshal(policyRaw, &policy)
-		_ = json.Unmarshal(metadataRaw, &metadata)
-		_ = json.Unmarshal(accessMetadataRaw, &accessMetadata)
+		if err := decodeJSONField(policyRaw, &policy, "client_access_routes.policy_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(metadataRaw, &metadata, "client_access_routes.metadata_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(accessMetadataRaw, &accessMetadata, "service_accesses.metadata_json"); err != nil {
+			return nil, err
+		}
 		if status == "active" {
 			activeCount++
 		}
@@ -754,7 +762,9 @@ func (s *Store) buildNodeRoutePolicySystemRoutes(ctx context.Context, nodeID str
 			continue
 		}
 		spec := map[string]any{}
-		_ = json.Unmarshal(raw, &spec)
+		if err := decodeJSONField(raw, &spec, "instance_revisions.spec_json"); err != nil {
+			return nil, err
+		}
 		entries = append(entries, xrayVLESSSystemRoutesForSpec(routePolicyXrayInstance{
 			ID:          instanceID,
 			Name:        name,
@@ -1706,33 +1716,41 @@ func firstRouteIdentityValue(values ...any) string {
 	return ""
 }
 
-func (s *Store) queueRoutePolicyForRoute(ctx context.Context, route domain.ClientAccessRoute) {
+func (s *Store) queueRoutePolicyForRoute(ctx context.Context, route domain.ClientAccessRoute) error {
 	if route.NodeID == nil || strings.TrimSpace(*route.NodeID) == "" {
-		return
+		return nil
 	}
-	_, _ = s.CreateNodeRoutePolicyApplyJob(ctx, strings.TrimSpace(*route.NodeID))
+	_, err := s.CreateNodeRoutePolicyApplyJob(ctx, strings.TrimSpace(*route.NodeID))
+	return err
 }
 
-func (s *Store) queueRoutePolicyJobForInstance(ctx context.Context, instanceID string) {
+func (s *Store) queueRoutePolicyJobForInstance(ctx context.Context, instanceID string) error {
 	instance, err := s.GetInstance(ctx, strings.TrimSpace(instanceID))
 	if err != nil || strings.TrimSpace(instance.NodeID) == "" {
-		return
+		return err
 	}
-	_, _ = s.CreateNodeRoutePolicyApplyJob(ctx, instance.NodeID)
+	_, err = s.CreateNodeRoutePolicyApplyJob(ctx, instance.NodeID)
+	return err
 }
 
-func (s *Store) queueRoutePolicyJobsForClient(ctx context.Context, clientID string) {
+func (s *Store) queueRoutePolicyJobsForClient(ctx context.Context, clientID string) error {
 	rows, err := s.db.Query(ctx, `select distinct node_id::text from client_access_routes where client_account_id=$1 and node_id is not null`, strings.TrimSpace(clientID))
 	if err != nil {
-		return
+		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var nodeID string
-		if err := rows.Scan(&nodeID); err == nil && strings.TrimSpace(nodeID) != "" {
-			_, _ = s.CreateNodeRoutePolicyApplyJob(ctx, nodeID)
+		if err := rows.Scan(&nodeID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(nodeID) != "" {
+			if _, err := s.CreateNodeRoutePolicyApplyJob(ctx, nodeID); err != nil {
+				return err
+			}
 		}
 	}
+	return rows.Err()
 }
 
 func normalizeClientAccessRoute(route *domain.ClientAccessRoute) error {
@@ -1913,8 +1931,12 @@ func scanClientAccessRoute(row pgx.Row) (domain.ClientAccessRoute, error) {
 	); err != nil {
 		return domain.ClientAccessRoute{}, err
 	}
-	_ = json.Unmarshal(policyRaw, &route.Policy)
-	_ = json.Unmarshal(metadataRaw, &route.Metadata)
+	if err := decodeJSONField(policyRaw, &route.Policy, "client_access_routes.policy_json"); err != nil {
+		return domain.ClientAccessRoute{}, err
+	}
+	if err := decodeJSONField(metadataRaw, &route.Metadata, "client_access_routes.metadata_json"); err != nil {
+		return domain.ClientAccessRoute{}, err
+	}
 	if route.Policy == nil {
 		route.Policy = map[string]any{}
 	}

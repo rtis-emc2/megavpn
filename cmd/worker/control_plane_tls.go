@@ -52,18 +52,25 @@ func handleControlPlaneTLSApplyJob(ctx context.Context, store *postgres.Store, j
 	}
 
 	conf := renderControlPlaneNginxConfig(settings, certPath, keyPath)
-	previousConf, hadPreviousConf, _ := readOptionalFile(controlPlaneNginxConfPath)
+	previousConf, hadPreviousConf, err := readOptionalFile(controlPlaneNginxConfPath)
+	if err != nil {
+		return controlPlaneTLSApplyFailed(ctx, store, "read_previous_nginx_config", err)
+	}
 	if err := writeFileAtomic(controlPlaneNginxConfPath, []byte(conf), 0o644); err != nil {
 		return controlPlaneTLSApplyFailed(ctx, store, "write_nginx_config", err)
 	}
 	if out, err := runCommand(ctx, "nginx", "-t"); err != nil {
-		restoreControlPlaneNginxConfig(previousConf, hadPreviousConf)
+		if restoreErr := restoreControlPlaneNginxConfig(previousConf, hadPreviousConf); restoreErr != nil {
+			return controlPlaneTLSApplyFailed(ctx, store, "nginx_test_restore", fmt.Errorf("%w: %s; restore failed: %w", err, out, restoreErr))
+		}
 		return controlPlaneTLSApplyFailed(ctx, store, "nginx_test", fmt.Errorf("%w: %s", err, out))
 	}
 	if out, err := reloadNginx(ctx); err != nil {
 		return controlPlaneTLSApplyFailed(ctx, store, "nginx_reload", fmt.Errorf("%w: %s", err, out))
 	}
-	_ = store.MarkControlPlaneTLSApplyResult(ctx, true, "")
+	if err := store.MarkControlPlaneTLSApplyResult(ctx, true, ""); err != nil {
+		return "failed", map[string]any{"stage": "control_plane_tls_status_update", "error": err.Error()}
+	}
 	return "succeeded", map[string]any{
 		"message":          "control plane tls edge applied",
 		"job_id":           job.ID,
@@ -80,8 +87,11 @@ func handleControlPlaneTLSApplyJob(ctx context.Context, store *postgres.Store, j
 
 func controlPlaneTLSApplyFailed(ctx context.Context, store *postgres.Store, stage string, err error) (string, map[string]any) {
 	errText := strings.TrimSpace(err.Error())
-	_ = store.MarkControlPlaneTLSApplyResult(ctx, false, stage+": "+errText)
-	return "failed", map[string]any{"stage": stage, "error": errText}
+	result := map[string]any{"stage": stage, "error": errText}
+	if markErr := store.MarkControlPlaneTLSApplyResult(ctx, false, stage+": "+errText); markErr != nil {
+		result["status_update_error"] = markErr.Error()
+	}
+	return "failed", result
 }
 
 func validateControlPlaneTLSApplySettings(settings domain.ControlPlaneTLSSettings) error {
@@ -245,12 +255,14 @@ func readOptionalFile(path string) ([]byte, bool, error) {
 	return b, err == nil, err
 }
 
-func restoreControlPlaneNginxConfig(previous []byte, hadPrevious bool) {
+func restoreControlPlaneNginxConfig(previous []byte, hadPrevious bool) error {
 	if hadPrevious {
-		_ = writeFileAtomic(controlPlaneNginxConfPath, previous, 0o644)
-		return
+		return writeFileAtomic(controlPlaneNginxConfPath, previous, 0o644)
 	}
-	_ = os.Remove(controlPlaneNginxConfPath)
+	if err := os.Remove(controlPlaneNginxConfPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func reloadNginx(ctx context.Context) (string, error) {

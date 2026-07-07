@@ -182,7 +182,9 @@ func (s *Store) GetPlatformUserInviteByToken(ctx context.Context, token string) 
 		return domain.PlatformUserInvite{}, err
 	}
 	if x.Status == "pending" && x.ExpiresAt.Before(time.Now().UTC()) {
-		_, _ = s.db.Exec(ctx, `update platform_user_invites set status='expired' where id=$1 and status='pending'`, x.ID)
+		if _, err := s.db.Exec(ctx, `update platform_user_invites set status='expired' where id=$1 and status='pending'`, x.ID); err != nil {
+			return domain.PlatformUserInvite{}, err
+		}
 		x.Status = "expired"
 	}
 	return x, nil

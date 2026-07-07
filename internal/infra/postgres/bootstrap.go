@@ -445,8 +445,12 @@ func (s *Store) ListNodeBootstrapRuns(ctx context.Context, nodeID string, limit 
 		if err := rows.Scan(&x.ID, &x.NodeID, &x.JobID, &x.Status, &x.BootstrapMode, &reqRaw, &resRaw, &x.StartedAt, &x.FinishedAt, &x.CreatedBy, &x.CreatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(reqRaw, &x.RequestPayload)
-		_ = json.Unmarshal(resRaw, &x.ResultPayload)
+		if err := decodeJSONField(reqRaw, &x.RequestPayload, "node_bootstrap_runs.request_payload_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(resRaw, &x.ResultPayload, "node_bootstrap_runs.result_payload_json"); err != nil {
+			return nil, err
+		}
 		if x.RequestPayload == nil {
 			x.RequestPayload = map[string]any{}
 		}

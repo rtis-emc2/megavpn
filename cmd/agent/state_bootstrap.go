@@ -55,7 +55,9 @@ func removeBootstrapFile(path string) error {
 	}
 	if len(b) > 0 {
 		zero := make([]byte, len(b))
-		_ = os.WriteFile(path, zero, 0o600)
+		if err := os.WriteFile(path, zero, 0o600); err != nil {
+			return fmt.Errorf("zero bootstrap file before removal: %w", err)
+		}
 	}
 	return os.Remove(path)
 }

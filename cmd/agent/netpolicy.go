@@ -59,7 +59,21 @@ func applyNetworkPolicy(ctx context.Context, payload instanceJobPayload) (map[st
 	if err := writeManagedFile(managedFileSpec{Path: unitPath, Content: renderNetworkPolicyUnit(unitName, scriptPath, payload), Mode: "0644"}); err != nil {
 		return nil, err
 	}
-	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+	reloadResult, err := runSystemdDaemonReload(ctx)
+	if err != nil {
+		return map[string]any{
+			"applied":        false,
+			"unit":           unitName,
+			"unit_path":      unitPath,
+			"script_path":    scriptPath,
+			"sysctl_count":   counts["sysctl"],
+			"firewall_count": counts["firewall"],
+			"nat_count":      counts["nat"],
+			"route_count":    counts["routes"],
+			"systemd_reload": reloadResult,
+			"error":          err.Error(),
+		}, err
+	}
 	code, out := runInstallCommand(ctx, "systemctl", "enable", "--now", unitName)
 	result := map[string]any{
 		"applied":        code == 0,
@@ -71,6 +85,7 @@ func applyNetworkPolicy(ctx context.Context, payload instanceJobPayload) (map[st
 		"nat_count":      counts["nat"],
 		"route_count":    counts["routes"],
 		"output":         truncate(out, 2000),
+		"systemd_reload": reloadResult,
 	}
 	if code != 0 {
 		result["error"] = "network policy apply failed"

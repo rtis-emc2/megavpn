@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -960,7 +959,9 @@ func scanFirewallRule(row firewallScanner) (domain.FirewallRule, error) {
 		item.DstListID = &dstListID
 	}
 	if len(rawMeta) > 0 {
-		_ = json.Unmarshal(rawMeta, &item.Metadata)
+		if err := decodeJSONField(rawMeta, &item.Metadata, "firewall_rules.metadata_json"); err != nil {
+			return domain.FirewallRule{}, err
+		}
 	}
 	if item.Metadata == nil {
 		item.Metadata = map[string]any{}
@@ -991,7 +992,9 @@ func scanFirewallNodeState(row firewallScanner) (domain.FirewallNodeState, error
 	if lastJobID != "" {
 		item.LastJobID = &lastJobID
 	}
-	_ = json.Unmarshal(rawObserved, &item.Observed)
+	if err := decodeJSONField(rawObserved, &item.Observed, "firewall_node_states.observed_json"); err != nil {
+		return domain.FirewallNodeState{}, err
+	}
 	if item.Observed == nil {
 		item.Observed = map[string]any{}
 	}

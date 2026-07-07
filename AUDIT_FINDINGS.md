@@ -74,15 +74,25 @@ evidence.
 | Fix | API now logs seed failure and fails fast in `MEGAVPN_PRODUCTION_MODE=true`; non-production keeps running with an explicit warning. |
 | Validation | `go test ./...`; `go test -race ./...`; `go vet ./...`. |
 
-### Medium: Remaining Ignored Error Backlog
+### High: Runtime and Database Side Effects Ignored Failures
+
+| Field | Detail |
+| --- | --- |
+| File/path | `cmd/agent`, `cmd/worker`, `internal/infra/postgres` |
+| Reason | Runtime apply/delete paths, route-policy/netpolicy enforcement, client provisioning, backhaul state transitions and several DB-side lifecycle updates ignored errors after a job appeared successful. |
+| Impact | Operators could see `queued`, `applied` or `ok` state while systemd reload, service enable, route-policy queueing, artifact generation, JSON decoding or DB cleanup actually failed. This directly affects instance deletion, emergency cleanup, client config propagation, VLESS routing and backhaul convergence. |
+| Fix | Runtime/systemd reloads now fail closed and are included in job evidence; JSON DB fields use a shared fail-closed decoder; provisioning/status/route-policy/backhaul side effects return errors; bootstrap secret zeroization is checked; zip bundle writer close errors are preserved. |
+| Validation | `go test ./cmd/agent ./cmd/worker ./internal/infra/postgres`; full validation matrix below. |
+
+### Medium: Classified Ignored Error Backlog
 
 | Field | Detail |
 | --- | --- |
 | File/path | `cmd`, `internal` |
-| Reason | `rg "_\\s*=\\s*[^=]" cmd internal --glob '*.go'` still reports 450 ignored-error sites after the startup seed fix. Many are expected best-effort audit/log/write-close/cleanup paths, but they are not yet classified. |
-| Impact | A subset may hide failed audit writes, failed state cleanup, failed runtime rollback or failed agent telemetry submission. |
-| Fix | This changeset fixes the highest-signal startup seed case. Remaining sites need a scoped classification pass by subsystem: worker runtime apply, agent cleanup/install, API audit/logging, store cascade cleanup, cryptographic hash writes and HTTP response writes. |
-| Validation | Repeat `rg "_\\s*=\\s*[^=]" cmd internal --glob '*.go'` and require each subsystem PR to reduce or justify its bucket. |
+| Reason | The remaining ignored errors are intentionally limited to best-effort audit/event inserts, response writes after headers are committed, cleanup of temporary files, websocket shutdown, telemetry/inventory submission retries and test cleanup. |
+| Impact | These paths should not change product state-machine decisions. Failed audit/event writes remain observable through primary job/result errors where they are security or lifecycle relevant. |
+| Fix | State-changing ignored errors in P0 scope were converted to explicit errors. Three direct `s.db.Exec` best-effort event inserts remain in discovery/capability event logging and are intentionally non-blocking. |
+| Validation | `rg "_ = json\\.Unmarshal" cmd internal` returns no matches; targeted grep for ignored state-changing calls returns no matches; remaining `_ =` sites are cleanup/audit/telemetry classes. |
 
 ### Medium: Camouflage Header Leakage Regression Coverage Needed gRPC Parity
 

@@ -68,7 +68,11 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 	}
 	rollback := func() map[string]any {
 		result := rollbackManagedFiles(backups)
-		_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+		reloadResult, err := runSystemdDaemonReload(ctx)
+		result["systemd_reload"] = reloadResult
+		if err != nil {
+			result["systemd_reload_warning"] = err.Error()
+		}
 		return result
 	}
 	changed := make([]string, 0, len(files))
@@ -84,7 +88,18 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 		}
 		changed = append(changed, file.Path)
 	}
-	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+	reloadResult, err := runSystemdDaemonReload(ctx)
+	if err != nil {
+		return "failed", map[string]any{
+			"error":          err.Error(),
+			"stage":          "systemd_daemon_reload",
+			"instance_id":    payload.InstanceID,
+			"service_code":   payload.ServiceCode,
+			"changed_files":  changed,
+			"systemd_reload": reloadResult,
+			"rollback":       rollback(),
+		}
+	}
 	if err := validateRenderedConfig(ctx, payload, files); err != nil {
 		return "failed", map[string]any{
 			"error":         err.Error(),
@@ -119,6 +134,7 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 		"endpoint_port":   payload.EndpointPort,
 		"enabled_desired": payload.Enabled,
 		"network_policy":  networkPolicy,
+		"systemd_reload":  reloadResult,
 	}
 	if len(runtimePreflight) > 0 {
 		result["runtime_preflight"] = runtimePreflight
@@ -142,7 +158,12 @@ func (e instanceRuntimeExecutor) Apply(ctx context.Context, payload instanceJobP
 		if !isAllowedInstanceUnit(payload, payload.SystemdUnit) {
 			return "failed", map[string]any{"error": "systemd_unit is not allowed for disabled instance apply", "instance_id": payload.InstanceID, "service_code": payload.ServiceCode, "systemd_unit": payload.SystemdUnit}
 		}
-		_, _ = runInstallCommand(ctx, "systemctl", "disable", payload.SystemdUnit)
+		disableCode, disableOut := runInstallCommand(ctx, "systemctl", "disable", payload.SystemdUnit)
+		result["systemd_disable_output"] = truncate(strings.TrimSpace(disableOut), 2000)
+		if disableCode != 0 && !isMissingSystemdUnitOutput(disableOut) {
+			result["error"] = commandExitError("systemd disable failed for disabled instance apply", disableOut).Error()
+			return "failed", result
+		}
 	}
 	result["active_state"] = currentUnitState(payload.SystemdUnit)
 	return status, result
@@ -350,7 +371,13 @@ func (e instanceRuntimeExecutor) Delete(ctx context.Context, payload instanceJob
 			warnings = append(warnings, "nginx cleanup warning: "+errText)
 		}
 	}
-	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+	reloadResult, err := runSystemdDaemonReload(ctx)
+	result["systemd_reload"] = reloadResult
+	if err != nil {
+		result["error"] = err.Error()
+		result["duration_ms"] = time.Since(started).Milliseconds()
+		return "failed", result
+	}
 
 	result["message"] = "instance runtime cleanup completed"
 	result["removed_paths"] = removedPaths

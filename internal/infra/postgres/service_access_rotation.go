@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
@@ -44,8 +43,12 @@ func (s *Store) RotateServiceAccess(ctx context.Context, clientID, accessID, dri
 		return domain.Job{}, err
 	}
 	instanceID = access.InstanceID
-	_ = json.Unmarshal(policyRaw, &access.Policy)
-	_ = json.Unmarshal(metadataRaw, &access.Metadata)
+	if err := decodeJSONField(policyRaw, &access.Policy, "service_accesses.policy_json"); err != nil {
+		return domain.Job{}, err
+	}
+	if err := decodeJSONField(metadataRaw, &access.Metadata, "service_accesses.metadata_json"); err != nil {
+		return domain.Job{}, err
+	}
 	if access.Metadata == nil {
 		access.Metadata = map[string]any{}
 	}

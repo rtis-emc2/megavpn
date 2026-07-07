@@ -76,7 +76,9 @@ func (s *Store) RollbackInstanceRevision(ctx context.Context, instanceID, revisi
 		return domain.InstanceRevision{}, fmt.Errorf("selected revision is not rollback-ready; status=%s", strings.TrimSpace(status))
 	}
 	var spec map[string]any
-	_ = json.Unmarshal(specRaw, &spec)
+	if err := decodeJSONField(specRaw, &spec, "instance_revisions.spec_json"); err != nil {
+		return domain.InstanceRevision{}, err
+	}
 	if spec == nil {
 		spec = map[string]any{}
 	}
@@ -281,9 +283,15 @@ func (s *Store) ListProvisioningAccessesByInstance(ctx context.Context, instance
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(policyRaw, &rec.Access.Policy)
-		_ = json.Unmarshal(metadataRaw, &rec.Access.Metadata)
-		_ = json.Unmarshal(specRaw, &rec.Instance.Spec)
+		if err := decodeJSONField(policyRaw, &rec.Access.Policy, "service_accesses.policy_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(metadataRaw, &rec.Access.Metadata, "service_accesses.metadata_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(specRaw, &rec.Instance.Spec, "instance_revisions.spec_json"); err != nil {
+			return nil, err
+		}
 		if rec.Access.Policy == nil {
 			rec.Access.Policy = map[string]any{}
 		}

@@ -400,7 +400,9 @@ func (s *Store) RetireNode(ctx context.Context, nodeID string) (domain.Node, err
 	if cmd.RowsAffected() == 0 {
 		return domain.Node{}, pgx.ErrNoRows
 	}
-	_, _ = s.db.Exec(ctx, `update node_agents set status='revoked',revoked_at=now() where node_id=$1`, nodeID)
+	if _, err := s.db.Exec(ctx, `update node_agents set status='revoked',revoked_at=now() where node_id=$1`, nodeID); err != nil {
+		return domain.Node{}, fmt.Errorf("revoke node agents during retire: %w", err)
+	}
 	_, _ = s.CreateAudit(ctx, "system", "node.retire", "node", &nodeID, "node retired")
 	return s.GetNode(ctx, nodeID)
 }
@@ -487,12 +489,14 @@ func (s *Store) HeartbeatWithVersion(ctx context.Context, nodeName, agentVersion
 	if cmd.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
-	_, _ = s.db.Exec(ctx, `update node_agents
+	if _, err := s.db.Exec(ctx, `update node_agents
 		set last_seen_at=$2,
 		    status='active',
 		    agent_version=coalesce(nullif($3,''),agent_version),
 		    protocol_version=coalesce(nullif($4,''),protocol_version)
-		where node_id=(select id from nodes where name=$1)`, nodeName, now, strings.TrimSpace(agentVersion), strings.TrimSpace(protocolVersion))
+		where node_id=(select id from nodes where name=$1)`, nodeName, now, strings.TrimSpace(agentVersion), strings.TrimSpace(protocolVersion)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -512,7 +516,9 @@ func (s *Store) ListNodeCapabilityInstallEvents(ctx context.Context, nodeID stri
 		if err := rows.Scan(&x.ID, &x.NodeID, &x.JobID, &x.CapabilityCode, &x.Strategy, &x.Status, &x.Summary, &raw, &x.CreatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(raw, &x.Payload)
+		if err := decodeJSONField(raw, &x.Payload, "node_capability_install_events.payload_json"); err != nil {
+			return nil, err
+		}
 		if x.Payload == nil {
 			x.Payload = map[string]any{}
 		}
@@ -885,7 +891,9 @@ func (s *Store) mergeCapabilityInstallJobDependents(ctx context.Context, jobID s
 		return err
 	}
 	payload := map[string]any{}
-	_ = json.Unmarshal(raw, &payload)
+	if err := decodeJSONField(raw, &payload, "jobs.payload_json"); err != nil {
+		return err
+	}
 	merged := normalizedStringSet(append(stringSetFromAny(payload["dependent_instance_ids"]), dependentInstanceIDs...))
 	if len(merged) > 0 {
 		payload["dependent_instance_ids"] = merged
@@ -1063,7 +1071,9 @@ func (s *Store) importDiscoveryAsInstance(ctx context.Context, d domain.NodeServ
 	var existingID string
 	err := s.db.QueryRow(ctx, `select id from instances where node_id=$1 and service_definition_id=(select id from service_definitions where code=$2) and (systemd_unit=$3 or name=$4) and status <> 'deleted' limit 1`, d.NodeID, d.ServiceCode, nullIfEmpty(d.SystemdUnit), d.Name).Scan(&existingID)
 	if err == nil && existingID != "" {
-		_, _ = s.db.Exec(ctx, `update node_service_discoveries set status='imported', managed_instance_id=$3 where node_id=$1 and id=$2`, d.NodeID, d.ID, existingID)
+		if _, err := s.db.Exec(ctx, `update node_service_discoveries set status='imported', managed_instance_id=$3 where node_id=$1 and id=$2`, d.NodeID, d.ID, existingID); err != nil {
+			return domain.Instance{}, err
+		}
 		return s.GetInstance(ctx, existingID)
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -1269,25 +1279,39 @@ func (s *Store) createInstanceWithOptions(ctx context.Context, x domain.Instance
 	spec["endpoint_port"] = x.EndpointPort
 	rev, err := s.createInstanceRevision(ctx, x.ID, "system", "validated", spec)
 	if err != nil {
-		s.discardUnqueuedInstanceDraft(ctx, x.ID)
+		if cleanupErr := s.discardUnqueuedInstanceDraft(ctx, x.ID); cleanupErr != nil {
+			return x, errors.Join(err, fmt.Errorf("discard invalid instance draft: %w", cleanupErr))
+		}
 		return x, err
 	}
 	if opts.requireApplyReadyRevision && !in(rev.Status, "validated", "applied") {
-		s.discardUnqueuedInstanceDraft(ctx, x.ID)
-		return x, initialRevisionNotApplyReadyError(rev)
+		applyReadyErr := initialRevisionNotApplyReadyError(rev)
+		if cleanupErr := s.discardUnqueuedInstanceDraft(ctx, x.ID); cleanupErr != nil {
+			return x, errors.Join(applyReadyErr, fmt.Errorf("discard unqueueable instance draft: %w", cleanupErr))
+		}
+		return x, applyReadyErr
 	}
 	if opts.queueInitialApply {
 		payload, payloadErr := s.buildInstanceJobPayload(ctx, x, "apply")
 		if payloadErr != nil {
-			s.discardUnqueuedInstanceDraft(ctx, x.ID)
+			if cleanupErr := s.discardUnqueuedInstanceDraft(ctx, x.ID); cleanupErr != nil {
+				return x, errors.Join(payloadErr, fmt.Errorf("discard unqueueable instance draft: %w", cleanupErr))
+			}
 			return x, fmt.Errorf("initial instance apply payload is not queueable: %w", payloadErr)
 		}
 		job, err := s.CreateJob(ctx, domain.Job{Type: "instance.apply", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload})
 		if err != nil {
-			s.discardUnqueuedInstanceDraft(ctx, x.ID)
+			if cleanupErr := s.discardUnqueuedInstanceDraft(ctx, x.ID); cleanupErr != nil {
+				return x, errors.Join(err, fmt.Errorf("discard unqueued instance draft: %w", cleanupErr))
+			}
 			return x, fmt.Errorf("initial instance apply queue failed: %w", err)
 		}
-		_, _ = s.db.Exec(ctx, `update instances set status='provisioning',updated_at=now() where id=$1 and status in ('draft','validated','failed')`, x.ID)
+		if _, err := s.db.Exec(ctx, `update instances set status='provisioning',updated_at=now() where id=$1 and status in ('draft','validated','failed')`, x.ID); err != nil {
+			if cleanupErr := s.discardUnqueuedInstanceDraft(ctx, x.ID); cleanupErr != nil {
+				return x, errors.Join(err, fmt.Errorf("discard unqueued instance draft: %w", cleanupErr))
+			}
+			return x, fmt.Errorf("mark instance provisioning: %w", err)
+		}
 		x.Status = "provisioning"
 		_ = s.upsertInstanceRuntimeStateForQueuedJob(ctx, x.ID, job)
 		_ = s.AddJobLog(ctx, job.ID, "info", "initial instance apply queued", map[string]any{"instance_id": x.ID, "service_code": x.ServiceCode})
@@ -1329,10 +1353,18 @@ func (s *Store) discardUnqueuedInstanceDraft(ctx context.Context, instanceID str
 		return nil
 	}
 	s.releaseInstanceAddressPoolAllocations(ctx, instanceID)
-	_, _ = s.db.Exec(ctx, `delete from instance_runtime_observations where instance_id=$1`, instanceID)
-	_, _ = s.db.Exec(ctx, `delete from instance_runtime_states where instance_id=$1`, instanceID)
-	_, _ = s.db.Exec(ctx, `delete from instance_revisions where instance_id=$1`, instanceID)
-	_, _ = s.db.Exec(ctx, `delete from instances where id=$1`, instanceID)
+	if _, err := s.db.Exec(ctx, `delete from instance_runtime_observations where instance_id=$1`, instanceID); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `delete from instance_runtime_states where instance_id=$1`, instanceID); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `delete from instance_revisions where instance_id=$1`, instanceID); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `delete from instances where id=$1`, instanceID); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(ctx, `delete from secret_refs
 		where meta_json->>'scope'='instance'
 		  and meta_json->>'instance_id'=$1`, instanceID)
@@ -1530,7 +1562,9 @@ func (s *Store) DeleteInstance(ctx context.Context, instanceID string) (domain.I
 	}
 	job, err := s.CreateJob(ctx, domain.Job{Type: "instance.delete", ScopeType: "instance", ScopeID: &x.ID, NodeID: &x.NodeID, InstanceID: &x.ID, Payload: payload})
 	if err != nil {
-		_, _ = s.db.Exec(ctx, `update instances set status=$2,enabled=$3,updated_at=now() where id=$1`, instanceID, x.Status, x.Enabled)
+		if _, rollbackErr := s.db.Exec(ctx, `update instances set status=$2,enabled=$3,updated_at=now() where id=$1`, instanceID, x.Status, x.Enabled); rollbackErr != nil {
+			return domain.Instance{}, errors.Join(err, fmt.Errorf("rollback instance delete state: %w", rollbackErr))
+		}
 		return domain.Instance{}, err
 	}
 	_ = s.upsertInstanceRuntimeStateForQueuedJob(ctx, instanceID, job)
@@ -1678,17 +1712,37 @@ func (s *Store) SetClientStatus(ctx context.Context, clientID, status string) (d
 		return domain.Client{}, err
 	}
 	if status == "revoked" {
-		_, _ = s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
-		_, _ = s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
-		_, _ = s.db.Exec(ctx, `update share_links set status='revoked' where client_account_id=$1 and status='active'`, clientID)
-		_, _ = s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, clientID)
-		s.queueRoutePolicyJobsForClient(ctx, clientID)
+		if _, err := s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, clientID); err != nil {
+			return domain.Client{}, err
+		}
+		if _, err := s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, clientID); err != nil {
+			return domain.Client{}, err
+		}
+		if _, err := s.db.Exec(ctx, `update share_links set status='revoked' where client_account_id=$1 and status='active'`, clientID); err != nil {
+			return domain.Client{}, err
+		}
+		if _, err := s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, clientID); err != nil {
+			return domain.Client{}, err
+		}
+		if err := s.queueRoutePolicyJobsForClient(ctx, clientID); err != nil {
+			return domain.Client{}, err
+		}
 	} else if status == "deleted" {
-		_, _ = s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
-		_, _ = s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
-		_, _ = s.db.Exec(ctx, `update share_links set status='revoked' where client_account_id=$1 and status='active'`, clientID)
-		_, _ = s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, clientID)
-		s.queueRoutePolicyJobsForClient(ctx, clientID)
+		if _, err := s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, clientID); err != nil {
+			return domain.Client{}, err
+		}
+		if _, err := s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, clientID); err != nil {
+			return domain.Client{}, err
+		}
+		if _, err := s.db.Exec(ctx, `update share_links set status='revoked' where client_account_id=$1 and status='active'`, clientID); err != nil {
+			return domain.Client{}, err
+		}
+		if _, err := s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, clientID); err != nil {
+			return domain.Client{}, err
+		}
+		if err := s.queueRoutePolicyJobsForClient(ctx, clientID); err != nil {
+			return domain.Client{}, err
+		}
 	}
 	_, _ = s.CreateAudit(ctx, "system", "client."+status, "client", &clientID, "client status changed")
 	return s.GetClient(ctx, clientID)
@@ -1837,12 +1891,24 @@ func (s *Store) RevokeClient(ctx context.Context, clientID string) (domain.Job, 
 	if _, err := s.GetClient(ctx, clientID); err != nil {
 		return domain.Job{}, err
 	}
-	_, _ = s.db.Exec(ctx, `update client_accounts set status='revoked',updated_at=now() where id=$1`, clientID)
-	_, _ = s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
-	_, _ = s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, clientID)
-	_, _ = s.db.Exec(ctx, `update share_links set status='revoked' where client_account_id=$1 and status='active'`, clientID)
-	_, _ = s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, clientID)
-	s.queueRoutePolicyJobsForClient(ctx, clientID)
+	if _, err := s.db.Exec(ctx, `update client_accounts set status='revoked',updated_at=now() where id=$1`, clientID); err != nil {
+		return domain.Job{}, err
+	}
+	if _, err := s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, clientID); err != nil {
+		return domain.Job{}, err
+	}
+	if _, err := s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, clientID); err != nil {
+		return domain.Job{}, err
+	}
+	if _, err := s.db.Exec(ctx, `update share_links set status='revoked' where client_account_id=$1 and status='active'`, clientID); err != nil {
+		return domain.Job{}, err
+	}
+	if _, err := s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, clientID); err != nil {
+		return domain.Job{}, err
+	}
+	if err := s.queueRoutePolicyJobsForClient(ctx, clientID); err != nil {
+		return domain.Job{}, err
+	}
 	j, err := s.CreateJob(ctx, domain.Job{Type: "client.revoke", ScopeType: "client", ScopeID: &clientID, Payload: map[string]any{"client_id": clientID}})
 	_, _ = s.CreateAudit(ctx, "system", "client.revoke", "client", &clientID, "client revoke queued")
 	return j, err
@@ -1861,8 +1927,12 @@ func (s *Store) ListServiceAccesses(ctx context.Context, clientID string) ([]dom
 		if err := rows.Scan(&a.ID, &a.ClientAccountID, &a.InstanceID, &a.Status, &a.ProvisionMode, &p, &m, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(p, &a.Policy)
-		_ = json.Unmarshal(m, &a.Metadata)
+		if err := decodeJSONField(p, &a.Policy, "service_accesses.policy_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(m, &a.Metadata, "service_accesses.metadata_json"); err != nil {
+			return nil, err
+		}
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -2099,7 +2169,9 @@ func (s *Store) ListJobLogs(ctx context.Context, jobID string, limit int) ([]dom
 		if err := rows.Scan(&l.ID, &l.JobID, &l.Level, &l.Message, &b, &l.CreatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(b, &l.Payload)
+		if err := decodeJSONField(b, &l.Payload, "job_logs.payload_json"); err != nil {
+			return nil, err
+		}
 		l.Payload = redactSensitiveMapForStorage(l.Payload)
 		out = append(out, l)
 	}
@@ -2191,7 +2263,10 @@ func (s *Store) completeJob(ctx context.Context, idv, owner string, requireLease
 	b, err := json.Marshal(storedResult)
 	if err != nil {
 		storedResult = map[string]any{"message": "result marshal failed", "error": err.Error()}
-		b, _ = json.Marshal(storedResult)
+		b, err = json.Marshal(storedResult)
+		if err != nil {
+			return fmt.Errorf("marshal fallback job result: %w", err)
+		}
 	}
 
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
@@ -2225,6 +2300,13 @@ func (s *Store) completeJob(ctx context.Context, idv, owner string, requireLease
 			return fmt.Errorf("job lease expired")
 		}
 	}
+	payload := map[string]any{}
+	if err := decodeJSONField(payloadRaw, &payload, "jobs.payload_json"); err != nil {
+		return err
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
 
 	if _, err = tx.Exec(ctx, `update jobs set status=$2,result_json=$3,finished_at=now(),locked_by=null,locked_until=null where id=$1`, idv, status, b); err != nil {
 		return err
@@ -2234,12 +2316,6 @@ func (s *Store) completeJob(ctx context.Context, idv, owner string, requireLease
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return err
-	}
-
-	payload := map[string]any{}
-	_ = json.Unmarshal(payloadRaw, &payload)
-	if payload == nil {
-		payload = map[string]any{}
 	}
 
 	if err := s.applyJobCompletionSideEffects(ctx, idv, jobType, status, scopeID, instanceID, payload, result, b); err != nil {
@@ -2304,19 +2380,21 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 	if status == "succeeded" {
 		switch jobType {
 		case "node.backhaul.apply":
-			s.ApplyBackhaulJobResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, NodeID: nil, Payload: payload, Result: result}, status, result)
+			return s.ApplyBackhaulJobResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, NodeID: nil, Payload: payload, Result: result}, status, result)
 		case "node.backhaul.probe":
-			s.ApplyBackhaulProbeResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, NodeID: nil, Payload: payload, Result: result}, status, result)
+			return s.ApplyBackhaulProbeResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, NodeID: nil, Payload: payload, Result: result}, status, result)
 		case "node.backhaul.cleanup":
-			s.ApplyBackhaulCleanupResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, NodeID: nil, Payload: payload, Result: result}, status, result)
+			return s.ApplyBackhaulCleanupResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, NodeID: nil, Payload: payload, Result: result}, status, result)
 		case "node.bootstrap":
 			if scopeID != nil && shouldHandoffNodeBootstrapToAgent(payload, result) {
-				_, _ = s.db.Exec(ctx, `update nodes
+				if _, err := s.db.Exec(ctx, `update nodes
 					set status='bootstrapping',
 					    execution_mode='agent_managed',
 					    agent_status='starting',
 					    updated_at=now()
-					where id=$1 and status <> 'retired'`, *scopeID)
+					where id=$1 and status <> 'retired'`, *scopeID); err != nil {
+					return err
+				}
 				jobs, warnings, err := s.QueueNodeRuntimeReconcile(ctx, *scopeID, "node.bootstrap")
 				if err != nil {
 					_ = s.AddJobLog(ctx, idv, "warn", "runtime reconcile was not queued after bootstrap", map[string]any{"error": err.Error()})
@@ -2340,13 +2418,17 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 					newTokenHash = hashToken(newToken)
 				}
 				if newTokenHash != "" {
-					_, _ = s.db.Exec(ctx, `update node_agents
+					if _, err := s.db.Exec(ctx, `update node_agents
 						set agent_token_hash=$2,
 						    token_hint=$3,
 						    status='active',
 						    revoked_at=null
-						where node_id=$1`, *scopeID, newTokenHash, newHint)
-					_, _ = s.db.Exec(ctx, `update nodes set agent_status='online',updated_at=now() where id=$1`, *scopeID)
+						where node_id=$1`, *scopeID, newTokenHash, newHint); err != nil {
+						return err
+					}
+					if _, err := s.db.Exec(ctx, `update nodes set agent_status='online',updated_at=now() where id=$1`, *scopeID); err != nil {
+						return err
+					}
 				}
 			}
 		case "node.emergency_cleanup":
@@ -2358,27 +2440,41 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 				nodeID = strings.TrimSpace(stringify(payload["node_id"]))
 			}
 			if nodeID != "" {
-				_ = s.applyNodeEmergencyCleanupResult(ctx, nodeID, payload)
+				if err := s.applyNodeEmergencyCleanupResult(ctx, nodeID, payload); err != nil {
+					return err
+				}
 			}
 		case "client.revoke":
 			if scopeID != nil {
-				_, _ = s.db.Exec(ctx, `update client_accounts set status='revoked',updated_at=now() where id=$1`, *scopeID)
-				_, _ = s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, *scopeID)
-				_, _ = s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, *scopeID)
-				_, _ = s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, *scopeID)
-				s.queueRoutePolicyJobsForClient(ctx, *scopeID)
+				if _, err := s.db.Exec(ctx, `update client_accounts set status='revoked',updated_at=now() where id=$1`, *scopeID); err != nil {
+					return err
+				}
+				if _, err := s.db.Exec(ctx, `update service_accesses set status='revoked',updated_at=now() where client_account_id=$1`, *scopeID); err != nil {
+					return err
+				}
+				if _, err := s.db.Exec(ctx, `update client_access_routes set status='revoked',updated_at=now() where client_account_id=$1`, *scopeID); err != nil {
+					return err
+				}
+				if _, err := s.db.Exec(ctx, `update client_subscriptions set status='revoked',updated_at=now() where client_account_id=$1 and status='active'`, *scopeID); err != nil {
+					return err
+				}
+				if err := s.queueRoutePolicyJobsForClient(ctx, *scopeID); err != nil {
+					return err
+				}
 			}
 		case "platform.control_plane_tls.apply":
-			_ = s.MarkControlPlaneTLSApplyResult(ctx, true, "")
+			if err := s.MarkControlPlaneTLSApplyResult(ctx, true, ""); err != nil {
+				return err
+			}
 		}
 	} else if strings.HasPrefix(jobType, "node.backhaul.") {
 		switch jobType {
 		case "node.backhaul.apply":
-			s.ApplyBackhaulJobResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
+			return s.ApplyBackhaulJobResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
 		case "node.backhaul.probe":
-			s.ApplyBackhaulProbeResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
+			return s.ApplyBackhaulProbeResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
 		case "node.backhaul.cleanup":
-			s.ApplyBackhaulCleanupResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
+			return s.ApplyBackhaulCleanupResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
 		}
 	} else if jobType == "platform.control_plane_tls.apply" {
 		errText := strings.TrimSpace(stringify(result["error"]))
@@ -2388,9 +2484,13 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 		if errText == "" {
 			errText = "control plane tls apply failed"
 		}
-		_ = s.MarkControlPlaneTLSApplyResult(ctx, false, errText)
+		if err := s.MarkControlPlaneTLSApplyResult(ctx, false, errText); err != nil {
+			return err
+		}
 	} else if jobType == "node.bootstrap" && scopeID != nil {
-		_, _ = s.db.Exec(ctx, `update nodes set status='draft',updated_at=now() where id=$1 and status='bootstrapping'`, *scopeID)
+		if _, err := s.db.Exec(ctx, `update nodes set status='draft',updated_at=now() where id=$1 and status='bootstrapping'`, *scopeID); err != nil {
+			return err
+		}
 	}
 
 	if jobType == "node.bootstrap" {
@@ -2515,7 +2615,9 @@ func (s *Store) applyInstanceJobCompletionSideEffects(ctx context.Context, insta
 		}
 	}
 	if routePolicyNeeded {
-		s.queueRoutePolicyJobForInstance(ctx, instanceID)
+		if err := s.queueRoutePolicyJobForInstance(ctx, instanceID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -2553,27 +2655,45 @@ func (s *Store) applyNodeEmergencyCleanupResult(ctx context.Context, nodeID stri
 	}
 	rows.Close()
 	for _, instanceID := range instanceIDs {
-		_, _ = s.db.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, instanceID)
+		if _, err := s.db.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, instanceID); err != nil {
+			return err
+		}
 		tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-		if err == nil {
-			cleanup, cleanupErr := s.cleanupInstanceClientServiceAccesses(ctx, tx, instanceID)
-			if cleanupErr != nil {
-				_ = tx.Rollback(ctx)
-			} else if commitErr := tx.Commit(ctx); commitErr != nil {
-				_ = tx.Rollback(ctx)
-			} else if len(cleanup.paths) > 0 {
-				s.removeManagedArtifactFiles(cleanup.paths)
+		if err != nil {
+			return err
+		}
+		cleanup, cleanupErr := s.cleanupInstanceClientServiceAccesses(ctx, tx, instanceID)
+		if cleanupErr != nil {
+			_ = tx.Rollback(ctx)
+			return cleanupErr
+		}
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			_ = tx.Rollback(ctx)
+			return commitErr
+		}
+		if len(cleanup.paths) > 0 {
+			_, fileErrors := s.removeManagedArtifactFiles(cleanup.paths)
+			if len(fileErrors) > 0 {
+				_, _ = s.CreateAudit(ctx, "system", "instance.artifact_cleanup.warning", "instance", &instanceID, strings.Join(fileErrors, "; "))
 			}
 		}
 		s.releaseInstanceAddressPoolAllocations(ctx, instanceID)
 	}
 	if includeAgent {
-		_, _ = s.db.Exec(ctx, `update node_agents set status='revoked',revoked_at=now() where node_id=$1`, nodeID)
-		_, _ = s.db.Exec(ctx, `update nodes set status='draft',agent_status='removed',last_heartbeat_at=null,updated_at=now() where id=$1 and status <> 'retired'`, nodeID)
+		if _, err := s.db.Exec(ctx, `update node_agents set status='revoked',revoked_at=now() where node_id=$1`, nodeID); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(ctx, `update nodes set status='draft',agent_status='removed',last_heartbeat_at=null,updated_at=now() where id=$1 and status <> 'retired'`, nodeID); err != nil {
+			return err
+		}
 	} else {
-		_, _ = s.db.Exec(ctx, `update nodes set updated_at=now() where id=$1 and status <> 'retired'`, nodeID)
+		if _, err := s.db.Exec(ctx, `update nodes set updated_at=now() where id=$1 and status <> 'retired'`, nodeID); err != nil {
+			return err
+		}
 		if cleanupScope == "services_only" {
-			_, _ = s.CreateNodeRoutePolicyApplyJob(ctx, nodeID)
+			if _, err := s.CreateNodeRoutePolicyApplyJob(ctx, nodeID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -2590,7 +2710,9 @@ func (s *Store) insertCapabilityInstallEvent(ctx context.Context, nodeID, jobID,
 		summary = "capability job event"
 	}
 	var payload map[string]any
-	_ = json.Unmarshal(payloadJSON, &payload)
+	if err := decodeJSONField(payloadJSON, &payload, "node_capability_install_events.payload_json"); err != nil {
+		return err
+	}
 	if payload == nil {
 		payload = map[string]any{}
 	}
@@ -3007,12 +3129,14 @@ func (s *Store) HeartbeatByNodeIDWithVersion(ctx context.Context, nodeID, agentV
 	if cmd.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
-	_, _ = s.db.Exec(ctx, `update node_agents
+	if _, err := s.db.Exec(ctx, `update node_agents
 		set last_seen_at=$2,
 		    status='active',
 		    agent_version=coalesce(nullif($3,''),agent_version),
 		    protocol_version=coalesce(nullif($4,''),protocol_version)
-		where node_id=$1`, nodeID, now, strings.TrimSpace(agentVersion), strings.TrimSpace(protocolVersion))
+		where node_id=$1`, nodeID, now, strings.TrimSpace(agentVersion), strings.TrimSpace(protocolVersion)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -3034,8 +3158,12 @@ func scanJob(row jobScanner) (domain.Job, error) {
 	if err := row.Scan(&j.ID, &j.Type, &j.ScopeType, &j.ScopeID, &j.NodeID, &j.InstanceID, &j.Status, &j.Priority, &p, &r, &j.LockedBy, &j.LockedUntil, &j.CreatedAt, &j.StartedAt, &j.FinishedAt); err != nil {
 		return domain.Job{}, err
 	}
-	_ = json.Unmarshal(p, &j.Payload)
-	_ = json.Unmarshal(r, &j.Result)
+	if err := decodeJSONField(p, &j.Payload, "jobs.payload_json"); err != nil {
+		return domain.Job{}, err
+	}
+	if err := decodeJSONField(r, &j.Result, "jobs.result_json"); err != nil {
+		return domain.Job{}, err
+	}
 	if j.Payload == nil {
 		j.Payload = map[string]any{}
 	}
@@ -3104,7 +3232,9 @@ func scanNodeServiceDiscovery(row nodeServiceDiscoveryScanner) (domain.NodeServi
 	if err := row.Scan(&x.ID, &x.NodeID, &x.ServiceCode, &x.Name, &x.SystemdUnit, &x.ConfigPath, &x.Status, &x.Source, &x.Confidence, &x.EndpointHost, &x.EndpointPort, &x.ManagedInstanceID, &b, &x.DetectedAt); err != nil {
 		return domain.NodeServiceDiscovery{}, err
 	}
-	_ = json.Unmarshal(b, &x.Payload)
+	if err := decodeJSONField(b, &x.Payload, "node_service_discoveries.payload_json"); err != nil {
+		return domain.NodeServiceDiscovery{}, err
+	}
 	if x.Payload == nil {
 		x.Payload = map[string]any{}
 	}
@@ -3119,7 +3249,9 @@ func scanNodeInventory(row nodeInventoryScanner) (domain.NodeInventorySnapshot, 
 	if err := row.Scan(&x.ID, &x.NodeID, &b, &x.CreatedAt); err != nil {
 		return domain.NodeInventorySnapshot{}, err
 	}
-	_ = json.Unmarshal(b, &x.Payload)
+	if err := decodeJSONField(b, &x.Payload, "node_inventory_snapshots.payload_json"); err != nil {
+		return domain.NodeInventorySnapshot{}, err
+	}
 	if x.Payload == nil {
 		x.Payload = map[string]any{}
 	}
@@ -3374,6 +3506,16 @@ func mustJSON(v any) []byte {
 	return b
 }
 
+func decodeJSONField(raw []byte, target any, field string) error {
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		return fmt.Errorf("decode %s: %w", field, err)
+	}
+	return nil
+}
+
 func redactSensitiveMapForStorage(src map[string]any) map[string]any {
 	if src == nil {
 		return nil
@@ -3504,7 +3646,9 @@ func (s *Store) latestInstanceSpec(ctx context.Context, instanceID string) (map[
 		return nil, err
 	}
 	var spec map[string]any
-	_ = json.Unmarshal(raw, &spec)
+	if err := decodeJSONField(raw, &spec, "instance_revisions.spec_json"); err != nil {
+		return nil, err
+	}
 	if spec == nil {
 		spec = map[string]any{}
 	}
@@ -3539,8 +3683,12 @@ func (s *Store) ListInstanceRevisions(ctx context.Context, instanceID string, li
 		if err := rows.Scan(&rev.ID, &rev.InstanceID, &rev.Source, &rev.Status, &rev.RenderedHash, &rev.RevisionNo, &specRaw, &validationRaw, &rev.CreatedAt, &rev.AppliedAt, &rev.IsCurrent, &rev.IsLastApplied); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(specRaw, &rev.Spec)
-		_ = json.Unmarshal(validationRaw, &rev.ValidationErrors)
+		if err := decodeJSONField(specRaw, &rev.Spec, "instance_revisions.spec_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(validationRaw, &rev.ValidationErrors, "instance_revisions.validation_errors_json"); err != nil {
+			return nil, err
+		}
 		if rev.Spec == nil {
 			rev.Spec = map[string]any{}
 		}
@@ -3646,15 +3794,22 @@ func (s *Store) createInstanceRevision(ctx context.Context, instanceID, source, 
 		status, renderedHash, validationErrors = s.validateInstanceRevisionSpec(ctx, instance, spec)
 	}
 	var revisionNo int
-	_ = s.db.QueryRow(ctx, `select coalesce(max(revision_no),0)+1 from instance_revisions where instance_id=$1`, instanceID).Scan(&revisionNo)
-	b, _ := json.Marshal(spec)
+	if err := s.db.QueryRow(ctx, `select coalesce(max(revision_no),0)+1 from instance_revisions where instance_id=$1`, instanceID).Scan(&revisionNo); err != nil {
+		return domain.InstanceRevision{}, err
+	}
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return domain.InstanceRevision{}, err
+	}
 	rev := domain.InstanceRevision{ID: id.New(), InstanceID: instanceID, RevisionNo: revisionNo, Source: source, Status: status, RenderedHash: renderedHash, Spec: spec, ValidationErrors: validationErrors, CreatedAt: time.Now().UTC(), IsCurrent: true}
 	if instance.CurrentRevisionID != nil && strings.TrimSpace(*instance.CurrentRevisionID) != "" {
-		_, _ = s.db.Exec(ctx, `update instance_revisions
+		if _, err := s.db.Exec(ctx, `update instance_revisions
 			set status='superseded'
 			where id=$1
 			  and id is distinct from $2
-			  and status in ('draft','validated','failed')`, *instance.CurrentRevisionID, nullIfEmpty(derefString(instance.LastAppliedRevisionID)))
+			  and status in ('draft','validated','failed')`, *instance.CurrentRevisionID, nullIfEmpty(derefString(instance.LastAppliedRevisionID))); err != nil {
+			return domain.InstanceRevision{}, err
+		}
 	}
 	if _, err := s.db.Exec(ctx, `insert into instance_revisions(id,instance_id,revision_no,source,status,spec_json,rendered_hash,validation_errors_json,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,now())`, rev.ID, rev.InstanceID, rev.RevisionNo, rev.Source, rev.Status, b, nullIfEmpty(rev.RenderedHash), mustJSON(rev.ValidationErrors)); err != nil {
 		return rev, err

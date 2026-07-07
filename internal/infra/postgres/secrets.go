@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -59,7 +58,9 @@ func (s *Store) GetSecretRef(ctx context.Context, secretRefID string) (domain.Se
 	if err != nil {
 		return domain.SecretRef{}, err
 	}
-	_ = json.Unmarshal(metaRaw, &ref.Meta)
+	if err := decodeJSONField(metaRaw, &ref.Meta, "secret_refs.meta_json"); err != nil {
+		return domain.SecretRef{}, err
+	}
 	if ref.Meta == nil {
 		ref.Meta = map[string]any{}
 	}
@@ -77,7 +78,9 @@ func (s *Store) ResolveSecretValue(ctx context.Context, secretRefID string) (dom
 	if err != nil {
 		return domain.SecretRef{}, nil, err
 	}
-	_ = json.Unmarshal(metaRaw, &ref.Meta)
+	if err := decodeJSONField(metaRaw, &ref.Meta, "secret_refs.meta_json"); err != nil {
+		return domain.SecretRef{}, nil, err
+	}
 	if ref.Meta == nil {
 		ref.Meta = map[string]any{}
 	}
