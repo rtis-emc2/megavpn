@@ -235,6 +235,7 @@ func TestBuildOpenVPNServerConfigAddsManagedStatusFile(t *testing.T) {
 	}, "/etc/openvpn/server/megavpn-edge-openvpn-udp")
 
 	for _, want := range []string{
+		managedRuntimeConfigHeader,
 		"ifconfig-pool-persist /etc/openvpn/server/megavpn-edge-openvpn-udp/ipp.txt",
 		"status-version 2",
 		"status /etc/openvpn/server/megavpn-edge-openvpn-udp/status.log 60",
@@ -265,6 +266,7 @@ func TestBuildWireGuardServerConfigAddsPeerAttributionComments(t *testing.T) {
 		t.Fatalf("buildWireGuardServerConfig returned error: %v", err)
 	}
 	for _, want := range []string{
+		managedRuntimeConfigHeader,
 		"# megavpn-service-access-id = 3d7f9a79-8738-41fa-9322-58b8bc12b10e",
 		"# megavpn-client = nlgate.999-iphone",
 		"PublicKey = client-public-key",

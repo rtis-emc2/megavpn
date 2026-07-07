@@ -32,6 +32,53 @@ func TestEmergencyCleanupManagedUnitAllowlist(t *testing.T) {
 	}
 }
 
+func TestEmergencyCleanupManagedServiceConfigDetection(t *testing.T) {
+	openVPN := emergencyManagedRuntimeConfigHeader + "\nport 1194\n"
+	if !isEmergencyManagedOpenVPNConfigContent(openVPN) {
+		t.Fatal("expected OpenVPN config with managed header to be detected")
+	}
+	legacyOpenVPN := "ca /etc/openvpn/server/megavpn-edge/ca.crt\ncert /etc/openvpn/server/megavpn-edge/server.crt\n"
+	if !isEmergencyManagedOpenVPNConfigContent(legacyOpenVPN) {
+		t.Fatal("expected legacy OpenVPN config with megavpn runtime dir to be detected")
+	}
+	if isEmergencyManagedOpenVPNConfigContent("ca /etc/openvpn/server/server/ca.crt\n") {
+		t.Fatal("did not expect unrelated OpenVPN config to be detected")
+	}
+
+	wireGuard := emergencyManagedRuntimeConfigHeader + "\n[Interface]\n"
+	if !isEmergencyManagedWireGuardConfigContent(wireGuard) {
+		t.Fatal("expected WireGuard config with managed header to be detected")
+	}
+	legacyWireGuard := "[Interface]\n\n# megavpn-service-access-id = access-1\n[Peer]\n"
+	if !isEmergencyManagedWireGuardConfigContent(legacyWireGuard) {
+		t.Fatal("expected legacy WireGuard config with managed peer marker to be detected")
+	}
+	if isEmergencyManagedWireGuardConfigContent("[Interface]\nAddress = 10.0.0.1/24\n") {
+		t.Fatal("did not expect unrelated WireGuard config to be detected")
+	}
+}
+
+func TestEmergencyManagedServiceUnitForConfigPath(t *testing.T) {
+	cases := map[string]string{
+		"/etc/openvpn/server/edge.conf": "openvpn-server@edge.service",
+		"/etc/wireguard/wg-edge.conf":   "wg-quick@wg-edge.service",
+	}
+	for path, want := range cases {
+		if got := emergencyManagedServiceUnitForConfigPath(path); got != want {
+			t.Fatalf("unit for %s = %q, want %q", path, got, want)
+		}
+	}
+	for _, path := range []string{
+		"/etc/openvpn/client/edge.conf",
+		"/tmp/wg-edge.conf",
+		"/etc/wireguard/../ssh.conf",
+	} {
+		if got := emergencyManagedServiceUnitForConfigPath(path); got != "" {
+			t.Fatalf("expected %s to be rejected, got unit %q", path, got)
+		}
+	}
+}
+
 func TestEmergencyCleanupServicesOnlyPreservesBackhaulAndRoutePolicy(t *testing.T) {
 	allowed := []string{
 		"megavpn-netpolicy-edge.service",
