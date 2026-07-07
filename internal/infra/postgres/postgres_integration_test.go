@@ -436,6 +436,78 @@ func TestPostgresIntegrationDefaultFirewallBaseline(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationFirewallApplyCreatesRevisionJobAndNodeState(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-fw-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.8.10",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	inventory, err := store.FirewallInventory(ctx)
+	if err != nil {
+		t.Fatalf("firewall inventory: %v", err)
+	}
+	var nodeBase domain.FirewallPolicy
+	for _, policy := range inventory.Policies {
+		if policy.Key == "node_base" {
+			nodeBase = policy
+			break
+		}
+	}
+	if nodeBase.ID == "" {
+		t.Fatal("node_base firewall policy was not seeded")
+	}
+
+	job, err := store.CreateFirewallApplyJob(ctx, node.ID, nodeBase.ID, true)
+	if err != nil {
+		t.Fatalf("create firewall apply job by policy UUID: %v", err)
+	}
+	if job.Type != "node.firewall.apply" || job.NodeID == nil || *job.NodeID != node.ID {
+		t.Fatalf("firewall job = %#v, want node.firewall.apply for node %s", job, node.ID)
+	}
+	if got := firstString(job.Payload["policy_id"]); got != nodeBase.ID {
+		t.Fatalf("firewall job policy_id = %q, want %s", got, nodeBase.ID)
+	}
+	if got, ok := job.Payload["enforce_default_policy"].(bool); !ok || !got {
+		t.Fatalf("firewall job enforce_default_policy = %#v, want true", job.Payload["enforce_default_policy"])
+	}
+
+	var revisionID, desiredRevisionID, status, lastJobID string
+	if err := store.db.QueryRow(ctx, `select coalesce(revision_id::text,''),coalesce(desired_revision_id::text,''),status,coalesce(last_job_id::text,'') from firewall_node_state where node_id=$1`, node.ID).
+		Scan(&revisionID, &desiredRevisionID, &status, &lastJobID); err != nil {
+		t.Fatalf("read firewall node state: %v", err)
+	}
+	if revisionID != "" || desiredRevisionID == "" || status != "pending" || lastJobID != job.ID {
+		t.Fatalf("firewall node state = revision:%q desired:%q status:%q last_job:%q, want pending desired revision for job %s",
+			revisionID, desiredRevisionID, status, lastJobID, job.ID)
+	}
+
+	if err := store.CompleteJob(ctx, job.ID, "succeeded", map[string]any{"rendered_hash": "sha256:test-firewall"}); err != nil {
+		t.Fatalf("complete firewall apply job: %v", err)
+	}
+	var appliedRevisionID string
+	if err := store.db.QueryRow(ctx, `select coalesce(revision_id::text,''),status from firewall_node_state where node_id=$1`, node.ID).
+		Scan(&appliedRevisionID, &status); err != nil {
+		t.Fatalf("read applied firewall node state: %v", err)
+	}
+	if appliedRevisionID != desiredRevisionID || status != "applied" {
+		t.Fatalf("applied firewall node state = revision:%q status:%q, want revision %s applied", appliedRevisionID, status, desiredRevisionID)
+	}
+}
+
 func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 

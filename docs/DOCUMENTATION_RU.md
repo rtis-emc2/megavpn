@@ -1,6 +1,6 @@
 # Индекс документации
 
-**Релиз:** `7.1.0.13`
+**Релиз:** `7.1.0.14`
 
 Этот документ - русская входная точка в документацию RTIS MegaVPN. Он фиксирует,
 где находится источник правды по каждому направлению: эксплуатация,
@@ -27,7 +27,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | 13 | [VLESS-подписки](VLESS_SUBSCRIPTIONS_RU.md) | Per-client VLESS subscription tokens и workflow доставки |
 | 14 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
 | 15 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
-| 16 | [Security review](SECURITY_REVIEW_7.1.0.13.md) | Security и release review artifact |
+| 16 | [Security review](SECURITY_REVIEW_7.1.0.14.md) | Security и release review artifact |
 | 17 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
 
 ## Владение документацией
@@ -71,7 +71,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 - Если в Control Plane есть managed workflow, документация не должна предлагать
   ручное изменение node как основной путь.
 - Каждый поддерживаемый документационный файл должен содержать release banner:
-  `7.1.0.13`.
+  `7.1.0.14`.
 
 ## Текущие gaps документации
 

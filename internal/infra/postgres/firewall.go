@@ -17,6 +17,7 @@ import (
 )
 
 var firewallKeyRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{1,62}$`)
+var firewallUUIDRE = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 func (s *Store) EnsureDefaultFirewallPolicies(ctx context.Context) error {
 	tx, err := s.db.Begin(ctx)
@@ -584,22 +585,34 @@ func (s *Store) CreateFirewallApplyJob(ctx context.Context, nodeID, policyID str
 	if err != nil {
 		return domain.Job{}, err
 	}
-	_, err = s.db.Exec(ctx, `insert into firewall_revisions(id,policy_id,revision_no,rendered_hash,rules_json,status,created_at)
+	job, payloadJSON, err := normalizeJobForInsert(domain.Job{Type: "node.firewall.apply", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Payload: built.payload})
+	if err != nil {
+		return domain.Job{}, err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, err = tx.Exec(ctx, `insert into firewall_revisions(id,policy_id,revision_no,rendered_hash,rules_json,status,created_at)
 values($1,$2,$3,'',$4,'active',now())`, built.revisionID, built.policy.ID, built.revisionNo, mustJSON(built.rulePayload))
 	if err != nil {
 		return domain.Job{}, err
 	}
-	job, err := s.CreateJob(ctx, domain.Job{Type: "node.firewall.apply", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Payload: built.payload})
-	if err != nil {
+	if err := insertJobRow(ctx, tx, job, payloadJSON); err != nil {
 		return domain.Job{}, err
 	}
-	_, err = s.db.Exec(ctx, `insert into firewall_node_state(id,node_id,policy_id,revision_id,desired_revision_id,status,observed_json,last_job_id,updated_at)
+	_, err = tx.Exec(ctx, `insert into firewall_node_state(id,node_id,policy_id,revision_id,desired_revision_id,status,observed_json,last_job_id,updated_at)
 values($1,$2,$3,null,$4,'pending','{}'::jsonb,$5,now())
 on conflict(node_id) do update set policy_id=excluded.policy_id, desired_revision_id=excluded.desired_revision_id, status='pending', last_job_id=excluded.last_job_id, updated_at=now()`,
 		id.New(), nodeID, built.policy.ID, built.revisionID, job.ID)
 	if err != nil {
 		return domain.Job{}, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Job{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "job.create", "job", &job.ID, "job queued")
 	_, _ = s.CreateAudit(ctx, "system", "firewall.apply", "node", &nodeID, "firewall apply queued")
 	return job, nil
 }
@@ -645,12 +658,13 @@ limit 1`, nodeID)
 }
 
 func (s *Store) getFirewallPolicy(ctx context.Context, policyID string) (domain.FirewallPolicy, error) {
+	policyID = strings.TrimSpace(policyID)
 	row := s.db.QueryRow(ctx, `select p.id,p.key,p.label,p.description,p.scope,coalesce(p.node_id::text,''),coalesce(n.name,''),p.default_input_policy,p.default_forward_policy,p.default_output_policy,p.status,
 	(select count(*) from firewall_rules r where r.policy_id=p.id and r.status <> 'deleted')::int,
 	p.created_at,p.updated_at
 from firewall_policies p
 left join nodes n on n.id=p.node_id
-where p.id=$1 or p.key=$1`, policyID)
+where ($2::uuid is not null and p.id=$2::uuid) or p.key=$1`, policyID, nullableFirewallLookupUUID(policyID))
 	return scanFirewallPolicy(row)
 }
 
@@ -660,7 +674,7 @@ func (s *Store) getFirewallAddressList(ctx context.Context, listID string) (doma
 	(select count(*) from firewall_address_entries e where e.list_id=l.id and e.status <> 'deleted')::int,
 	l.created_at,l.updated_at
 from firewall_address_lists l
-where (l.id=$1 or l.key=$1) and l.status <> 'deleted'`, listID)
+where (($2::uuid is not null and l.id=$2::uuid) or l.key=$1) and l.status <> 'deleted'`, listID, nullableFirewallLookupUUID(listID))
 	return scanFirewallAddressList(row)
 }
 
@@ -1247,6 +1261,14 @@ func nullableFirewallID(value *string) any {
 		return nil
 	}
 	return strings.TrimSpace(*value)
+}
+
+func nullableFirewallLookupUUID(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" || !firewallUUIDRE.MatchString(value) {
+		return nil
+	}
+	return value
 }
 
 func archivedFirewallKey(key, idValue string) string {

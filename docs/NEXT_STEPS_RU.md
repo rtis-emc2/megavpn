@@ -1,6 +1,6 @@
 # Следующие шаги
 
-**Релиз:** `7.1.0.13`
+**Релиз:** `7.1.0.14`
 
 Актуальный baseline: [`ROADMAP_V1_AND_TZ_RU.md`](../ROADMAP_V1_AND_TZ_RU.md).
 Английская версия: [`NEXT_STEPS.md`](NEXT_STEPS.md).

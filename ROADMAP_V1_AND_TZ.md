@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.13`
+**Release:** `7.1.0.14`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.13`
+**Code baseline:** RTIS MegaVPN `7.1.0.14`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,13 +23,13 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.13` continues the production-hardening line after the firewall,
+`7.1.0.14` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
-documentation-gate and VLESS provisioning-sync releases. This release adds
-expected-vs-observed Traffic Accounting collector coverage on top of the
-collector freshness model, so live-node validation can see when an active
-traffic-accounting-enabled managed instance should report but no sample stream
-has arrived. The codebase already has a working control-plane foundation:
+documentation-gate, VLESS provisioning-sync and traffic-accounting collector
+coverage releases. This release hardens Firewall apply on upgraded PostgreSQL
+installations by removing mixed UUID/text prepared-statement lookups and
+aligning firewall schema constraints with the runtime catalog model. The
+codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
