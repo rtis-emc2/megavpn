@@ -1,6 +1,6 @@
 # Documentation Review
 
-**Release:** `7.1.0.28`
+**Release:** `7.1.0.29`
 
 **Date:** 2026-07-02
 
@@ -20,7 +20,7 @@ Russian review: [DOCUMENTATION_REVIEW_RU.md](DOCUMENTATION_REVIEW_RU.md).
 | The operator guide did not cover a clean-host installation path | Operators still had to infer installer, env, migration, systemd and nginx steps from scripts | Expanded EN/RU guides from installation through first system setup and runtime validation |
 | Release gate did not require the new user-facing docs | Documentation could regress silently | Updated `docs/RELEASE_GATES.md` and `scripts/self-test.sh` documentation gate |
 | Product roadmap, release evidence and operational procedures were not clearly separated | High risk of stale operational instructions in overview docs | README now links to source-of-truth docs instead of duplicating runbooks |
-| Release version was not visible in every primary document | Operators could confuse current release docs with historical roadmap notes | Added a `7.1.0.28` release banner to maintained documentation files |
+| Release version was not visible in every primary document | Operators could confuse current release docs with historical roadmap notes | Added a `7.1.0.29` release banner to maintained documentation files |
 | Roadmap and next-step notes mixed languages under default filenames | Documentation ownership was unclear for English and Russian operators | Split roadmap and next-step notes into English defaults and `_RU` companions |
 | VLESS access groups moved out of instance manage but docs still described the old workflow | Operators could configure client groups in the wrong place or miss the required re-apply step | Added paired VLESS access-group docs and updated the operator guide to use `Instances -> VLESS groups` |
 

@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.28`
+**Release:** `7.1.0.29`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.28`
+**Code baseline:** RTIS MegaVPN `7.1.0.29`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,18 +23,19 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.28` continues the production-hardening line after the firewall,
+`7.1.0.29` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate, VLESS provisioning-sync, traffic-accounting collector
 coverage, firewall apply hardening and lost-node lifecycle releases. This
-release focuses on operator diagnostics for stuck-looking runtime apply flows:
-the Jobs UI now distinguishes agent queue wait, agent claim/lease and
-agent-result wait states for `instance.apply` and other node-agent jobs instead
-of showing a generic `n/a` result. The preceding `7.1.0.27` hotfix repaired the
-VLESS client identity provisioning SQL cast after stabilizing node replacement:
-issued client UUIDs are stored as client-level service identities, backfilled
-from existing access metadata and reused when replacement ingress instances are
-provisioned. The codebase already has a working control-plane foundation:
+release focuses on service-pack rollout idempotency: repeated submits for the
+same node, endpoint host, service and listen port reuse existing components
+instead of creating suffixed duplicate runtime instances. The preceding
+`7.1.0.28` hotfix made agent-handled job wait states explicit in Jobs UI, and
+`7.1.0.27` repaired the VLESS client identity provisioning SQL cast after
+stabilizing node replacement: issued client UUIDs are stored as client-level
+service identities, backfilled from existing access metadata and reused when
+replacement ingress instances are provisioned. The codebase already has a
+working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.

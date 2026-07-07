@@ -3,6 +3,7 @@ package http
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rtis-emc2/megavpn/internal/domain"
@@ -190,6 +191,63 @@ func TestSelectServicePackComponentsHTTPRejectsInvalidSelections(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestFindExistingServicePackComponentInstancePrefersCanonicalPackInstance(t *testing.T) {
+	pack, found := findServicePack("xray_nginx_http_edge")
+	if !found {
+		t.Fatal("xray_nginx_http_edge service pack is required")
+	}
+	component := pack.Components[0]
+	baseName, baseSlug := servicePackComponentBaseIdentity("portal-edge", component)
+	now := time.Now().UTC()
+	instances := []domain.Instance{
+		{
+			ID:           "duplicate",
+			NodeID:       "node-1",
+			ServiceCode:  "xray-core",
+			Name:         baseName + " 2",
+			Slug:         baseSlug + "-2",
+			Status:       "provisioning",
+			EndpointHost: "portal.nlgate.ru",
+			EndpointPort: 7080,
+			CreatedAt:    now.Add(-2 * time.Minute),
+		},
+		{
+			ID:           "canonical",
+			NodeID:       "node-1",
+			ServiceCode:  "xray-core",
+			Name:         baseName,
+			Slug:         baseSlug,
+			Status:       "provisioning",
+			EndpointHost: "portal.nlgate.ru",
+			EndpointPort: 7080,
+			CreatedAt:    now.Add(-time.Minute),
+		},
+		{
+			ID:           "other-host",
+			NodeID:       "node-1",
+			ServiceCode:  "xray-core",
+			Name:         baseName,
+			Slug:         baseSlug,
+			Status:       "provisioning",
+			EndpointHost: "other.nlgate.ru",
+			EndpointPort: 7080,
+			CreatedAt:    now.Add(-3 * time.Minute),
+		},
+	}
+
+	got, ok := findExistingServicePackComponentInstance(instances, "node-1", component, baseName, baseSlug, "portal.nlgate.ru")
+	if !ok {
+		t.Fatal("expected existing service pack component instance")
+	}
+	if got.ID != "canonical" {
+		t.Fatalf("existing instance = %q, want canonical", got.ID)
+	}
+
+	if _, ok := findExistingServicePackComponentInstance(instances, "node-1", component, baseName, baseSlug, "new.nlgate.ru"); ok {
+		t.Fatal("different endpoint host must not match existing component")
 	}
 }
 

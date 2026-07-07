@@ -477,6 +477,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 		req.CertificateID = certificateID
 	}
 	created := make([]domain.Instance, 0, len(componentList))
+	existing := make([]domain.Instance, 0)
 	applyNowInstanceIDs := []string{}
 	dependentInstanceIDsByRuntime := map[string][]string{}
 	existingInstances, err := s.store.ListInstances(r.Context())
@@ -487,13 +488,10 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 	identitySet := newServicePackInstanceIdentitySet(existingInstances)
 	for _, selected := range selectedComponents {
 		component := selected.Component
-		baseName := req.BaseName
-		if suffix := strings.TrimSpace(component.NameSuffix); suffix != "" {
-			baseName += "-" + suffix
-		}
-		baseSlug := slugifyHTTP(req.BaseName)
-		if suffix := strings.TrimSpace(component.SlugSuffix); suffix != "" {
-			baseSlug += "-" + slugifyHTTP(suffix)
+		baseName, baseSlug := servicePackComponentBaseIdentity(req.BaseName, component)
+		if existingInstance, ok := findExistingServicePackComponentInstance(existingInstances, req.NodeID, component, baseName, baseSlug, req.EndpointHost); ok {
+			existing = append(existing, existingInstance)
+			continue
 		}
 		var createdInstance domain.Instance
 		var createErr error
@@ -549,12 +547,13 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 		if createErr != nil {
 			discarded := discardCreatedServicePackInstances(r.Context(), s.store, created)
 			writeJSON(w, 409, response{
-				"status":            "partial_failure",
-				"error":             fmt.Sprintf("service pack component %q is not apply-ready: %v", servicePackComponentLabel(component), createErr),
-				"component":         servicePackComponentLabel(component),
-				"service_pack_key":  pack.Key,
-				"created_instances": created,
-				"discarded_count":   discarded,
+				"status":             "partial_failure",
+				"error":              fmt.Sprintf("service pack component %q is not apply-ready: %v", servicePackComponentLabel(component), createErr),
+				"component":          servicePackComponentLabel(component),
+				"service_pack_key":   pack.Key,
+				"created_instances":  created,
+				"existing_instances": existing,
+				"discarded_count":    discarded,
 			})
 			return
 		}
@@ -582,6 +581,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 				"service_pack_key":     pack.Key,
 				"runtime_service_code": runtimeCode,
 				"created_instances":    created,
+				"existing_instances":   existing,
 				"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
 			})
 			return
@@ -597,6 +597,7 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 				"error":                err.Error(),
 				"service_pack_key":     pack.Key,
 				"created_instances":    created,
+				"existing_instances":   existing,
 				"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
 				"apply_jobs":           redactedJobs(applyJobs),
 			})
@@ -606,12 +607,23 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 	}
 	authCtx, ok := authFromRequest(r)
 	if ok {
-		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "service_pack.create", "service_pack", nil, "service pack created: "+pack.Key)
+		if len(created) == 0 && len(existing) > 0 {
+			_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "service_pack.reuse", "service_pack", nil, "service pack already existed: "+pack.Key)
+		} else {
+			_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "service_pack.create", "service_pack", nil, "service pack created: "+pack.Key)
+		}
 	}
-	writeJSON(w, 201, response{
-		"status":               "ok",
+	statusCode := 201
+	statusText := "ok"
+	if len(created) == 0 && len(existing) > 0 {
+		statusCode = 200
+		statusText = "already_exists"
+	}
+	writeJSON(w, statusCode, response{
+		"status":               statusText,
 		"service_pack_key":     pack.Key,
 		"created_instances":    created,
+		"existing_instances":   existing,
 		"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
 		"apply_jobs":           redactedJobs(applyJobs),
 	})
@@ -1117,6 +1129,92 @@ func isServicePackCatalogUnavailable(err error) bool {
 type servicePackInstanceIdentitySet struct {
 	slugs     map[string]struct{}
 	nodeNames map[string]struct{}
+}
+
+func servicePackComponentBaseIdentity(baseName string, component domain.ServicePackComponent) (string, string) {
+	baseName = strings.TrimSpace(baseName)
+	if baseName == "" {
+		baseName = "instance"
+	}
+	name := baseName
+	if suffix := strings.TrimSpace(component.NameSuffix); suffix != "" {
+		name += "-" + suffix
+	}
+	slug := slugifyHTTP(baseName)
+	if suffix := strings.TrimSpace(component.SlugSuffix); suffix != "" {
+		slug += "-" + slugifyHTTP(suffix)
+	}
+	return name, slug
+}
+
+func findExistingServicePackComponentInstance(instances []domain.Instance, nodeID string, component domain.ServicePackComponent, baseName, baseSlug, endpointHost string) (domain.Instance, bool) {
+	nodeID = strings.TrimSpace(nodeID)
+	serviceCode := driver.NormalizeCode(component.ServiceCode)
+	endpointHost = strings.ToLower(strings.TrimSpace(endpointHost))
+	endpointPort := component.EndpointPort
+	baseName = strings.ToLower(strings.TrimSpace(baseName))
+	baseSlug = strings.ToLower(slugifyHTTP(baseSlug))
+	bestScore := 0
+	var best domain.Instance
+	for _, instance := range instances {
+		if strings.TrimSpace(instance.ID) == "" || strings.EqualFold(strings.TrimSpace(instance.Status), "deleted") {
+			continue
+		}
+		if strings.TrimSpace(instance.NodeID) != nodeID {
+			continue
+		}
+		if driver.NormalizeCode(instance.ServiceCode) != serviceCode {
+			continue
+		}
+		if endpointPort != 0 && instance.EndpointPort != endpointPort {
+			continue
+		}
+		if endpointHost != "" && strings.ToLower(strings.TrimSpace(instance.EndpointHost)) != endpointHost {
+			continue
+		}
+		score := servicePackExistingInstanceMatchScore(instance, baseName, baseSlug)
+		if best.ID == "" || score < bestScore || (score == bestScore && instance.CreatedAt.Before(best.CreatedAt)) {
+			best = instance
+			bestScore = score
+		}
+	}
+	return best, best.ID != ""
+}
+
+func servicePackExistingInstanceMatchScore(instance domain.Instance, baseName, baseSlug string) int {
+	name := strings.ToLower(strings.TrimSpace(instance.Name))
+	slug := strings.ToLower(strings.TrimSpace(instance.Slug))
+	switch {
+	case baseSlug != "" && slug == baseSlug:
+		return 0
+	case baseName != "" && name == baseName:
+		return 1
+	case baseSlug != "" && servicePackOrdinalMatch(slug, baseSlug, "-"):
+		return 2
+	case baseName != "" && servicePackOrdinalMatch(name, baseName, " "):
+		return 3
+	default:
+		return 10
+	}
+}
+
+func servicePackOrdinalMatch(value, base, separator string) bool {
+	if value == base {
+		return true
+	}
+	if !strings.HasPrefix(value, base+separator) {
+		return false
+	}
+	suffix := strings.TrimPrefix(value, base+separator)
+	if suffix == "" {
+		return false
+	}
+	for _, r := range suffix {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func newServicePackInstanceIdentitySet(instances []domain.Instance) *servicePackInstanceIdentitySet {
