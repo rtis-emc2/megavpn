@@ -121,14 +121,22 @@ func (s *Store) clientProvisioningServiceMetadata(ctx context.Context, clientID,
 		return nil, err
 	}
 	applyXrayPublicClientEndpointMetadata(metadata, inbound, spec)
+	profileKey := xrayClientIdentityProfileKey(metadata)
+	metadata["xray_identity_key"] = profileKey
 	forceNewUUID, err := s.serviceAccessForcesNewXrayUUID(ctx, clientID, instanceID)
 	if err != nil {
 		return nil, err
 	}
 	if !forceNewUUID {
-		reusableUUID, err := s.lookupReusableXrayClientUUID(ctx, clientID, "")
+		reusableUUID, err := lookupXrayClientIdentityUUIDTx(ctx, s.db, clientID, profileKey)
 		if err != nil {
 			return nil, err
+		}
+		if reusableUUID == "" {
+			reusableUUID, err = s.lookupReusableXrayClientUUID(ctx, clientID, "")
+			if err != nil {
+				return nil, err
+			}
 		}
 		if reusableUUID != "" {
 			metadata["xray_uuid"] = reusableUUID

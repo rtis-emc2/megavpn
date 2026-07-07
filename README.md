@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.25`
+**Release:** `7.1.0.26`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,10 +56,13 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.25` fixes the Clients provisioning table layout: the Actions column now
-has a stable width and its button grid no longer forces horizontal overflow or
-clips row actions on wide operator screens. The previous stabilization baseline
-also keeps strict SSH host-key bootstrap scanning, dirty-form auto-refresh
+`7.1.0.26` makes VLESS client identity persistent at the client level instead
+of treating the issued UUID as instance-scoped metadata. Replacement ingress
+nodes now inherit the already issued client UUID during provisioning, so a
+stable public endpoint can be moved to new nodes without forcing users to
+re-import client profiles. The migration backfills this identity registry from
+existing Xray/VLESS service accesses. The previous stabilization baseline also
+keeps strict SSH host-key bootstrap scanning, dirty-form auto-refresh
 suppression, deleted-instance runtime report filtering and orphan runtime state
 pruning. The current focus is:
 
@@ -119,8 +122,9 @@ pruning. The current focus is:
 - VLESS client provisioning now syncs active access-group catalog entries into
   the selected Xray instance before validating the chosen group, and materializes
   selected-egress groups into concrete Xray outbound/source-route metadata;
-- VLESS client identity is now stable across Xray/VLESS ingress instances:
-  provisioning a client onto a new ingress reuses the existing client UUID and
+- VLESS client identity is now stable across Xray/VLESS ingress instances and
+  node replacement: provisioning a client onto a new ingress reuses the
+  client-level UUID even after the old instance/service access was removed, and
   queues apply so the new server accepts the already issued client credential;
 - Xray UUID rotation now preserves the client's selected VLESS access group
   instead of falling back to a stale implicit `route` value; stale implicit

@@ -391,6 +391,97 @@ func TestPostgresIntegrationXrayProvisioningReusesClientUUIDAcrossInstances(t *t
 	}
 }
 
+func TestPostgresIntegrationXrayClientIdentitySurvivesServiceAccessDeletion(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-xray-replace-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.20",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	first, err := store.CreateInstanceDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-xray-old-" + suffix,
+		Slug:         "it-xray-old-" + suffix,
+		EndpointHost: "portal.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("portal.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create first xray instance: %v", err)
+	}
+	client, err := store.CreateClient(ctx, domain.Client{
+		Username:    "it-xray-replace-client-" + suffix,
+		DisplayName: "Xray Replace Client",
+		Email:       "it-xray-replace-client-" + suffix + "@example.invalid",
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if _, err := store.ProvisionClientWithOptions(ctx, client.ID, []string{first.ID}, map[string]map[string]any{
+		first.ID: {"vless_group": "out_usa_sf"},
+	}); err != nil {
+		t.Fatalf("provision first xray access: %v", err)
+	}
+	firstAccess := xrayServiceAccessByInstance(t, ctx, store, client.ID, first.ID)
+	firstMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, firstAccess.ID)
+	if err != nil {
+		t.Fatalf("ensure first xray uuid: %v", err)
+	}
+	firstUUID := firstString(firstMetadata["xray_uuid"])
+	if firstUUID == "" {
+		t.Fatal("first xray uuid must be generated")
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from client_service_identities where client_account_id=$1 and credential_json->>'xray_uuid'=$2`, 1, client.ID, firstUUID)
+
+	if _, err := store.DeleteClientServiceAccess(ctx, client.ID, firstAccess.ID); err != nil {
+		t.Fatalf("delete old service access: %v", err)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where id=$1`, 0, firstAccess.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from client_service_identities where client_account_id=$1 and credential_json->>'xray_uuid'=$2`, 1, client.ID, firstUUID)
+
+	replacement, err := store.CreateInstanceDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-xray-new-" + suffix,
+		Slug:         "it-xray-new-" + suffix,
+		EndpointHost: "portal.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("portal.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create replacement xray instance: %v", err)
+	}
+	if _, err := store.ProvisionClientWithOptions(ctx, client.ID, []string{replacement.ID}, map[string]map[string]any{
+		replacement.ID: {"vless_group": "out_usa_sf"},
+	}); err != nil {
+		t.Fatalf("provision replacement xray access: %v", err)
+	}
+	replacementAccess := xrayServiceAccessByInstance(t, ctx, store, client.ID, replacement.ID)
+	if got := firstString(replacementAccess.Metadata["xray_uuid"]); got != firstUUID {
+		t.Fatalf("replacement access xray uuid = %q, want retained uuid %q", got, firstUUID)
+	}
+	replacementMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, replacementAccess.ID)
+	if err != nil {
+		t.Fatalf("ensure replacement xray uuid: %v", err)
+	}
+	if got := firstString(replacementMetadata["xray_uuid"]); got != firstUUID {
+		t.Fatalf("replacement ensured xray uuid = %q, want retained uuid %q", got, firstUUID)
+	}
+}
+
 func TestPostgresIntegrationDefaultFirewallBaseline(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 

@@ -1,6 +1,6 @@
 # VLESS Subscriptions
 
-**Release:** `7.1.0.25`
+**Release:** `7.1.0.26`
 
 VLESS subscriptions provide a live per-client profile feed for compatible
 client applications. They are an operator delivery mechanism for already
@@ -25,7 +25,8 @@ Russian companion: [VLESS_SUBSCRIPTIONS_RU.md](VLESS_SUBSCRIPTIONS_RU.md).
 
 1. Operator provisions a client and explicitly selects inbound services.
 2. Provisioning creates `service_accesses` and service-specific metadata.
-3. For VLESS, provisioning stores the client UUID in access metadata. Additional
+3. For VLESS, provisioning stores the client UUID in a client-level identity
+   registry and mirrors it into access metadata. Additional or replacement
    VLESS ingress bindings for the same client reuse the existing UUID unless an
    operator explicitly rotates that access.
 4. Operator opens client access and rotates a VLESS subscription token.

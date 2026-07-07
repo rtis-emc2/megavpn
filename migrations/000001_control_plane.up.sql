@@ -123,6 +123,21 @@ create table if not exists service_accesses(
   unique(client_account_id, instance_id)
 );
 
+create table if not exists client_service_identities(
+  id uuid primary key,
+  client_account_id uuid not null references client_accounts(id) on delete cascade,
+  service_code text not null,
+  profile_key text not null,
+  credential_json jsonb not null default '{}'::jsonb,
+  status text not null default 'active' check(status in ('active','rotated','revoked')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(client_account_id, service_code, profile_key)
+);
+
+create index if not exists idx_client_service_identities_lookup
+on client_service_identities(service_code, profile_key, status, updated_at desc);
+
 create table if not exists artifacts(
   id uuid primary key,
   client_account_id uuid not null references client_accounts(id) on delete cascade,

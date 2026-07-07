@@ -154,19 +154,23 @@ func (s *Store) EnsureXrayServiceAccessUUID(ctx context.Context, accessID string
 	}
 
 	forceNew := xrayServiceAccessUUIDRotationRequested(metadata)
+	profileKey := xrayClientIdentityProfileKey(metadata)
 	uuid := firstString(metadata["xray_uuid"], metadata["uuid"])
-	if uuid == "" || forceNew {
-		if !forceNew {
-			reusableUUID, err := lookupReusableXrayClientUUIDTx(ctx, tx, clientID, accessID)
-			if err != nil {
-				return nil, err
-			}
-			uuid = reusableUUID
+	if !forceNew && uuid == "" {
+		reusableUUID, err := lookupReusableXrayClientUUIDFromServiceAccessTx(ctx, tx, clientID, accessID)
+		if err != nil {
+			return nil, err
 		}
-		if uuid == "" {
-			uuid = id.New()
-		}
+		uuid = reusableUUID
+	}
+	identityUUID, err := ensureXrayClientIdentityUUIDTx(ctx, tx, clientID, profileKey, uuid, forceNew)
+	if err != nil {
+		return nil, err
+	}
+	if identityUUID != "" && (uuid != identityUUID || forceNew || metadata["xray_identity_key"] == nil) {
+		uuid = identityUUID
 		metadata["xray_uuid"] = uuid
+		metadata["xray_identity_key"] = profileKey
 		delete(metadata, "uuid")
 		delete(metadata, "rotate_credentials")
 		delete(metadata, "force_new_xray_uuid")
@@ -200,6 +204,11 @@ func (s *Store) serviceAccessForcesNewXrayUUID(ctx context.Context, clientID, in
 }
 
 func (s *Store) lookupReusableXrayClientUUID(ctx context.Context, clientID, excludedAccessID string) (string, error) {
+	if uuid, err := lookupXrayClientIdentityUUIDTx(ctx, s.db, clientID, defaultXrayClientIdentityProfileKey); err != nil {
+		return "", err
+	} else if uuid != "" {
+		return uuid, nil
+	}
 	return lookupReusableXrayClientUUIDTx(ctx, s.db, clientID, excludedAccessID)
 }
 
@@ -207,7 +216,16 @@ type xrayClientUUIDQuerier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-func lookupReusableXrayClientUUIDTx(ctx context.Context, q xrayClientUUIDQuerier, clientID, excludedAccessID string) (string, error) {
+func lookupReusableXrayClientUUIDTx(ctx context.Context, q clientServiceIdentityQuerier, clientID, excludedAccessID string) (string, error) {
+	if uuid, err := lookupXrayClientIdentityUUIDTx(ctx, q, clientID, defaultXrayClientIdentityProfileKey); err != nil {
+		return "", err
+	} else if uuid != "" {
+		return uuid, nil
+	}
+	return lookupReusableXrayClientUUIDFromServiceAccessTx(ctx, q, clientID, excludedAccessID)
+}
+
+func lookupReusableXrayClientUUIDFromServiceAccessTx(ctx context.Context, q xrayClientUUIDQuerier, clientID, excludedAccessID string) (string, error) {
 	clientID = strings.TrimSpace(clientID)
 	if clientID == "" {
 		return "", nil

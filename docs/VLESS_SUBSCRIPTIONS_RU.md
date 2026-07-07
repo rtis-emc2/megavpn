@@ -1,6 +1,6 @@
 # VLESS-подписки
 
-**Релиз:** `7.1.0.25`
+**Релиз:** `7.1.0.26`
 
 VLESS-подписки дают клиентскому приложению live feed с профилями конкретного
 клиента. Это способ доставки уже выданного VLESS-доступа, а не замена
@@ -24,8 +24,9 @@ English companion: [VLESS_SUBSCRIPTIONS.md](VLESS_SUBSCRIPTIONS.md).
 
 1. Оператор делает provisioning клиента и явно выбирает входные сервисы.
 2. Provisioning создает `service_accesses` и service-specific metadata.
-3. Для VLESS provisioning сохраняет client UUID в access metadata.
-   Дополнительные VLESS ingress bindings для того же client переиспользуют
+3. Для VLESS provisioning сохраняет client UUID в client-level identity
+   registry и зеркалирует его в access metadata. Дополнительные или
+   replacement VLESS ingress bindings для того же client переиспользуют
    существующий UUID, если оператор явно не запускает rotation этого access.
 4. Оператор открывает client access и делает rotation VLESS subscription token.
 5. UI показывает полный URL подписки один раз.

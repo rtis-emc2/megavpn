@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.1.0.25`
+**Release:** `7.1.0.26`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -723,10 +723,14 @@ Provisioning must not silently grant every compatible service. Operators choose
 the exact inbound services per client.
 
 For Xray/VLESS, the client UUID is treated as the client's reusable service
-identity. When the same client is provisioned onto an additional VLESS ingress,
-the Control Plane reuses the existing UUID, writes it into the new instance's
-managed client list and queues instance apply. The access stays `pending` until
-the agent reports a successful apply; only then does it become `active`.
+identity. It is stored independently from individual instances and service
+access rows. When the same client is provisioned onto an additional or
+replacement VLESS ingress, the Control Plane reuses the existing UUID, writes
+it into the new instance's managed client list and queues instance apply. The
+access stays `pending` until the agent reports a successful apply; only then
+does it become `active`. If the public host/path/port changes, keep DNS pointed
+at the replacement endpoint or deliver a VLESS subscription URL so clients can
+discover the new endpoint without manual profile editing.
 
 `Delete` on one row in `Client Configs` or `Artifacts` removes only that
 generated config and delivery links pointing to it. `Clear configs` removes all

@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.25`
+**Release:** `7.1.0.26`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.25`
+**Code baseline:** RTIS MegaVPN `7.1.0.26`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,15 +23,14 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.25` continues the production-hardening line after the firewall,
+`7.1.0.26` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate, VLESS provisioning-sync, traffic-accounting collector
 coverage, firewall apply hardening and lost-node lifecycle releases. This
-release stabilizes operator workflows and runtime hygiene: Node management now
-blocks background auto-refresh while SSH bootstrap access credentials are being
-edited, stale runtime reports for deleted instances are ignored, and runtime
-state/observation pruning removes orphan rows. The codebase already has a
-working control-plane foundation:
+release stabilizes VLESS client identity across node replacement: issued client
+UUIDs are now stored as client-level service identities, backfilled from
+existing access metadata and reused when replacement ingress instances are
+provisioned. The codebase already has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
