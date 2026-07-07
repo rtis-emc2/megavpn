@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.12`
+**Release:** `7.1.0.13`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.12`
+**Code baseline:** RTIS MegaVPN `7.1.0.13`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.12` continues the production-hardening line after the firewall,
+`7.1.0.13` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate and VLESS provisioning-sync releases. This release adds
 expected-vs-observed Traffic Accounting collector coverage on top of the
@@ -387,9 +387,9 @@ No database migration or public API contract changed. The change is an
 agent/runtime recovery hardening release with Control Plane capability-state
 side effects and regression coverage.
 
-## 18. Release 7.1.0.12 Closure
+## 18. Release 7.1.0.13 Closure
 
-The goal of `7.1.0.12` is to make missing expected Traffic Accounting collector
+The goal of `7.1.0.13` is to make missing expected Traffic Accounting collector
 streams visible without expanding the privacy boundary. The platform still
 stores aggregate byte counters, not payloads, URLs, DNS queries or
 per-destination browsing history.
@@ -415,7 +415,7 @@ Closed in this release:
   expected collector SQL lifecycle scope, applied-revision source and
   placeholder ordering under client/node/protocol filters.
 - Web asset cache keys, release banners and release review artifacts were
-  advanced to `7.1.0.12`.
+  advanced to `7.1.0.13`.
 
 Agent runtime collector behavior, database schema and traffic privacy boundary
 did not change. Because current agents emit accounting rows only when counters

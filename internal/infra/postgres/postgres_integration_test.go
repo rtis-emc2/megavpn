@@ -1691,6 +1691,36 @@ func TestPostgresIntegrationDeleteClientServiceAccessRemovesRows(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationDeleteArtifactRemovesOnlyConfigAndShareLink(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	store.SetArtifactRoot(t.TempDir())
+
+	fixture := createClientServiceAccessCleanupFixture(t, ctx, store, "artifact-cleanup")
+	result, err := store.DeleteArtifact(ctx, fixture.client.ID, fixture.artifact.ID)
+	if err != nil {
+		t.Fatalf("delete artifact: %v", err)
+	}
+	if !result.Deleted {
+		t.Fatalf("artifact delete result did not mark deleted: %#v", result)
+	}
+	if result.ArtifactID != fixture.artifact.ID || result.ClientID != fixture.client.ID {
+		t.Fatalf("artifact delete refs = %#v", result)
+	}
+	if result.ShareLinksDeleted != 1 || result.FilesDeleted != 1 {
+		t.Fatalf("artifact delete cleanup = %#v, want one share link and one file", result)
+	}
+
+	assertPostgresCount(t, ctx, store, `select count(*) from client_accounts where id=$1`, 1, fixture.client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where id=$1`, 1, fixture.access.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from client_access_routes where service_access_id=$1`, 1, fixture.access.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from artifacts where id=$1`, 0, fixture.artifact.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from share_links where id=$1`, 0, fixture.share.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 1, fixture.secret.ID)
+	if _, err := os.Stat(fixture.artifact.StoragePath); !os.IsNotExist(err) {
+		t.Fatalf("artifact file after artifact delete error = %v, want not exist", err)
+	}
+}
+
 func TestPostgresIntegrationInstanceDeleteRemovesClientServiceAccessRows(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 	store.SetArtifactRoot(t.TempDir())

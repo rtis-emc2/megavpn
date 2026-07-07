@@ -165,6 +165,7 @@
             ${artifactPreviewable(row.type) ? `<button class="secondary-btn artifact-preview-btn" type="button" data-client-id="${escapeHTML(row.client_id)}" data-artifact-id="${escapeHTML(row.id)}">Preview</button>` : ''}
             <button class="secondary-btn artifact-download-btn" type="button" data-client-id="${escapeHTML(row.client_id)}" data-artifact-id="${escapeHTML(row.id)}">Download</button>
             <button class="secondary-btn artifact-publish-btn" type="button" data-client-id="${escapeHTML(row.client_id)}" data-artifact-id="${escapeHTML(row.id)}">Publish link</button>
+            <button class="danger-btn artifact-delete-btn" type="button" data-client-id="${escapeHTML(row.client_id)}" data-artifact-id="${escapeHTML(row.id)}">Delete</button>
           </div>` },
       ], '<button class="secondary-btn" type="button" id="artifactExportBtn">Queue export</button>');
       document.getElementById('artifactExportBtn')?.addEventListener('click', openArtifactExportModal);
@@ -178,6 +179,9 @@
       });
       document.querySelectorAll('.artifact-publish-btn').forEach((button) => {
         button.addEventListener('click', () => openShareLinkPublishModal(button.dataset.clientId, button.dataset.artifactId));
+      });
+      document.querySelectorAll('.artifact-delete-btn').forEach((button) => {
+        button.addEventListener('click', () => openDeleteArtifactModal(button.dataset.clientId, button.dataset.artifactId));
       });
     }
 
@@ -301,6 +305,45 @@ path = ${escapeHTML(selectedArtifact.storage_path || 'n/a')}</div>`
       } catch (err) {
         el('modalBody').innerHTML = `<div class="empty">Failed to load artifact: ${escapeHTML(err.message)}</div>`;
       }
+    }
+
+    function openDeleteArtifactModal(clientID, artifactID) {
+      const artifact = (state.artifacts || []).find((item) => item.id === artifactID) || null;
+      openModal('Delete config artifact', 'Remove one generated client config', `
+        <p class="danger-text">This removes the selected generated config and public links that point to it. Client access remains provisioned and configs can be built again.</p>
+        <div class="client-danger-summary">
+          <div><span>Client</span><strong>${escapeHTML(clientByID(clientID)?.username || clientID || 'n/a')}</strong></div>
+          <div><span>Type</span><strong>${escapeHTML(artifactTypeLabel(artifact?.artifact_type || 'artifact'))}</strong></div>
+          <div><span>Artifact</span><strong>${escapeHTML(artifactID || 'n/a')}</strong></div>
+          <div><span>Status</span><strong>${escapeHTML(artifact?.status || 'unknown')}</strong></div>
+        </div>
+        <div class="modal-actions">
+          <button class="secondary-btn" id="cancelDeleteArtifactBtn" type="button">Cancel</button>
+          <button class="danger-btn" id="confirmDeleteArtifactBtn" type="button">Delete config</button>
+        </div>
+        <div id="deleteArtifactResult" class="form-result"></div>`, { variant: 'danger' });
+      document.getElementById('cancelDeleteArtifactBtn')?.addEventListener('click', closeModal);
+      document.getElementById('confirmDeleteArtifactBtn')?.addEventListener('click', async () => {
+        const target = document.getElementById('deleteArtifactResult');
+        const button = document.getElementById('confirmDeleteArtifactBtn');
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'Deleting';
+        }
+        if (target) target.innerHTML = '<span class="tag warn">deleting config</span>';
+        try {
+          const data = await requestJSON(`/api/v1/clients/${clientID}/artifacts/${artifactID}`, { method: 'DELETE' });
+          if (target) target.innerHTML = renderActionResponse(data, 'Config artifact deleted');
+          await refresh();
+          setTimeout(closeModal, 400);
+        } catch (err) {
+          if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+          if (button) {
+            button.disabled = false;
+            button.textContent = 'Delete config';
+          }
+        }
+      });
     }
 
     function openShareLinkPublishModal(initialClientID = '', initialArtifactID = '') {

@@ -50,6 +50,16 @@ type ClientConfigCleanupResult struct {
 	FileErrors           []string `json:"file_errors,omitempty"`
 }
 
+type ArtifactDeleteResult struct {
+	ClientID          string   `json:"client_id"`
+	ArtifactID        string   `json:"artifact_id"`
+	ArtifactType      string   `json:"artifact_type"`
+	Deleted           bool     `json:"deleted"`
+	ShareLinksDeleted int64    `json:"share_links_deleted"`
+	FilesDeleted      int64    `json:"files_deleted"`
+	FileErrors        []string `json:"file_errors,omitempty"`
+}
+
 type ClientDeleteResult struct {
 	ClientID                string                    `json:"client_id"`
 	Username                string                    `json:"username"`

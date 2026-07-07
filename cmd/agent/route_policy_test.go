@@ -37,3 +37,43 @@ func TestValidateRoutePolicyPayload(t *testing.T) {
 		t.Fatal("expected invalid routes payload")
 	}
 }
+
+func TestRoutePolicyTelemetryTablesIncludeCurrentAndPreviousManagedTables(t *testing.T) {
+	t.Parallel()
+
+	tables := routePolicyTelemetryTables(
+		[]any{
+			map[string]any{
+				"egress": map[string]any{"table": "21001"},
+			},
+			map[string]any{
+				"egress": map[string]any{"table": "main"},
+			},
+		},
+		[]any{
+			map[string]any{"table": "59714"},
+			map[string]any{"table": "bad;table"},
+		},
+		routePolicyCleanupSnapshot{
+			Routes: []any{
+				map[string]any{
+					"status":           "active",
+					"action":           "allow",
+					"destination_type": "cidr",
+					"destination":      "203.0.113.0/24",
+					"egress":           map[string]any{"status": "candidate", "table": "21002"},
+					"enforcement":      map[string]any{"mode": "l3_l4_candidate"},
+				},
+			},
+		},
+	)
+	want := []string{"21001", "21002", "59714"}
+	if len(tables) != len(want) {
+		t.Fatalf("tables = %#v, want %#v", tables, want)
+	}
+	for idx := range want {
+		if tables[idx] != want[idx] {
+			t.Fatalf("tables = %#v, want %#v", tables, want)
+		}
+	}
+}

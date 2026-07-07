@@ -1,6 +1,6 @@
 # RBAC Matrix
 
-**Release:** `7.1.0.12`
+**Release:** `7.1.0.13`
 
 ## Seeded Roles
 
@@ -27,7 +27,7 @@
 | `client.write` | Client | Client account mutation |
 | `client.provision` | Client | Provision/revoke access and rotate/revoke VLESS subscriptions |
 | `artifact.read` | Artifact | Artifact list/download/preview |
-| `artifact.export` | Artifact | Artifact build jobs |
+| `artifact.export` | Artifact | Artifact build jobs and generated artifact deletion |
 | `share_link.manage` | Artifact | Publish/revoke public share links |
 | `job.read` | Job | Job list/detail/logs |
 | `job.write` | Job | Non-privileged direct jobs only |

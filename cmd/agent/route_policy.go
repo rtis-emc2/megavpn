@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -58,6 +59,7 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		"skipped_reasons":   kernelPlan.Reasons,
 		"previous_snapshot": previousSnapshotResult,
 	}
+	telemetryTables := routePolicyTelemetryTables(routes, systemRoutes, previousSnapshot)
 	if strings.TrimSpace(kernelPlan.Script) != "" {
 		if !isSafeRoutePolicyManagedPath(routePolicyScriptPath) || !isSafeRoutePolicyManagedPath(routePolicyUnitPath) || !isSafeRoutePolicyManagedPath(routePolicyTimerPath) {
 			return "failed", map[string]any{"error": "route policy managed path is not allowed", "stage": "route_policy_enforcement_paths"}
@@ -83,16 +85,16 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		if timerCode != 0 {
 			errText := routePolicyExecutionError("route policy refresh timer failed", timerOut)
 			kernelResult["error"] = errText
-			kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx)
+			kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx, telemetryTables...)
 			return "failed", map[string]any{"error": errText, "kernel": kernelResult}
 		}
 		if code != 0 {
 			errText := routePolicyExecutionError("route policy kernel enforcement failed", out)
 			kernelResult["error"] = errText
-			kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx)
+			kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx, telemetryTables...)
 			return "failed", map[string]any{"error": errText, "kernel": kernelResult}
 		}
-		kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx)
+		kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx, telemetryTables...)
 	}
 	activeCount := 0
 	enforceableCount := 0
@@ -181,6 +183,7 @@ func (c client) cleanupRoutePolicy(ctx context.Context, j job, st agentState) (s
 		SystemRoutes: append(append([]any{}, payloadSnapshot.SystemRoutes...), fileSnapshot.SystemRoutes...),
 	}
 	plan := renderRoutePolicyCleanupScript(combined, stringify(j.Payload["revision"]))
+	telemetryTables := routePolicyTelemetryTables(combined.Routes, combined.SystemRoutes)
 	result := map[string]any{
 		"message":           "route policy cleanup completed",
 		"node_id":           nodeID,
@@ -192,7 +195,7 @@ func (c client) cleanupRoutePolicy(ctx context.Context, j job, st agentState) (s
 		"skipped_count":     plan.SkippedCount,
 		"skipped_reasons":   plan.Reasons,
 		"previous_snapshot": fileSnapshotResult,
-		"telemetry_before":  collectRoutePolicyKernelTelemetry(ctx),
+		"telemetry_before":  collectRoutePolicyKernelTelemetry(ctx, telemetryTables...),
 	}
 	stopCode, stopOut := runInstallCommand(ctx, "systemctl", "disable", "--now", routePolicyTimerName, routePolicyUnitName)
 	result["stop_output"] = truncate(strings.TrimSpace(stopOut), 2000)
@@ -230,7 +233,7 @@ func (c client) cleanupRoutePolicy(ctx context.Context, j job, st agentState) (s
 	if len(warnings) > 0 {
 		result["warnings"] = warnings
 	}
-	result["telemetry_after"] = collectRoutePolicyKernelTelemetry(ctx)
+	result["telemetry_after"] = collectRoutePolicyKernelTelemetry(ctx, telemetryTables...)
 	if code != 0 {
 		result["error"] = "route policy cleanup script failed"
 		return "failed", result
@@ -238,7 +241,7 @@ func (c client) cleanupRoutePolicy(ctx context.Context, j job, st agentState) (s
 	return "succeeded", result
 }
 
-func collectRoutePolicyKernelTelemetry(ctx context.Context) map[string]any {
+func collectRoutePolicyKernelTelemetry(ctx context.Context, tables ...string) map[string]any {
 	steps := make([]any, 0, 5)
 	add := func(label, name string, args ...string) {
 		code, out := runInstallCommand(ctx, name, args...)
@@ -254,10 +257,63 @@ func collectRoutePolicyKernelTelemetry(ctx context.Context) map[string]any {
 	add("ip_rule_show", "ip", "rule", "show")
 	add("nft_route_policy_output", "nft", "list", "chain", "inet", "megavpn", "route_policy_output")
 	add("nft_route_policy_prerouting", "nft", "list", "chain", "inet", "megavpn", "route_policy_prerouting")
+	for _, table := range routePolicySafeSortedTables(tables...) {
+		add("ip_route_show_table_"+table, "ip", "route", "show", "table", table)
+	}
 	return map[string]any{
 		"collected_at": time.Now().UTC().Format(time.RFC3339),
 		"steps":        steps,
 	}
+}
+
+func routePolicyTelemetryTables(routes []any, systemRoutes []any, snapshots ...routePolicyCleanupSnapshot) []string {
+	tables := []string{}
+	add := func(table string) {
+		table = strings.TrimSpace(table)
+		if table == "" || strings.EqualFold(table, "main") || !isSafeNetworkToken(table) {
+			return
+		}
+		tables = append(tables, table)
+	}
+	for _, item := range systemRoutes {
+		route, _ := item.(map[string]any)
+		if route == nil {
+			continue
+		}
+		add(stringify(route["table"]))
+	}
+	for _, item := range routes {
+		route, _ := item.(map[string]any)
+		if route == nil {
+			continue
+		}
+		add(stringify(nestedMap(route, "egress")["table"]))
+	}
+	for _, snapshot := range snapshots {
+		targets, _ := routePolicyCleanupTargetsFromSnapshot(snapshot)
+		for _, target := range targets {
+			add(target.Table)
+		}
+	}
+	return routePolicySafeSortedTables(tables...)
+}
+
+func routePolicySafeSortedTables(tables ...string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, table := range tables {
+		table = strings.TrimSpace(table)
+		if table == "" || strings.EqualFold(table, "main") || !isSafeNetworkToken(table) || seen[table] {
+			continue
+		}
+		seen[table] = true
+		out = append(out, table)
+	}
+	sort.Strings(out)
+	if len(out) > 20 {
+		return out[:20]
+	}
+	return out
 }
 
 func readRoutePolicySnapshot(path string) (routePolicyCleanupSnapshot, map[string]any) {

@@ -898,6 +898,7 @@
               <div class="inline-actions compact-actions">
                 ${canPreview ? `<button class="secondary-btn client-artifact-preview-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-artifact-id="${escapeHTML(artifact.id)}">Preview</button>` : ''}
                 <button class="secondary-btn client-artifact-download-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-artifact-id="${escapeHTML(artifact.id)}">Download</button>
+                <button class="danger-btn client-artifact-delete-btn" type="button" data-client-id="${escapeHTML(clientID)}" data-artifact-id="${escapeHTML(artifact.id)}">Delete</button>
               </div>
             </td>
           </tr>`;
@@ -1153,6 +1154,9 @@
           const url = artifactDownloadURL(button.dataset.clientId, button.dataset.artifactId);
           window.open(url, '_blank', 'noopener,noreferrer');
         });
+      });
+      document.querySelectorAll('.client-artifact-delete-btn').forEach((button) => {
+        button.addEventListener('click', () => openDeleteClientArtifactModal(button.dataset.clientId, button.dataset.artifactId, artifactList));
       });
     }
 
@@ -1519,6 +1523,55 @@
         });
       } catch (err) {
         el('modalBody').innerHTML = `<div class="empty">Failed to load artifact: ${escapeHTML(err.message)}</div>`;
+      }
+    }
+
+    function openDeleteClientArtifactModal(clientID, artifactID, artifactList = []) {
+      const client = findClient(clientID);
+      const artifact = (artifactList || []).find((item) => item.id === artifactID);
+      if (!client || !artifact) return;
+      openModal(`Delete config: ${client.username}`, 'Remove one generated client config', `
+        <p class="danger-text">This removes only the selected generated config and public links that point to it. Service access remains provisioned, so a fresh config can be built again.</p>
+        <div class="client-danger-summary">
+          <div><span>Client</span><strong>${escapeHTML(clientDisplayName(client))}</strong></div>
+          <div><span>Type</span><strong>${escapeHTML(artifactTypeLabel(artifact.artifact_type))}</strong></div>
+          <div><span>Status</span><strong>${escapeHTML(artifact.status || 'unknown')}</strong></div>
+          <div><span>Size</span><strong>${escapeHTML(String(artifact.size_bytes || 0))} B</strong></div>
+        </div>
+        <div class="modal-actions">
+          <button class="danger-btn" id="confirmDeleteClientArtifactBtn" type="button">Delete config</button>
+          <button class="secondary-btn" id="cancelDeleteClientArtifactBtn" type="button">Cancel</button>
+        </div>
+        <div id="deleteClientArtifactResult" class="form-result"></div>`, { variant: 'danger' });
+      document.getElementById('cancelDeleteClientArtifactBtn')?.addEventListener('click', () => openClientAccessesModal(clientID));
+      document.getElementById('confirmDeleteClientArtifactBtn')?.addEventListener('click', () => deleteClientArtifact(clientID, artifactID));
+    }
+
+    async function deleteClientArtifact(clientID, artifactID) {
+      const target = document.getElementById('deleteClientArtifactResult');
+      const button = document.getElementById('confirmDeleteClientArtifactBtn');
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Deleting config';
+      }
+      if (target) target.innerHTML = '<span class="tag warn">deleting config</span>';
+      try {
+        const data = await requestJSON(`/api/v1/clients/${clientID}/artifacts/${artifactID}`, { method: 'DELETE' });
+        if (target) {
+          target.innerHTML = `
+            <div class="notice success">
+              <strong>Config deleted</strong>
+              <p>${escapeHTML(String(data.share_links_deleted || 0))} delivery links and ${escapeHTML(String(data.files_deleted || 0))} files removed.</p>
+            </div>`;
+        }
+        await refresh();
+        setTimeout(() => openClientAccessesModal(clientID), 500);
+      } catch (err) {
+        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Delete config';
+        }
       }
     }
 

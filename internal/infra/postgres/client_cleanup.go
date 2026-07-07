@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,6 +50,64 @@ func (s *Store) ClearClientConfigs(ctx context.Context, clientID string) (domain
 	cleanup.result.FilesDeleted, cleanup.result.FileErrors = s.removeClientArtifactFiles(clientID, cleanup.paths)
 	_, _ = s.CreateAudit(ctx, "system", "client.configs.clear", "client", &clientID, "client generated configs cleared")
 	return cleanup.result, nil
+}
+
+func (s *Store) DeleteArtifact(ctx context.Context, clientID, artifactID string) (domain.ArtifactDeleteResult, error) {
+	clientID = strings.TrimSpace(clientID)
+	artifactID = strings.TrimSpace(artifactID)
+	if clientID == "" || artifactID == "" {
+		return domain.ArtifactDeleteResult{}, fmt.Errorf("client id and artifact id are required")
+	}
+	if _, err := s.GetClient(ctx, clientID); err != nil {
+		return domain.ArtifactDeleteResult{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.ArtifactDeleteResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	result := domain.ArtifactDeleteResult{
+		ClientID:   clientID,
+		ArtifactID: artifactID,
+	}
+	var storagePath string
+	err = tx.QueryRow(ctx, `select artifact_type,storage_path
+		from artifacts
+		where client_account_id=$1 and id=$2
+		for update`, clientID, artifactID).Scan(&result.ArtifactType, &storagePath)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ArtifactDeleteResult{}, fmt.Errorf("artifact not found")
+		}
+		return domain.ArtifactDeleteResult{}, err
+	}
+
+	tag, err := tx.Exec(ctx, `delete from share_links
+		where client_account_id=$1
+		  and target_type='artifact'
+		  and target_id=$2`, clientID, artifactID)
+	if err != nil {
+		return domain.ArtifactDeleteResult{}, err
+	}
+	result.ShareLinksDeleted = tag.RowsAffected()
+
+	tag, err = tx.Exec(ctx, `delete from artifacts where client_account_id=$1 and id=$2`, clientID, artifactID)
+	if err != nil {
+		return domain.ArtifactDeleteResult{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ArtifactDeleteResult{}, pgx.ErrNoRows
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.ArtifactDeleteResult{}, err
+	}
+
+	result.Deleted = true
+	result.FilesDeleted, result.FileErrors = s.removeManagedArtifactFiles([]string{storagePath})
+	_, _ = s.CreateAudit(ctx, "system", "client.artifact.delete", "artifact", &artifactID, "generated client config artifact deleted")
+	return result, nil
 }
 
 func (s *Store) DeleteClient(ctx context.Context, clientID string) (domain.ClientDeleteResult, error) {

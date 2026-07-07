@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.0.12`
+**Release:** `7.1.0.13`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -56,7 +56,7 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.12` adds expected-vs-observed Traffic Accounting collector coverage for
+`7.1.0.13` adds expected-vs-observed Traffic Accounting collector coverage for
 enabled active/degraded managed instances while keeping release stabilization as
 the operating mode. The current focus is:
 

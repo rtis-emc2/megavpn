@@ -155,6 +155,7 @@ type Store interface {
 	CreateArtifactBuildJob(context.Context, string, string, []string) (domain.Job, error)
 	RevokeClient(context.Context, string) (domain.Job, error)
 	ClearClientConfigs(context.Context, string) (domain.ClientConfigCleanupResult, error)
+	DeleteArtifact(context.Context, string, string) (domain.ArtifactDeleteResult, error)
 	ListServiceAccesses(context.Context, string) ([]domain.ServiceAccess, error)
 	DeleteClientServiceAccess(context.Context, string, string) (domain.ClientServiceAccessDeleteResult, error)
 	ListClientAccessRoutes(context.Context, string) ([]domain.ClientAccessRoute, error)
@@ -477,6 +478,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/clients/{id}/accesses/{access_id}/rotate-shadowsocks", "client.provision", s.rotateClientAccess("shadowsocks"))
 	protected("GET /api/v1/clients/{id}/artifacts", "artifact.read", s.clientArtifacts)
 	protected("POST /api/v1/clients/{id}/artifacts", "artifact.export", s.createArtifact)
+	protected("DELETE /api/v1/clients/{id}/artifacts/{artifact_id}", "artifact.export", s.deleteArtifact)
 	protected("GET /api/v1/clients/{id}/artifacts/{artifact_id}/content", "artifact.read", s.clientArtifactContent)
 	protected("GET /api/v1/clients/{id}/artifacts/{artifact_id}/download", "artifact.read", s.clientArtifactDownload)
 	protected("GET /api/v1/clients/{id}/share-links", "artifact.read", s.clientShareLinks)
@@ -1749,6 +1751,14 @@ func (s *Server) createArtifact(w nethttp.ResponseWriter, r *nethttp.Request) {
 		"requested_type": req.Type,
 		"message":        "artifact build queued",
 	})
+}
+func (s *Server) deleteArtifact(w nethttp.ResponseWriter, r *nethttp.Request) {
+	x, err := s.store.DeleteArtifact(r.Context(), idParam(r), strings.TrimSpace(r.PathValue("artifact_id")))
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, x)
 }
 func (s *Server) clientShareLinks(w nethttp.ResponseWriter, r *nethttp.Request) {
 	x, err := s.store.ListShareLinks(r.Context(), idParam(r))

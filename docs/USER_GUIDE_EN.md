@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.1.0.12`
+**Release:** `7.1.0.13`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -653,7 +653,8 @@ Where to configure it:
   traffic is marked in `inet megavpn route_policy_output`; `ip rule fwmark`
   then sends the marked flow into the selected backhaul route table and `mgbh*`
   interface. The job result includes telemetry for the route-policy unit/timer,
-  `ip rule show` and managed nftables chains.
+  `ip rule show`, managed nftables chains and `ip route show table` for managed
+  route tables referenced by the current or previous snapshot.
 - `Nodes -> Manage -> Clean route policy`: explicit rollback for managed
   route-policy runtime. Use it when a node was removed from the ingress path,
   stale route-policy state is suspected after instance/client deletion, or a
@@ -722,9 +723,12 @@ the Control Plane reuses the existing UUID, writes it into the new instance's
 managed client list and queues instance apply. The access stays `pending` until
 the agent reports a successful apply; only then does it become `active`.
 
-`Clear configs` does not revoke service access: service bindings stay in place
-and the operator can build fresh artifacts. `Delete client` is irreversible
-removal from the runtime model; audit and job history remain for traceability.
+`Delete` on one row in `Client Configs` or `Artifacts` removes only that
+generated config and delivery links pointing to it. `Clear configs` removes all
+generated configs, share links and subscription tokens for the client. Neither
+operation revokes service access: service bindings stay in place and the
+operator can build fresh artifacts. `Delete client` is irreversible removal from
+the runtime model; audit and job history remain for traceability.
 
 ## 17. Share Links, VLESS Subscriptions And Email
 
