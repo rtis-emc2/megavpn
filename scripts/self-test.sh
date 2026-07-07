@@ -35,6 +35,9 @@ RELEASE_ENDPOINT_DOMAIN="${MEGAVPN_RELEASE_ENDPOINT_DOMAIN:-}"
 RELEASE_CERTIFICATE_ID="${MEGAVPN_RELEASE_CERTIFICATE_ID:-}"
 RUN_RACE="${MEGAVPN_SELF_TEST_RUN_RACE:-${MEGAVPN_RELEASE_RUN_RACE:-1}}"
 RUN_SERVICE_MATRIX="${MEGAVPN_SELF_TEST_RUN_SERVICE_MATRIX:-${MEGAVPN_RELEASE_RUN_SERVICE_MATRIX:-0}}"
+REQUIRE_AGENT_REPORT="${MEGAVPN_SELF_TEST_REQUIRE_AGENT_REPORT:-${MEGAVPN_RELEASE_REQUIRE_AGENT_REPORT:-1}}"
+SERVICE_MATRIX_REQUIRED_PACKS="${MEGAVPN_SELF_TEST_SERVICE_MATRIX_REQUIRED_PACKS:-${MEGAVPN_RELEASE_SERVICE_MATRIX_REQUIRED_PACKS:-}}"
+SERVICE_MATRIX_REQUIRE_NO_SKIPS="${MEGAVPN_SELF_TEST_SERVICE_MATRIX_REQUIRE_NO_SKIPS:-${MEGAVPN_RELEASE_SERVICE_MATRIX_REQUIRE_NO_SKIPS:-0}}"
 NGINX_CONFIG="${MEGAVPN_SELF_TEST_NGINX_CONFIG:-}"
 NODE_BIN="${MEGAVPN_SELF_TEST_NODE_BIN:-${MEGAVPN_RELEASE_NODE_BIN:-node}}"
 
@@ -212,6 +215,14 @@ require_frontend_bootstrap_smoke() {
   "$NODE_BIN" scripts/frontend-bootstrap-smoke.js
 }
 
+require_service_pack_smoke_regression() {
+  if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
+    skip_check "node is unavailable; service-pack smoke regression was not run"
+    return 77
+  fi
+  "$NODE_BIN" scripts/service-pack-smoke-regression.js
+}
+
 require_frontend_asset_manifest() {
   local ref path missing=0
   while IFS= read -r ref; do
@@ -360,6 +371,7 @@ require_api_smoke() {
 }
 
 require_vpn_service_matrix() {
+  local summary_file
   if [[ "$RUN_SERVICE_MATRIX" != "1" && "$RUN_SERVICE_MATRIX" != "true" ]]; then
     skip_check "set MEGAVPN_SELF_TEST_RUN_SERVICE_MATRIX=1 to run VPN/service matrix"
     return 77
@@ -370,7 +382,32 @@ require_vpn_service_matrix() {
   fi
   require_command curl || return 1
   require_command jq || return 1
-  MEGAVPN_PUBLIC_BASE_URL="$RELEASE_BASE_URL" scripts/service-pack-smoke.sh --matrix "$RELEASE_NODE_ID" "$RELEASE_ENDPOINT_DOMAIN" "$RELEASE_CERTIFICATE_ID"
+  summary_file="${MEGAVPN_SMOKE_MATRIX_SUMMARY_FILE:-}"
+  if [[ -z "$summary_file" && -n "${MEGAVPN_SMOKE_EVIDENCE_DIR:-}" ]]; then
+    summary_file="${MEGAVPN_SMOKE_EVIDENCE_DIR%/}/_matrix-summary.json"
+  fi
+  MEGAVPN_PUBLIC_BASE_URL="$RELEASE_BASE_URL" \
+    MEGAVPN_SMOKE_REQUIRE_AGENT_REPORT="$REQUIRE_AGENT_REPORT" \
+    scripts/service-pack-smoke.sh --matrix "$RELEASE_NODE_ID" "$RELEASE_ENDPOINT_DOMAIN" "$RELEASE_CERTIFICATE_ID"
+  if [[ -n "$summary_file" ]]; then
+    [[ -f "$summary_file" ]] || {
+      printf 'service matrix summary file was not written: %s\n' "$summary_file" >&2
+      return 1
+    }
+    if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
+      printf 'node is unavailable; cannot validate service matrix evidence report\n' >&2
+      return 1
+    fi
+    if [[ -n "$SERVICE_MATRIX_REQUIRED_PACKS" && ( "$SERVICE_MATRIX_REQUIRE_NO_SKIPS" == "1" || "$SERVICE_MATRIX_REQUIRE_NO_SKIPS" == "true" ) ]]; then
+      "$NODE_BIN" scripts/service-pack-evidence-report.js --require-pack "$SERVICE_MATRIX_REQUIRED_PACKS" --require-no-skips "$summary_file"
+    elif [[ -n "$SERVICE_MATRIX_REQUIRED_PACKS" ]]; then
+      "$NODE_BIN" scripts/service-pack-evidence-report.js --require-pack "$SERVICE_MATRIX_REQUIRED_PACKS" "$summary_file"
+    elif [[ "$SERVICE_MATRIX_REQUIRE_NO_SKIPS" == "1" || "$SERVICE_MATRIX_REQUIRE_NO_SKIPS" == "true" ]]; then
+      "$NODE_BIN" scripts/service-pack-evidence-report.js --require-no-skips "$summary_file"
+    else
+      "$NODE_BIN" scripts/service-pack-evidence-report.js "$summary_file"
+    fi
+  fi
 }
 
 write_report() {
@@ -418,6 +455,7 @@ run_check "shell-syntax" "Shell scripts parse under bash -n" require_shell_synta
 run_check "control-plane-install-validation" "Control Plane installer validates non-interactive clean-install inputs" require_control_plane_install_validation
 run_check "frontend-js-syntax" "Static Web UI JavaScript parses under node --check" require_frontend_js_syntax
 run_check "frontend-bootstrap-smoke" "Static Web UI assets bootstrap with browser-like runtime dependencies" require_frontend_bootstrap_smoke
+run_check "service-pack-smoke-regression" "Service-pack smoke script handles matrix planning, provision apply, artifacts and cleanup against a mock API" require_service_pack_smoke_regression
 run_check "frontend-asset-manifest" "Static Web UI index references only existing assets" require_frontend_asset_manifest
 run_check "frontend-page-module-exports" "Static Web UI page modules export the create contract expected by app.js" require_frontend_page_module_exports
 run_check "static-security-patterns" "No banned production command patterns are present" require_static_security_patterns

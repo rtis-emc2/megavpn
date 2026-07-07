@@ -494,8 +494,64 @@ scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
 [certificate-id]`. Matrix smoke пропускает camouflage packs, если значение не
 задано: использовать сам ingress host как fallback нельзя, это может создать
 proxy loop.
+Чтобы тестировать протоколы партиями и не создавать лишние port conflicts на
+одной node, ограничивайте matrix через `--packs` или `MEGAVPN_SMOKE_PACKS`:
+`scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
+[certificate-id] --packs openvpn_tcp_11994,openvpn_udp_1194,wireguard_roadwarrior`.
+Для временного исключения pack используйте `--exclude` или
+`MEGAVPN_SMOKE_EXCLUDE_PACKS`. Перед реальным запуском используйте `--plan`
+или `MEGAVPN_SMOKE_PLAN_ONLY=1`: smoke script покажет выбранные packs,
+endpoint hosts, обязательные certificate/fallback условия и возможные
+пересечения listen ports, но не создаст instances.
+Для staged проверки всех основных протоколов используйте batch runner:
+`scripts/service-pack-staged-smoke.sh --plan <node-id> <endpoint-domain> [certificate-id]`,
+затем реальный запуск без `--plan`. Доступные партии: `remote_access_l3`
+OpenVPN/WireGuard, `proxy_access` HTTP Proxy/MTProto/Shadowsocks,
+`xray_reality`, `xray_nginx_http`, `xray_nginx_grpc` и `legacy_l2tp`
+IPsec/L2TP. Обычный all-batches запуск на одной node требует `--cleanup`, так
+как несколько партий используют public port 443; без cleanup runner остановится
+до создания ресурсов. Ограничить запуск можно через
+`--batches remote_access_l3,proxy_access`. Staged runner печатает путь
+`staged_summary:` и пишет общий `_staged-summary.json` под evidence root; этот
+файл показывает статус каждой партии и путь к ее `_matrix-summary.json`.
+Переопределить путь можно через `MEGAVPN_SMOKE_STAGED_SUMMARY_FILE`.
+Для повторных диагностических прогонов на одной disposable node можно включить
+`MEGAVPN_SMOKE_CLEANUP=1`: после успешного smoke скрипт удалит созданного
+smoke-клиента, его artifacts/share-links и дождется `instance.delete` jobs для
+созданных instances. Если нужно автоматически убирать частично созданные
+ресурсы после failed smoke, добавьте `MEGAVPN_SMOKE_CLEANUP_ON_FAILURE=1`.
+Для release evidence cleanup лучше не включать, чтобы сохранить проверяемый
+runtime след до ручного review.
+Для machine-readable evidence задайте `MEGAVPN_SMOKE_EVIDENCE_DIR`, например
+`MEGAVPN_SMOKE_EVIDENCE_DIR=tmp/service-pack-evidence`. Каждый успешный pack
+запишет отдельный JSON с input-параметрами, created instances, runtime install
+jobs, applied instance snapshots, runtime states, provision result и artifacts.
+Matrix-run дополнительно пишет `_matrix-summary.json` с totals и строками
+OK/FAILED/SKIPPED; путь можно переопределить через
+`MEGAVPN_SMOKE_MATRIX_SUMMARY_FILE`. После matrix-run сформируйте offline
+отчет по сохраненным файлам:
+`scripts/service-pack-evidence-report.js tmp/service-pack-evidence/_matrix-summary.json`.
+Для приемки конкретной партии добавьте
+`--require-pack openvpn_tcp_11994,openvpn_udp_1194,wireguard_roadwarrior`;
+скрипт завершится с ошибкой, если pack не дал OK evidence, runtime не ready
+или у клиента нет active service access с ready artifact ожидаемого типа.
 API, Web UI, Nginx renderer и smoke script отклоняют fallback URL/Host/SNI,
 которые указывают на тот же публичный ingress host.
+По умолчанию smoke script после apply каждого созданного instance также ждет,
+что runtime projection станет `runtime_status=active`,
+`health_status=healthy` и `drift_status=in_sync`. Используйте
+`MEGAVPN_SMOKE_RUNTIME_CHECK=0` только для диагностики create/provision, где
+runtime convergence намеренно не входит в проверку. Используйте
+`MEGAVPN_SMOKE_REQUIRE_AGENT_REPORT=1`, если release evidence должен доказать,
+что live systemd/listening-port state уже прислал агент, а не только
+job-derived runtime projection.
+Если на чистой node нет runtime capability, создание service pack может
+поставить в очередь `runtime_install_jobs`. Smoke script ждет эти jobs перед
+apply instance, поэтому matrix на чистой node проверяет convergence installer
+flow, а не только уже предустановленные runtime. После client provisioning smoke
+также ждет post-provision `instance.apply` jobs, которые доставляют клиентские
+UUID/ключи в runtime, и проверяет, что каждый выбранный service access стал
+`active` и получил свой ready artifact ожидаемого protocol type.
 
 ### 13.2 Manual instance
 

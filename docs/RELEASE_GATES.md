@@ -42,6 +42,9 @@ The baseline gate must pass:
 - Smoke scripts that call `/api/v1` support `MEGAVPN_AUTH_TOKEN`.
 - Static Web UI JavaScript passes `node --check` and
   `scripts/frontend-bootstrap-smoke.js` reaches `__MegaVPNBootReady`.
+- `scripts/service-pack-smoke-regression.js` passes against its local mock API,
+  covering matrix planning, pack filter validation, post-provision apply waits,
+  staged batch planning, per-access artifact checks and cleanup behavior.
 - Static production scan finds no `/bin/sh -c`, `StrictHostKeyChecking=accept-new`, curl-to-shell, curl-to-gpg or apt-key trust bootstrap pattern outside tests.
 
 ## 2. Security Gate
@@ -118,6 +121,53 @@ MEGAVPN_RELEASE_ENDPOINT_DOMAIN=smoke.example.com \
 scripts/release-gate.sh
 ```
 
+For staged protocol validation on a shared disposable node, restrict the matrix
+with `MEGAVPN_SMOKE_PACKS` or `MEGAVPN_SMOKE_EXCLUDE_PACKS`. Full production
+promotion still requires evidence for every pack in the minimum matrix, but
+batched runs reduce port conflicts while diagnosing individual runtimes. Run
+`scripts/service-pack-smoke.sh --matrix ... --plan` first when changing the
+batch: the dry run must show the intended packs, required fallback/certificate
+inputs and any listen-port overlap before instances are created. For
+operator-friendly staged runs, use `scripts/service-pack-staged-smoke.sh`:
+`remote_access_l3`, `proxy_access`, `xray_reality`, `xray_nginx_http`,
+`xray_nginx_grpc` and `legacy_l2tp` are separate batch names with per-batch
+evidence directories, automatic evidence-report validation and a top-level
+`_staged-summary.json` under the staged evidence root. The summary path is
+printed as `staged_summary:` and can be overridden with
+`MEGAVPN_SMOKE_STAGED_SUMMARY_FILE`. The runner fails before creating
+resources when selected batches reuse endpoint ports without
+`MEGAVPN_SMOKE_CLEANUP=1`; use cleanup for diagnostic all-batch runs on one
+node, or run 443-based batches on isolated nodes for final evidence. For
+diagnostic reruns on a shared disposable node, `MEGAVPN_SMOKE_CLEANUP=1` may be
+used to delete smoke clients and instances after a successful run; add
+`MEGAVPN_SMOKE_CLEANUP_ON_FAILURE=1` only when failed diagnostic runs should
+also remove partial resources automatically. Final release evidence should keep
+cleanup disabled until the runtime state has been reviewed. Set
+`MEGAVPN_SMOKE_EVIDENCE_DIR` for release-candidate runs so every successful
+pack writes machine-readable JSON evidence with created instances, runtime
+states, provision result and artifacts. Matrix runs must also retain
+`_matrix-summary.json` or the file configured by
+`MEGAVPN_SMOKE_MATRIX_SUMMARY_FILE` so OK/FAILED/SKIPPED rows remain tied to
+their per-pack evidence files. After every matrix run, render and validate the
+saved evidence before accepting it:
+
+```bash
+scripts/service-pack-evidence-report.js \
+  --require-pack openvpn_tcp_11994,openvpn_udp_1194,wireguard_roadwarrior \
+  tmp/service-pack-evidence/_matrix-summary.json
+```
+
+For final promotion, include every pack from the minimum matrix in
+`--require-pack`; the report is fail-closed for failed rows, missing per-pack
+evidence, non-ready runtime state, inactive service accesses and missing or
+wrong-type client artifacts. When the matrix is run through
+`scripts/release-gate.sh`, the same validation runs automatically if
+`MEGAVPN_SMOKE_EVIDENCE_DIR` or
+`MEGAVPN_SMOKE_MATRIX_SUMMARY_FILE` is set. Use
+`MEGAVPN_RELEASE_SERVICE_MATRIX_REQUIRED_PACKS` for the required pack list and
+`MEGAVPN_RELEASE_SERVICE_MATRIX_REQUIRE_NO_SKIPS=1` when any skipped row should
+block the gate.
+
 Minimum matrix:
 
 - OpenVPN TCP/UDP
@@ -130,7 +180,20 @@ Minimum matrix:
 - Shadowsocks
 - IPsec/L2TP
 
-Drivers that are intentionally materialize-only must be recorded as such, not counted as active runtime success.
+The matrix must verify created instance runtime projection after apply:
+`runtime_status=active`, `health_status=healthy` and `drift_status=in_sync`.
+For final release evidence, `scripts/release-gate.sh` passes
+`MEGAVPN_SMOKE_REQUIRE_AGENT_REPORT=1` by default so the matrix proves
+agent-reported systemd/listening-port state, not only job-derived runtime
+state. On clean nodes the matrix must also wait for any `runtime_install_jobs`
+created by the service-pack preflight before applying dependent instances.
+Client provisioning smoke must then wait for post-provision `instance.apply`
+jobs and verify every selected service access is active with a ready per-access
+artifact of the expected protocol type, not merely that one artifact exists for
+the client.
+Override with `MEGAVPN_RELEASE_REQUIRE_AGENT_REPORT=0` only for diagnostics.
+Drivers that are intentionally materialize-only must be recorded as such, not
+counted as active runtime success.
 
 ## 5.1 Topology And Access Gate
 

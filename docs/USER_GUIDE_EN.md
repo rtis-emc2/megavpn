@@ -493,8 +493,62 @@ For repeatable smoke tests, pass the same fallback explicitly:
 scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
 [certificate-id]`. Matrix smoke skips camouflage packs when this value is not
 set, because using the ingress host itself as fallback can create a proxy loop.
+To test protocols in batches and avoid unnecessary port conflicts on one node,
+limit the matrix with `--packs` or `MEGAVPN_SMOKE_PACKS`:
+`scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
+[certificate-id] --packs openvpn_tcp_11994,openvpn_udp_1194,wireguard_roadwarrior`.
+Use `--exclude` or `MEGAVPN_SMOKE_EXCLUDE_PACKS` to temporarily skip a pack.
+Before a real run, use `--plan` or `MEGAVPN_SMOKE_PLAN_ONLY=1`: the smoke
+script prints selected packs, endpoint hosts, required certificate/fallback
+inputs and possible listen-port overlaps without creating instances.
+For staged validation of the main protocol groups, use the batch runner:
+`scripts/service-pack-staged-smoke.sh --plan <node-id> <endpoint-domain> [certificate-id]`,
+then rerun without `--plan`. Available batches are `remote_access_l3`
+for OpenVPN/WireGuard, `proxy_access` for HTTP Proxy/MTProto/Shadowsocks,
+`xray_reality`, `xray_nginx_http`, `xray_nginx_grpc` and `legacy_l2tp`
+for IPsec/L2TP. A normal all-batches run on one node requires `--cleanup`
+because several batches reuse public port 443; without cleanup the runner stops
+before creating resources. Limit a run with
+`--batches remote_access_l3,proxy_access`. The staged runner prints a
+`staged_summary:` path and writes a top-level `_staged-summary.json` under the
+evidence root; this file shows every batch status and its `_matrix-summary.json`
+path. Override it with `MEGAVPN_SMOKE_STAGED_SUMMARY_FILE` when needed.
+For repeated diagnostic runs on the same disposable node, enable
+`MEGAVPN_SMOKE_CLEANUP=1`: after a successful smoke the script deletes the
+created smoke client, its artifacts/share-links and waits for `instance.delete`
+jobs for created instances. Add `MEGAVPN_SMOKE_CLEANUP_ON_FAILURE=1` when a
+failed smoke should also remove partially created resources automatically. Keep
+cleanup disabled for release evidence until runtime state has been reviewed.
+For machine-readable evidence, set `MEGAVPN_SMOKE_EVIDENCE_DIR`, for example
+`MEGAVPN_SMOKE_EVIDENCE_DIR=tmp/service-pack-evidence`. Each successful pack
+writes one JSON file with input parameters, created instances, runtime install
+jobs, applied instance snapshots, runtime states, provision result and
+artifacts. Matrix runs also write `_matrix-summary.json` with totals and
+OK/FAILED/SKIPPED rows; override the path with
+`MEGAVPN_SMOKE_MATRIX_SUMMARY_FILE` when needed. After a matrix run, render and
+validate the saved files offline:
+`scripts/service-pack-evidence-report.js tmp/service-pack-evidence/_matrix-summary.json`.
+For acceptance of a staged batch, add
+`--require-pack openvpn_tcp_11994,openvpn_udp_1194,wireguard_roadwarrior`; the
+script exits non-zero when a pack did not produce OK evidence, runtime is not
+ready or the client has no active service access with a ready artifact of the
+expected type.
 The API, Web UI, Nginx renderer and smoke script reject fallback URL/Host/SNI
 values that target the same public ingress host.
+By default the smoke script also waits for each created instance runtime
+projection to become `runtime_status=active`, `health_status=healthy` and
+`drift_status=in_sync` after apply. Set `MEGAVPN_SMOKE_RUNTIME_CHECK=0` only
+for create/provision diagnostics where runtime convergence is intentionally out
+of scope. Set `MEGAVPN_SMOKE_REQUIRE_AGENT_REPORT=1` when release evidence must
+prove that the agent reported live systemd/listening-port state, not only the
+job-derived runtime projection.
+When a clean node is missing a runtime capability, service-pack creation can
+queue `runtime_install_jobs`. The smoke script waits for those jobs before
+queuing or polling instance apply, so a clean-node matrix validates installer
+convergence and not just preinstalled runtimes. After client provisioning, the
+smoke script also waits for post-provision `instance.apply` jobs that deliver
+client UUIDs/keys into runtime, then verifies that every selected service access
+is `active` and has its own ready artifact of the expected protocol type.
 
 ### 13.2 Manual Instance
 

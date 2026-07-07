@@ -30,6 +30,9 @@ RELEASE_ENDPOINT_DOMAIN="${MEGAVPN_RELEASE_ENDPOINT_DOMAIN:-}"
 RELEASE_CERTIFICATE_ID="${MEGAVPN_RELEASE_CERTIFICATE_ID:-}"
 RUN_RACE="${MEGAVPN_RELEASE_RUN_RACE:-1}"
 RUN_SERVICE_MATRIX="${MEGAVPN_RELEASE_RUN_SERVICE_MATRIX:-0}"
+REQUIRE_AGENT_REPORT="${MEGAVPN_RELEASE_REQUIRE_AGENT_REPORT:-1}"
+SERVICE_MATRIX_REQUIRED_PACKS="${MEGAVPN_RELEASE_SERVICE_MATRIX_REQUIRED_PACKS:-}"
+SERVICE_MATRIX_REQUIRE_NO_SKIPS="${MEGAVPN_RELEASE_SERVICE_MATRIX_REQUIRE_NO_SKIPS:-0}"
 ALLOW_SKIPS="${MEGAVPN_RELEASE_ALLOW_SKIPS:-0}"
 GOVULNCHECK_VERSION="${MEGAVPN_RELEASE_GOVULNCHECK_VERSION:-v1.5.0}"
 NODE_BIN="${MEGAVPN_RELEASE_NODE_BIN:-node}"
@@ -116,6 +119,10 @@ require_frontend_js_syntax() {
 
 run_frontend_bootstrap_smoke() {
   "$NODE_BIN" scripts/frontend-bootstrap-smoke.js
+}
+
+run_service_pack_smoke_regression() {
+  "$NODE_BIN" scripts/service-pack-smoke-regression.js
 }
 
 require_binary_version_commands() {
@@ -205,7 +212,33 @@ run_api_smoke() {
 }
 
 run_service_matrix() {
-  MEGAVPN_PUBLIC_BASE_URL="$RELEASE_BASE_URL" scripts/service-pack-smoke.sh --matrix "$RELEASE_NODE_ID" "$RELEASE_ENDPOINT_DOMAIN" "$RELEASE_CERTIFICATE_ID"
+  local summary_file
+  summary_file="${MEGAVPN_SMOKE_MATRIX_SUMMARY_FILE:-}"
+  if [[ -z "$summary_file" && -n "${MEGAVPN_SMOKE_EVIDENCE_DIR:-}" ]]; then
+    summary_file="${MEGAVPN_SMOKE_EVIDENCE_DIR%/}/_matrix-summary.json"
+  fi
+  MEGAVPN_PUBLIC_BASE_URL="$RELEASE_BASE_URL" \
+    MEGAVPN_SMOKE_REQUIRE_AGENT_REPORT="$REQUIRE_AGENT_REPORT" \
+    scripts/service-pack-smoke.sh --matrix "$RELEASE_NODE_ID" "$RELEASE_ENDPOINT_DOMAIN" "$RELEASE_CERTIFICATE_ID"
+  if [[ -n "$summary_file" ]]; then
+    [[ -f "$summary_file" ]] || {
+      log "service matrix summary file was not written: $summary_file"
+      return 1
+    }
+    command -v "$NODE_BIN" >/dev/null 2>&1 || {
+      log "node is unavailable; cannot validate service matrix evidence report"
+      return 1
+    }
+    if [[ -n "$SERVICE_MATRIX_REQUIRED_PACKS" && ( "$SERVICE_MATRIX_REQUIRE_NO_SKIPS" == "1" || "$SERVICE_MATRIX_REQUIRE_NO_SKIPS" == "true" ) ]]; then
+      "$NODE_BIN" scripts/service-pack-evidence-report.js --require-pack "$SERVICE_MATRIX_REQUIRED_PACKS" --require-no-skips "$summary_file"
+    elif [[ -n "$SERVICE_MATRIX_REQUIRED_PACKS" ]]; then
+      "$NODE_BIN" scripts/service-pack-evidence-report.js --require-pack "$SERVICE_MATRIX_REQUIRED_PACKS" "$summary_file"
+    elif [[ "$SERVICE_MATRIX_REQUIRE_NO_SKIPS" == "1" || "$SERVICE_MATRIX_REQUIRE_NO_SKIPS" == "true" ]]; then
+      "$NODE_BIN" scripts/service-pack-evidence-report.js --require-no-skips "$summary_file"
+    else
+      "$NODE_BIN" scripts/service-pack-evidence-report.js "$summary_file"
+    fi
+  fi
 }
 
 run_gate "gofmt-clean" require_gofmt_clean
@@ -226,9 +259,11 @@ run_gate "smoke-auth-coverage" require_smoke_auth_coverage
 if command -v "$NODE_BIN" >/dev/null 2>&1; then
   run_gate "frontend-js-syntax" require_frontend_js_syntax
   run_gate "frontend-bootstrap-smoke" run_frontend_bootstrap_smoke
+  run_gate "service-pack-smoke-regression" run_service_pack_smoke_regression
 else
   skip_gate "frontend-js-syntax" "set MEGAVPN_RELEASE_NODE_BIN or install node"
   skip_gate "frontend-bootstrap-smoke" "set MEGAVPN_RELEASE_NODE_BIN or install node"
+  skip_gate "service-pack-smoke-regression" "set MEGAVPN_RELEASE_NODE_BIN or install node"
 fi
 run_gate "static-security-patterns" require_clean_static_scan
 

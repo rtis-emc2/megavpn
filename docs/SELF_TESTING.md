@@ -30,6 +30,7 @@ Local gates:
 - `control-plane-install-validation`
 - `frontend-js-syntax`, when `node` is installed
 - `frontend-bootstrap-smoke`, when `node` is installed
+- `service-pack-smoke-regression`, when `node` is installed
 - `static-security-patterns`
 - `smoke-auth-coverage`
 - `migration-sequence`
@@ -47,6 +48,13 @@ The `control-plane-install-validation` gate runs the Control Plane installer in
 validate-only mode with non-interactive clean-install inputs. It verifies that
 the installer accepts a production-shaped configuration without requiring root
 writes, systemd changes, package installation or network access.
+
+The `service-pack-smoke-regression` gate runs `scripts/service-pack-smoke.sh`
+against a local mock API. It verifies matrix `--plan` filters, unknown pack
+fail-fast behavior, runtime-install polling, post-provision `instance.apply`
+polling, per-access artifact validation, success/failure cleanup paths, staged
+batch planning and the offline evidence report validator without touching a
+real control plane or node.
 
 `FAIL` means a gate ran and found a product or repository problem. `SKIP` means the host or environment did not provide enough release evidence; skipped gates are not acceptable for a production tag.
 
@@ -84,6 +92,17 @@ This enables:
 - `vpn-service-smoke-matrix`
 
 The matrix covers OpenVPN, WireGuard, Xray, HTTP Proxy, MTProto, Shadowsocks and IPsec/L2TP through `scripts/service-pack-smoke.sh`.
+When `MEGAVPN_SMOKE_EVIDENCE_DIR` or `MEGAVPN_SMOKE_MATRIX_SUMMARY_FILE` is set,
+the live matrix gate also runs `scripts/service-pack-evidence-report.js`. Use
+`MEGAVPN_SELF_TEST_SERVICE_MATRIX_REQUIRED_PACKS` and
+`MEGAVPN_SELF_TEST_SERVICE_MATRIX_REQUIRE_NO_SKIPS=1` to make a diagnostic run
+fail-closed for a staged protocol batch.
+For manual staged runs, `scripts/service-pack-staged-smoke.sh` wraps the matrix
+into protocol batches, writes one evidence directory per batch and writes a
+top-level `_staged-summary.json` for the whole operator run. It refuses real
+multi-batch runs with known endpoint-port overlaps unless cleanup is enabled,
+so diagnostics do not accidentally create conflicting 443 listeners on one
+node.
 
 Smoke helpers under `scripts/` honor `MEGAVPN_AUTH_TOKEN` and send it as a bearer token. Keep that token scoped to the release-test operator role and rotate it after every shared test environment run.
 

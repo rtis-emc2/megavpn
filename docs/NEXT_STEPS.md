@@ -40,8 +40,19 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
 7. Validate service-pack and runtime paths on a test server: IPsec/L2TP, Xray
    Reality, Xray+Nginx gRPC, Xray WebSocket camouflage, OpenVPN TCP/UDP,
    WireGuard, HTTP Proxy, MTProto and Shadowsocks. For camouflage matrix runs,
-   set `MEGAVPN_FALLBACK_UPSTREAM_URL` to the real fallback website; otherwise
-   those packs are intentionally skipped.
+   run `scripts/service-pack-smoke.sh --matrix ... --plan` first to preview
+   selected packs, endpoint hosts, certificate/fallback requirements and port
+   overlaps without creating instances. Set `MEGAVPN_FALLBACK_UPSTREAM_URL` to
+   the real fallback website; otherwise those packs are intentionally skipped.
+   Store staged batch evidence in `MEGAVPN_SMOKE_EVIDENCE_DIR` and validate
+   `_matrix-summary.json` with `scripts/service-pack-evidence-report.js`
+   before accepting the batch. Prefer `scripts/service-pack-staged-smoke.sh`
+   for operator runs because it groups protocols into conflict-aware batches
+   and validates evidence after every batch. Preserve its top-level
+   `_staged-summary.json` together with per-batch evidence so final acceptance
+   can trace each protocol group to its `_matrix-summary.json`. Run all
+   443-based batches with `--cleanup` for diagnostics or on isolated
+   disposable nodes for final release evidence.
 8. Validate and harden the topology workspace: local static world map, GeoIP
    node placement, node owner metadata, role/health badges, backhaul edges,
    operator-facing route-toggle UX on real nodes, failed-hop diagnostics and
