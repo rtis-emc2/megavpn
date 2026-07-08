@@ -34,9 +34,9 @@ Unsafe methods must preserve `X-MegaVPN-CSRF: 1` and `credentials: include`.
 
 | Frontend file | Purpose | Current limitation |
 | --- | --- | --- |
-| `frontend/src/shared/api/client.ts` | Fetch wrapper, API base, CSRF, cookie credentials, typed API error. | No field-level validation mapper yet. |
-| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Mostly read-path; mutation coverage incomplete. |
-| `frontend/src/shared/query/hooks.ts` | TanStack Query read hooks. | Mutation hooks and invalidation policy incomplete. |
+| `frontend/src/shared/api/client.ts` | Fetch wrapper, API base, CSRF, cookie credentials, typed API error. | Field-level validation mapping is currently implemented in focused forms, not as a global helper. |
+| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, VLESS groups and Firewall mutations are wired; other domains remain incomplete. |
+| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, VLESS groups and Firewall invalidation is wired; other domains remain incomplete. |
 
 Raw `/api/v1` strings are allowed only under `frontend/src/shared/api` and
 tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
@@ -136,15 +136,15 @@ tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
 
 | Backend endpoint family | Legacy usage | New wrapper / hook | UI page | Status | Invalidation / security notes |
 | --- | --- | --- | --- | --- | --- |
-| `GET/POST /api/v1/clients`, `GET/DELETE /api/v1/clients/{id}`, `POST /suspend`, `/activate` | clients CRUD/status | `endpoints.clients`; `useClients`; mutations missing | Clients | read-only / legacy-only |
-| `DELETE /api/v1/clients/{id}/configs`, `POST /provision`, `/revoke` | provisioning | missing | Clients | legacy-only | Bulk provisioning must use group endpoints, not one job per client. |
-| `GET /api/v1/clients/{id}/accesses`, `DELETE /accesses/{access_id}`, `POST /accesses/{access_id}/rotate-*` | accesses | missing | Clients detail | legacy-only | Rotation returns jobs and secrets must be redacted. |
+| `GET/POST /api/v1/clients`, `GET/DELETE /api/v1/clients/{id}`, `POST /suspend`, `/activate` | clients CRUD/status | `listClients`; `getClient`; `createClient`; `updateClientStatus`; `deleteClient`; matching hooks | Clients | connected | Create maps validation/conflict errors; delete is confirmed; generic update remains backend-missing. |
+| `DELETE /api/v1/clients/{id}/configs`, `POST /provision`, `/revoke` | provisioning | `revokeClient`; `useRevokeClient`; configs/provision missing | Clients | partial | Revoke is connected with job tracking. Config cleanup and direct instance provisioning remain legacy-only; VLESS assignment uses group endpoints, not one job per client. |
+| `GET /api/v1/clients/{id}/accesses`, `DELETE /accesses/{access_id}`, `POST /accesses/{access_id}/rotate-*` | accesses | `getClientAccessOverview`; `useClientAccessOverview` for read; mutations missing | Clients detail | read-only / legacy-only | Access identity is shown without secret material. Rotation/delete service access remain legacy-only. |
 | `GET/POST/DELETE /api/v1/clients/{id}/routes` | client routes | missing | Clients detail | legacy-only |
-| `GET /api/v1/clients/{id}/access-groups`, `PATCH /access-groups/{service_code}` | per-client group membership | missing | Clients detail | legacy-only |
-| `GET/POST/DELETE /api/v1/clients/{id}/artifacts`, `GET /content`, `GET /download` | client artifacts | artifacts aggregate only | Delivery | read-only / legacy-only | Artifact content rendered text-safe; downloads no-store. |
-| `GET/POST /api/v1/clients/{id}/share-links`, `POST /share-links/{link_id}/revoke` | share links | aggregate `endpoints.shareLinks`; mutations missing | Delivery | read-only / legacy-only | Share token visible only on creation response. |
-| `GET /api/v1/clients/{id}/subscriptions`, `POST /subscriptions/rotate`, `POST /subscriptions/{subscription_id}/revoke` | subscriptions | missing | Subscriptions | disabled / legacy-only | Subscription token should not persist in long-lived UI state. |
-| `POST /api/v1/clients/{id}/deliver-email` | email delivery | missing | Delivery | legacy-only | Email delivery errors shown safely. |
+| `GET /api/v1/clients/{id}/access-groups`, `PATCH /access-groups/{service_code}` | per-client group membership | read through `getClientAccessOverview`; assignment uses `previewSingleClientAccessGroupAssignment` / `applySingleClientAccessGroupAssignment` against `/client-access-groups/{group_id}/members:*` | Clients detail / Access | connected for VLESS | Preview is mandatory; group/mode/client changes make preview stale and disable Apply. |
+| `GET/POST/DELETE /api/v1/clients/{id}/artifacts`, `GET /content`, `GET /download` | client artifacts | `listClientArtifacts`; `buildClientArtifact`; `getClientArtifactDownload`; `deleteClientArtifact`; matching hooks | Clients detail / Artifacts | connected | Build returns job tracking; download opens backend URL without token storage; delete is confirmed. Inline content preview is not exposed in this task. |
+| `GET/POST /api/v1/clients/{id}/share-links`, `POST /share-links/{link_id}/revoke` | share links | aggregate `endpoints.shareLinks`; mutations missing | Delivery | FE8-P0-03B / legacy-only | Share token visible only on creation response. Not part of FE8-P0-03A. |
+| `GET /api/v1/clients/{id}/subscriptions`, `POST /subscriptions/rotate`, `POST /subscriptions/{subscription_id}/revoke` | subscriptions | missing | Subscriptions | FE8-P0-03B / legacy-only | Subscription token should not persist in long-lived UI state. Not part of FE8-P0-03A. |
+| `POST /api/v1/clients/{id}/deliver-email` | email delivery | missing | Delivery | FE8-P0-03B / legacy-only | Email delivery errors shown safely. Not part of FE8-P0-03A. |
 
 ### 4.9 Backhaul, Artifacts Aggregate, Jobs, Audit
 

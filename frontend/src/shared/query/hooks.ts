@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@ta
 import {
   applyClientAccessGroupMembers,
   applyClientAccessGroupSync,
+  applySingleClientAccessGroupAssignment,
+  buildClientArtifact,
+  createClient,
   applyNodeFirewall,
   createClientAccessGroup,
   createFirewallAddressGroup,
@@ -12,19 +15,28 @@ import {
   deleteFirewallAddressGroupEntry,
   deleteFirewallPolicy,
   deleteFirewallRule,
+  deleteClient,
+  deleteClientArtifact,
   disableNodeFirewall,
   endpoints,
   getAvailableClientsForGroup,
+  getClient,
   getClientAccessGroupMembers,
   getClientAccessGroupScope,
   getClientAccessGroupSyncState,
+  getClientAccessOverview,
   getFirewallSafetySettings,
   getNodeFirewallState,
+  listClientArtifacts,
   listClientAccessGroups,
+  previewSingleClientAccessGroupAssignment,
   previewClientAccessGroupMembers,
   previewClientAccessGroupSync,
   previewNodeFirewall,
   removeClientAccessGroupMember,
+  removeClientAccessGroupMembership,
+  revokeClient,
+  updateClientStatus,
   updateClientAccessGroup,
   updateClientAccessGroupScope,
   updateFirewallAddressGroup,
@@ -44,13 +56,23 @@ import type {
   Certificate,
   ClientAccessGroup,
   ClientAccessGroupInput,
+  ClientAccessGroupMembershipResult,
   ClientAccessGroupMemberQuery,
   ClientAccessGroupMembersPage,
   ClientAccessGroupMembershipRequest,
+  ClientAccessOverview,
   ClientAccessGroupScope,
   ClientAccessGroupSyncState,
   ClientAccessService,
   ClientAccount,
+  ClientArtifact,
+  ClientArtifactBuildRequest,
+  ClientArtifactBuildResult,
+  ClientArtifactDeleteResult,
+  ClientCreateInput,
+  ClientDeleteResult,
+  ClientDetail,
+  ClientStatusUpdateInput,
   Dashboard,
   FirewallAddressGroup,
   FirewallApplyRequest,
@@ -106,6 +128,61 @@ export function useClients(options?: QueryOptions<ClientAccount[]>) {
   return useQuery({ queryKey: ['clients'], queryFn: endpoints.clients, staleTime: stale.normal, ...options });
 }
 
+export function useClientDetail(clientId: string | undefined, options?: QueryOptions<ClientDetail>) {
+  return useQuery({
+    queryKey: ['client', clientId],
+    queryFn: () => getClient(clientId || ''),
+    enabled: Boolean(clientId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+function invalidateClientQueries(queryClient: ReturnType<typeof useQueryClient>, clientId?: string) {
+  void queryClient.invalidateQueries({ queryKey: ['clients'] });
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  if (clientId) {
+    void queryClient.invalidateQueries({ queryKey: ['client', clientId] });
+    void queryClient.invalidateQueries({ queryKey: ['client-access-overview', clientId] });
+    void queryClient.invalidateQueries({ queryKey: ['client-artifacts', clientId] });
+  }
+}
+
+export function useCreateClient() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientDetail, Error, ClientCreateInput>({
+    mutationFn: createClient,
+    onSuccess: (client) => invalidateClientQueries(queryClient, client.id),
+  });
+}
+
+export function useUpdateClientStatus() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientDetail, Error, { clientId: string; input: ClientStatusUpdateInput }>({
+    mutationFn: ({ clientId, input }) => updateClientStatus(clientId, input),
+    onSuccess: (client, input) => invalidateClientQueries(queryClient, client.id || input.clientId),
+  });
+}
+
+export function useDeleteClient() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientDeleteResult, Error, string>({
+    mutationFn: deleteClient,
+    onSuccess: (_result, clientId) => invalidateClientQueries(queryClient, clientId),
+  });
+}
+
+export function useRevokeClient() {
+  const queryClient = useQueryClient();
+  return useMutation<Job, Error, string>({
+    mutationFn: revokeClient,
+    onSuccess: (job, clientId) => {
+      invalidateClientQueries(queryClient, clientId);
+      void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+    },
+  });
+}
+
 export function useClientAccessServices(options?: QueryOptions<ClientAccessService[]>) {
   return useQuery({ queryKey: ['client-access-services'], queryFn: endpoints.clientAccessServices, staleTime: stale.slow, ...options });
 }
@@ -122,6 +199,7 @@ export function useClientAccessGroups(serviceCode?: string, options?: QueryOptio
 function invalidateClientAccessGroupQueries(queryClient: ReturnType<typeof useQueryClient>, groupID?: string) {
   void queryClient.invalidateQueries({ queryKey: ['client-access-groups'] });
   void queryClient.invalidateQueries({ queryKey: ['clients'] });
+  void queryClient.invalidateQueries({ queryKey: ['client-access-overview'] });
   void queryClient.invalidateQueries({ queryKey: ['jobs'] });
   if (groupID) {
     void queryClient.invalidateQueries({ queryKey: ['client-access-group-members', groupID] });
@@ -186,6 +264,44 @@ export function useRemoveClientAccessGroupMember() {
   return useMutation({
     mutationFn: ({ groupId, clientId }: { groupId: string; clientId: string }) => removeClientAccessGroupMember(groupId, clientId),
     onSuccess: (result, input) => invalidateClientAccessGroupQueries(queryClient, result.group_id || input.groupId),
+  });
+}
+
+export function useClientAccessOverview(clientId: string | undefined, options?: QueryOptions<ClientAccessOverview>) {
+  return useQuery({
+    queryKey: ['client-access-overview', clientId],
+    queryFn: () => getClientAccessOverview(clientId || ''),
+    enabled: Boolean(clientId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function usePreviewSingleClientAccessGroupAssignment() {
+  return useMutation<ClientAccessGroupMembershipResult, Error, { groupId: string; clientId: string; mode: 'add_only' | 'add_or_move'; buildArtifacts?: boolean }>({
+    mutationFn: ({ groupId, clientId, mode, buildArtifacts }) => previewSingleClientAccessGroupAssignment(groupId, clientId, mode, buildArtifacts),
+  });
+}
+
+export function useApplySingleClientAccessGroupAssignment() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientAccessGroupMembershipResult, Error, { groupId: string; clientId: string; mode: 'add_only' | 'add_or_move'; buildArtifacts?: boolean }>({
+    mutationFn: ({ groupId, clientId, mode, buildArtifacts }) => applySingleClientAccessGroupAssignment(groupId, clientId, mode, buildArtifacts),
+    onSuccess: (result, input) => {
+      invalidateClientAccessGroupQueries(queryClient, result.group_id || input.groupId);
+      invalidateClientQueries(queryClient, input.clientId);
+    },
+  });
+}
+
+export function useRemoveClientAccessGroupMembership() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientAccessGroupMembershipResult, Error, { groupId: string; clientId: string }>({
+    mutationFn: ({ groupId, clientId }) => removeClientAccessGroupMembership(groupId, clientId),
+    onSuccess: (result, input) => {
+      invalidateClientAccessGroupQueries(queryClient, result.group_id || input.groupId);
+      invalidateClientQueries(queryClient, input.clientId);
+    },
   });
 }
 
@@ -454,6 +570,39 @@ export function useBackhaulLinks(options?: QueryOptions<BackhaulLink[]>) {
 
 export function useArtifacts(options?: QueryOptions<Artifact[]>) {
   return useQuery({ queryKey: ['artifacts'], queryFn: endpoints.artifacts, staleTime: stale.normal, ...options });
+}
+
+export function useClientArtifacts(clientId: string | undefined, options?: QueryOptions<ClientArtifact[]>) {
+  return useQuery({
+    queryKey: ['client-artifacts', clientId],
+    queryFn: () => listClientArtifacts(clientId || ''),
+    enabled: Boolean(clientId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useBuildClientArtifact() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientArtifactBuildResult, Error, { clientId: string; input: ClientArtifactBuildRequest }>({
+    mutationFn: ({ clientId, input }) => buildClientArtifact(clientId, input),
+    onSuccess: (result, input) => {
+      invalidateClientQueries(queryClient, input.clientId);
+      void queryClient.invalidateQueries({ queryKey: ['artifacts'] });
+      if (result.job?.id) void queryClient.invalidateQueries({ queryKey: ['job', result.job.id] });
+    },
+  });
+}
+
+export function useDeleteClientArtifact() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientArtifactDeleteResult, Error, { clientId: string; artifactId: string }>({
+    mutationFn: ({ clientId, artifactId }) => deleteClientArtifact(clientId, artifactId),
+    onSuccess: (_result, input) => {
+      invalidateClientQueries(queryClient, input.clientId);
+      void queryClient.invalidateQueries({ queryKey: ['artifacts'] });
+    },
+  });
 }
 
 export function useShareLinks(options?: QueryOptions<ShareLink[]>) {

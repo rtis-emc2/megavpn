@@ -19,6 +19,11 @@ removal, scope update и sync preview/apply не требуют `/legacy/`. Non-
 services остаются видимыми как catalog-only до включения backend
 materialization.
 
+Для одного клиента тот же backend model доступен из `Clients -> <client> ->
+Access`: оператор выбирает VLESS group, выполняет backend Preview, затем Apply.
+Этот путь не создает отдельный instance-scoped VLESS membership и не использует
+`/legacy/`.
+
 ## Модель данных
 
 ```text
@@ -72,6 +77,11 @@ Unsupported services видны оператору, но не применяют
 
 `Apply` недоступен до успешного preview. Любое изменение selection, paste,
 filter или mode инвалидирует preview.
+
+Для одиночной операции откройте `Clients`, выберите клиента, перейдите на
+вкладку `Access` и используйте `Assign VLESS group`. Preview/Apply и Remove
+используют те же endpoints `client-access-groups/{group_id}/members:*`, что и
+массовый workflow в `Clients -> Groups`.
 
 ## Runtime Behavior
 

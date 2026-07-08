@@ -77,7 +77,60 @@ export type ClientAccount = APIRecord & {
   display_name?: string;
   email?: string;
   status?: string;
+  notes?: string;
+  expires_at?: string | null;
   created_at?: string;
+  updated_at?: string;
+  summary?: ClientSummary;
+};
+
+export type ClientStatus = 'active' | 'suspended' | 'revoked' | 'expired' | 'deleted';
+
+export type ClientSummary = {
+  service_access_count?: number;
+  active_service_access_count?: number;
+  pending_service_access_count?: number;
+  route_count?: number;
+  active_route_count?: number;
+  artifact_count?: number;
+  ready_artifact_count?: number;
+  share_link_count?: number;
+  active_share_link_count?: number;
+  last_artifact_at?: string;
+  next_share_link_expires_at?: string;
+};
+
+export type ClientDetail = ClientAccount;
+
+export type ClientCreateInput = {
+  username: string;
+  display_name?: string;
+  email?: string;
+  notes?: string;
+  expires_at?: string | null;
+  status?: ClientStatus;
+};
+
+export type ClientStatusUpdateInput = {
+  status: Extract<ClientStatus, 'active' | 'suspended'>;
+};
+
+export type ClientDeleteResult = APIRecord & {
+  client_id?: string;
+  deleted?: boolean;
+  config_cleanup?: APIRecord;
+};
+
+export type ClientServiceAccess = APIRecord & {
+  id: string;
+  client_account_id?: string;
+  instance_id?: string;
+  status?: string;
+  provision_mode?: string;
+  policy?: APIRecord;
+  metadata?: APIRecord;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type ClientAccessService = APIRecord & {
@@ -276,6 +329,32 @@ export type ClientAccessGroupSyncState = {
   updated_at?: string;
 };
 
+export type ClientAccessOverview = {
+  client: ClientDetail;
+  accesses: ClientServiceAccess[];
+  groups: ClientAccessGroup[];
+  vless_group?: ClientAccessGroup | null;
+};
+
+export type ClientAccessGroupAssignment = {
+  client_id: string;
+  group_id: string;
+  service_code: string;
+  mode: 'add_only' | 'add_or_move';
+};
+
+export type ClientAccessGroupAssignmentPreviewRequest = ClientAccessGroupAssignment & {
+  build_artifacts?: boolean;
+};
+
+export type ClientAccessGroupAssignmentPreviewResult = ClientAccessGroupMembershipResult;
+
+export type ClientAccessGroupAssignmentApplyRequest = ClientAccessGroupAssignment & {
+  build_artifacts?: boolean;
+};
+
+export type ClientAccessGroupAssignmentApplyResult = ClientAccessGroupMembershipResult;
+
 export type APIValidationError = {
   error?: string;
   field?: string;
@@ -460,15 +539,47 @@ export type Job = APIRecord & {
   result?: APIRecord;
 };
 
+export type JobRef = Pick<Job, 'id' | 'type' | 'status'> & APIRecord;
+
 export type Artifact = APIRecord & {
   id: string;
+  client_account_id?: string;
   client_id?: string;
   artifact_type?: string;
   type?: string;
   status?: string;
+  service_access_id?: string | null;
   storage_path?: string;
   path?: string;
+  content_hash?: string;
   size_bytes?: number;
+  created_at?: string;
+};
+
+export type ClientArtifact = Artifact;
+
+export type ClientArtifactBuildRequest = {
+  type?: string;
+  instance_ids?: string[];
+};
+
+export type ClientArtifactBuildResult = APIRecord & {
+  job: JobRef;
+  requested_type?: string;
+  message?: string;
+};
+
+export type ClientArtifactDownloadResult = {
+  url: string;
+  method: 'GET';
+};
+
+export type ClientArtifactDeleteResult = APIRecord & {
+  client_id?: string;
+  artifact_id?: string;
+  artifact_type?: string;
+  deleted?: boolean;
+  share_links_deleted?: number;
 };
 
 export type ShareLink = APIRecord & {

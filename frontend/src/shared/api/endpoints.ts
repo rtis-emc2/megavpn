@@ -16,6 +16,16 @@ import type {
   ClientAccessGroupSyncState,
   ClientAccessService,
   ClientAccount,
+  ClientAccessOverview,
+  ClientArtifact,
+  ClientArtifactBuildRequest,
+  ClientArtifactBuildResult,
+  ClientArtifactDeleteResult,
+  ClientArtifactDownloadResult,
+  ClientCreateInput,
+  ClientDeleteResult,
+  ClientDetail,
+  ClientStatusUpdateInput,
   Dashboard,
   FirewallAddressGroup,
   FirewallAddressGroupEntry,
@@ -75,6 +85,38 @@ export function acceptInvite(token: string, password: string): Promise<unknown> 
   return sendJSON(`/api/v1/auth/invites/${encodeURIComponent(token)}/accept`, 'POST', { password });
 }
 
+export function listClients(_params: { search?: string; status?: string } = {}): Promise<ClientAccount[]> {
+  return apiRequest<ClientAccount[]>('/api/v1/clients');
+}
+
+export function getClient(clientId: string): Promise<ClientDetail> {
+  return apiRequest<ClientDetail>(`/api/v1/clients/${encodeURIComponent(clientId)}`);
+}
+
+export function createClient(input: ClientCreateInput): Promise<ClientDetail> {
+  return sendJSON<ClientDetail>('/api/v1/clients', 'POST', input);
+}
+
+export function updateClient(_clientId: string, _input: Partial<ClientCreateInput>): Promise<never> {
+  return Promise.reject(new Error('Backend has no generic client update endpoint in this release.'));
+}
+
+export function updateClientStatus(clientId: string, input: ClientStatusUpdateInput): Promise<ClientDetail> {
+  const action = input.status === 'suspended' ? 'suspend' : input.status === 'active' ? 'activate' : '';
+  if (!action) {
+    return Promise.reject(new Error('Backend supports only activate and suspend status endpoints in this release.'));
+  }
+  return sendJSON<ClientDetail>(`/api/v1/clients/${encodeURIComponent(clientId)}/${action}`, 'POST', {});
+}
+
+export function deleteClient(clientId: string): Promise<ClientDeleteResult> {
+  return apiRequest<ClientDeleteResult>(`/api/v1/clients/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
+}
+
+export function revokeClient(clientId: string): Promise<Job> {
+  return sendJSON<Job>(`/api/v1/clients/${encodeURIComponent(clientId)}/revoke`, 'POST', {});
+}
+
 export function listClientAccessServices(): Promise<ClientAccessService[]> {
   return apiRequest<ClientAccessService[]>('/api/v1/client-access-services');
 }
@@ -125,6 +167,40 @@ export function applyClientAccessGroupMembers(groupId: string, payload: ClientAc
 
 export function removeClientAccessGroupMember(groupId: string, clientId: string): Promise<ClientAccessGroupMembershipResult> {
   return apiRequest<ClientAccessGroupMembershipResult>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
+}
+
+export async function getClientAccessOverview(clientId: string): Promise<ClientAccessOverview> {
+  const [client, accesses, groups] = await Promise.all([
+    getClient(clientId),
+    apiRequest<ClientAccessOverview['accesses']>(`/api/v1/clients/${encodeURIComponent(clientId)}/accesses`),
+    apiRequest<ClientAccessGroup[]>(`/api/v1/clients/${encodeURIComponent(clientId)}/access-groups`),
+  ]);
+  const vlessGroup = groups.find((group) => group.service_code === 'vless') || null;
+  return { client, accesses, groups, vless_group: vlessGroup };
+}
+
+function singleClientMembershipPayload(clientId: string, mode: 'add_only' | 'add_or_move', buildArtifacts = false): ClientAccessGroupMembershipRequest {
+  return {
+    client_ids: [clientId],
+    mode,
+    queue_apply: true,
+    build_artifacts: buildArtifacts,
+  };
+}
+
+export function previewSingleClientAccessGroupAssignment(groupId: string, clientId: string, mode: 'add_only' | 'add_or_move', buildArtifacts = false): Promise<ClientAccessGroupMembershipResult> {
+  return previewClientAccessGroupMembers(groupId, {
+    ...singleClientMembershipPayload(clientId, mode, buildArtifacts),
+    dry_run: true,
+  });
+}
+
+export function applySingleClientAccessGroupAssignment(groupId: string, clientId: string, mode: 'add_only' | 'add_or_move', buildArtifacts = false): Promise<ClientAccessGroupMembershipResult> {
+  return applyClientAccessGroupMembers(groupId, singleClientMembershipPayload(clientId, mode, buildArtifacts));
+}
+
+export function removeClientAccessGroupMembership(groupId: string, clientId: string): Promise<ClientAccessGroupMembershipResult> {
+  return removeClientAccessGroupMember(groupId, clientId);
 }
 
 export function getClientAccessGroupScope(groupId: string): Promise<ClientAccessGroupScope> {
@@ -261,6 +337,25 @@ export function updateFirewallSafetySettings(input: FirewallManagementSettings):
   return sendJSON<FirewallManagementSettings>('/api/v1/firewall/management-settings', 'PUT', input);
 }
 
+export function listClientArtifacts(clientId: string): Promise<ClientArtifact[]> {
+  return apiRequest<ClientArtifact[]>(`/api/v1/clients/${encodeURIComponent(clientId)}/artifacts`);
+}
+
+export function buildClientArtifact(clientId: string, input: ClientArtifactBuildRequest): Promise<ClientArtifactBuildResult> {
+  return sendJSON<ClientArtifactBuildResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/artifacts`, 'POST', input);
+}
+
+export function getClientArtifactDownload(clientId: string, artifactId: string): Promise<ClientArtifactDownloadResult> {
+  return Promise.resolve({
+    url: apiURL(`/api/v1/clients/${encodeURIComponent(clientId)}/artifacts/${encodeURIComponent(artifactId)}/download`),
+    method: 'GET',
+  });
+}
+
+export function deleteClientArtifact(clientId: string, artifactId: string): Promise<ClientArtifactDeleteResult> {
+  return apiRequest<ClientArtifactDeleteResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/artifacts/${encodeURIComponent(artifactId)}`, { method: 'DELETE' });
+}
+
 export const endpoints = {
   ready: () => apiRequest<ReadyStatus>('/api/v1/ready'),
   version: () => apiRequest<VersionInfo>('/api/v1/version'),
@@ -268,7 +363,8 @@ export const endpoints = {
   nodes: () => apiRequest<NodeEntity[]>('/api/v1/nodes'),
   instances: () => apiRequest<ServiceInstance[]>('/api/v1/instances'),
   instanceRuntimeStates: () => apiRequest<Record<string, unknown>[]>('/api/v1/instances/runtime-states'),
-  clients: () => apiRequest<ClientAccount[]>('/api/v1/clients'),
+  clients: () => listClients(),
+  client: getClient,
   clientAccessServices: listClientAccessServices,
   clientAccessGroups: () => listClientAccessGroups(),
   firewallInventory: getFirewallInventory,

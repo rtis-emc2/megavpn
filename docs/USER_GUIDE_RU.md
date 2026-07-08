@@ -716,20 +716,24 @@ VLESS-специфичные режимы и runtime validation - в
 ## 16. Клиенты и provisioning
 
 1. Откройте `Clients`.
-2. Создайте client account.
-3. Нажмите `Provision`.
-4. Выберите конкретные service instances, которые доступны клиенту.
-5. Запустите provisioning job.
-6. После постановки в очередь UI должен показать результат: job id, selected
-   services, status и next action.
-7. После успешного provisioning откройте client access.
-8. Соберите artifacts: `.ovpn`, VLESS URL, WireGuard config, Shadowsocks URI или
-   bundle.
-9. Preview/download проверьте до отправки клиенту.
-10. При необходимости создайте share link, выполните rotation VLESS
-    subscription URL или отправьте email.
+2. Создайте client account или выберите существующего клиента.
+3. В drawer клиента используйте `Overview` для activate/suspend, revoke и
+   delete. Delete и revoke требуют confirmation; revoke показывает job.
+4. Для VLESS откройте вкладку `Access`, выберите VLESS group и mode.
+5. Нажмите `Preview`; проверьте create/move/skip/fail, affected instances и
+   job impact.
+6. Нажмите `Apply` только после успешного preview. Любое изменение group/mode
+   делает preview stale и блокирует Apply.
+7. Для удаления VLESS membership используйте `Remove VLESS membership`; действие
+   требует confirmation и использует backend member delete endpoint.
+8. На вкладке `Artifacts` соберите artifact, скачайте ready artifact через
+   backend download endpoint или удалите artifact с confirmation.
+9. На вкладке `Activity / Jobs` отслеживайте client-scoped jobs.
+10. Share links, VLESS subscriptions и email delivery в новой 8.0.0 UI остаются
+    за FE8-P0-03B; для этих операций используйте `/legacy/`.
 11. Для перевыпуска без удаления доступа используйте `Clients -> Access ->
-    Client Configs -> Clear configs`, затем заново выполните `Build configs`.
+    Client Configs -> Clear configs`, затем заново выполните `Build configs` в
+    legacy workflow, пока config cleanup не мигрирован.
 12. Для полного удаления клиента используйте `Clients -> Delete`. Операция
     удаляет client account, service accesses, routes, generated configs,
     delivery links, VLESS subscriptions и service-access secret refs, после чего
@@ -748,13 +752,12 @@ agent не подтвердит успешный apply; только после 
 выдавайте VLESS subscription URL, чтобы клиентское приложение получило новый
 endpoint без ручного редактирования профиля.
 
-`Delete` на отдельной строке в `Client Configs` или `Artifacts` удаляет только
-выбранный generated config и delivery links, которые на него указывают.
-`Clear configs` удаляет все generated configs, share links и subscription tokens
-клиента. Оба действия не отзывают сам доступ: клиентские service bindings
-остаются, а оператор может собрать новые artifacts. `Delete client` -
-необратимая операция удаления клиента из runtime-модели; audit/job history при
-этом сохраняется для traceability.
+`Delete` на отдельной строке в `Artifacts` удаляет выбранный artifact.
+`Delete` на отдельной строке в `Client Configs` и `Clear configs` остаются
+legacy-only в FE8-P0-03A. Эти действия не отзывают сам доступ: клиентские
+service bindings остаются, а оператор может собрать новые artifacts. `Delete
+client` - необратимая операция удаления клиента из runtime-модели; audit/job
+history при этом сохраняется для traceability.
 
 ## 17. Share links, VLESS subscriptions и email
 

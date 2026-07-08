@@ -45,22 +45,22 @@ to `/legacy/`.
 
 | Workflow | Status | Notes |
 | --- | --- | --- |
-| List/search/filter | read-only | Current page lists clients; advanced filters are not complete. |
-| Create client | disabled intentionally | Backend exists; form and validation mapping not wired. |
+| List/search/filter | fully connected | `GET /api/v1/clients`; search/status filters run in the workspace over the backend list. |
+| Create client | fully connected | `POST /api/v1/clients`; validation/conflict responses are preserved and mapped in the form where possible. |
 | Edit client | backend-missing | No generic `PATCH/PUT /clients/{id}` route found. |
-| Activate/suspend | legacy-only | Backend exists; needs confirmation and invalidation. |
-| Delete client | legacy-only | Backend exists; destructive confirmation required. |
-| Provision through access groups | legacy-only | Must use group bulk endpoints; no one-job-per-client bulk implementation. |
-| Revoke client | legacy-only | Backend exists; async job tracking required. |
+| Activate/suspend | fully connected | `POST /api/v1/clients/{id}/suspend` and `/activate`; query invalidation is wired. |
+| Delete client | fully connected | `DELETE /api/v1/clients/{id}` with confirmation and client list invalidation. |
+| Provision through access groups | fully connected for single-client VLESS | Client detail uses the same access-group member preview/apply backend model as `Clients -> Groups`; no one-job-per-client bulk path is introduced. Non-VLESS provisioning remains legacy-only. |
+| Revoke client | fully connected | `POST /api/v1/clients/{id}/revoke`; returned job is shown in the client workspace. |
 | Routes | legacy-only | Backend exists; detail workflow not migrated. |
-| Accesses | legacy-only | Backend exists; rotation requires secret-safe handling. |
+| Accesses | read-only / legacy-only | Current service access identity and group assignment are shown without secrets; access delete/rotation remains legacy-only. |
 | Config cleanup | legacy-only | Backend exists; destructive confirmation required. |
-| Artifact build | legacy-only | Backend exists; async job tracking required. |
-| Artifact download | read-only / legacy-only | Aggregate list exists; per-client download workflow not migrated. |
-| Artifact delete | legacy-only | Backend exists; destructive confirmation required. |
-| Email delivery | legacy-only | Backend exists; form not migrated. |
-| Share link create/revoke | legacy-only | Backend exists; token one-time display required. |
-| Subscription rotate/revoke | disabled intentionally | Backend exists; token safety UX not migrated. |
+| Artifact build | fully connected | `POST /api/v1/clients/{id}/artifacts`; returned job is tracked in the drawer. |
+| Artifact download | fully connected | `GET /api/v1/clients/{id}/artifacts/{artifact_id}/download` opened through a backend URL; no token storage. |
+| Artifact delete | fully connected | `DELETE /api/v1/clients/{id}/artifacts/{artifact_id}` with confirmation and artifact invalidation. |
+| Email delivery | FE8-P0-03B / legacy-only | Backend exists; form not migrated in FE8-P0-03A. |
+| Share link create/revoke | FE8-P0-03B / legacy-only | Backend exists; token one-time display is deferred to FE8-P0-03B. |
+| Subscription rotate/revoke | FE8-P0-03B / legacy-only | Backend exists; token safety UX is deferred to FE8-P0-03B. |
 
 ### Clients -> Groups
 
