@@ -3,10 +3,16 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`cb9b0f3e97043ec9d2bb8a6499472e75536354dc`
+`PENDING_FE8_P0_04B_FEATURE_COMMIT`
+
+FE8-P0-04B service pack instance creation feature commit:
+`PENDING_FE8_P0_04B_FEATURE_COMMIT`
 
 FE8-P0-04A instance runtime control feature commit:
 `e07b2b766949d3aa867717972b4834fa51aa84d2`
+
+FE8-P0-04A evidence commit:
+`711b06dec5076fabcd7488fd11d010b65e6c8276`
 
 FE8-P0-03B client delivery feature commit:
 `8dbcb97bcf225d34686c0eb555a6697425f12c37`
@@ -33,12 +39,13 @@ Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
 Current evidence CI:
-GitHub Actions run `28974567628` passed for
-`cb9b0f3e97043ec9d2bb8a6499472e75536354dc`.
+Local FE8-P0-04B evidence is pending push/CI for
+`PENDING_FE8_P0_04B_FEATURE_COMMIT`. Previous accepted baseline CI run
+`28974936662` passed for `711b06dec5076fabcd7488fd11d010b65e6c8276`.
 
-Current evidence date UTC: `2026-07-08T20:51:41Z`
+Current evidence date UTC: `2026-07-08T21:16:46Z`
 
-Status: FE8-P0-04A is locally verified and reviewable. Final 8.0.0 cutover
+Status: FE8-P0-04B is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
 validation, integrated disposable-data smoke and backend version synchronization
 are complete.
@@ -47,11 +54,13 @@ VLESS is connected in the new UI without `/legacy/`. Firewall is connected in
 the new UI without `/legacy/`. Clients core/artifacts are connected in the new
 UI without `/legacy/`. Client delivery workflows are connected in the new UI
 without `/legacy/`. Existing Instances runtime control is connected in the new
+UI without `/legacy/`. Service pack instance creation, manual instance creation,
+instance spec replace and runtime artifact list/import are connected in the new
 UI without `/legacy/`. Remaining workflows listed below are still not migrated.
 
 ## 1. Summary
 
-This evidence records the current 8.0.0 frontend branch after FE8-P0-04A:
+This evidence records the current 8.0.0 frontend branch after FE8-P0-04B:
 
 - CI push coverage includes `release/8.0.0-frontend-console` and `release/**`;
   pull request coverage remains enabled.
@@ -72,6 +81,13 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-04A:
   list/detail, runtime state, revisions/rollback, apply/reapply, lifecycle
   actions, diagnostics, delete/force-delete, read-only access group
   materialization and async job tracking.
+- `Services -> Service Packs` is connected without `/legacy/` for service pack
+  list/detail, JSON create/update, enable/disable/delete and create instance
+  from pack.
+- `Instances` manual create and spec replace are connected without `/legacy/`
+  through backend `POST /api/v1/instances` and `PUT /api/v1/instances/{id}/spec`.
+- `Services -> Runtime Artifacts` is connected without `/legacy/` for runtime
+  artifact list, safe metadata view and URL import.
 - Share/subscription one-time URLs are shown only in transient local UI state
   after backend create/rotate responses and are cleared on close.
 - `/legacy/` remains the rollback UI and still covers non-migrated workflows.
@@ -85,19 +101,20 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-04A:
 | `go test ./...` | PASS | All Go package tests pass, including `internal/api/http`. |
 | `go test -race ./...` | PASS | Race detector tests pass. |
 | `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` | PASS | All operational binaries build. |
-| `cd frontend && npm ci` | PASS | npm `11.7.0`; 251 packages installed; audit found 0 vulnerabilities. |
+| `cd frontend && npm ci` | PASS | npm `11.18.0`; 251 packages installed; audit found 0 vulnerabilities. |
 | `cd frontend && npm run typecheck` | PASS | TypeScript checks pass. |
 | `cd frontend && npm run lint` | PASS | ESLint passes. |
-| `cd frontend && npm run test` | PASS | Vitest: 5 files, 50 tests passed. |
-| `cd frontend && npm run i18n:check` | PASS | i18n key parity ok: 457 keys. |
-| `cd frontend && npm run build` | PASS | Vite build wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-CkP2jR8P.js`, `web/assets/index-CMdslovF.css`. |
+| `cd frontend && npm run test` | PASS | Vitest: 6 files, 57 tests passed. |
+| `cd frontend && npm run i18n:check` | PASS | i18n key parity ok: 510 keys. |
+| `cd frontend && npm run build` | PASS | Vite build wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-mEHTiV16.js`, `web/assets/index-CMdslovF.css`. |
 | `scripts/ci/frontend-serving-smoke.sh` | PASS | Root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
 | `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
 | `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
 | `scripts/smoke/vless-client-access-groups-smoke.sh` | SKIP | No `MEGAVPN_PUBLIC_BASE_URL` or `MEGAVPN_API_URL` was provided for a disposable/local API. |
+| `scripts/smoke/service-pack-smoke.sh --plan <node-id> <endpoint-domain> [certificate-id]` | SKIP | No disposable/local API, target node or endpoint domain was available in this workstation session. |
 
 Local note: this workstation did not expose a native `npm` binary in `PATH`;
-frontend checks were run through npm CLI `11.7.0` on the bundled Node runtime.
+frontend checks were run through npm CLI `11.18.0` on the bundled Node runtime.
 The repository standard and GitHub CI path remain plain `npm ci` and
 `npm run ...`.
 
@@ -200,12 +217,53 @@ Unsupported or deferred Instances sub-actions:
 
 - backend has no separate instance apply preview/validate endpoint, so apply and
   reapply are direct backend mutations guarded by explicit confirmation;
-- create-from-service-pack, manual instance create, spec editor, service pack
-  CRUD and runtime artifact import remain FE8-P0-04B or legacy-only;
+- backend has no separate service pack validation endpoint, so service pack
+  create/update uses backend validation during the real `PUT` mutation;
+- backend has no separate instance spec preview endpoint or draft-save HTTP
+  route, so spec replace uses local JSON object validation, explicit
+  confirmation and backend validation during `PUT /api/v1/instances/{id}/spec`;
+- backend has no runtime binary artifact delete endpoint in this release, so
+  runtime artifact delete remains disabled with the exact backend reason;
 - Instances show access group materialization read-only and do not own primary
   VLESS group/member management.
 
-## 6. VLESS Groups Test Evidence
+## 6. Service Packs / Instance Creation / Runtime Artifacts Test Evidence
+
+`frontend/src/pages/services/ServiceWorkspace.test.tsx` and
+`frontend/src/pages/services/InstancesPage.test.tsx` verify FE8-P0-04B service
+provisioning workflows against mocked backend API responses:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Services workspace tabs | `renders Services workspace tabs and opens service pack detail`; asserts links for `Instances`, `Service Packs` and `Runtime Artifacts`. |
+| Service pack list loads | Same test renders mocked `GET /api/v1/service-packs` rows. |
+| Service pack detail opens | Same test opens a pack drawer and renders recommendations safely as text/JSON. |
+| Service pack create/update/delete/status | `updates and deletes service packs through backend management endpoints`; asserts `PUT /api/v1/service-packs/{key}`, `POST /disable` and `DELETE /service-packs/{key}`. |
+| Create from service pack confirmation | `creates instances from a service pack and shows instance and job links`; verifies no backend create call before `Confirm`. |
+| Create from service pack endpoint | Same test asserts `POST /api/v1/service-packs/{key}/instances`. |
+| Create result links | Same test renders created instance/job evidence and links to `/services/instances` and `/operations/jobs`. |
+| 403 handling | `shows service pack create errors distinctly for 403, 422 and 409`; renders permission text safely. |
+| 422 handling | Same test renders validation text safely. |
+| 409 handling | Same test renders conflict text safely. |
+| Manual instance create | `creates manual instances and replaces specs through backend endpoints`; asserts `POST /api/v1/instances` with node, service and name. |
+| Spec replace | Same test asserts `PUT /api/v1/instances/{id}/spec` only after confirmation. |
+| Runtime artifact list | `lists, imports and safely renders runtime artifact metadata without delete support`; renders mocked `GET /api/v1/binary-artifacts` rows. |
+| Runtime artifact import | Same test asserts `POST /api/v1/binary-artifacts/import-url`. |
+| Runtime artifact delete unsupported | Same test verifies delete is disabled with `Backend has no binary runtime artifact delete endpoint in this release.` |
+| Artifact metadata safe rendering | Same test renders script-like metadata as text and verifies no `img` element is created. |
+| No `/legacy` workflow | Services workspace tests assert no `/legacy` workflow links or requests for implemented pages. |
+| No raw page API calls | Services workspace tests assert no `/api/v1` string or raw `fetch` in Services page components. |
+
+Service pack instance creation works in the new UI without `/legacy/`.
+
+Manual instance creation works in the new UI without `/legacy/`.
+
+Runtime artifacts workflow works in the new UI without `/legacy/` for list,
+safe metadata view and URL import. Runtime artifact delete remains disabled
+because the backend has no binary runtime artifact delete endpoint in this
+release.
+
+## 7. VLESS Groups Test Evidence
 
 `frontend/src/pages/clients/ClientGroupsPage.test.tsx` verifies the migrated
 VLESS group workflow against mocked backend API responses:
@@ -221,7 +279,7 @@ VLESS group workflow against mocked backend API responses:
 | Preview stale disables apply | `invalidates VLESS membership preview and disables apply when selection inputs change`; apply remains disabled after mode change. |
 | No `/legacy` calls | Every VLESS workflow test asserts no request path starts with `/legacy`. |
 
-## 7. Firewall Test Evidence
+## 8. Firewall Test Evidence
 
 `frontend/src/pages/network-policy/FirewallPage.test.tsx` verifies the migrated
 Firewall workflow against mocked backend API responses:
@@ -243,7 +301,7 @@ Unsupported Firewall sub-action:
 
 - rule reorder remains disabled because the backend has no reorder endpoint.
 
-## 8. Integrated API Smoke
+## 9. Integrated API Smoke
 
 Added script from the VLESS workflow pass:
 
@@ -267,7 +325,20 @@ URL was available in this workstation session. FE8-P0-03B added a backend unit
 test for share link rotation and frontend/API-contract tests for delivery, but
 not a live DB delivery smoke.
 
-## 9. Static Serving Evidence
+Service pack runtime provisioning can be smoke-tested against a disposable node
+with the existing service pack smoke command sequence:
+
+```bash
+export MEGAVPN_PUBLIC_BASE_URL=http://127.0.0.1:8080
+export MEGAVPN_AUTH_TOKEN=<operator-or-test-token>
+scripts/smoke/service-pack-smoke.sh --plan <node-id> <endpoint-domain> [certificate-id]
+scripts/smoke/service-pack-smoke.sh --matrix <node-id> <endpoint-domain> [certificate-id]
+```
+
+Current service pack live smoke evidence is SKIP, not PASS: no disposable API,
+target node or endpoint domain was available in this workstation session.
+
+## 10. Static Serving Evidence
 
 Backend tests and `scripts/ci/frontend-serving-smoke.sh` cover:
 
@@ -277,7 +348,7 @@ Backend tests and `scripts/ci/frontend-serving-smoke.sh` cover:
 - `/api/*` and `/agent/*` are not shadowed by SPA fallback;
 - missing root `/assets/*` return 404 rather than SPA HTML.
 
-## 10. Security / Review Hygiene
+## 11. Security / Review Hygiene
 
 Current enforced hygiene:
 
@@ -300,9 +371,11 @@ Current enforced hygiene:
   success;
 - Instances diagnostics, runtime observations and backend errors are rendered as
   text, not HTML;
+- service pack definitions, instance specs and runtime artifact metadata are
+  rendered as text/JSON, not HTML;
 - unsupported non-VLESS services remain catalog-only or legacy-only.
 
-## 11. Write Workflow Summary
+## 12. Write Workflow Summary
 
 Fully connected in the new console:
 
@@ -322,7 +395,11 @@ Fully connected in the new console:
 - `Instances` existing-instance runtime control: list/detail, runtime state,
   revisions/rollback, apply/reapply, start/stop/restart/enable/disable,
   diagnostics, delete/force-delete, read-only access group materialization and
-  async job tracking.
+  async job tracking;
+- `Services -> Service Packs` list/detail/create/update/enable/disable/delete
+  and create instance from pack;
+- `Instances` manual create and spec replace;
+- `Services -> Runtime Artifacts` list, safe metadata view and URL import.
 
 Still disabled, read-only or legacy-only:
 
@@ -331,14 +408,15 @@ Still disabled, read-only or legacy-only:
 - client routes, access rotation and config cleanup;
 - client delivery history;
 - nodes bootstrap/control/terminal/diagnostics mutations;
-- instances create-from-service-pack, manual create, spec editor, service pack
-  CRUD and runtime artifact import;
+- runtime artifact delete;
+- separate service pack validation, instance spec preview and instance draft-save
+  endpoints;
 - certificates import/issue/default/revoke/delete;
 - platform settings save, mail test and TLS apply;
 - backhaul mutations;
 - backup/restore browser UI.
 
-## 12. Known Limitations
+## 13. Known Limitations
 
 - Backend binary/version metadata remains `7.1.1.0`; synchronizing it to
   `8.0.0` is a separate release task.
@@ -360,31 +438,39 @@ Still disabled, read-only or legacy-only:
   backend apply endpoint.
 - Instances rollback returns an apply-ready revision rather than a job; the new
   UI queues a real apply job when backend reports `can_apply`.
-- Instances create-from-service-pack, manual create, spec editor, service pack
-  CRUD and runtime artifact import remain deferred to FE8-P0-04B or legacy-only.
+- Service pack create/update has no separate backend validation endpoint; the
+  new UI submits real backend mutations after explicit operator action and
+  renders backend validation/conflict errors safely.
+- Instance spec editing has no separate preview endpoint or draft-save HTTP
+  route in this release; spec replace is confirmed and validated by the real
+  backend `PUT` mutation.
+- Runtime artifact delete remains disabled because the backend has no binary
+  runtime artifact delete endpoint in this release.
 - No browser screenshot/responsive Playwright evidence was produced in this
   pass.
 - Integrated live API smoke was not run against a disposable DB/API in this
-  session; FE8-P0-04A evidence is frontend/API-contract test coverage against
+  session; FE8-P0-04B evidence is frontend/API-contract test coverage against
   mocked backend responses plus the full local CI command set.
 
-## 13. Go / No-Go
+## 14. Go / No-Go
 
 Recommendation:
 
 - GO for PR review and CI validation of the 8.0.0 frontend branch.
 - GO for using new UI `Clients -> Groups -> VLESS`, Clients core/artifacts,
-  Clients delivery, Firewall preview/apply/disable and existing Instances
-  runtime control in controlled staging after operator review.
+  Clients delivery, Firewall preview/apply/disable, existing Instances runtime
+  control, service pack instance creation, manual instance creation and runtime
+  artifact list/import in controlled staging after operator review.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
 
 1. run integrated smoke/e2e against disposable DB/API data for VLESS, Clients
-   core/artifacts/delivery, Firewall and Instances runtime operator flows;
+   core/artifacts/delivery, Firewall and Instances/Service Packs runtime
+   operator flows;
 2. migrate Nodes bootstrap/control/diagnostics workflows;
-3. migrate Instances create-from-service-pack, manual create, spec editor,
-   service pack CRUD and runtime artifact import workflows;
+3. add backend/browser support for runtime artifact delete if it is required for
+   final operator parity;
 4. migrate Clients routes, access rotation and config cleanup;
 5. migrate Certificates and Platform settings write workflows;
 6. add E2E/browser responsive evidence for critical operator flows;

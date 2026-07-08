@@ -78,6 +78,170 @@ export type ServiceInstance = APIRecord & {
 
 export type ServiceInstanceDetail = ServiceInstance;
 
+export type ServicePackComponent = APIRecord & {
+  label?: string;
+  description?: string;
+  service_code?: string;
+  preset_key?: string;
+  name_suffix?: string;
+  slug_suffix?: string;
+  endpoint_port?: number;
+  requires_endpoint_host?: boolean;
+  spec?: APIRecord;
+};
+
+export type ServicePack = APIRecord & {
+  key: string;
+  label?: string;
+  description?: string;
+  base_name_template?: string;
+  endpoint_hint?: string;
+  requires_endpoint_host?: boolean;
+  platform_notes?: string[];
+  recommendations?: string[];
+  components?: ServicePackComponent[];
+  status?: string;
+  source?: string;
+  version?: number;
+  display_order?: number;
+};
+
+export type ServicePackDetail = ServicePack;
+
+export type ServicePackCapability = APIRecord & {
+  service_code?: string;
+  action?: string;
+  supported?: boolean;
+  reason?: string;
+};
+
+export type ServicePackSchema = APIRecord & {
+  fields?: APIRecord[];
+};
+
+export type ServicePackCreateInput = ServicePack;
+
+export type ServicePackUpdateInput = ServicePack;
+
+export type ServicePackValidationResult = APIRecord & {
+  status?: string;
+  issues?: unknown[];
+};
+
+export type InstanceCreateFromPackInput = APIRecord & {
+  node_id: string;
+  base_name?: string;
+  endpoint_host?: string;
+  certificate_id?: string;
+  openvpn_pki_profile?: string;
+  xray_egress_mode?: string;
+  xray_egress_node_id?: string;
+  camouflage_path?: string;
+  fallback_upstream_url?: string;
+  fallback_host_header?: string;
+  fallback_sni?: string;
+  auto_install_runtime?: boolean;
+  components?: Array<{
+    index?: number;
+    endpoint_port?: number;
+    openvpn_pki_profile?: string;
+  }>;
+};
+
+export type InstanceManualCreateInput = APIRecord & {
+  node_id: string;
+  service_code: string;
+  name: string;
+  slug?: string;
+  endpoint_host?: string;
+  endpoint_port?: number;
+  spec?: APIRecord;
+};
+
+export type InstanceCreateResult = ServiceInstance | (APIRecord & {
+  status?: string;
+  service_pack_key?: string;
+  created_instances?: ServiceInstance[];
+  existing_instances?: ServiceInstance[];
+  runtime_install_jobs?: Job[];
+  apply_jobs?: Job[];
+  job?: Job;
+  jobs?: Job[];
+  error?: string;
+});
+
+export type InstanceSpecDraft = APIRecord & {
+  spec: APIRecord;
+  apply_after_save?: boolean;
+};
+
+export type InstanceSpecValidationResult = APIRecord & {
+  revision?: ServiceInstanceRevision;
+  can_apply?: boolean;
+  message?: string;
+  issue_count?: number;
+};
+
+export type RuntimeArtifact = APIRecord & {
+  id: string;
+  name?: string;
+  kind?: string;
+  service_code?: string;
+  version?: string;
+  os_family?: string;
+  os_version?: string;
+  architecture?: string;
+  storage_path?: string;
+  size_bytes?: number;
+  sha256?: string;
+  signature?: string;
+  status?: string;
+  metadata?: APIRecord;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type RuntimeArtifactImportInput = APIRecord & {
+  source_url: string;
+  expected_sha256: string;
+  name?: string;
+  kind?: string;
+  service_code?: string;
+  version?: string;
+  os_family?: string;
+  os_version?: string;
+  architecture?: string;
+  install_mode?: string;
+  install_path?: string;
+  archive_binary_path?: string;
+  signature?: string;
+  storage_path?: string;
+  replace_file?: boolean;
+};
+
+export type RuntimeArtifactImportResult = RuntimeArtifact;
+
+export type RuntimeArtifactDeleteResult = APIRecord & {
+  status?: string;
+  artifact?: RuntimeArtifact;
+};
+
+export type RuntimeTargetNode = NodeEntity;
+
+export type ServiceTypeCapability = APIRecord & {
+  id?: string;
+  code: string;
+  name?: string;
+  category?: string;
+  tier?: string;
+  supports_accounts?: boolean;
+  supports_artifacts?: boolean;
+  supports_install?: boolean;
+  supports_instances?: boolean;
+  enabled?: boolean;
+  created_at?: string;
+};
+
 export type RuntimeCheck = APIRecord & {
   code?: string;
   display_name?: string;

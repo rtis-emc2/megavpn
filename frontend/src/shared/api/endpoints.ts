@@ -60,16 +60,32 @@ import type {
   InstanceForceDeleteInput,
   InstanceLifecycleAction,
   InstanceLifecycleResult,
+  InstanceCreateFromPackInput,
+  InstanceCreateResult,
+  InstanceManualCreateInput,
+  InstanceSpecDraft,
+  InstanceSpecValidationResult,
   InstanceRollbackRequest,
   InstanceRollbackResult,
   Job,
   NodeEntity,
   ReadyStatus,
+  RuntimeArtifact,
+  RuntimeArtifactDeleteResult,
+  RuntimeArtifactImportInput,
+  RuntimeArtifactImportResult,
   ServiceInstance,
   ServiceInstanceDetail,
   ServiceInstanceRevision,
   ServiceInstanceRuntimeObservation,
   ServiceInstanceRuntimeState,
+  ServicePack,
+  ServicePackDetail,
+  ServicePackCreateInput,
+  ServicePackUpdateInput,
+  ServicePackValidationResult,
+  ServiceTypeCapability,
+  RuntimeTargetNode,
   ShareLink,
   TrafficSummary,
   AvailableClientsForGroupPage,
@@ -148,6 +164,66 @@ export function listInstances(_params: { search?: string; status?: string; servi
   return apiRequest<ServiceInstance[]>('/api/v1/instances');
 }
 
+export function listServiceTypeCapabilities(): Promise<ServiceTypeCapability[]> {
+  return apiRequest<ServiceTypeCapability[]>('/api/v1/services');
+}
+
+export function listRuntimeTargets(_params: { serviceCode?: string } = {}): Promise<RuntimeTargetNode[]> {
+  return apiRequest<RuntimeTargetNode[]>('/api/v1/nodes');
+}
+
+export function listServicePacks(params: { includeInactive?: boolean } = {}): Promise<ServicePack[]> {
+  return apiRequest<ServicePack[]>(`/api/v1/service-packs${queryString({ include_inactive: params.includeInactive ? 1 : undefined })}`);
+}
+
+export async function getServicePack(packId: string): Promise<ServicePackDetail> {
+  const packs = await listServicePacks({ includeInactive: true });
+  const pack = packs.find((item) => item.key === packId);
+  if (!pack) throw new Error('service pack not found');
+  return pack;
+}
+
+export function createServicePack(input: ServicePackCreateInput): Promise<ServicePackDetail> {
+  if (!input.key) return Promise.reject(new Error('service pack key is required'));
+  return sendJSON<ServicePackDetail>(`/api/v1/service-packs/${encodeURIComponent(input.key)}`, 'PUT', input);
+}
+
+export function updateServicePack(packId: string, input: ServicePackUpdateInput): Promise<ServicePackDetail> {
+  return sendJSON<ServicePackDetail>(`/api/v1/service-packs/${encodeURIComponent(packId)}`, 'PUT', { ...input, key: packId });
+}
+
+export function deleteServicePack(packId: string): Promise<ServicePackDetail> {
+  return apiRequest<ServicePackDetail>(`/api/v1/service-packs/${encodeURIComponent(packId)}`, { method: 'DELETE' });
+}
+
+export function setServicePackEnabled(packId: string, enabled: boolean): Promise<ServicePackDetail> {
+  return sendJSON<ServicePackDetail>(`/api/v1/service-packs/${encodeURIComponent(packId)}/${enabled ? 'enable' : 'disable'}`, 'POST', {});
+}
+
+export function validateServicePack(_input: ServicePackCreateInput): Promise<ServicePackValidationResult> {
+  return Promise.reject(new Error('Backend has no service pack validation endpoint in this release.'));
+}
+
+export function createInstanceFromServicePack(packId: string, input: InstanceCreateFromPackInput): Promise<InstanceCreateResult> {
+  return sendJSON<InstanceCreateResult>(`/api/v1/service-packs/${encodeURIComponent(packId)}/instances`, 'POST', input);
+}
+
+export function createInstanceManual(input: InstanceManualCreateInput): Promise<InstanceCreateResult> {
+  return sendJSON<InstanceCreateResult>('/api/v1/instances', 'POST', input);
+}
+
+export function validateInstanceSpec(_input: InstanceSpecDraft): Promise<InstanceSpecValidationResult> {
+  return Promise.reject(new Error('Backend has no separate instance spec validation endpoint in this release; save spec uses backend validation.'));
+}
+
+export function saveInstanceDraft(_instanceId: string, _input: InstanceSpecDraft): Promise<InstanceSpecValidationResult> {
+  return Promise.reject(new Error('Backend has no HTTP save-draft endpoint in this release; use spec replace to create a validated revision.'));
+}
+
+export function replaceInstanceSpec(instanceId: string, input: InstanceSpecDraft): Promise<InstanceSpecValidationResult> {
+  return sendJSON<InstanceSpecValidationResult>(`/api/v1/instances/${encodeURIComponent(instanceId)}/spec`, 'PUT', { spec: input.spec });
+}
+
 export function getInstance(instanceId: string): Promise<ServiceInstanceDetail> {
   return apiRequest<ServiceInstanceDetail>(`/api/v1/instances/${encodeURIComponent(instanceId)}`);
 }
@@ -198,6 +274,25 @@ export function deleteInstance(instanceId: string): Promise<InstanceDeleteResult
 
 export function forceDeleteInstance(instanceId: string, input: InstanceForceDeleteInput): Promise<InstanceDeleteResult> {
   return sendJSON<InstanceDeleteResult>(`/api/v1/instances/${encodeURIComponent(instanceId)}/force-delete`, 'POST', input);
+}
+
+export function listRuntimeArtifacts(params: { includeInactive?: boolean } = {}): Promise<RuntimeArtifact[]> {
+  return apiRequest<RuntimeArtifact[]>(`/api/v1/binary-artifacts${queryString({ include_inactive: params.includeInactive ? 1 : undefined })}`);
+}
+
+export async function getRuntimeArtifact(artifactId: string): Promise<RuntimeArtifact> {
+  const artifacts = await listRuntimeArtifacts({ includeInactive: true });
+  const artifact = artifacts.find((item) => item.id === artifactId);
+  if (!artifact) throw new Error('runtime artifact not found');
+  return artifact;
+}
+
+export function importRuntimeArtifact(input: RuntimeArtifactImportInput): Promise<RuntimeArtifactImportResult> {
+  return sendJSON<RuntimeArtifactImportResult>('/api/v1/binary-artifacts/import-url', 'POST', input);
+}
+
+export function deleteRuntimeArtifact(_artifactId: string): Promise<RuntimeArtifactDeleteResult> {
+  return Promise.reject(new Error('Backend has no binary runtime artifact delete endpoint in this release.'));
 }
 
 export function listClientAccessServices(): Promise<ClientAccessService[]> {
@@ -519,6 +614,7 @@ export const endpoints = {
   nodes: () => apiRequest<NodeEntity[]>('/api/v1/nodes'),
   instances: () => listInstances(),
   instanceRuntimeStates: () => listInstanceRuntimeStates(),
+  serviceTypeCapabilities: () => listServiceTypeCapabilities(),
   clients: () => listClients(),
   client: getClient,
   clientAccessServices: listClientAccessServices,
@@ -536,8 +632,8 @@ export const endpoints = {
   artifacts: () => apiRequest<Artifact[]>('/api/v1/artifacts'),
   shareLinks: () => apiRequest<ShareLink[]>('/api/v1/share-links'),
   addressPools: () => apiRequest<AddressPools>('/api/v1/address-pools'),
-  servicePacks: () => apiRequest<Record<string, unknown>[]>('/api/v1/service-packs?include_inactive=1'),
-  binaryArtifacts: () => apiRequest<Record<string, unknown>[]>('/api/v1/binary-artifacts'),
+  servicePacks: () => listServicePacks(),
+  binaryArtifacts: () => listRuntimeArtifacts(),
   audit: () => apiRequest<Record<string, unknown>[]>('/api/v1/audit?limit=200'),
   runtimePreflight: () => apiRequest<Record<string, unknown>>('/api/v1/runtime/preflight'),
   controlPlaneTLS: () => apiRequest<Record<string, unknown>>('/api/v1/settings/control-plane-tls'),

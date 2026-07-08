@@ -105,18 +105,19 @@ to `/legacy/`.
 | --- | --- | --- |
 | Instances list | fully connected | Read path. |
 | Instance detail/runtime/revisions | fully connected | Detail drawer loads `GET /api/v1/instances/{id}`, runtime state, runtime observations and revisions. Runtime/diagnostic output is rendered as text. |
-| Create from service pack | legacy-only | Backend exists; create form not migrated. |
-| Manual create | legacy-only | Backend exists; spec form not migrated. |
-| Draft/spec replace | legacy-only | Backend exists; validation mapping required. |
+| Create from service pack | fully connected | `POST /api/v1/service-packs/{key}/instances`; confirmation required when no separate validation/preview endpoint exists. Created/existing instances and returned jobs are shown. |
+| Manual create | fully connected | `POST /api/v1/instances`; service type and node options come from backend APIs. Spec is edited as JSON text and submitted only through the shared API client. |
+| Draft/spec replace | partially connected | Spec replace is fully connected through `PUT /api/v1/instances/{id}/spec` with confirmation and backend validation. Separate preview/validate and draft-save HTTP routes are backend-missing, so those sub-actions are not exposed. |
 | Apply/reapply | fully connected | `POST /api/v1/instances/{id}/apply`; confirmation required; returned job is tracked. Backend has no separate preview endpoint. |
 | Lifecycle start/stop/restart/enable/disable | fully connected | Real backend lifecycle endpoints are wired with confirmation and job tracking. |
 | Rollback | fully connected | Explicit revision selection and confirmation required. Backend rollback creates a new revision; when it is apply-ready, UI queues a real apply job for runtime effect. |
 | Diagnostics | fully connected | `POST /api/v1/instances/{id}/diagnose`; runtime observations are rendered safely as text. |
 | Delete/force-delete | fully connected | Delete and force-delete call real backend endpoints. Force-delete requires exact confirmation text. |
-| Service pack CRUD | legacy-only | Backend exists; form not migrated. |
+| Service pack list/detail | fully connected | `GET /api/v1/service-packs`; detail is derived from the list because the backend has no separate detail route. |
+| Service pack CRUD/status | fully connected | `PUT /api/v1/service-packs/{key}`, `POST /enable`, `POST /disable`, `DELETE /service-packs/{key}`; backend validation/conflict/permission errors are surfaced safely. Separate service pack validation endpoint is backend-missing. |
 | Access group materialization | read-only connected | Instances show materialized access groups and link to `Clients -> Groups`; no add/move/remove/create VLESS group actions are exposed here. |
 | VLESS templates | legacy-only/deprecated | Primary access group management belongs under Clients -> Groups. |
-| Runtime artifact import/list/delete | read-only / legacy-only | List connected; import not migrated; delete endpoint not found for binary artifacts. |
+| Runtime artifact list/import/delete | partially connected | List and URL import are fully connected through `GET /api/v1/binary-artifacts` and `POST /api/v1/binary-artifacts/import-url`. Metadata is rendered as text. Delete remains backend-missing because no binary runtime artifact DELETE route exists. |
 
 ### Nodes
 

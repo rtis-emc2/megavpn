@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +9,7 @@ import { InstancesPage } from './InstancesPage';
 type FetchCall = {
   method: string;
   path: string;
-  body?: unknown;
+  body?: Record<string, unknown>;
 };
 
 const instance = {
@@ -144,12 +144,13 @@ describe('InstancesPage', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://megavpn.test');
       const method = String(init?.method || 'GET').toUpperCase();
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
       calls.push({ method, path: `${url.pathname}${url.search}`, body });
 
       if (method === 'GET' && url.pathname === '/api/v1/instances') return json([instance]);
       if (method === 'GET' && url.pathname === '/api/v1/instances/runtime-states') return json([runtimeState]);
       if (method === 'GET' && url.pathname === '/api/v1/nodes') return json([{ id: 'node-1', name: 'Edge One', status: 'active' }]);
+      if (method === 'GET' && url.pathname === '/api/v1/services') return json([{ id: 'svc-1', code: 'xray-core', name: 'Xray Core', supports_instances: true, enabled: true }]);
       if (method === 'GET' && url.pathname === '/api/v1/instances/instance-1') return json(instance);
       if (method === 'GET' && url.pathname === '/api/v1/instances/instance-1/runtime-state') return json(runtimeState);
       if (method === 'GET' && url.pathname === '/api/v1/instances/instance-1/revisions') return json(revisions);
@@ -178,6 +179,8 @@ describe('InstancesPage', () => {
         return json({ ...instance, status: 'deleting' });
       }
       if (method === 'POST' && url.pathname === '/api/v1/instances/instance-1/force-delete') return json({ status: 'deleted', instance: { ...instance, status: 'deleted' } });
+      if (method === 'POST' && url.pathname === '/api/v1/instances') return json({ ...instance, id: 'instance-new', name: body?.name || 'Manual edge' }, 201);
+      if (method === 'PUT' && url.pathname === '/api/v1/instances/instance-1/spec') return json({ revision: { ...revisions[0], id: 'rev-spec' }, can_apply: true, message: 'instance revision saved as apply-ready', issue_count: 0 });
       return json({ error: `unhandled ${method} ${url.pathname}` }, 404);
     }));
   });
@@ -267,6 +270,31 @@ describe('InstancesPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/instances/instance-1/force-delete')).toBe(true));
     expect(calls.find((call) => call.method === 'POST' && call.path === '/api/v1/instances/instance-1/force-delete')?.body).toMatchObject({ confirmation: 'DELETE xray-edge', reason: 'stale runtime cleanup' });
+  });
+
+  it('creates manual instances and replaces specs through backend endpoints', async () => {
+    renderPage();
+    expect((await screen.findAllByText('Xray edge')).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole('button', { name: 'Manual instance' }));
+    await screen.findByRole('heading', { name: 'Manual instance' });
+    await userEvent.selectOptions(screen.getAllByLabelText('Node').at(-1)!, 'node-1');
+    await userEvent.selectOptions(screen.getAllByLabelText('Service').at(-1)!, 'xray-core');
+    await userEvent.type(screen.getByLabelText('Name'), 'Manual edge');
+    await userEvent.type(screen.getByLabelText('Slug'), 'manual-edge');
+    await userEvent.type(screen.getByLabelText('Endpoint host'), 'manual.example.test');
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/instances')).toBe(true));
+    expect(calls.find((call) => call.method === 'POST' && call.path === '/api/v1/instances')?.body).toMatchObject({ node_id: 'node-1', service_code: 'xray-core', name: 'Manual edge' });
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1)!);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
+    await screen.findByRole('heading', { name: 'Xray edge' });
+    await userEvent.click(screen.getByRole('tab', { name: 'Spec' }));
+    fireEvent.change(screen.getByLabelText('Spec JSON'), { target: { value: '{"redacted":true,"port":443}' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Replace spec' }));
+    expect(calls.some((call) => call.method === 'PUT' && call.path === '/api/v1/instances/instance-1/spec')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'PUT' && call.path === '/api/v1/instances/instance-1/spec')).toBe(true));
   });
 
   it('keeps access groups read-only and links management to Clients Groups', async () => {

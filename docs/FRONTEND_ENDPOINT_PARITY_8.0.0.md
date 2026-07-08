@@ -35,8 +35,8 @@ Unsafe methods must preserve `X-MegaVPN-CSRF: 1` and `credentials: include`.
 | Frontend file | Purpose | Current limitation |
 | --- | --- | --- |
 | `frontend/src/shared/api/client.ts` | Fetch wrapper, API base, CSRF, cookie credentials, typed API error. | Field-level validation mapping is currently implemented in focused forms, not as a global helper. |
-| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, delivery, VLESS groups and Firewall mutations are wired; other domains remain incomplete. |
-| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, delivery, VLESS groups and Firewall invalidation is wired; other domains remain incomplete. |
+| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, delivery, VLESS groups, Firewall and Services/Instances provisioning mutations are wired; other domains remain incomplete. |
+| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, delivery, VLESS groups, Firewall and Services/Instances provisioning invalidation is wired; other domains remain incomplete. |
 
 Raw `/api/v1` strings are allowed only under `frontend/src/shared/api` and
 tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
@@ -75,10 +75,10 @@ tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
 | Backend endpoint family | Legacy usage | New wrapper / hook | UI page | Status | Invalidation / security notes |
 | --- | --- | --- | --- | --- | --- |
 | `GET /api/v1/dashboard` | dashboard | `endpoints.dashboard`; `useDashboard` | Dashboard | connected | Poll without overwriting forms. |
-| `GET /api/v1/services`, `GET /api/v1/service-drivers`, `GET /api/v1/services/installers` | catalog/installers | services missing, installers missing | Services | partial | Add wrappers before write forms. |
-| `GET/PUT /api/v1/service-packs`, `POST /{key}/enable`, `/disable`, `DELETE /{key}` | service pack CRUD | `endpoints.servicePacks`; mutations missing | Service Packs | read-only / legacy-only | Mutations invalidate service packs and instances. |
+| `GET /api/v1/services`, `GET /api/v1/service-drivers`, `GET /api/v1/services/installers` | catalog/installers | `listServiceTypeCapabilities`; service-drivers/installers missing | Services | partial | Service type list is used by manual instance create. Driver/installers remain legacy-only. |
+| `GET/PUT /api/v1/service-packs`, `POST /{key}/enable`, `/disable`, `DELETE /{key}` | service pack CRUD | `listServicePacks`, `getServicePack` derived from list, `createServicePack`, `updateServicePack`, `deleteServicePack`, `setServicePackEnabled`; matching hooks | Service Packs | connected | Mutations invalidate service packs, instances and jobs where relevant. Backend has no separate validation endpoint. |
 | `GET/PUT /api/v1/vless-groups`, `POST /{key}/enable`, `/disable`, `DELETE /{key}` | VLESS templates | missing except legacy | Clients -> Groups / Services | legacy-only | Primary VLESS management belongs under Clients -> Groups in new IA. |
-| `GET /api/v1/binary-artifacts`, `POST /api/v1/binary-artifacts`, `/import`, `/import-url` | runtime binary repository | `endpoints.binaryArtifacts`; mutations missing | Runtime Artifacts | read-only / legacy-only | Downloads/imports must preserve no-store and safe error rendering. |
+| `GET /api/v1/binary-artifacts`, `POST /api/v1/binary-artifacts`, `/import`, `/import-url` | runtime binary repository | `listRuntimeArtifacts`, `getRuntimeArtifact` derived from list, `importRuntimeArtifact`; matching hooks | Runtime Artifacts | connected for list/import-url | Metadata is rendered as text. URL import is wired. Direct file import/create is not exposed. Delete remains backend-missing because no browser DELETE route exists. |
 
 ### 4.4 Client Access Groups
 
@@ -114,11 +114,11 @@ tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
 
 | Backend endpoint family | Legacy usage | New wrapper / hook | UI page | Status | Invalidation / security notes |
 | --- | --- | --- | --- | --- | --- |
-| `GET /api/v1/instances` | instance list | `listInstances`; `useInstances` | Instances | connected | List merges runtime summary from `GET /api/v1/instances/runtime-states`; create routes remain FE8-P0-04B. |
-| `POST /api/v1/instances`, `POST /api/v1/service-packs/{key}/instances` | instance create | missing | Instances | legacy-only / FE8-P0-04B | Create from service pack and manual create are explicitly disabled in new UI. |
+| `GET /api/v1/instances` | instance list | `listInstances`; `useInstances` | Instances | connected | List merges runtime summary from `GET /api/v1/instances/runtime-states`. |
+| `POST /api/v1/instances`, `POST /api/v1/service-packs/{key}/instances` | instance create | `createInstanceManual`, `createInstanceFromServicePack`; `useCreateInstanceManual`, `useCreateInstanceFromServicePack` | Instances / Service Packs | connected | Create from service pack and manual create use real backend mutations, confirmation where needed, invalidation and safe error rendering. |
 | `GET /api/v1/instances/runtime-states`, `GET /instances/{id}/runtime-state`, `/runtime-observations` | runtime state and diagnostics observations | `listInstanceRuntimeStates`; `getInstanceRuntimeState`; `getInstanceRuntimeObservations`; matching hooks | Instances | connected | Runtime and diagnostic output is rendered as text, not HTML. |
 | `GET /api/v1/instances/{id}`, `GET /instances/{id}/revisions` | detail/revisions | `getInstance`; `getInstanceRevisions`; matching hooks | Instances/Revisions | connected | Revisions are read-only except rollback workflow below. |
-| `PUT /api/v1/instances/{id}/spec` | spec replace | missing | Instances/Revisions | legacy-only / FE8-P0-04B | Spec editor remains out of FE8-P0-04A. |
+| `PUT /api/v1/instances/{id}/spec` | spec replace | `replaceInstanceSpec`; `useReplaceInstanceSpec` | Instances / Spec | connected | Spec JSON is rendered as text, locally checked as an object, then backend-validated by the real replace mutation with confirmation. Separate preview and draft-save routes are backend-missing. |
 | `POST /api/v1/instances/{id}/rollback`, `DELETE /{id}`, `POST /force-delete` | rollback/delete | `rollbackInstance`; `deleteInstance`; `forceDeleteInstance`; matching hooks | Instances | connected | Rollback requires explicit revision and confirmation; if backend returns apply-ready revision, UI queues a real apply job. Delete/force-delete require confirmation; force-delete requires exact confirmation text. |
 | `POST /api/v1/instances/{id}/apply`, `/restart`, `/start`, `/stop`, `/enable`, `/disable`, `/diagnose` | lifecycle/jobs | `applyInstance`; `reapplyInstance`; `runInstanceLifecycleAction`; `runInstanceDiagnostics`; matching hooks | Instances | connected | Actions require confirmation, invalidate instances/runtime/jobs and render returned job state through `JobStatusPanel`. Backend has no separate apply preview endpoint. |
 | `GET /api/v1/instances/{id}/vless-groups/members` | materialized access groups | `getInstanceAccessGroups`; `useInstanceAccessGroups` | Instances / Access groups | connected read-only | Shows materialization context and links to `Clients -> Groups`. No add/move/remove/create group actions are exposed under Instances. |

@@ -1,11 +1,12 @@
-import { Activity, LinkIcon, Play, Power, RefreshCw, RotateCcw, Search, Square, Trash2 } from 'lucide-react';
+import { Activity, FilePenLine, LinkIcon, PackagePlus, Play, Power, RefreshCw, RotateCcw, Search, Square, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { APIError } from '../../shared/api/client';
-import type { InstanceLifecycleAction, Job, ServiceInstance, ServiceInstanceRuntimeState } from '../../shared/api/types';
+import type { APIRecord, InstanceLifecycleAction, Job, NodeEntity, ServiceInstance, ServiceInstanceRuntimeState, ServiceTypeCapability } from '../../shared/api/types';
 import {
   useApplyInstance,
+  useCreateInstanceManual,
   useDeleteInstance,
   useForceDeleteInstance,
   useInstanceAccessGroups,
@@ -18,20 +19,24 @@ import {
   useInstances,
   useNodes,
   useReapplyInstance,
+  useReplaceInstanceSpec,
+  useServiceTypeCapabilities,
   useRollbackInstance,
   useRunInstanceDiagnostics,
 } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
+import { ServicesTabs } from './ServicesTabs';
 
-type InstanceTab = 'overview' | 'runtime' | 'revisions' | 'diagnostics' | 'access-groups' | 'jobs';
+type InstanceTab = 'overview' | 'runtime' | 'spec' | 'revisions' | 'diagnostics' | 'access-groups' | 'jobs';
 
 type ConfirmAction =
   | { type: 'apply'; instance: ServiceInstance }
   | { type: 'reapply'; instance: ServiceInstance }
   | { type: 'lifecycle'; instance: ServiceInstance; action: InstanceLifecycleAction }
   | { type: 'diagnose'; instance: ServiceInstance }
+  | { type: 'replace-spec'; instance: ServiceInstance; spec: APIRecord; applyAfterSave: boolean }
   | { type: 'rollback'; instance: ServiceInstance; revisionId: string }
   | { type: 'delete'; instance: ServiceInstance }
   | { type: 'force-delete'; instance: ServiceInstance; confirmation: string; reason: string };
@@ -76,10 +81,13 @@ function runtimeFor(instanceId: string, states: ServiceInstanceRuntimeState[] | 
 export function InstancesPage() {
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
+  const navigate = useNavigate();
   const instances = useInstances();
   const runtimeStates = useInstanceRuntimeStates();
   const nodes = useNodes({ retry: false });
+  const serviceTypes = useServiceTypeCapabilities({ retry: false });
   const [selectedId, setSelectedId] = useState('');
+  const [manualCreateOpen, setManualCreateOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [serviceFilter, setServiceFilter] = useState('all');
@@ -102,8 +110,9 @@ export function InstancesPage() {
     <PageScaffold
       title={t('instances.title')}
       subtitle={t('instances.subtitle')}
-      actions={<><Button disabled>{t('instances.createFromPack')}</Button><Button disabled>{t('instances.manualInstance')}</Button></>}
+      actions={<><Button icon={<PackagePlus size={16} />} onClick={() => navigate('/services/service-packs')}>{t('instances.createFromPack')}</Button><Button icon={<FilePenLine size={16} />} onClick={() => setManualCreateOpen(true)}>{t('instances.manualInstance')}</Button></>}
     >
+      <ServicesTabs />
       <Toolbar>
         <Badge>{t('instances.applyExplicit')}</Badge>
         <Badge>{t('instances.accessGroupsReadOnly')} <Link to="/clients/groups">{t('clients.openGroups')}</Link></Badge>
@@ -167,6 +176,13 @@ export function InstancesPage() {
         open={Boolean(selectedId)}
         onClose={() => setSelectedId('')}
       />
+      <ManualInstanceDrawer
+        key={manualCreateOpen ? `open:${nodes.data?.[0]?.id || ''}:${serviceTypes.data?.map((service) => service.code).join(',') || ''}` : 'closed'}
+        open={manualCreateOpen}
+        onClose={() => setManualCreateOpen(false)}
+        nodes={nodes.data || []}
+        serviceTypes={serviceTypes.data || []}
+      />
     </PageScaffold>
   );
 }
@@ -188,12 +204,13 @@ function InstanceDrawer({ instance, nodeName, open, onClose }: { instance?: Serv
   const apply = useApplyInstance();
   const reapply = useReapplyInstance();
   const rollback = useRollbackInstance();
+  const replaceSpec = useReplaceInstanceSpec();
   const diagnose = useRunInstanceDiagnostics();
   const lifecycle = useInstanceLifecycleAction();
   const deleteMutation = useDeleteInstance();
   const forceDelete = useForceDeleteInstance();
   const current = detail.data || instance;
-  const busy = apply.isPending || reapply.isPending || rollback.isPending || diagnose.isPending || lifecycle.isPending || deleteMutation.isPending || forceDelete.isPending;
+  const busy = apply.isPending || reapply.isPending || rollback.isPending || replaceSpec.isPending || diagnose.isPending || lifecycle.isPending || deleteMutation.isPending || forceDelete.isPending;
   const lastJobId = jobId || runtime.data?.last_job_id || '';
 
   const recordJob = (job?: Job) => {
@@ -217,6 +234,13 @@ function InstanceDrawer({ instance, nodeName, open, onClose }: { instance?: Serv
         recordJob(await diagnose.mutateAsync({ instanceId: confirm.instance.id }));
         setNotice(t('instances.actionAccepted'));
         setActiveTab('diagnostics');
+      } else if (confirm.type === 'replace-spec') {
+        const result = await replaceSpec.mutateAsync({ instanceId: confirm.instance.id, input: { spec: confirm.spec, apply_after_save: confirm.applyAfterSave } });
+        if (confirm.applyAfterSave && result.can_apply) {
+          recordJob(await apply.mutateAsync({ instanceId: confirm.instance.id }));
+        }
+        setNotice(result.message || t('instances.specReplaceAccepted'));
+        setActiveTab(confirm.applyAfterSave ? 'jobs' : 'revisions');
       } else if (confirm.type === 'rollback') {
         const result = await rollback.mutateAsync({ instanceId: confirm.instance.id, input: { revision_id: confirm.revisionId } });
         if (result.can_apply) {
@@ -242,7 +266,7 @@ function InstanceDrawer({ instance, nodeName, open, onClose }: { instance?: Serv
       <QueryBoundary isLoading={detail.isLoading} isError={detail.isError} error={detail.error} refetch={() => void detail.refetch()}>
         <div className="page-stack">
           <div className="tabs" role="tablist" aria-label={t('instances.detailTabs')}>
-            {(['overview', 'runtime', 'revisions', 'diagnostics', 'access-groups', 'jobs'] as InstanceTab[]).map((tab) => (
+            {(['overview', 'runtime', 'spec', 'revisions', 'diagnostics', 'access-groups', 'jobs'] as InstanceTab[]).map((tab) => (
               <button
                 key={tab}
                 className={`tab-link ${activeTab === tab ? 'active' : ''}`.trim()}
@@ -261,6 +285,9 @@ function InstanceDrawer({ instance, nodeName, open, onClose }: { instance?: Serv
           ) : null}
           {current && activeTab === 'runtime' ? (
             <RuntimeTab instance={current} runtime={runtime} onConfirm={setConfirm} busy={busy} />
+          ) : null}
+          {current && activeTab === 'spec' ? (
+            <SpecTab key={`${current.id}:${current.current_revision_id || ''}:${current.updated_at || ''}`} instance={current} onConfirm={setConfirm} busy={busy} />
           ) : null}
           {current && activeTab === 'revisions' ? (
             <RevisionsTab
@@ -403,6 +430,50 @@ function RuntimeDiagnostics({ state }: { state?: ServiceInstanceRuntimeState }) 
   );
 }
 
+function SpecTab({ instance, busy, onConfirm }: { instance: ServiceInstance; busy: boolean; onConfirm: (action: ConfirmAction) => void }) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState(() => safeJSON(instance.spec || {}));
+  const [applyAfterSave, setApplyAfterSave] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = () => {
+    setError('');
+    let spec: APIRecord;
+    try {
+      const parsed = JSON.parse(draft || '{}');
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(t('instances.specMustBeObject'));
+      }
+      spec = parsed as APIRecord;
+    } catch (parseError) {
+      setError(parseError instanceof Error ? parseError.message : t('instances.invalidJSON'));
+      return;
+    }
+    onConfirm({ type: 'replace-spec', instance, spec, applyAfterSave });
+  };
+
+  return (
+    <Card>
+      <CardBody>
+        <div className="page-stack">
+          <Toolbar>
+            <Badge>{t('instances.backendValidated')}</Badge>
+            <Badge>{t('common.readOnly')} {t('instances.noHtmlRendering')}</Badge>
+          </Toolbar>
+          <FormField label={t('instances.specJSON')} full>
+            <Textarea value={draft} rows={14} spellCheck={false} onChange={(event) => setDraft(event.target.value)} />
+          </FormField>
+          <Checkbox label={t('instances.applyAfterSpecSave')} checked={applyAfterSave} onChange={(event) => setApplyAfterSave(event.target.checked)} />
+          {error ? <div role="alert" className="error-state-inline">{error}</div> : null}
+          <Toolbar>
+            <Button variant="primary" icon={<FilePenLine size={16} />} disabled={busy} onClick={submit}>{t('instances.replaceSpec')}</Button>
+          </Toolbar>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
 function RevisionsTab({ instance, revisions, selectedRevisionId, setSelectedRevisionId, busy, onConfirm }: {
   instance: ServiceInstance;
   revisions: ReturnType<typeof useInstanceRevisions>;
@@ -527,6 +598,108 @@ function JobsTab({ jobId, runtime }: { jobId: string; runtime?: ServiceInstanceR
   );
 }
 
+function ManualInstanceDrawer({ open, onClose, nodes, serviceTypes }: { open: boolean; onClose: () => void; nodes: NodeEntity[]; serviceTypes: ServiceTypeCapability[] }) {
+  const { t } = useTranslation();
+  const createManual = useCreateInstanceManual();
+  const [nodeId, setNodeId] = useState(() => nodes[0]?.id || '');
+  const [serviceCode, setServiceCode] = useState(() => serviceTypes.find((service) => service.supports_instances !== false)?.code || '');
+  const [name, setName] = useState('');
+  const [slug, setSlug] = useState('');
+  const [endpointHost, setEndpointHost] = useState('');
+  const [endpointPort, setEndpointPort] = useState('');
+  const [specText, setSpecText] = useState('{}');
+  const [notice, setNotice] = useState('');
+  const [created, setCreated] = useState<ServiceInstance | null>(null);
+
+  const submit = async () => {
+    setNotice('');
+    setCreated(null);
+    let spec: APIRecord;
+    try {
+      const parsed = JSON.parse(specText || '{}');
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(t('instances.specMustBeObject'));
+      }
+      spec = parsed as APIRecord;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t('instances.invalidJSON'));
+      return;
+    }
+    try {
+      const result = await createManual.mutateAsync({
+        node_id: nodeId,
+        service_code: serviceCode,
+        name,
+        slug,
+        endpoint_host: endpointHost,
+        endpoint_port: endpointPort ? Number(endpointPort) : undefined,
+        spec,
+      });
+      if ('id' in result && typeof result.id === 'string') setCreated(result as ServiceInstance);
+      setNotice(t('instances.manualCreateAccepted'));
+    } catch (error) {
+      setNotice(formatAPIError(error));
+    }
+  };
+
+  const canSubmit = Boolean(nodeId && serviceCode && name && !createManual.isPending);
+
+  return (
+    <Drawer title={t('instances.manualInstance')} open={open} onClose={onClose}>
+      <div className="page-stack">
+        <ServicesTabs />
+        <Badge>{t('instances.manualCreateBackendValidated')}</Badge>
+        <FormGrid>
+          <FormField label={t('instances.node')}>
+            <Select value={nodeId} onChange={(event) => setNodeId(event.target.value)}>
+              <option value="">{t('instances.selectNode')}</option>
+              {nodes.map((node) => <option key={node.id} value={node.id}>{node.name || node.id}</option>)}
+            </Select>
+          </FormField>
+          <FormField label={t('instances.service')}>
+            <Select value={serviceCode} onChange={(event) => setServiceCode(event.target.value)}>
+              <option value="">{t('instances.selectService')}</option>
+              {serviceTypes.filter((service) => service.supports_instances !== false).map((service) => (
+                <option key={service.code} value={service.code}>{service.name || service.code}</option>
+              ))}
+            </Select>
+          </FormField>
+          <FormField label={t('common.name')}>
+            <TextField value={name} onChange={(event) => setName(event.target.value)} />
+          </FormField>
+          <FormField label={t('instances.slug')}>
+            <TextField value={slug} onChange={(event) => setSlug(event.target.value)} />
+          </FormField>
+          <FormField label={t('instances.endpointHost')}>
+            <TextField value={endpointHost} onChange={(event) => setEndpointHost(event.target.value)} />
+          </FormField>
+          <FormField label={t('instances.endpointPort')}>
+            <TextField type="number" min={1} max={65535} value={endpointPort} onChange={(event) => setEndpointPort(event.target.value)} />
+          </FormField>
+          <FormField label={t('instances.specJSON')} full>
+            <Textarea rows={10} spellCheck={false} value={specText} onChange={(event) => setSpecText(event.target.value)} />
+          </FormField>
+        </FormGrid>
+        {notice ? <div role={notice.includes(':') || notice.includes('JSON') ? 'alert' : 'status'}>{notice}</div> : null}
+        {created ? (
+          <Card>
+            <CardBody>
+              <Toolbar>
+                <Badge>{t('instances.createdInstance')}</Badge>
+                <code>{created.id}</code>
+              </Toolbar>
+            </CardBody>
+          </Card>
+        ) : null}
+        <Toolbar>
+          <Button variant="primary" disabled={!canSubmit} onClick={() => void submit()}>{t('common.create')}</Button>
+          <Button onClick={onClose}>{t('common.close')}</Button>
+        </Toolbar>
+      </div>
+    </Drawer>
+  );
+}
+
 function InstanceConfirmDialog({ action, busy, nodeName, onConfirm, onClose }: {
   action: ConfirmAction | null;
   busy: boolean;
@@ -550,6 +723,7 @@ function InstanceConfirmDialog({ action, busy, nodeName, onConfirm, onClose }: {
           status: action.instance.status || 'n/a',
         })}</p>
         {action.type === 'rollback' ? <p>{t('instances.rollbackRevision', { revision: action.revisionId })}</p> : null}
+        {action.type === 'replace-spec' ? <p>{t('instances.replaceSpecImpact', { apply: action.applyAfterSave ? t('common.yes') : t('common.no') })}</p> : null}
         {action.type === 'force-delete' ? <p>{t('instances.forceConfirmExpected', { value: expectedConfirmation })}</p> : null}
         <Toolbar>
           <Button variant={action.type === 'delete' || action.type === 'force-delete' || action.type === 'rollback' ? 'danger' : 'primary'} disabled={busy || !forceValid} onClick={onConfirm}>{t('clients.core.confirm')}</Button>

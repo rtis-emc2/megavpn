@@ -10,6 +10,9 @@ import {
   createClientShareLink,
   createClientSubscription,
   createClientAccessGroup,
+  createInstanceFromServicePack,
+  createInstanceManual,
+  createServicePack,
   createFirewallAddressGroup,
   createFirewallAddressGroupEntry,
   createFirewallPolicy,
@@ -21,6 +24,8 @@ import {
   deleteClient,
   deleteClientArtifact,
   deleteInstance,
+  deleteRuntimeArtifact,
+  deleteServicePack,
   disableNodeFirewall,
   endpoints,
   forceDeleteInstance,
@@ -34,6 +39,8 @@ import {
   getInstanceRevisions,
   getInstanceRuntimeObservations,
   getInstanceRuntimeState,
+  getRuntimeArtifact,
+  getServicePack,
   getClientAccessOverview,
   getFirewallSafetySettings,
   getNodeFirewallState,
@@ -42,11 +49,16 @@ import {
   listClientShareLinks,
   listClientSubscriptions,
   listClientAccessGroups,
+  listRuntimeArtifacts,
+  listRuntimeTargets,
+  listServicePacks,
+  listServiceTypeCapabilities,
   previewSingleClientAccessGroupAssignment,
   previewClientAccessGroupMembers,
   previewClientAccessGroupSync,
   previewNodeFirewall,
   reapplyInstance,
+  replaceInstanceSpec,
   removeClientAccessGroupMember,
   removeClientAccessGroupMembership,
   revokeClientShareLink,
@@ -55,12 +67,18 @@ import {
   rollbackInstance,
   runInstanceDiagnostics,
   runInstanceLifecycleAction,
+  importRuntimeArtifact,
   rotateClientShareLink,
   rotateClientSubscription,
   sendClientArtifactEmail,
   updateClientStatus,
   updateClientAccessGroup,
   updateClientAccessGroupScope,
+  updateServicePack,
+  setServicePackEnabled,
+  validateInstanceSpec,
+  validateServicePack,
+  saveInstanceDraft,
   updateFirewallAddressGroup,
   updateFirewallAddressGroupEntry,
   updateFirewallPolicy,
@@ -123,20 +141,36 @@ import type {
   InstanceAccessGroupMaterialization,
   InstanceApplyRequest,
   InstanceApplyResult,
+  InstanceCreateFromPackInput,
+  InstanceCreateResult,
   InstanceDeleteResult,
   InstanceForceDeleteInput,
   InstanceLifecycleAction,
   InstanceLifecycleResult,
+  InstanceManualCreateInput,
   InstanceRollbackRequest,
   InstanceRollbackResult,
+  InstanceSpecDraft,
+  InstanceSpecValidationResult,
   Job,
   NodeEntity,
   ReadyStatus,
+  RuntimeArtifact,
+  RuntimeArtifactDeleteResult,
+  RuntimeArtifactImportInput,
+  RuntimeArtifactImportResult,
   ServiceInstance,
   ServiceInstanceDetail,
   ServiceInstanceRevision,
   ServiceInstanceRuntimeObservation,
   ServiceInstanceRuntimeState,
+  ServicePack,
+  ServicePackCreateInput,
+  ServicePackDetail,
+  ServicePackUpdateInput,
+  ServicePackValidationResult,
+  ServiceTypeCapability,
+  RuntimeTargetNode,
   ShareLink,
   TrafficSummary,
   AvailableClientsForGroupPage,
@@ -172,16 +206,162 @@ export function useInstances(options?: QueryOptions<ServiceInstance[]>) {
   return useQuery({ queryKey: ['instances'], queryFn: endpoints.instances, staleTime: stale.normal, ...options });
 }
 
-function invalidateInstanceQueries(queryClient: ReturnType<typeof useQueryClient>, instanceId?: string) {
+function invalidateServicesWorkspace(queryClient: ReturnType<typeof useQueryClient>, instanceId?: string) {
   void queryClient.invalidateQueries({ queryKey: ['instances'] });
   void queryClient.invalidateQueries({ queryKey: ['instance-runtime-states'] });
-  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
   void queryClient.invalidateQueries({ queryKey: ['service-packs'] });
+  void queryClient.invalidateQueries({ queryKey: ['runtime-artifacts'] });
+  void queryClient.invalidateQueries({ queryKey: ['binary-artifacts'] });
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
   if (instanceId) {
     void queryClient.invalidateQueries({ queryKey: ['instance', instanceId] });
-    void queryClient.invalidateQueries({ queryKey: ['instance-runtime-state', instanceId] });
-    void queryClient.invalidateQueries({ queryKey: ['instance-runtime-observations', instanceId] });
     void queryClient.invalidateQueries({ queryKey: ['instance-revisions', instanceId] });
+    void queryClient.invalidateQueries({ queryKey: ['instance-runtime-state', instanceId] });
+  }
+}
+
+export function useServiceTypeCapabilities(options?: QueryOptions<ServiceTypeCapability[]>) {
+  return useQuery({ queryKey: ['service-type-capabilities'], queryFn: listServiceTypeCapabilities, staleTime: stale.slow, ...options });
+}
+
+export function useRuntimeTargets(options?: QueryOptions<RuntimeTargetNode[]>) {
+  return useQuery({ queryKey: ['runtime-targets'], queryFn: () => listRuntimeTargets(), staleTime: stale.normal, ...options });
+}
+
+export function useServicePacks(options?: QueryOptions<ServicePack[]>) {
+  return useQuery({ queryKey: ['service-packs'], queryFn: () => listServicePacks(), staleTime: stale.slow, ...options });
+}
+
+export function useServicePackDetail(packId: string | undefined, options?: QueryOptions<ServicePackDetail>) {
+  return useQuery({
+    queryKey: ['service-pack', packId],
+    queryFn: () => getServicePack(packId || ''),
+    enabled: Boolean(packId),
+    staleTime: stale.slow,
+    ...options,
+  });
+}
+
+export function useCreateServicePack() {
+  const queryClient = useQueryClient();
+  return useMutation<ServicePackDetail, Error, ServicePackCreateInput>({
+    mutationFn: createServicePack,
+    onSuccess: () => invalidateServicesWorkspace(queryClient),
+  });
+}
+
+export function useUpdateServicePack() {
+  const queryClient = useQueryClient();
+  return useMutation<ServicePackDetail, Error, { packId: string; input: ServicePackUpdateInput }>({
+    mutationFn: ({ packId, input }) => updateServicePack(packId, input),
+    onSuccess: (pack) => {
+      invalidateServicesWorkspace(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ['service-pack', pack.key] });
+    },
+  });
+}
+
+export function useDeleteServicePack() {
+  const queryClient = useQueryClient();
+  return useMutation<ServicePackDetail, Error, string>({
+    mutationFn: deleteServicePack,
+    onSuccess: (pack) => {
+      invalidateServicesWorkspace(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ['service-pack', pack.key] });
+    },
+  });
+}
+
+export function useSetServicePackEnabled() {
+  const queryClient = useQueryClient();
+  return useMutation<ServicePackDetail, Error, { packId: string; enabled: boolean }>({
+    mutationFn: ({ packId, enabled }) => setServicePackEnabled(packId, enabled),
+    onSuccess: (pack) => {
+      invalidateServicesWorkspace(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ['service-pack', pack.key] });
+    },
+  });
+}
+
+export function useValidateServicePack() {
+  return useMutation<ServicePackValidationResult, Error, ServicePackCreateInput>({
+    mutationFn: validateServicePack,
+  });
+}
+
+export function useCreateInstanceFromServicePack() {
+  const queryClient = useQueryClient();
+  return useMutation<InstanceCreateResult, Error, { packId: string; input: InstanceCreateFromPackInput }>({
+    mutationFn: ({ packId, input }) => createInstanceFromServicePack(packId, input),
+    onSuccess: () => invalidateServicesWorkspace(queryClient),
+  });
+}
+
+export function useCreateInstanceManual() {
+  const queryClient = useQueryClient();
+  return useMutation<InstanceCreateResult, Error, InstanceManualCreateInput>({
+    mutationFn: createInstanceManual,
+    onSuccess: (result) => invalidateServicesWorkspace(queryClient, 'id' in result && typeof result.id === 'string' ? result.id : undefined),
+  });
+}
+
+export function useValidateInstanceSpec() {
+  return useMutation<InstanceSpecValidationResult, Error, InstanceSpecDraft>({
+    mutationFn: validateInstanceSpec,
+  });
+}
+
+export function useSaveInstanceDraft() {
+  return useMutation<InstanceSpecValidationResult, Error, { instanceId: string; input: InstanceSpecDraft }>({
+    mutationFn: ({ instanceId, input }) => saveInstanceDraft(instanceId, input),
+  });
+}
+
+export function useReplaceInstanceSpec() {
+  const queryClient = useQueryClient();
+  return useMutation<InstanceSpecValidationResult, Error, { instanceId: string; input: InstanceSpecDraft }>({
+    mutationFn: ({ instanceId, input }) => replaceInstanceSpec(instanceId, input),
+    onSuccess: (_result, input) => invalidateServicesWorkspace(queryClient, input.instanceId),
+  });
+}
+
+export function useRuntimeArtifacts(options?: QueryOptions<RuntimeArtifact[]>) {
+  return useQuery({ queryKey: ['runtime-artifacts'], queryFn: () => listRuntimeArtifacts(), staleTime: stale.normal, retry: false, ...options });
+}
+
+export function useRuntimeArtifactDetail(artifactId: string | undefined, options?: QueryOptions<RuntimeArtifact>) {
+  return useQuery({
+    queryKey: ['runtime-artifact', artifactId],
+    queryFn: () => getRuntimeArtifact(artifactId || ''),
+    enabled: Boolean(artifactId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useImportRuntimeArtifact() {
+  const queryClient = useQueryClient();
+  return useMutation<RuntimeArtifactImportResult, Error, RuntimeArtifactImportInput>({
+    mutationFn: importRuntimeArtifact,
+    onSuccess: (artifact) => {
+      invalidateServicesWorkspace(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ['runtime-artifact', artifact.id] });
+    },
+  });
+}
+
+export function useDeleteRuntimeArtifact() {
+  const queryClient = useQueryClient();
+  return useMutation<RuntimeArtifactDeleteResult, Error, string>({
+    mutationFn: deleteRuntimeArtifact,
+    onSuccess: () => invalidateServicesWorkspace(queryClient),
+  });
+}
+
+function invalidateInstanceQueries(queryClient: ReturnType<typeof useQueryClient>, instanceId?: string) {
+  invalidateServicesWorkspace(queryClient, instanceId);
+  if (instanceId) {
+    void queryClient.invalidateQueries({ queryKey: ['instance-runtime-observations', instanceId] });
     void queryClient.invalidateQueries({ queryKey: ['instance-access-groups', instanceId] });
   }
 }
