@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.0.30`
+**Release:** `7.1.1.0`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.0.30`
+**Code baseline:** RTIS MegaVPN `7.1.1.0`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,7 +23,7 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.0.30` continues the production-hardening line after the firewall,
+`7.1.1.0` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate, VLESS provisioning-sync, traffic-accounting collector
 coverage, firewall apply hardening and lost-node lifecycle releases. This
@@ -229,7 +229,8 @@ feature increment.
 
 Closed in this release:
 
-- Go release baseline now requires patch-level `1.26.4`.
+- Go release baseline now requires patch-level enforcement; the maintained
+  repository baseline is `1.26.5`.
 - CI and release gate run `govulncheck@v1.5.0`.
 - Control-plane installer compares full Go semver, including patch version.
 - NGINX.org repository bootstrap verifies the signing key fingerprint before

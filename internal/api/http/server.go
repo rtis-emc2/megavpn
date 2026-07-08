@@ -105,6 +105,12 @@ type Store interface {
 	ListVLESSGroupTemplateCatalog(context.Context) ([]domain.VLESSGroupTemplate, error)
 	UpsertVLESSGroupTemplate(context.Context, domain.VLESSGroupTemplate) (domain.VLESSGroupTemplate, error)
 	SetVLESSGroupTemplateStatus(context.Context, string, string) (domain.VLESSGroupTemplate, error)
+	ListInstanceVLESSGroupMembers(context.Context, string) (domain.VLESSGroupMembersOverview, error)
+	ListInstanceVLESSGroupMemberClients(context.Context, string, string, string, string, int, int) (domain.VLESSGroupMembersPage, error)
+	ListInstanceVLESSGroupAvailableClients(context.Context, string, string, string, int, int) (domain.VLESSGroupAvailableClientsPage, error)
+	AddInstanceVLESSGroupMembers(context.Context, string, string, domain.VLESSGroupMembershipRequest) (domain.VLESSGroupMembershipResult, error)
+	MoveInstanceVLESSGroupMember(context.Context, string, string, string) (domain.VLESSGroupMembershipResult, error)
+	RemoveInstanceVLESSGroupMember(context.Context, string, string) (domain.VLESSGroupMembershipResult, error)
 	ListBinaryArtifacts(context.Context, bool) ([]domain.BinaryArtifact, error)
 	CreateBinaryArtifact(context.Context, domain.BinaryArtifact) (domain.BinaryArtifact, error)
 	ResolveBinaryDownloadTicket(context.Context, string, string, string, string) (domain.BinaryDownloadTicket, domain.BinaryArtifact, error)
@@ -309,6 +315,9 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected := func(pattern, permission string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
 		mux.Handle(pattern, s.withPermission(permission, nethttp.HandlerFunc(h)))
 	}
+	protectedAll := func(pattern string, permissions []string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
+		mux.Handle(pattern, s.withPermissions(permissions, nethttp.HandlerFunc(h)))
+	}
 	authenticated := func(pattern string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
 		mux.Handle(pattern, s.withPermission("", nethttp.HandlerFunc(h)))
 	}
@@ -451,6 +460,12 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/instances", "instance.write", s.createInstance)
 	protected("POST /api/v1/service-packs/{key}/instances", "instance.write", s.createServicePackInstances)
 	protected("GET /api/v1/instances/{id}", "instance.read", s.getInstance)
+	protectedAll("GET /api/v1/instances/{id}/vless-groups/members", []string{"instance.read", "client.read"}, s.listInstanceVLESSGroupMembers)
+	protectedAll("GET /api/v1/instances/{id}/vless-groups/{group_key}/members", []string{"instance.read", "client.read"}, s.listInstanceVLESSGroupMemberClients)
+	protectedAll("GET /api/v1/instances/{id}/vless-groups/available-clients", []string{"instance.read", "client.read"}, s.listInstanceVLESSGroupAvailableClients)
+	protectedAll("POST /api/v1/instances/{id}/vless-groups/{group_key}/members", []string{"instance.write", "client.provision"}, s.addInstanceVLESSGroupMembers)
+	protectedAll("PATCH /api/v1/instances/{id}/vless-groups/members/{client_id}", []string{"instance.write", "client.provision"}, s.moveInstanceVLESSGroupMember)
+	protectedAll("DELETE /api/v1/instances/{id}/vless-groups/members/{client_id}", []string{"instance.write", "client.provision"}, s.removeInstanceVLESSGroupMember)
 	protected("GET /api/v1/instances/{id}/runtime-state", "instance.read", s.getInstanceRuntimeState)
 	protected("GET /api/v1/instances/{id}/runtime-observations", "instance.read", s.listInstanceRuntimeObservations)
 	protected("GET /api/v1/instances/{id}/revisions", "instance.read", s.listInstanceRevisions)
@@ -937,7 +952,10 @@ func trafficAccountingCSVHeader() []string {
 }
 
 func trafficAccountingCSVRow(sample domain.TrafficAccountingSample) []string {
-	metadata, _ := json.Marshal(sample.Metadata)
+	metadata, err := json.Marshal(sample.Metadata)
+	if err != nil {
+		metadata = []byte(`{"error":"metadata_marshal_failed"}`)
+	}
 	return []string{
 		sample.ID,
 		sample.NodeID,
@@ -2230,18 +2248,6 @@ func (s *Server) agentJobResult(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	_ = s.store.AddJobLog(r.Context(), idv, "info", "agent submitted result", req.Result)
 	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"status": "accepted"})
-}
-
-func jobTypeMustUseTypedEndpoint(jobType string) bool {
-	return appjobs.MustUseTypedEndpoint(jobType)
-}
-
-func jobTypeAllowedInGenericAPI(jobType string) bool {
-	return appjobs.AllowedInGenericAPI(jobType)
-}
-
-func requiredPermissionForJobType(jobType string) string {
-	return appjobs.RequiredPermissionForType(jobType)
 }
 
 func tokenHint(token string) string {

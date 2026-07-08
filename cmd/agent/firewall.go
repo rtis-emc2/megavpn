@@ -51,12 +51,13 @@ type nodeFirewallAddressLists struct {
 }
 
 type nodeFirewallAddressList struct {
-	ID     string
-	Key    string
-	NameV4 string
-	NameV6 string
-	V4     []string
-	V6     []string
+	ID         string
+	Key        string
+	NameV4     string
+	NameV6     string
+	V4         []string
+	V6         []string
+	IgnoredDNS int
 }
 
 type nodeFirewallListElement struct {
@@ -70,6 +71,7 @@ type nodeFirewallPlan struct {
 	SystemRuleCount          int
 	Hash                     string
 	Warnings                 []string
+	AddressListCounts        []map[string]any
 	DefaultPolicyEnforcement string
 }
 
@@ -92,7 +94,7 @@ func (c *client) handleNodeFirewallJob(ctx context.Context, j job, st agentState
 		if err != nil {
 			return "failed", map[string]any{"error": err.Error(), "stage": "render"}
 		}
-		return "succeeded", map[string]any{"applied": false, "rule_count": plan.Count, "system_rule_count": plan.SystemRuleCount, "rendered_hash": plan.Hash, "warnings": plan.Warnings, "default_policy_enforcement": plan.DefaultPolicyEnforcement, "script": plan.Script}
+		return "succeeded", map[string]any{"applied": false, "rule_count": plan.Count, "system_rule_count": plan.SystemRuleCount, "rendered_hash": plan.Hash, "warnings": plan.Warnings, "address_list_counts": plan.AddressListCounts, "default_policy_enforcement": plan.DefaultPolicyEnforcement, "script": plan.Script}
 	case "node.firewall.observe":
 		code, out := runInstallCommand(ctx, "nft", "list", "table", firewallNFTFamily, firewallNFTTable)
 		result := map[string]any{"observed": code == 0, "output": truncate(out, 4000)}
@@ -125,6 +127,7 @@ func (c *client) handleNodeFirewallJob(ctx context.Context, j job, st agentState
 			"system_rule_count":          plan.SystemRuleCount,
 			"rendered_hash":              plan.Hash,
 			"warnings":                   plan.Warnings,
+			"address_list_counts":        plan.AddressListCounts,
 			"default_policy_enforcement": plan.DefaultPolicyEnforcement,
 			"output":                     truncate(out, 4000),
 		}
@@ -263,7 +266,7 @@ func renderNodeFirewallPlan(payload map[string]any) (nodeFirewallPlan, error) {
 	if defaults.Enforce {
 		enforcement = "enforced"
 	}
-	return nodeFirewallPlan{Script: script, Count: applied, SystemRuleCount: safetyCount + len(rejectLines), Hash: hex.EncodeToString(sum[:]), Warnings: warnings, DefaultPolicyEnforcement: enforcement}, nil
+	return nodeFirewallPlan{Script: script, Count: applied, SystemRuleCount: safetyCount + len(rejectLines), Hash: hex.EncodeToString(sum[:]), Warnings: warnings, AddressListCounts: addressLists.stats(), DefaultPolicyEnforcement: enforcement}, nil
 }
 
 func parseNodeFirewallDefaultPolicies(payload map[string]any) (nodeFirewallDefaultPolicies, []string, error) {
@@ -537,6 +540,9 @@ func parseNodeFirewallAddressLists(raw any) (nodeFirewallAddressLists, []string,
 				warnings = append(warnings, fmt.Sprintf("address-list %s entry %d: %s", first(listKey, listID), entryIdx+1, warning))
 			}
 			if !supported {
+				if warning != "" || strings.EqualFold(strings.TrimSpace(stringify(entry["value_type"])), "dns") {
+					list.IgnoredDNS++
+				}
 				continue
 			}
 			switch element.Family {
@@ -557,6 +563,23 @@ func parseNodeFirewallAddressLists(raw any) (nodeFirewallAddressLists, []string,
 		out.Ordered = append(out.Ordered, list)
 	}
 	return out, warnings, nil
+}
+
+func (lists nodeFirewallAddressLists) stats() []map[string]any {
+	out := make([]map[string]any, 0, len(lists.Ordered))
+	for _, list := range lists.Ordered {
+		out = append(out, map[string]any{
+			"id":                  list.ID,
+			"key":                 list.Key,
+			"rendered_entries":    len(list.V4) + len(list.V6),
+			"rendered_ipv4":       len(list.V4),
+			"rendered_ipv6":       len(list.V6),
+			"ignored_dns_entries": list.IgnoredDNS,
+			"set_v4":              list.NameV4,
+			"set_v6":              list.NameV6,
+		})
+	}
+	return out
 }
 
 func parseNodeFirewallRules(raw any) ([]nodeFirewallRule, []string, error) {

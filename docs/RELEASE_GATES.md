@@ -1,10 +1,10 @@
 # Release Gates
 
-**Release:** `7.1.0.30`
+**Release:** `7.1.1.0`
 
 This file defines the minimum evidence required before tagging a production release.
 
-For `7.1.0.30`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
+For `7.1.1.0`, these gates are used as release promotion evidence. A release can be published with documented product gaps, but not with unknown install, migration, agent-channel, node-cleanup or runtime-apply behavior.
 
 ## 1. Release Gate
 
@@ -35,6 +35,8 @@ The baseline gate must pass:
 - `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` passes.
 - Operational binaries print the same release through `--version`.
 - Shell scripts under `scripts/` pass `bash -n`.
+- GitHub Actions workflow `uses:` entries are pinned to immutable 40-character
+  commit SHA refs by `scripts/ci/actions-pinning-check.sh`.
 - `scripts/ci/docs-consistency.sh` passes: maintained docs, roadmap files,
   production env templates, current security review links and Web UI asset
   cache keys match the code release.
@@ -74,8 +76,10 @@ tests. The drill is intentionally strict: `MEGAVPN_RELEASE_DATABASE_DSN` must
 point at an empty disposable database unless
 `MEGAVPN_MIGRATION_DRILL_ALLOW_EXISTING=1` is set for diagnostics only. It
 applies all migrations from zero, applies them again to verify runner
-idempotency, checks critical schema invariants, then the integration suite
-covers job lifecycle, stale lease recovery and client/share cleanup behavior.
+idempotency, checks critical schema invariants, required security indexes,
+token-storage columns, VLESS group templates and firewall seed groups, then the
+integration suite covers job lifecycle, stale lease recovery and client/share
+cleanup behavior.
 
 For backup/restore evidence, provide a separate disposable restore target:
 

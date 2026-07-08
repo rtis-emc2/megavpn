@@ -56,6 +56,9 @@ func (s *Store) ListProvisioningAccesses(ctx context.Context, clientID string) (
 	join instances i on i.id=sa.instance_id
 	join service_definitions sd on sd.id=i.service_definition_id
 	where sa.client_account_id=$1
+	  and sa.status <> 'revoked'
+	  and ca.status <> 'deleted'
+	  and i.status <> 'deleted'
 	order by sa.created_at asc`, clientID)
 	if err != nil {
 		return nil, err

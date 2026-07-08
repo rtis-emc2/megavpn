@@ -27,6 +27,10 @@ type changePasswordRequest struct {
 }
 
 func (s *Server) withPermission(permission string, next nethttp.Handler) nethttp.Handler {
+	return s.withPermissions([]string{permission}, next)
+}
+
+func (s *Server) withPermissions(permissions []string, next nethttp.Handler) nethttp.Handler {
 	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		token := strings.TrimSpace(bearerToken(r))
 		cookieAuth := false
@@ -54,9 +58,11 @@ func (s *Server) withPermission(permission string, next nethttp.Handler) nethttp
 			writeErr(w, 401, "invalid session")
 			return
 		}
-		if !authContextHasPermission(authCtx, permission) {
-			writeErr(w, 403, "forbidden")
-			return
+		for _, permission := range permissions {
+			if !authContextHasPermission(authCtx, permission) {
+				writeErr(w, 403, "forbidden")
+				return
+			}
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, authCtx)))
 	})

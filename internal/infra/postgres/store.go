@@ -576,7 +576,10 @@ func (s *Store) SubmitNodeInventory(ctx context.Context, nodeID string, payload 
 	if _, err := s.GetNode(ctx, nodeID); err != nil {
 		return domain.NodeInventorySnapshot{}, nil, err
 	}
-	b, _ := json.Marshal(payload)
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return domain.NodeInventorySnapshot{}, nil, fmt.Errorf("marshal node inventory payload: %w", err)
+	}
 	snap := domain.NodeInventorySnapshot{ID: id.New(), NodeID: nodeID, Payload: payload, CreatedAt: time.Now().UTC()}
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -595,7 +598,9 @@ func (s *Store) SubmitNodeInventory(ctx context.Context, nodeID string, payload 
 		if !in(arch, "amd64", "arm64") {
 			arch = "amd64"
 		}
-		_, _ = tx.Exec(ctx, `update nodes set os_family='linux', os_version=$2, architecture=$3, updated_at=now() where id=$1`, nodeID, osVersion, arch)
+		if _, err := tx.Exec(ctx, `update nodes set os_family='linux', os_version=$2, architecture=$3, updated_at=now() where id=$1`, nodeID, osVersion, arch); err != nil {
+			return snap, nil, err
+		}
 	}
 	caps := deriveCapabilities(nodeID, payload, snap.CreatedAt)
 	for _, c := range caps {
@@ -607,7 +612,10 @@ func (s *Store) SubmitNodeInventory(ctx context.Context, nodeID string, payload 
 	}
 	discoveries := deriveServiceDiscoveries(nodeID, payload, snap.CreatedAt)
 	for _, d := range discoveries {
-		db, _ := json.Marshal(d.Payload)
+		db, err := json.Marshal(d.Payload)
+		if err != nil {
+			return snap, nil, fmt.Errorf("marshal service discovery payload: %w", err)
+		}
 		_, err = tx.Exec(ctx, `insert into node_service_discoveries(id,node_id,service_code,name,systemd_unit,config_path,status,source,confidence,endpoint_host,endpoint_port,payload_json,detected_at) values($1,$2,$3,$4,nullif($5,''),nullif($6,''),$7,$8,$9,nullif($10,''),nullif($11,0),$12,$13)
 			on conflict(node_id, service_code, name) do update set systemd_unit=excluded.systemd_unit,config_path=excluded.config_path,status=case when node_service_discoveries.status='imported' then node_service_discoveries.status else excluded.status end,source=excluded.source,confidence=excluded.confidence,endpoint_host=excluded.endpoint_host,endpoint_port=excluded.endpoint_port,payload_json=excluded.payload_json,detected_at=excluded.detected_at`, d.ID, d.NodeID, d.ServiceCode, d.Name, d.SystemdUnit, d.ConfigPath, d.Status, d.Source, d.Confidence, d.EndpointHost, d.EndpointPort, db, d.DetectedAt)
 		if err != nil {
@@ -1117,7 +1125,10 @@ func (s *Store) importDiscoveryAsInstance(ctx context.Context, d domain.NodeServ
 	if err != nil {
 		return domain.Instance{}, err
 	}
-	b, _ := json.Marshal(spec)
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return domain.Instance{}, fmt.Errorf("marshal imported instance spec: %w", err)
+	}
 	_, err = tx.Exec(ctx, `insert into instance_revisions(id,instance_id,revision_no,source,status,spec_json,created_at) values($1,$2,1,'import','validated',$3,now())`, id.New(), instanceID, b)
 	if err != nil {
 		return domain.Instance{}, err
@@ -1126,7 +1137,9 @@ func (s *Store) importDiscoveryAsInstance(ctx context.Context, d domain.NodeServ
 	if err != nil {
 		return domain.Instance{}, err
 	}
-	_, _ = tx.Exec(ctx, `insert into node_service_discovery_events(id,node_id,discovery_id,event_type,summary,payload_json,created_at) values($1,$2,$3,'imported',$4,$5,now())`, id.New(), d.NodeID, d.ID, "service discovery imported", mustJSON(map[string]any{"instance_id": instanceID, "service_code": d.ServiceCode}))
+	if _, err := tx.Exec(ctx, `insert into node_service_discovery_events(id,node_id,discovery_id,event_type,summary,payload_json,created_at) values($1,$2,$3,'imported',$4,$5,now())`, id.New(), d.NodeID, d.ID, "service discovery imported", mustJSON(map[string]any{"instance_id": instanceID, "service_code": d.ServiceCode})); err != nil {
+		return domain.Instance{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return domain.Instance{}, err
 	}
@@ -2110,7 +2123,10 @@ func normalizeJobForInsert(j domain.Job) (domain.Job, []byte, error) {
 		return j, nil, err
 	}
 	j.Payload = normalizedPayload
-	b, _ := json.Marshal(j.Payload)
+	b, err := json.Marshal(j.Payload)
+	if err != nil {
+		return j, nil, fmt.Errorf("marshal job payload: %w", err)
+	}
 	if j.CreatedAt.IsZero() {
 		j.CreatedAt = time.Now().UTC()
 	}
@@ -2827,8 +2843,15 @@ func (s *Store) AddJobLog(ctx context.Context, jobID, level, msg string, payload
 	if payload == nil {
 		payload = map[string]any{}
 	}
-	b, _ := json.Marshal(redactSensitiveMapForStorage(payload))
-	_, err := s.db.Exec(ctx, `insert into job_logs(id,job_id,level,message,payload_json,created_at) values($1,$2,$3,$4,$5,now())`, id.New(), jobID, level, msg, b)
+	redacted := redactSensitiveMapForStorage(payload)
+	b, err := json.Marshal(redacted)
+	if err != nil {
+		b, err = json.Marshal(map[string]any{"message": "job log payload marshal failed", "error": err.Error()})
+		if err != nil {
+			return err
+		}
+	}
+	_, err = s.db.Exec(ctx, `insert into job_logs(id,job_id,level,message,payload_json,created_at) values($1,$2,$3,$4,$5,now())`, id.New(), jobID, level, msg, b)
 	return err
 }
 

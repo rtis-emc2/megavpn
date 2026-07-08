@@ -150,6 +150,51 @@ func TestRenderNodeFirewallPlanRendersAddressListSets(t *testing.T) {
 	}
 }
 
+func TestRenderNodeFirewallPlanReportsIgnoredDNSAddressEntries(t *testing.T) {
+	t.Parallel()
+
+	plan, err := renderNodeFirewallPlan(map[string]any{
+		"node_id": "node-1",
+		"address_lists": []any{
+			map[string]any{
+				"id":     "list-1",
+				"key":    "mixed_sources",
+				"status": "active",
+				"entries": []any{
+					map[string]any{"value": "10.20.0.0/16", "value_type": "cidr", "status": "active"},
+					map[string]any{"value": "operator.example.test", "value_type": "dns", "status": "active"},
+				},
+			},
+		},
+		"rules": []any{
+			map[string]any{
+				"id":           "allow-mixed",
+				"priority":     100,
+				"chain":        "input",
+				"action":       "accept",
+				"protocol":     "tcp",
+				"src_list_key": "mixed_sources",
+				"dst_ports":    "443",
+				"enabled":      true,
+				"status":       "active",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderNodeFirewallPlan returned error: %v", err)
+	}
+	if len(plan.Warnings) == 0 {
+		t.Fatal("expected DNS ignored warning")
+	}
+	if len(plan.AddressListCounts) != 1 {
+		t.Fatalf("address list counts = %#v, want one item", plan.AddressListCounts)
+	}
+	stats := plan.AddressListCounts[0]
+	if stats["rendered_entries"] != 1 || stats["ignored_dns_entries"] != 1 {
+		t.Fatalf("address list stats = %#v, want 1 rendered and 1 ignored DNS", stats)
+	}
+}
+
 func TestRenderNodeFirewallPlanRejectsEmptyAddressList(t *testing.T) {
 	t.Parallel()
 

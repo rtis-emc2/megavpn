@@ -118,6 +118,10 @@ require_shell_syntax() {
   )
 }
 
+require_actions_pinning() {
+  scripts/ci/actions-pinning-check.sh
+}
+
 require_frontend_js_syntax() {
   find web/assets -maxdepth 1 -name '*.js' -print0 | xargs -0 -n1 "$NODE_BIN" --check
 }
@@ -260,6 +264,7 @@ fi
 run_gate "go-build" go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin
 run_gate "binary-version-commands" require_binary_version_commands
 run_gate "shell-syntax" require_shell_syntax
+run_gate "actions-pinning" require_actions_pinning
 run_gate "docs-consistency" require_docs_consistency
 run_gate "control-plane-install-validation" require_control_plane_install_validation
 run_gate "smoke-auth-coverage" require_smoke_auth_coverage

@@ -1,6 +1,6 @@
 # Self-Testing
 
-**Release:** `7.1.0.30`
+**Release:** `7.1.1.0`
 
 `scripts/ci/self-test.sh` is the broad diagnostic entrypoint for release readiness. It differs from `scripts/ci/release-gate.sh`: the release gate is fail-fast, while self-test keeps running independent gates and writes a report that separates working, failing and not-tested areas.
 
@@ -26,6 +26,7 @@ Local gates:
 - `go-build`
 - `binary-version-commands`
 - `shell-syntax`
+- `actions-pinning`
 - `docs-consistency`
 - `control-plane-install-validation`
 - `frontend-js-syntax`, when `node` is installed
@@ -72,8 +73,9 @@ This enables:
 
 - `postgres-migrations-and-integration`: `scripts/ci/postgres-migration-drill.sh`
   applies every migration from an empty disposable database, applies them again
-  to prove idempotent skip behavior, checks critical tables/security columns and
-  then runs the PostgreSQL integration suite.
+  to prove idempotent skip behavior, checks critical tables, required indexes,
+  token-storage columns, VLESS group templates and firewall seed groups, then
+  runs the PostgreSQL integration suite.
 - `backup-restore-drill`: creates a backup archive from the migrated disposable
   database and restores it into the separate restore database.
 

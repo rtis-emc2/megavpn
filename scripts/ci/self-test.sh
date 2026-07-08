@@ -189,6 +189,10 @@ require_shell_syntax() {
 	)
 }
 
+require_actions_pinning() {
+	scripts/ci/actions-pinning-check.sh
+}
+
 require_control_plane_install_validation() {
   MEGAVPN_CP_VALIDATE_ONLY=1 \
     MEGAVPN_CP_ASSUME_YES=1 \
@@ -459,6 +463,7 @@ run_check "go-vet" "Go vet reports no issues" require_go_vet
 run_check "go-build" "API, worker, agent and migrate binaries build" require_go_build
 run_check "binary-version-commands" "All operational binaries print version and exit without runtime startup" require_binary_version_commands
 run_check "shell-syntax" "Shell scripts parse under bash -n" require_shell_syntax
+run_check "actions-pinning" "GitHub Actions use pinned commit SHA refs" require_actions_pinning
 run_check "control-plane-install-validation" "Control Plane installer validates non-interactive clean-install inputs" require_control_plane_install_validation
 run_check "frontend-js-syntax" "Static Web UI JavaScript parses under node --check" require_frontend_js_syntax
 run_check "frontend-bootstrap-smoke" "Static Web UI assets bootstrap with browser-like runtime dependencies" require_frontend_bootstrap_smoke

@@ -47,13 +47,24 @@ require_command psql
 critical_tables=(
   nodes
   node_agents
+  node_enrollment_tokens
+  node_inventory_snapshots
+  node_capabilities
+  node_service_discoveries
+  node_service_discovery_events
+  node_capability_install_events
+  node_access_methods
+  node_bootstrap_runs
   instances
+  instance_revisions
   instance_runtime_states
   instance_runtime_observations
   service_definitions
+  service_pack_templates
   client_accounts
   service_accesses
   client_service_identities
+  client_subscriptions
   client_access_routes
   artifacts
   share_links
@@ -61,6 +72,29 @@ critical_tables=(
   job_logs
   resource_locks
   audit_events
+  platform_users
+  roles
+  permissions
+  role_permissions
+  platform_user_roles
+  user_sessions
+  platform_mail_settings
+  platform_user_invites
+  client_email_deliveries
+  secret_refs
+  agent_trust_roots
+  node_agent_certificates
+  platform_service_pki_roots
+  platform_certificates
+  platform_control_plane_tls_settings
+  backhaul_links
+  backhaul_transports
+  address_pool_spaces
+  address_pool_allocations
+  binary_artifacts
+  binary_manifests
+  binary_download_tickets
+  vless_group_templates
   firewall_address_lists
   firewall_address_entries
   firewall_policies
@@ -68,6 +102,31 @@ critical_tables=(
   firewall_revisions
   firewall_node_state
   traffic_accounting_samples
+)
+
+critical_indexes=(
+  idx_jobs_status_priority
+  idx_jobs_locked_until
+  idx_resource_locks_job
+  idx_job_logs_job_created
+  idx_share_links_token_hash
+  idx_client_service_identities_lookup
+  client_subscriptions_token_hash_idx
+  idx_client_subscriptions_client_status
+  idx_client_access_routes_baseline_access
+  idx_instance_runtime_states_node_health
+  idx_instance_runtime_observations_instance_time
+  idx_traffic_accounting_node_sample_key
+  idx_traffic_accounting_client_export
+  idx_binary_artifacts_unique_active
+  idx_binary_download_tickets_artifact
+  vless_group_templates_status_order_idx
+  idx_service_accesses_instance_status
+  idx_service_accesses_instance_vless_group
+  idx_client_accounts_lookup_lower
+  firewall_address_entries_active_value_idx
+  firewall_policies_node_idx
+  firewall_rules_policy_priority_idx
 )
 
 table_sql=""
@@ -127,14 +186,41 @@ for table in "${critical_tables[@]}"; do
   fi
 done
 
+for index in "${critical_indexes[@]}"; do
+  present="$(psql_value "select to_regclass('$(sql_quote "$index")') is not null;")"
+  if [[ "$present" != "t" ]]; then
+    die "required index missing after migrations: $index"
+  fi
+done
+
 token_columns="$(psql_value "select count(*) from information_schema.columns where table_schema=current_schema() and table_name='share_links' and column_name in ('token_hash','token_hint');")"
 if [[ "$token_columns" != "2" ]]; then
   die "share_links token_hash/token_hint columns are required; found $token_columns"
 fi
 
+plaintext_share_token_columns="$(psql_value "select count(*) from information_schema.columns where table_schema=current_schema() and table_name='share_links' and column_name='token';")"
+if [[ "$plaintext_share_token_columns" != "0" ]]; then
+  die "share_links must not contain a plaintext token column"
+fi
+
 firewall_apply_columns="$(psql_value "select count(*) from information_schema.columns where table_schema=current_schema() and table_name='firewall_node_state' and column_name in ('last_preview_json','last_error','last_job_id');")"
 if [[ "$firewall_apply_columns" != "3" ]]; then
   die "firewall_node_state apply hardening columns are required; found $firewall_apply_columns"
+fi
+
+firewall_node_state_status_constraint="$(psql_value "select count(*) from pg_constraint c join pg_class t on t.oid = c.conrelid join pg_namespace n on n.oid = t.relnamespace where n.nspname = current_schema() and t.relname = 'firewall_node_state' and c.conname = 'firewall_node_state_status_check' and pg_get_constraintdef(c.oid) like '%pending_disable%' and pg_get_constraintdef(c.oid) like '%disabled%' and pg_get_constraintdef(c.oid) like '%stale%';")"
+if [[ "$firewall_node_state_status_constraint" != "1" ]]; then
+  die "firewall_node_state status constraint must allow pending_disable/disabled/stale"
+fi
+
+vless_templates="$(psql_value "select count(*) from vless_group_templates where status='active';")"
+if [[ "$vless_templates" -lt 1 ]]; then
+  die "active VLESS group templates are required after migrations"
+fi
+
+firewall_seed_groups="$(psql_value "select count(*) from firewall_address_lists where key in ('trusted_operators','vpn_client_sources','backhaul_sources','public_service_sources','blocked_destinations') and status <> 'deleted';")"
+if [[ "$firewall_seed_groups" -lt 5 ]]; then
+  die "firewall semantic/default address groups missing after migrations; found $firewall_seed_groups"
 fi
 
 if [[ "$RUN_BACKUP_RESTORE" == "auto" ]]; then
