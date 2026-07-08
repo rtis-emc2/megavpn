@@ -3017,7 +3017,7 @@ func (s *Store) CreateAudit(ctx context.Context, actor, action, resource string,
 }
 
 func (s *Store) SeedLocalInventory(ctx context.Context) error {
-	_, err := s.db.Exec(ctx, `insert into nodes(id,name,kind,role,status,address,os_family,os_version,architecture,execution_mode,agent_status,created_at,updated_at) values($1,'local','local','egress','online','127.0.0.1','linux','unknown','amd64','local_managed','unknown',now(),now()) on conflict(name) do nothing`, id.New())
+	_, err := s.db.Exec(ctx, `insert into nodes(id,name,kind,role,status,address,os_family,os_version,architecture,execution_mode,agent_status,created_at,updated_at) values($1,'local','local','egress','online','127.0.0.1','linux','unknown','amd64','local_managed','unknown',now(),now()) on conflict(name) where status <> 'retired' do nothing`, id.New())
 	return err
 }
 

@@ -227,6 +227,27 @@ func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationSeedLocalInventoryUsesActiveNodeNameUniqueness(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	if err := store.SeedLocalInventory(ctx); err != nil {
+		t.Fatalf("seed local inventory: %v", err)
+	}
+	if err := store.SeedLocalInventory(ctx); err != nil {
+		t.Fatalf("repeat seed local inventory: %v", err)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from nodes where name='local' and status <> 'retired'`, 1)
+
+	if _, err := store.db.Exec(ctx, `update nodes set status='retired' where name='local'`); err != nil {
+		t.Fatalf("retire local node: %v", err)
+	}
+	if err := store.SeedLocalInventory(ctx); err != nil {
+		t.Fatalf("seed local inventory after retire: %v", err)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from nodes where name='local' and status <> 'retired'`, 1)
+	assertPostgresCount(t, ctx, store, `select count(*) from nodes where name='local'`, 2)
+}
+
 func TestPostgresIntegrationDeletedInstanceRuntimeReportsAreIgnored(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 
