@@ -69,7 +69,21 @@ Use a disposable PostgreSQL database:
 MEGAVPN_RELEASE_DATABASE_DSN='postgres://...' scripts/ci/release-gate.sh
 ```
 
-This runs migrations and PostgreSQL integration tests, including job lifecycle and stale lease recovery.
+This runs `scripts/ci/postgres-migration-drill.sh` before PostgreSQL integration
+tests. The drill is intentionally strict: `MEGAVPN_RELEASE_DATABASE_DSN` must
+point at an empty disposable database unless
+`MEGAVPN_MIGRATION_DRILL_ALLOW_EXISTING=1` is set for diagnostics only. It
+applies all migrations from zero, applies them again to verify runner
+idempotency, checks critical schema invariants, then the integration suite
+covers job lifecycle, stale lease recovery and client/share cleanup behavior.
+
+For backup/restore evidence, provide a separate disposable restore target:
+
+```bash
+MEGAVPN_RELEASE_DATABASE_DSN='postgres://...' \
+MEGAVPN_RELEASE_RESTORE_DATABASE_DSN='postgres://...' \
+scripts/ci/release-gate.sh
+```
 
 For API/worker/agent E2E, run against a disposable control plane and test node:
 

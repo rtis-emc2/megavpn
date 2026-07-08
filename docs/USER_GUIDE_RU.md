@@ -900,7 +900,7 @@ Lost-node instance force delete:
 Перед production rollout:
 
 1. `scripts/ci/release-gate.sh` без unexplained skips.
-2. Disposable PostgreSQL migration test.
+2. `scripts/ci/postgres-migration-drill.sh` на пустой disposable PostgreSQL DB.
 3. Backup/restore drill.
 4. `nginx -t` на edge host.
 5. `systemd-analyze verify` для systemd units.

@@ -321,7 +321,9 @@ require_postgres_migrations_and_integration() {
     skip_check "set MEGAVPN_RELEASE_DATABASE_DSN to a disposable PostgreSQL database"
     return 77
   fi
-  MEGAVPN_DATABASE_DSN="$RELEASE_DATABASE_DSN" go run ./cmd/migrate
+  MEGAVPN_DATABASE_DSN="$RELEASE_DATABASE_DSN" \
+    MEGAVPN_MIGRATION_DRILL_RUN_BACKUP_RESTORE=0 \
+    scripts/ci/postgres-migration-drill.sh
   MEGAVPN_TEST_DATABASE_DSN="$RELEASE_DATABASE_DSN" go test ./internal/infra/postgres -run 'TestPostgresIntegration' -count=1
 }
 
@@ -467,7 +469,7 @@ run_check "static-security-patterns" "No banned production command patterns are 
 run_check "smoke-auth-coverage" "Smoke scripts that call protected API endpoints support bearer auth" require_smoke_auth_coverage
 run_check "migration-sequence" "SQL migration numbers are unique and gap-free" require_migration_sequence
 run_check "docs-consistency" "Release, security, RBAC, operations and env-template documents are synchronized" require_release_docs
-run_check "postgres-migrations-and-integration" "Migrations and PostgreSQL integration tests pass on disposable DB" require_postgres_migrations_and_integration
+run_check "postgres-migrations-and-integration" "Zero-database migration drill, idempotent re-run and PostgreSQL integration tests pass on disposable DB" require_postgres_migrations_and_integration
 run_check "backup-restore-drill" "Backup archive restores into a separate disposable DB" require_backup_restore_drill
 run_check "systemd-verify" "Systemd unit files verify on a systemd host" require_systemd_verify
 run_check "nginx-t" "Nginx configuration validates on target host" require_nginx_verify

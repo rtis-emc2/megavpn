@@ -70,8 +70,16 @@ scripts/ci/self-test.sh
 
 This enables:
 
-- `postgres-migrations-and-integration`
-- `backup-restore-drill`
+- `postgres-migrations-and-integration`: `scripts/ci/postgres-migration-drill.sh`
+  applies every migration from an empty disposable database, applies them again
+  to prove idempotent skip behavior, checks critical tables/security columns and
+  then runs the PostgreSQL integration suite.
+- `backup-restore-drill`: creates a backup archive from the migrated disposable
+  database and restores it into the separate restore database.
+
+`MEGAVPN_RELEASE_DATABASE_DSN` must be empty for release evidence. Use
+`MEGAVPN_MIGRATION_DRILL_ALLOW_EXISTING=1` only for local diagnostics when you
+explicitly accept that the run is not a zero-database migration proof.
 
 ## Live Runtime Gates
 

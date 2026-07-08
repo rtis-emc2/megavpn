@@ -1816,6 +1816,58 @@ func TestPostgresIntegrationRecoverStaleJobLeases(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationAgentJobCompletionRejectsForgedLeaseOwner(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-forged-job-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.1.20",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	job, err := store.CreateJob(ctx, domain.Job{
+		Type:      "node.route_policy.apply",
+		ScopeType: "node",
+		ScopeID:   &node.ID,
+		NodeID:    &node.ID,
+		Priority:  20,
+		Payload:   map[string]any{"node_id": node.ID},
+	})
+	if err != nil {
+		t.Fatalf("create route policy job: %v", err)
+	}
+	claimed, ok, err := store.AgentNextJob(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("claim route policy job: %v", err)
+	}
+	if !ok || claimed.ID != job.ID || claimed.LockedBy == nil {
+		t.Fatalf("claimed job = %#v, want locked running job %s", claimed, job.ID)
+	}
+	if err := store.CompleteAgentJob(ctx, claimed.ID, "agent:forged-node", "succeeded", map[string]any{"message": "forged result"}); err == nil {
+		t.Fatal("forged agent completion with mismatched lease owner must be rejected")
+	}
+	afterForge, err := store.GetJob(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("get job after forged completion: %v", err)
+	}
+	if afterForge.Status != "running" || afterForge.FinishedAt != nil {
+		t.Fatalf("job after forged completion = status:%s finished:%v, want still running", afterForge.Status, afterForge.FinishedAt)
+	}
+	if err := store.CompleteAgentJob(ctx, claimed.ID, "agent:"+node.ID, "succeeded", map[string]any{"message": "valid result"}); err != nil {
+		t.Fatalf("complete with real owner: %v", err)
+	}
+}
+
 func TestPostgresIntegrationAgentVersionProjection(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 
@@ -2030,6 +2082,46 @@ func TestPostgresIntegrationDeleteClientServiceAccessRemovesRows(t *testing.T) {
 	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, fixture.secret.ID)
 	if _, err := os.Stat(fixture.artifact.StoragePath); !os.IsNotExist(err) {
 		t.Fatalf("artifact file after service access delete error = %v, want not exist", err)
+	}
+}
+
+func TestPostgresIntegrationShareLinkRejectsRevokedTokenReuse(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	store.SetArtifactRoot(t.TempDir())
+
+	fixture := createClientServiceAccessCleanupFixture(t, ctx, store, "share-revoke")
+	link, artifact, err := store.ResolveShareLinkArtifact(ctx, fixture.share.Token)
+	if err != nil {
+		t.Fatalf("resolve active share link: %v", err)
+	}
+	if link.ID != fixture.share.ID || artifact.ID != fixture.artifact.ID {
+		t.Fatalf("resolved link/artifact = %s/%s, want %s/%s", link.ID, artifact.ID, fixture.share.ID, fixture.artifact.ID)
+	}
+	if _, err := store.RevokeShareLink(ctx, fixture.client.ID, fixture.share.ID); err != nil {
+		t.Fatalf("revoke share link: %v", err)
+	}
+	if _, _, err := store.ResolveShareLinkArtifact(ctx, fixture.share.Token); err == nil {
+		t.Fatal("revoked share token must not be reusable")
+	}
+}
+
+func TestPostgresIntegrationShareLinkRejectsExpiredToken(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	store.SetArtifactRoot(t.TempDir())
+
+	fixture := createClientServiceAccessCleanupFixture(t, ctx, store, "share-expired")
+	if _, err := store.db.Exec(ctx, `update share_links set expires_at=$2 where id=$1`, fixture.share.ID, time.Now().UTC().Add(-time.Minute)); err != nil {
+		t.Fatalf("expire share link: %v", err)
+	}
+	if _, _, err := store.ResolveShareLinkArtifact(ctx, fixture.share.Token); err == nil {
+		t.Fatal("expired share token must be rejected")
+	}
+	var status string
+	if err := store.db.QueryRow(ctx, `select status from share_links where id=$1`, fixture.share.ID).Scan(&status); err != nil {
+		t.Fatalf("load expired share link status: %v", err)
+	}
+	if status != "expired" {
+		t.Fatalf("share link status after expired resolve = %q, want expired", status)
 	}
 }
 

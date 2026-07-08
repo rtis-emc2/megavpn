@@ -184,7 +184,9 @@ require_smoke_auth_coverage() {
 }
 
 run_migrations_and_integration() {
-  MEGAVPN_DATABASE_DSN="$RELEASE_DATABASE_DSN" go run ./cmd/migrate
+  MEGAVPN_DATABASE_DSN="$RELEASE_DATABASE_DSN" \
+    MEGAVPN_MIGRATION_DRILL_RUN_BACKUP_RESTORE=0 \
+    scripts/ci/postgres-migration-drill.sh
   MEGAVPN_TEST_DATABASE_DSN="$RELEASE_DATABASE_DSN" go test ./internal/infra/postgres -run 'TestPostgresIntegration' -count=1
 }
 

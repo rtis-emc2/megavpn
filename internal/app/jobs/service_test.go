@@ -140,3 +140,27 @@ func TestCreateRejectsGenericJobWithoutPermission(t *testing.T) {
 		t.Fatalf("permission = %q", permissionErr.Permission)
 	}
 }
+
+func TestCreateRejectsPrivilegedJobTypeFromGenericAPI(t *testing.T) {
+	t.Parallel()
+
+	service := New(&memoryStore{})
+	_, err := service.Create(context.Background(), domain.Job{Type: "node.firewall.apply"}, func(string) bool {
+		return true
+	})
+	if !errors.Is(err, ErrTypedEndpointRequired) {
+		t.Fatalf("err = %v, want ErrTypedEndpointRequired", err)
+	}
+}
+
+func TestCreateRejectsUnknownJobTypeFromGenericAPI(t *testing.T) {
+	t.Parallel()
+
+	service := New(&memoryStore{})
+	_, err := service.Create(context.Background(), domain.Job{Type: "node.inventory"}, func(string) bool {
+		return true
+	})
+	if !errors.Is(err, ErrGenericAPIUnavailable) {
+		t.Fatalf("err = %v, want ErrGenericAPIUnavailable", err)
+	}
+}
