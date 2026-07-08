@@ -6,7 +6,12 @@ const path = require('path');
 const vm = require('vm');
 
 const rootDir = path.resolve(__dirname, '..', '..');
-const indexPath = path.join(rootDir, 'web', 'index.html');
+const defaultLegacyIndex = path.join(rootDir, 'web', 'legacy', 'index.html');
+const defaultIndex = fs.existsSync(defaultLegacyIndex) ? defaultLegacyIndex : path.join(rootDir, 'web', 'index.html');
+const indexPath = process.env.MEGAVPN_FRONTEND_SMOKE_INDEX
+  ? path.resolve(rootDir, process.env.MEGAVPN_FRONTEND_SMOKE_INDEX)
+  : defaultIndex;
+const indexDir = path.dirname(indexPath);
 const indexHTML = fs.readFileSync(indexPath, 'utf8');
 
 class ClassList {
@@ -332,7 +337,7 @@ if (!scripts.length) {
 
 async function main() {
   for (const src of scripts) {
-    const filePath = path.join(rootDir, 'web', src.replace(/^\.\//, ''));
+    const filePath = path.resolve(indexDir, src.replace(/^\.\//, ''));
     const source = fs.readFileSync(filePath, 'utf8');
     vm.runInContext(source, context, { filename: filePath });
   }
@@ -345,7 +350,7 @@ async function main() {
   if (!windowObject.__MegaVPNBootReady) {
     throw new Error('frontend bootstrap did not reach __MegaVPNBootReady');
   }
-  console.log(`frontend bootstrap smoke ok: ${scripts.length} assets`);
+  console.log(`frontend bootstrap smoke ok: ${scripts.length} assets from ${path.relative(rootDir, indexPath)}`);
 }
 
 main().catch((err) => {

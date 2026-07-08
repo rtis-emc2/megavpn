@@ -100,7 +100,24 @@ jobs:
       - name: Check Web UI JavaScript syntax
         run: |
           set -euo pipefail
-          find web/assets -maxdepth 1 -type f -name '*.js' -print0 | sort -z | xargs -0 -n1 node --check
+          find web/assets web/legacy/assets -maxdepth 1 -type f -name '*.js' -print0 | sort -z | xargs -0 -n1 node --check
+
+      - name: Check React frontend workspace
+        run: |
+          set -euo pipefail
+          cd frontend
+          npm ci
+          npm run typecheck
+          npm run lint
+          npm run test
+          npm run i18n:check
+          npm run build
+
+      - name: Check frontend serving contract
+        run: scripts/ci/frontend-serving-smoke.sh
+
+      - name: Check frontend static guards
+        run: scripts/ci/frontend-static-guards.sh
 
       - name: Check GitHub Actions pinning
         run: scripts/ci/actions-pinning-check.sh

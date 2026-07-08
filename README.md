@@ -63,6 +63,11 @@ The release notes and stabilization baseline are maintained in
 [docs/releases/7.1.1.0.md](docs/releases/7.1.1.0.md). Release readiness gates
 are documented in [docs/RELEASE_GATES.md](docs/RELEASE_GATES.md).
 
+Frontend Console `8.0.0` is being prepared as a release candidate in
+[docs/releases/8.0.0.md](docs/releases/8.0.0.md). The React/Vite console is the
+new primary UI candidate, while the previous static UI remains available under
+`/legacy/` for rollback during the migration.
+
 ## Component Model
 
 | Component | Purpose |

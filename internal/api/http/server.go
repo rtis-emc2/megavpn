@@ -346,6 +346,9 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	authenticated := func(pattern string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
 		mux.Handle(pattern, s.withPermission("", nethttp.HandlerFunc(h)))
 	}
+	mux.HandleFunc("GET /legacy", s.legacyRedirect)
+	mux.HandleFunc("GET /legacy/", s.legacyIndex)
+	mux.HandleFunc("GET /legacy/assets/{path...}", s.legacyAssets)
 	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /share/{token}", s.withRateLimit("public_share_download", 120, time.Minute, s.publicShareDownload))
 	mux.HandleFunc("GET /subscribe/vless/{token}", s.withRateLimit("public_vless_subscription", 120, time.Minute, s.publicVLESSSubscription))
@@ -724,12 +727,85 @@ func decodeJSONBody(r *nethttp.Request, v any, optional bool) bool {
 func idParam(r *nethttp.Request) string { return strings.TrimSpace(r.PathValue("id")) }
 
 func (s *Server) index(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.URL.Path != "/" && !shouldServeFrontendFallback(r.URL.Path) {
+		nethttp.NotFound(w, r)
+		return
+	}
 	setWebAssetNoStore(w)
 	if s.serveFileIfExists(w, r, "index.html", "text/html; charset=utf-8") {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><title>RTIS MegaVPN API</title><style>body{font-family:system-ui;background:#0b1120;color:#e5e7eb;padding:40px}a{color:#fda4af}code{background:#111827;padding:2px 6px;border-radius:6px}</style></head><body><h1>RTIS MegaVPN Control Plane</h1><p>API is running.</p><p><a href="/health">/health</a> · <a href="/api/v1/dashboard">/api/v1/dashboard</a> · <a href="/api/v1/ready">/api/v1/ready</a></p></body></html>`))
+}
+
+func shouldServeFrontendFallback(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || path[0] != '/' {
+		return false
+	}
+	blockedPrefixes := []string{
+		"/api/",
+		"/agent/",
+		"/assets/",
+		"/legacy/",
+		"/share/",
+		"/subscribe/",
+		"/download/",
+		"/downloads/",
+		"/exports/",
+	}
+	for _, prefix := range blockedPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return false
+		}
+	}
+	blockedExact := map[string]struct{}{
+		"/api":         {},
+		"/agent":       {},
+		"/assets":      {},
+		"/legacy":      {},
+		"/share":       {},
+		"/subscribe":   {},
+		"/download":    {},
+		"/downloads":   {},
+		"/exports":     {},
+		"/health":      {},
+		"/healthz":     {},
+		"/ready":       {},
+		"/favicon.ico": {},
+		"/robots.txt":  {},
+		"/sitemap.xml": {},
+	}
+	if _, ok := blockedExact[path]; ok {
+		return false
+	}
+	return !strings.Contains(filepath.Base(path), ".")
+}
+
+func (s *Server) legacyRedirect(w nethttp.ResponseWriter, r *nethttp.Request) {
+	nethttp.Redirect(w, r, "/legacy/", nethttp.StatusMovedPermanently)
+}
+
+func (s *Server) legacyIndex(w nethttp.ResponseWriter, r *nethttp.Request) {
+	setWebAssetNoStore(w)
+	if s.serveFileIfExists(w, r, filepath.Join("legacy", "index.html"), "text/html; charset=utf-8") {
+		return
+	}
+	nethttp.NotFound(w, r)
+}
+
+func (s *Server) legacyAssets(w nethttp.ResponseWriter, r *nethttp.Request) {
+	assetPath := strings.TrimSpace(r.PathValue("path"))
+	if assetPath == "" || strings.HasSuffix(assetPath, "/") {
+		nethttp.NotFound(w, r)
+		return
+	}
+	setWebAssetNoStore(w)
+	if s.serveFileIfExists(w, r, filepath.Join("legacy", "assets", assetPath), "") {
+		return
+	}
+	nethttp.NotFound(w, r)
 }
 
 func (s *Server) assets(w nethttp.ResponseWriter, r *nethttp.Request) {

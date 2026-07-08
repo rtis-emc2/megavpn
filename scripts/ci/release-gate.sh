@@ -123,15 +123,35 @@ require_actions_pinning() {
 }
 
 require_frontend_js_syntax() {
-  find web/assets -maxdepth 1 -name '*.js' -print0 | xargs -0 -n1 "$NODE_BIN" --check
+  find web/assets web/legacy/assets -maxdepth 1 -name '*.js' -print0 | sort -z | xargs -0 -n1 "$NODE_BIN" --check
 }
 
 run_frontend_bootstrap_smoke() {
   "$NODE_BIN" scripts/ci/frontend-bootstrap-smoke.js
 }
 
+run_frontend_workspace_checks() {
+  (
+    cd frontend
+    npm ci
+    npm run typecheck
+    npm run lint
+    npm run test
+    npm run i18n:check
+    npm run build
+  )
+}
+
 run_install_web_wrapper_smoke() {
   scripts/ci/install-web-wrapper-smoke.sh
+}
+
+run_frontend_serving_smoke() {
+  scripts/ci/frontend-serving-smoke.sh
+}
+
+run_frontend_static_guards() {
+  scripts/ci/frontend-static-guards.sh
 }
 
 run_service_pack_smoke_regression() {
@@ -273,6 +293,8 @@ run_gate "docs-consistency" require_docs_consistency
 run_gate "control-plane-install-validation" require_control_plane_install_validation
 run_gate "smoke-auth-coverage" require_smoke_auth_coverage
 run_gate "install-web-wrapper-smoke" run_install_web_wrapper_smoke
+run_gate "frontend-serving-smoke" run_frontend_serving_smoke
+run_gate "frontend-static-guards" run_frontend_static_guards
 if command -v "$NODE_BIN" >/dev/null 2>&1; then
   run_gate "frontend-js-syntax" require_frontend_js_syntax
   run_gate "frontend-bootstrap-smoke" run_frontend_bootstrap_smoke
@@ -281,6 +303,11 @@ else
   skip_gate "frontend-js-syntax" "set MEGAVPN_RELEASE_NODE_BIN or install node"
   skip_gate "frontend-bootstrap-smoke" "set MEGAVPN_RELEASE_NODE_BIN or install node"
   skip_gate "service-pack-smoke-regression" "set MEGAVPN_RELEASE_NODE_BIN or install node"
+fi
+if command -v npm >/dev/null 2>&1; then
+  run_gate "frontend-workspace-checks" run_frontend_workspace_checks
+else
+  skip_gate "frontend-workspace-checks" "install npm through the release Node.js runtime"
 fi
 run_gate "static-security-patterns" require_clean_static_scan
 

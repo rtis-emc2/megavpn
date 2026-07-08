@@ -6,6 +6,12 @@
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
 instances, backhaul, клиентов и клиентских artifacts.
 
+Примечание для frontend `8.0.0` RC1: новая React/Vite-консоль открывается на
+`/`, а предыдущий static UI доступен на `/legacy/`. Ряд write-workflows в новой
+консоли намеренно отключен до полного wiring backend endpoints; для таких
+операций используйте `/legacy/` и сверяйтесь с
+`docs/FRONTEND_WRITE_WORKFLOWS_8.0.0.md`.
+
 ## 1. Базовые понятия
 
 | Термин | Значение |

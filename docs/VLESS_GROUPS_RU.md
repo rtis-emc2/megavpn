@@ -12,6 +12,10 @@ VLESS access groups - это reusable client access groups для клиентс
 `service_accesses` как проекцию. Так политика доступа не размазывается по
 каждому VLESS instance и остается аудируемой.
 
+Примечание для frontend `8.0.0` RC1: новая консоль не показывает fake-success
+для VLESS membership changes. Если preview/apply недоступны в React UI,
+используйте `/legacy/` до завершения миграции write-workflow.
+
 VLESS group глобальная. Участие клиента хранится один раз и материализуется во
 все active Xray/VLESS instances, которые поддерживают эту group. VLESS instance
 по-прежнему отвечает за listener, certificate/Reality settings и default egress

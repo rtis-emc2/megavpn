@@ -13,9 +13,14 @@ cd "$ROOT_DIR"
 
 scripts/install-web.sh "$TARGET_DIR"
 
-for required in index.html assets/app.js; do
+for required in index.html legacy/index.html legacy/assets/app.js; do
   if [[ ! -f "$TARGET_DIR/$required" ]]; then
     echo "installed Web UI is missing $required" >&2
     exit 1
   fi
 done
+
+if ! find "$TARGET_DIR/assets" -maxdepth 1 -type f \( -name '*.js' -o -name '*.css' \) | grep -q .; then
+  echo "installed Web UI is missing built frontend assets" >&2
+  exit 1
+fi

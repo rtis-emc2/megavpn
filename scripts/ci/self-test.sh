@@ -211,9 +211,9 @@ require_frontend_js_syntax() {
     skip_check "node is unavailable; web/assets/*.js syntax check was not run"
     return 77
   fi
-  for file in web/assets/*.js; do
+  while IFS= read -r -d '' file; do
     "$NODE_BIN" --check "$file"
-  done
+  done < <(find web/assets web/legacy/assets -maxdepth 1 -type f -name '*.js' -print0 | sort -z)
 }
 
 require_frontend_bootstrap_smoke() {
@@ -224,8 +224,36 @@ require_frontend_bootstrap_smoke() {
   "$NODE_BIN" scripts/ci/frontend-bootstrap-smoke.js
 }
 
+require_frontend_workspace_checks() {
+  if [[ ! -f frontend/package.json ]]; then
+    skip_check "frontend/package.json is unavailable; React console checks were not run"
+    return 77
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    skip_check "npm is unavailable; React console checks were not run"
+    return 77
+  fi
+  (
+    cd frontend
+    npm ci
+    npm run typecheck
+    npm run lint
+    npm run test
+    npm run i18n:check
+    npm run build
+  )
+}
+
 require_install_web_wrapper_smoke() {
   scripts/ci/install-web-wrapper-smoke.sh
+}
+
+require_frontend_serving_smoke() {
+  scripts/ci/frontend-serving-smoke.sh
+}
+
+require_frontend_static_guards() {
+  scripts/ci/frontend-static-guards.sh
 }
 
 require_service_pack_smoke_regression() {
@@ -237,37 +265,47 @@ require_service_pack_smoke_regression() {
 }
 
 require_frontend_asset_manifest() {
-  local ref path missing=0
-  while IFS= read -r ref; do
-    path="${ref%%\?*}"
-    if [[ "$path" != assets/* ]]; then
-      continue
-    fi
-    if [[ ! -f "web/$path" ]]; then
-      printf 'missing web/%s\n' "$path"
-      missing=1
-    fi
-  done < <(sed -nE 's/.*(src|href)="\.\/([^"]+)".*/\2/p' web/index.html)
+  local index ref path base missing=0
+  for index in web/index.html web/legacy/index.html; do
+    [[ -f "$index" ]] || continue
+    base="$(dirname "$index")"
+    while IFS= read -r ref; do
+      path="${ref%%\?*}"
+      path="${path#./}"
+      path="${path#/}"
+      if [[ "$path" != assets/* ]]; then
+        continue
+      fi
+      if [[ ! -f "$base/$path" ]]; then
+        printf 'missing %s/%s referenced by %s\n' "$base" "$path" "$index"
+        missing=1
+      fi
+    done < <(sed -nE 's/.*(src|href)="([^"]+)".*/\2/p' "$index")
+  done
   [[ "$missing" -eq 0 ]]
 }
 
-require_frontend_page_module_exports() {
+require_frontend_legacy_page_module_exports() {
   local module file export missing=0
+  if [[ ! -f web/legacy/assets/app.js ]]; then
+    printf 'legacy frontend app.js is missing\n' >&2
+    return 1
+  fi
   while IFS= read -r module; do
     [[ -n "$module" ]] || continue
     file="$(printf '%s\n' "$module" | sed -E 's/^MegaVPN//' | sed -E 's/Page$//' | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]')-page.js"
     case "$module" in
       MegaVPNOpsPages) file="ops-pages.js" ;;
     esac
-    if [[ ! -f "web/assets/$file" ]]; then
+    if [[ ! -f "web/legacy/assets/$file" ]]; then
       continue
     fi
     export="window.${module} = \\{ create:"
-    if ! rg -q "$export" "web/assets/$file"; then
-      printf 'web/assets/%s does not export window.%s.create\n' "$file" "$module" >&2
+    if ! rg -q "$export" "web/legacy/assets/$file"; then
+      printf 'web/legacy/assets/%s does not export window.%s.create\n' "$file" "$module" >&2
       missing=1
     fi
-  done < <(sed -nE 's/.*window\.([A-Za-z0-9]+Page[s]?)\?\.create.*/\1/p' web/assets/app.js | sort -u)
+  done < <(sed -nE 's/.*window\.([A-Za-z0-9]+Page[s]?)\?\.create.*/\1/p' web/legacy/assets/app.js | sort -u)
   [[ "$missing" -eq 0 ]]
 }
 
@@ -471,10 +509,13 @@ run_check "actions-pinning" "GitHub Actions use pinned commit SHA refs" require_
 run_check "control-plane-install-validation" "Control Plane installer validates non-interactive clean-install inputs" require_control_plane_install_validation
 run_check "frontend-js-syntax" "Static Web UI JavaScript parses under node --check" require_frontend_js_syntax
 run_check "frontend-bootstrap-smoke" "Static Web UI assets bootstrap with browser-like runtime dependencies" require_frontend_bootstrap_smoke
+run_check "frontend-workspace-checks" "React frontend typecheck, lint, tests, i18n parity and build pass" require_frontend_workspace_checks
+run_check "frontend-serving-smoke" "New console root, deep links, static assets, API non-shadowing and legacy route serving pass" require_frontend_serving_smoke
+run_check "frontend-static-guards" "React frontend has no raw page API calls, auth token storage, unreviewed HTML sinks or console response logging" require_frontend_static_guards
 run_check "install-web-wrapper-smoke" "Deploy Web UI wrapper copies static frontend assets from the repository root" require_install_web_wrapper_smoke
 run_check "service-pack-smoke-regression" "Service-pack smoke script handles matrix planning, provision apply, artifacts and cleanup against a mock API" require_service_pack_smoke_regression
 run_check "frontend-asset-manifest" "Static Web UI index references only existing assets" require_frontend_asset_manifest
-run_check "frontend-page-module-exports" "Static Web UI page modules export the create contract expected by app.js" require_frontend_page_module_exports
+run_check "frontend-legacy-page-module-exports" "Legacy Web UI page modules export the create contract expected by legacy app.js" require_frontend_legacy_page_module_exports
 run_check "static-security-patterns" "No banned production command patterns are present" require_static_security_patterns
 run_check "smoke-auth-coverage" "Smoke scripts that call protected API endpoints support bearer auth" require_smoke_auth_coverage
 run_check "migration-sequence" "SQL migration numbers are unique and gap-free" require_migration_sequence
