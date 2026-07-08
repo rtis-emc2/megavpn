@@ -17,7 +17,18 @@ import type {
   ClientAccessService,
   ClientAccount,
   Dashboard,
+  FirewallAddressGroup,
+  FirewallAddressGroupEntry,
+  FirewallApplyRequest,
+  FirewallApplyResult,
+  FirewallDisableResult,
   FirewallInventory,
+  FirewallManagementSettings,
+  FirewallNodeState,
+  FirewallPolicy,
+  FirewallPreviewRequest,
+  FirewallPreviewResult,
+  FirewallRule,
   Job,
   NodeEntity,
   ReadyStatus,
@@ -136,6 +147,120 @@ export function getClientAccessGroupSyncState(groupId: string): Promise<ClientAc
   return apiRequest<ClientAccessGroupSyncState[]>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/sync-state`);
 }
 
+export type FirewallAddressGroupInput = Partial<Pick<FirewallAddressGroup, 'key' | 'label' | 'description' | 'scope' | 'status'>>;
+export type FirewallAddressGroupEntryInput = Partial<Pick<FirewallAddressGroupEntry, 'value' | 'value_type' | 'label' | 'status'>>;
+export type FirewallPolicyInput = Partial<Pick<FirewallPolicy, 'key' | 'label' | 'description' | 'scope' | 'node_id' | 'default_input_policy' | 'default_forward_policy' | 'default_output_policy' | 'status'>>;
+export type FirewallRuleInput = Partial<Pick<FirewallRule, 'policy_id' | 'priority' | 'chain' | 'action' | 'direction' | 'protocol' | 'src_list_id' | 'dst_list_id' | 'src_cidr' | 'dst_cidr' | 'src_ports' | 'dst_ports' | 'state_match' | 'comment' | 'enabled' | 'log' | 'status' | 'metadata'>>;
+
+export function getFirewallInventory(): Promise<FirewallInventory> {
+  return apiRequest<FirewallInventory>('/api/v1/firewall');
+}
+
+export async function listFirewallAddressGroups(): Promise<FirewallAddressGroup[]> {
+  return (await getFirewallInventory()).address_lists;
+}
+
+export function createFirewallAddressGroup(input: FirewallAddressGroupInput): Promise<FirewallAddressGroup> {
+  return sendJSON<FirewallAddressGroup>('/api/v1/firewall/address-lists', 'POST', input);
+}
+
+export function updateFirewallAddressGroup(id: string, input: FirewallAddressGroupInput): Promise<FirewallAddressGroup> {
+  return sendJSON<FirewallAddressGroup>(`/api/v1/firewall/address-lists/${encodeURIComponent(id)}`, 'PUT', input);
+}
+
+export function deleteFirewallAddressGroup(id: string): Promise<FirewallAddressGroup> {
+  return apiRequest<FirewallAddressGroup>(`/api/v1/firewall/address-lists/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function listFirewallAddressGroupEntries(groupId?: string): Promise<FirewallAddressGroupEntry[]> {
+  const entries = (await getFirewallInventory()).entries;
+  return groupId ? entries.filter((entry) => entry.list_id === groupId) : entries;
+}
+
+export function createFirewallAddressGroupEntry(groupId: string, input: FirewallAddressGroupEntryInput): Promise<FirewallAddressGroupEntry> {
+  return sendJSON<FirewallAddressGroupEntry>(`/api/v1/firewall/address-lists/${encodeURIComponent(groupId)}/entries`, 'POST', input);
+}
+
+export function updateFirewallAddressGroupEntry(groupId: string, entryId: string, input: FirewallAddressGroupEntryInput): Promise<FirewallAddressGroupEntry> {
+  return sendJSON<FirewallAddressGroupEntry>(`/api/v1/firewall/address-lists/${encodeURIComponent(groupId)}/entries/${encodeURIComponent(entryId)}`, 'PUT', input);
+}
+
+export function deleteFirewallAddressGroupEntry(groupId: string, entryId: string): Promise<FirewallAddressGroupEntry> {
+  return apiRequest<FirewallAddressGroupEntry>(`/api/v1/firewall/address-lists/${encodeURIComponent(groupId)}/entries/${encodeURIComponent(entryId)}`, { method: 'DELETE' });
+}
+
+export async function listFirewallPolicies(): Promise<FirewallPolicy[]> {
+  return (await getFirewallInventory()).policies;
+}
+
+export function createFirewallPolicy(input: FirewallPolicyInput): Promise<FirewallPolicy> {
+  return sendJSON<FirewallPolicy>('/api/v1/firewall/policies', 'POST', input);
+}
+
+export function updateFirewallPolicy(id: string, input: FirewallPolicyInput): Promise<FirewallPolicy> {
+  return sendJSON<FirewallPolicy>(`/api/v1/firewall/policies/${encodeURIComponent(id)}`, 'PUT', input);
+}
+
+export function deleteFirewallPolicy(id: string): Promise<FirewallPolicy> {
+  return apiRequest<FirewallPolicy>(`/api/v1/firewall/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function listFirewallRules(policyId?: string): Promise<FirewallRule[]> {
+  const rules = (await getFirewallInventory()).rules;
+  return policyId ? rules.filter((rule) => rule.policy_id === policyId) : rules;
+}
+
+export function createFirewallRule(policyId: string, input: FirewallRuleInput): Promise<FirewallRule> {
+  return sendJSON<FirewallRule>(`/api/v1/firewall/policies/${encodeURIComponent(policyId)}/rules`, 'POST', input);
+}
+
+export function updateFirewallRule(ruleId: string, input: FirewallRuleInput): Promise<FirewallRule> {
+  const policyId = String(input.policy_id || '').trim();
+  if (!policyId) {
+    return Promise.reject(new Error('firewall policy id is required to update a rule'));
+  }
+  return sendJSON<FirewallRule>(`/api/v1/firewall/policies/${encodeURIComponent(policyId)}/rules/${encodeURIComponent(ruleId)}`, 'PUT', input);
+}
+
+export function deleteFirewallRule(ruleId: string, policyId: string): Promise<FirewallRule> {
+  return apiRequest<FirewallRule>(`/api/v1/firewall/policies/${encodeURIComponent(policyId)}/rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' });
+}
+
+export function reorderFirewallRules(): Promise<never> {
+  return Promise.reject(new Error('firewall rule reorder is not supported by the current backend API'));
+}
+
+export async function getNodeFirewallState(nodeId: string): Promise<FirewallNodeState | null> {
+  const inventory = await getFirewallInventory();
+  return inventory.node_states.find((state) => state.node_id === nodeId) || null;
+}
+
+export function previewNodeFirewall(nodeId: string, policyId: string, input: FirewallPreviewRequest = {}): Promise<FirewallPreviewResult> {
+  return sendJSON<FirewallPreviewResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/firewall/preview`, 'POST', {
+    policy_id: policyId,
+    enforce_default_policy: input.enforce_default_policy ?? true,
+  });
+}
+
+export function applyNodeFirewall(nodeId: string, policyId: string, _previewTokenOrHash?: string, input: FirewallApplyRequest = {}): Promise<FirewallApplyResult> {
+  return sendJSON<FirewallApplyResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/firewall/apply`, 'POST', {
+    policy_id: policyId,
+    enforce_default_policy: input.enforce_default_policy ?? true,
+  });
+}
+
+export function disableNodeFirewall(nodeId: string): Promise<FirewallDisableResult> {
+  return sendJSON<FirewallDisableResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/firewall/disable`, 'POST', {});
+}
+
+export function getFirewallSafetySettings(): Promise<FirewallManagementSettings> {
+  return apiRequest<FirewallManagementSettings>('/api/v1/firewall/management-settings');
+}
+
+export function updateFirewallSafetySettings(input: FirewallManagementSettings): Promise<FirewallManagementSettings> {
+  return sendJSON<FirewallManagementSettings>('/api/v1/firewall/management-settings', 'PUT', input);
+}
+
 export const endpoints = {
   ready: () => apiRequest<ReadyStatus>('/api/v1/ready'),
   version: () => apiRequest<VersionInfo>('/api/v1/version'),
@@ -146,7 +271,7 @@ export const endpoints = {
   clients: () => apiRequest<ClientAccount[]>('/api/v1/clients'),
   clientAccessServices: listClientAccessServices,
   clientAccessGroups: () => listClientAccessGroups(),
-  firewallInventory: () => apiRequest<FirewallInventory>('/api/v1/firewall'),
+  firewallInventory: getFirewallInventory,
   trafficAccounting: () => apiRequest<TrafficSummary>('/api/v1/traffic/accounting?limit=250'),
   jobs: () => apiRequest<Job[]>('/api/v1/jobs?limit=100'),
   job: (id: string) => apiRequest<Job>(`/api/v1/jobs/${encodeURIComponent(id)}`),

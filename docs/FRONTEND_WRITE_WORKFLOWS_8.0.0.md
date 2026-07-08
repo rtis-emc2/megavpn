@@ -86,14 +86,14 @@ to `/legacy/`.
 
 | Workflow | Status | Notes |
 | --- | --- | --- |
-| Firewall inventory | fully connected | Read-only inventory. |
-| Firewall address group CRUD | legacy-only | Backend exists; forms not migrated. |
-| Firewall policy CRUD | legacy-only | Backend exists; forms not migrated. |
-| Firewall rule CRUD | legacy-only | Backend exists; forms not migrated. |
-| Firewall management/safety settings | legacy-only | Backend exists; safety settings form not migrated. |
-| Node firewall preview | disabled intentionally | Backend exists; local fake preview was removed. |
-| Node firewall apply | disabled intentionally | Backend exists; must follow successful backend preview. |
-| Node firewall disable | disabled intentionally | Backend exists; emergency confirmation required. |
+| Firewall inventory | fully connected | `GET /api/v1/firewall`; policies, rules, address groups, entries and node states render in the new UI. |
+| Firewall address group CRUD | fully connected | `POST/PUT/DELETE /api/v1/firewall/address-lists`; entries use `/address-lists/{id}/entries`. DNS-only and zero-renderable group warnings are visible. |
+| Firewall policy CRUD | fully connected | `POST/PUT/DELETE /api/v1/firewall/policies`; default input/forward/output policy is editable. |
+| Firewall rule CRUD | fully connected | `POST/PUT/DELETE /api/v1/firewall/policies/{id}/rules`; rules show chain/action/priority/source/destination/protocol/ports/state. Rule reorder remains disabled because the backend has no reorder endpoint. |
+| Firewall management/safety settings | connected read | `GET /api/v1/firewall/management-settings`; UI displays trusted control-plane/operator/SSH source presence. Settings update wrapper exists, but the page does not expose a write form in this task. |
+| Node firewall preview | fully connected | `POST /api/v1/nodes/{id}/firewall/preview`; preview job payload/result is rendered as text, not HTML. |
+| Node firewall apply | fully connected | `POST /api/v1/nodes/{id}/firewall/apply`; Apply is disabled until backend preview request succeeds and becomes disabled again when preview is stale or blocking errors exist. |
+| Node firewall disable | fully connected | `POST /api/v1/nodes/{id}/firewall/disable`; emergency confirmation states the exact managed table removal scope and shows job tracking. |
 | Route policy UI | legacy-only | Backend preview/apply/cleanup exists; new UI not migrated. |
 | Traffic overview | fully connected | `GET /api/v1/traffic/accounting`. |
 | Traffic export | fully connected | Backend export URL opened directly; no token storage. |

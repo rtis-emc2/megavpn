@@ -287,35 +287,159 @@ export type FirewallPolicy = APIRecord & {
   id: string;
   key?: string;
   label?: string;
-  status?: string;
-  default_action?: string;
+  description?: string;
   scope?: string;
+  node_id?: string;
+  node_name?: string;
+  default_input_policy?: string;
+  default_forward_policy?: string;
+  default_output_policy?: string;
+  status?: string;
+  rule_count?: number;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type FirewallRule = APIRecord & {
   id: string;
   policy_id?: string;
   priority?: number;
-  action?: string;
+  chain?: 'input' | 'forward' | 'output' | string;
+  action?: 'accept' | 'drop' | 'reject' | string;
+  direction?: string;
   protocol?: string;
-  chain?: string;
+  src_list_id?: string;
+  src_list_key?: string;
+  dst_list_id?: string;
+  dst_list_key?: string;
+  src_cidr?: string;
+  dst_cidr?: string;
+  src_ports?: string;
+  dst_ports?: string;
+  state_match?: string[];
   comment?: string;
+  enabled?: boolean;
+  log?: boolean;
+  status?: string;
+  metadata?: APIRecord;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type FirewallAddressGroup = APIRecord & {
   id: string;
   key?: string;
   label?: string;
+  description?: string;
+  scope?: string;
   status?: string;
   entry_count?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type FirewallAddressGroupEntry = APIRecord & {
+  id: string;
+  list_id?: string;
+  list_key?: string;
+  value?: string;
+  value_type?: 'address' | 'cidr' | 'range' | 'dns' | string;
+  label?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type FirewallNodeState = APIRecord & {
+  id?: string;
+  node_id: string;
+  node_name?: string;
+  policy_id?: string;
+  policy_key?: string;
+  revision_id?: string;
+  desired_revision_id?: string;
+  status?: string;
+  observed?: APIRecord;
+  last_job_id?: string;
+  updated_at?: string;
+};
+
+export type FirewallManagementSettings = {
+  control_plane_source_cidrs?: string[];
+  ssh_bootstrap_source_cidrs?: string[];
+  trusted_operator_cidrs?: string[];
+};
+
+export type FirewallSafetyWarning = {
+  code?: string;
+  message: string;
+  severity?: string;
+};
+
+export type FirewallSafetyError = {
+  code?: string;
+  message: string;
+  field?: string;
+};
+
+export type FirewallRenderedSet = APIRecord & {
+  firewall_payload_hash?: string;
+  safety_mode?: string;
+  policy_id?: string;
+  policy_key?: string;
+  revision_id?: string;
+  revision_no?: number;
+  default_input_policy?: string;
+  default_forward_policy?: string;
+  default_output_policy?: string;
+  enforce_default_policy?: boolean;
+  rules?: APIRecord[];
+  address_lists?: APIRecord[];
+  ssh_bootstrap_ports?: number[];
+  node_requires_forward_preservation?: boolean;
+};
+
+export type FirewallJobResult = APIRecord & {
+  rendered_hash?: string;
+  rendered_nftables?: string;
+  rendered_summary?: string;
+  warnings?: string[];
+  blocking_errors?: string[];
+  ssh_bootstrap_preserved?: boolean;
+  control_plane_egress_preserved?: boolean;
+  forward_egress_preserved?: boolean;
+};
+
+export type FirewallPreviewRequest = {
+  policy_id?: string;
+  enforce_default_policy?: boolean;
+};
+
+export type FirewallPreviewResult = Job & {
+  payload: FirewallRenderedSet;
+  result: FirewallJobResult;
+};
+
+export type FirewallApplyRequest = {
+  policy_id?: string;
+  enforce_default_policy?: boolean;
+};
+
+export type FirewallApplyResult = Job & {
+  payload: FirewallRenderedSet;
+  result: FirewallJobResult;
+};
+
+export type FirewallDisableResult = Job & {
+  result: FirewallJobResult;
 };
 
 export type FirewallInventory = {
   address_lists: FirewallAddressGroup[];
-  entries: APIRecord[];
+  entries: FirewallAddressGroupEntry[];
   policies: FirewallPolicy[];
   rules: FirewallRule[];
-  node_states: APIRecord[];
+  node_states: FirewallNodeState[];
 };
 
 export type TrafficSummary = APIRecord & {

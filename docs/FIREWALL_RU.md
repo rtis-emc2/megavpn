@@ -96,23 +96,26 @@ semantic groups.
 
 Откройте `Firewall` в control menu.
 
-- `Overview`: счетчики и общий posture.
-- `Policies`: карточки policy, metadata default chain, preview и apply.
-- `Rules`: общий список правил по priority.
-- `Address groups`: управление groups и entries.
-- `Node apply`: последнее состояние apply по каждой node, row-scoped preview/apply/disable.
+- Верхняя панель задает `Target node`, `Policy` и режим `Strict defaults`.
+- `Address groups`: list/create/update/delete groups, IP/CIDR/range entries и
+  предупреждения по DNS-only или zero-renderable groups.
+- `Policy`: list/create/update/delete policies и default
+  input/forward/output actions.
+- `Rules`: list/create/update/delete rules по выбранной policy. Chain
+  `input`/`forward`/`output`, action, priority, source/destination groups,
+  protocol, ports, state и comment видны в effective order. Reorder выключен,
+  потому что backend endpoint для reorder отсутствует.
+- `Preview & Apply`: реальный backend `node.firewall.preview`, stale-preview
+  guard, confirmation dialog и backend `node.firewall.apply`.
+- `Node state`: состояние `firewall_node_state`, last job и emergency
+  `node.firewall.disable`.
+- `Safety`: trusted control-plane/operators/SSH source presence, strict default
+  posture и backend safety notes.
 
-Верхние workflow-кнопки переключают на нужный этап. В редакторе правил есть
-presets для SSH management, HTTPS control, WireGuard, OpenVPN TCP/UDP, IPsec
-IKE/NAT-T, L2TP, Shadowsocks TCP/UDP, HTTP proxy, MTProto, Nginx edge HTTP(S)
-и drop invalid packets.
-
-Вкладка `Policies` показывает posture каждой policy, default
-input/forward/output actions и короткий preview правил. Вкладка `Rules`
-содержит локальные filters по policy, chain, action и текстовый поиск по
-CIDR/list/port/comment fields. Вкладка `Address groups` содержит локальный
-поиск по metadata group и values entries. Верхняя таблица управляет named
-groups, вторая таблица показывает concrete entries внутри этих groups.
+Новая React UI больше не требует перехода в `/legacy/` для core firewall
+workflow: address groups -> rules -> policy -> preview -> apply -> node state
+-> emergency disable. Preview/apply/disable остаются backend-gated; UI не
+делает fake preview и не показывает success, пока backend не принял request.
 
 Встроенная policy `Default node firewall` - рекомендуемый минимальный baseline
 для production nodes. В strict mode она запрещает незапрошенный input и

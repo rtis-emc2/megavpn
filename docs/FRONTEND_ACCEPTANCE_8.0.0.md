@@ -5,11 +5,16 @@ Branch: `release/8.0.0-frontend-console`
 Implementation commit at evidence time:
 `9044647110cd5cbaeb4d5a866b96f56008fcb338`
 
-Evidence date UTC: `2026-07-08T18:12:48Z`
+FE8-P0-02 Firewall task evidence:
+final pushed commit is reported in the task final response; this document is
+part of that commit and therefore cannot self-reference its own immutable Git
+SHA without changing the SHA.
+
+Evidence date UTC: `2026-07-08T18:43:23Z`
 
 Status: RC1 frontend branch is reviewable and CI-verifiable. Final 8.0.0
-cutover is still blocked by non-VLESS write workflow migration and backend
-version synchronization.
+cutover is still blocked by non-Firewall/non-VLESS write workflow migration and
+backend version synchronization.
 
 ## 1. Summary
 
@@ -23,6 +28,8 @@ Clients -> Groups implementation:
 - `Clients -> Groups -> VLESS` is connected in the new React console without
   `/legacy/` for create/edit, member preview/apply/remove, scope update and sync
   preview/apply.
+- `Firewall` address groups, policies, rules, preview, apply and emergency
+  disable are connected in the new React console without `/legacy/`.
 - Non-VLESS access services remain catalog-only until backend materialization is
   implemented.
 - A lightweight API smoke script exists for disposable/local VLESS group
@@ -41,9 +48,9 @@ Clients -> Groups implementation:
 | `cd frontend && npm ci` | PASS | npm `11.18.0`; 251 packages installed; audit found 0 vulnerabilities. |
 | `cd frontend && npm run typecheck` | PASS | TypeScript checks pass. |
 | `cd frontend && npm run lint` | PASS | ESLint passes. |
-| `cd frontend && npm run test` | PASS | Vitest: 2 files, 8 tests passed. |
+| `cd frontend && npm run test` | PASS | Vitest: 3 files, 30 tests passed. |
 | `cd frontend && npm run i18n:check` | PASS | i18n key parity ok: 327 keys. |
-| `cd frontend && npm run build` | PASS | Vite build wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-QsEN7-DN.js`, `web/assets/index-C9SCsY-r.css`. |
+| `cd frontend && npm run build` | PASS | Vite build wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-kuNMHIpl.js`, `web/assets/index-C9SCsY-r.css`. |
 | `scripts/ci/frontend-serving-smoke.sh` | PASS | Backend serving smoke passed; root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
 | `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
 | `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
@@ -73,7 +80,34 @@ VLESS workflow against mocked backend API responses:
 The existing app shell test also remains green:
 `frontend/src/app/App.test.tsx`.
 
-## 4. Integrated API Smoke
+## 4. Firewall Workflow Test Evidence
+
+`frontend/src/pages/network-policy/FirewallPage.test.tsx` verifies the migrated
+Firewall workflow against mocked backend API responses:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Load policies/address groups | `loads policies and address groups from mocked API`; asserts `GET /api/v1/firewall`. |
+| Address group create/update/delete | Tests assert `POST`, `PUT` and `DELETE /api/v1/firewall/address-lists`. |
+| DNS-only/empty group warnings | `shows DNS-only and empty renderable address group warnings`. |
+| Rule create/update/delete | Tests assert `POST`, `PUT` and `DELETE /api/v1/firewall/policies/{id}/rules`. |
+| Preview disabled until node/policy selected | `keeps Preview disabled until node and policy are selected`. |
+| Successful preview enables Apply | `enables Apply after successful backend preview`. |
+| Stale preview disables Apply | `marks preview stale and disables Apply after policy changes`. |
+| Blocking preview errors prevent Apply | `blocks Apply when preview returns blocking errors`. |
+| Apply confirmation/job | Tests assert confirmation, real `POST /api/v1/nodes/{id}/firewall/apply` and job link. |
+| Emergency disable | Test asserts confirmation text and real `POST /api/v1/nodes/{id}/firewall/disable`. |
+| 403/422/409 handling | Tests assert distinct permission, validation and conflict messages. |
+| Safe rendered output | `renders backend rendered output as text, not HTML`. |
+| No `/legacy` core workflow | `does not expose /legacy for Firewall core workflow`. |
+
+Firewall preview/apply/disable works in the new UI without `/legacy`.
+
+Unsupported Firewall sub-action:
+
+- rule reorder remains disabled because the backend has no reorder endpoint.
+
+## 5. Integrated API Smoke
 
 Added script:
 
@@ -103,7 +137,7 @@ Current evidence is SKIP, not PASS: no disposable DB/API base URL was available
 in this workstation session. Do not claim final release readiness without a
 real smoke run against disposable data.
 
-## 5. Static Serving Evidence
+## 6. Static Serving Evidence
 
 Backend tests and `scripts/ci/frontend-serving-smoke.sh` cover:
 
@@ -113,7 +147,7 @@ Backend tests and `scripts/ci/frontend-serving-smoke.sh` cover:
 - `/api/*` and `/agent/*` are not shadowed by SPA fallback;
 - missing root `/assets/*` return 404 rather than SPA HTML.
 
-## 6. Security / Review Hygiene
+## 7. Security / Review Hygiene
 
 Current enforced hygiene:
 
@@ -124,8 +158,10 @@ Current enforced hygiene:
 - no production console logging in new frontend source;
 - VLESS apply actions require backend preview and stale preview disables apply;
 - unsupported non-VLESS services are visible as catalog-only and fail closed.
+- Firewall Apply requires a successful backend Preview, stale preview disables
+  Apply, and preview blocking errors prevent Apply.
 
-## 7. Write Workflow Summary
+## 8. Write Workflow Summary
 
 Fully connected in the new console:
 
@@ -135,12 +171,13 @@ Fully connected in the new console:
 - traffic export URL;
 - `Clients -> Groups -> VLESS` create/edit, member preview/apply/remove, scope
   update and sync preview/apply.
+- `Firewall` address groups, policies, rules, preview, apply, node state and
+  emergency disable.
 
 Still disabled, read-only or legacy-only:
 
 - non-VLESS access group materialization workflows;
 - migration conflict UI for access groups;
-- firewall CRUD and node firewall preview/apply/disable;
 - nodes bootstrap/control/terminal/diagnostics mutations;
 - instances create/apply/rollback/lifecycle/delete;
 - client provisioning, artifacts, shares and subscriptions;
@@ -149,34 +186,36 @@ Still disabled, read-only or legacy-only:
 - backhaul mutations;
 - backup/restore browser UI.
 
-## 8. Known Limitations
+## 9. Known Limitations
 
 - Backend binary/version metadata remains `7.1.1.0`; synchronizing it to
   `8.0.0` is a separate release task.
-- Full normal operator work still requires `/legacy/` for many write workflows.
+- Full normal operator work still requires `/legacy/` for many non-Firewall and
+  non-VLESS write workflows.
 - Endpoint DTOs are still broad for multiple non-VLESS domains.
 - No browser screenshot/responsive Playwright evidence was produced in this
   pass.
 - Integrated VLESS API smoke was added but not run against a disposable DB/API
   in this session.
 
-## 9. Go / No-Go
+## 10. Go / No-Go
 
 Recommendation:
 
 - GO for PR review and CI validation of the 8.0.0 frontend branch.
 - GO for using new UI `Clients -> Groups -> VLESS` workflow in controlled
   staging after disposable API smoke evidence is produced.
+- GO for using new UI `Firewall` preview/apply/disable in controlled staging
+  with operator review of backend preview jobs.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
 
 1. run the VLESS integrated API smoke against disposable DB/API data;
-2. migrate Firewall CRUD and node preview/apply/disable with safety UX;
-3. migrate Nodes bootstrap/control/diagnostics workflows;
-4. migrate Instances lifecycle/apply/rollback/delete workflows;
-5. migrate Clients provisioning/artifacts/share/subscriptions workflows;
-6. migrate Certificates and Platform settings write workflows;
-7. add E2E/browser responsive evidence for critical operator flows;
-8. synchronize backend/frontend version and release-chain artifacts to `8.0.0`;
-9. run full release gate in the release environment.
+2. migrate Nodes bootstrap/control/diagnostics workflows;
+3. migrate Instances lifecycle/apply/rollback/delete workflows;
+4. migrate Clients provisioning/artifacts/share/subscriptions workflows;
+5. migrate Certificates and Platform settings write workflows;
+6. add E2E/browser responsive evidence for critical operator flows;
+7. synchronize backend/frontend version and release-chain artifacts to `8.0.0`;
+8. run full release gate in the release environment.

@@ -126,10 +126,10 @@ tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
 | Backend endpoint family | Legacy usage | New wrapper / hook | UI page | Status | Invalidation / security notes |
 | --- | --- | --- | --- | --- | --- |
 | `GET /api/v1/address-pools`, `POST/PUT/DELETE /address-pools/spaces`, `POST /spaces/{id}/routing` | address pools | `endpoints.addressPools`; `useAddressPools`; mutations missing | Address Pools | read-only / legacy-only |
-| `GET /api/v1/firewall` | firewall inventory | `endpoints.firewallInventory`; `useFirewallInventory` | Firewall | connected read |
-| `POST/PUT/DELETE /api/v1/firewall/policies`, `/address-lists`, `/address-lists/{id}/entries`, `/policies/{id}/rules` | firewall model CRUD | missing | Firewall | legacy-only | Invalidate firewall inventory after mutations. |
-| `GET/PUT /api/v1/firewall/management-settings` | firewall safety settings | read wrapper missing | Settings/Firewall | legacy-only | Safety settings require clear warnings. |
-| `POST /api/v1/nodes/{id}/firewall/preview`, `/apply`, `/disable` | node firewall apply | missing | Firewall | disabled / legacy-only | Preview mandatory before strict apply; no fake preview. |
+| `GET /api/v1/firewall` | firewall inventory | `endpoints.firewallInventory`; `useFirewallInventory`; `useFirewallAddressGroups`; `useFirewallPolicies`; `useFirewallRules`; `useNodeFirewallState` | Firewall | connected |
+| `POST/PUT/DELETE /api/v1/firewall/policies`, `/address-lists`, `/address-lists/{id}/entries`, `/policies/{id}/rules` | firewall model CRUD | `create/update/deleteFirewallAddressGroup`; entry wrappers; `create/update/deleteFirewallPolicy`; `create/update/deleteFirewallRule`; matching mutation hooks | Firewall | fully connected | Invalidate firewall inventory and jobs after mutations. Rule reorder remains unsupported because no backend endpoint exists. |
+| `GET/PUT /api/v1/firewall/management-settings` | firewall safety settings | `getFirewallSafetySettings`; `updateFirewallSafetySettings`; `useFirewallSafetySettings`; `useUpdateFirewallSafetySettings` | Firewall/Safety | connected | UI shows trusted management source presence and strict-policy safety posture. |
+| `POST /api/v1/nodes/{id}/firewall/preview`, `/apply`, `/disable` | node firewall apply | `previewNodeFirewall`; `applyNodeFirewall`; `disableNodeFirewall`; `usePreviewNodeFirewall`; `useApplyNodeFirewall`; `useDisableNodeFirewall` | Firewall | fully connected | Preview is mandatory before Apply in UI; stale preview disables Apply; backend strict apply still requires matching successful preview hash/job. |
 | `GET /api/v1/traffic/accounting`, `GET /api/v1/traffic/accounting/export` | traffic overview/export | `endpoints.trafficAccounting`, `trafficAccountingExportURL`; `useTrafficAccounting` | Traffic | connected | Export opens backend URL; backend no-store applies. |
 
 ### 4.8 Clients, Delivery, Shares, Subscriptions
@@ -186,7 +186,7 @@ SPA fallback must not shadow any `/agent/*` path.
 | Nodes | `nodes`, node detail, diagnostics, capabilities, jobs, dashboard |
 | Instances | `instances`, runtime-states, revisions, jobs, dashboard |
 | Address pools | `address-pools`, instances, firewall when address groups depend on pools |
-| Firewall | `firewall-inventory`, node detail/firewall state, jobs |
+| Firewall | `firewall-inventory`, node detail/firewall state, jobs, policies, rules, address groups |
 | Clients/artifacts/share/subscriptions | `clients`, artifacts, share-links, jobs, dashboard |
 | Backhaul | `backhaul-links`, nodes, jobs |
 | Jobs cancel/create | `jobs`, job detail/logs |
