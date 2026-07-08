@@ -2,8 +2,17 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Latest FE8-P0-03A feature/evidence commit:
+Latest evidence commit:
+`8dbcb97bcf225d34686c0eb555a6697425f12c37`
+
+FE8-P0-03B client delivery feature commit:
+`8dbcb97bcf225d34686c0eb555a6697425f12c37`
+
+FE8-P0-03A feature commit:
 `326499a6691833dc3d9be406cf9e84a91544a358`
+
+FE8-P0-03A evidence commit:
+`f825a3d67eb2bca36fda9e806c88ae0a95adeec9`
 
 VLESS implementation commit:
 `f33070aee76e9fb11100a5ea954fded09c0d4a10`
@@ -21,20 +30,21 @@ Previous accepted evidence CI:
 GitHub Actions run `28967364873` passed for
 `f1d8769b63cdfe705afb29a71b8927d4c4abe147`.
 
-Current evidence date UTC: `2026-07-08T19:49:21Z`
+Current evidence date UTC: `2026-07-08T20:14:36Z`
 
-Status: FE8-P0-03A is locally verified and reviewable. Final 8.0.0 cutover
+Status: FE8-P0-03B is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
-validation and backend version synchronization are complete.
+validation, integrated disposable-data smoke and backend version synchronization
+are complete.
 
 VLESS is connected in the new UI without `/legacy/`. Firewall is connected in
-the new UI without `/legacy/`. Clients core, single-client VLESS assignment and
-client artifacts are connected in the new UI without `/legacy/`. Remaining
-workflows listed below are still not migrated.
+the new UI without `/legacy/`. Clients core, single-client VLESS assignment,
+client artifacts and client delivery workflows are connected in the new UI
+without `/legacy/`. Remaining workflows listed below are still not migrated.
 
 ## 1. Summary
 
-This evidence records the current 8.0.0 frontend branch after FE8-P0-03A:
+This evidence records the current 8.0.0 frontend branch after FE8-P0-03B:
 
 - CI push coverage includes `release/8.0.0-frontend-console` and `release/**`;
   pull request coverage remains enabled.
@@ -48,7 +58,11 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-03A:
   create, activate/suspend, revoke/delete, single-client VLESS group
   preview/apply/remove, artifact list/build/download/delete and client-scoped
   job tracking.
-- Share links, subscriptions and email delivery remain deferred to FE8-P0-03B.
+- `Clients -> Delivery` is connected without `/legacy/` for share link
+  create/rotate/revoke, VLESS subscription create-or-rotate/revoke and email
+  delivery.
+- Share/subscription one-time URLs are shown only in transient local UI state
+  after backend create/rotate responses and are cleared on close.
 - `/legacy/` remains the rollback UI and still covers non-migrated workflows.
 
 ## 2. Commands Run
@@ -57,15 +71,15 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-03A:
 | --- | --- | --- |
 | `gofmt -l cmd internal` | PASS | No files listed. |
 | `go vet ./...` | PASS | No vet findings. |
-| `go test ./...` | PASS | All Go package tests pass. |
+| `go test ./...` | PASS | All Go package tests pass, including `internal/api/http`. |
 | `go test -race ./...` | PASS | Race detector tests pass. |
 | `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` | PASS | All operational binaries build. |
 | `cd frontend && npm ci` | PASS | npm `11.7.0`; 251 packages installed; audit found 0 vulnerabilities. |
 | `cd frontend && npm run typecheck` | PASS | TypeScript checks pass. |
 | `cd frontend && npm run lint` | PASS | ESLint passes. |
-| `cd frontend && npm run test` | PASS | Vitest: 4 files, 38 tests passed. |
-| `cd frontend && npm run i18n:check` | PASS | i18n key parity ok: 365 keys. |
-| `cd frontend && npm run build` | PASS | Vite build wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-BcepIhBb.js`, `web/assets/index-B_z-3Pv-.css`. |
+| `cd frontend && npm run test` | PASS | Vitest: 4 files, 42 tests passed. |
+| `cd frontend && npm run i18n:check` | PASS | i18n key parity ok: 403 keys. |
+| `cd frontend && npm run build` | PASS | Vite build wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-CkTz6Dsm.js`, `web/assets/index-CMdslovF.css`. |
 | `scripts/ci/frontend-serving-smoke.sh` | PASS | Root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
 | `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
 | `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
@@ -78,8 +92,8 @@ The repository standard and GitHub CI path remain plain `npm ci` and
 
 ## 3. Clients Core Test Evidence
 
-`frontend/src/pages/clients/ClientsPage.test.tsx` verifies FE8-P0-03A against
-mocked backend API responses:
+`frontend/src/pages/clients/ClientsPage.test.tsx` verifies FE8-P0-03A and
+FE8-P0-03B client workflows against mocked backend API responses:
 
 | Required behavior | Test evidence |
 | --- | --- |
@@ -89,18 +103,17 @@ mocked backend API responses:
 | Conflict/validation handling | Same test renders `409` conflict and maps a `422` username field error. |
 | Status action | `runs status, revoke and delete actions only through confirmed backend mutations`; asserts `POST /suspend`. |
 | Delete/revoke confirmation | Same test confirms before `POST /revoke` and `DELETE /clients/{id}`. |
-| Current VLESS group visible | `assigns single-client VLESS access through backend preview and apply`; renders current VLESS group. |
+| Current VLESS group visible | `assigns a single client to a VLESS group with preview, stale guard and apply`; renders current VLESS group. |
 | VLESS preview endpoint | Same test asserts `POST /client-access-groups/{group_id}/members:preview`. |
 | Preview enables Apply | Same test verifies Apply becomes enabled only after successful preview. |
 | Stale preview disables Apply | Same test changes mode after preview and verifies Apply disables. |
 | VLESS apply endpoint | Same test asserts `POST /client-access-groups/{group_id}/members:bulk-apply`. |
-| Remove VLESS membership | `removes VLESS membership only after confirmation`; asserts backend member `DELETE`. |
-| Artifact list/build/download/delete | `manages client artifacts through backend endpoints without logging tokens`; asserts list, build, download URL open and delete. |
+| Remove VLESS membership | `removes VLESS membership through the backend after confirmation`; asserts backend member `DELETE`. |
+| Artifact list/build/download/delete | `lists, builds, downloads and deletes client artifacts through backend endpoints`; asserts list, build, download URL open and delete. |
 | Job tracking | Revoke/artifact tests render job tracking for returned job IDs. |
-| Permission handling | `shows permission errors safely and does not call /legacy`; renders `403` text. |
+| Permission handling | `shows permission errors safely and keeps Clients workflows away from legacy`; renders `403` text. |
 | No `/legacy` workflow | Tests assert no request path starts with `/legacy`. |
-| No raw page API calls | `keeps Clients page free of raw API calls`; verifies no `/api/v1` string or raw `fetch` in the page component. |
-| i18n coverage | `npm run i18n:check` passed with 365 matching keys. |
+| No raw page API calls | `keeps raw API paths out of the Clients page component`; verifies no `/api/v1` string or raw `fetch` in the page component. |
 
 Clients core workflow works in the new UI without `/legacy/`.
 
@@ -108,7 +121,43 @@ Single-client VLESS access assignment works in the new UI without `/legacy/`.
 
 Client artifacts workflow works in the new UI without `/legacy/`.
 
-## 4. VLESS Groups Test Evidence
+## 4. Client Delivery Test Evidence
+
+`frontend/src/pages/clients/ClientsPage.test.tsx` verifies FE8-P0-03B delivery
+workflows against mocked backend API responses:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Delivery tab renders | Delivery tests open `Clients -> Delivery` from the client drawer. |
+| Artifact row delivery action | `opens delivery from an artifact row and creates a one-time share link safely`; opens Delivery from a ready artifact row. |
+| Share links list loads | Same test renders mocked `GET /api/v1/clients/{id}/share-links` data. |
+| Create share link | Same test asserts `POST /api/v1/clients/{id}/share-links`. |
+| One-time share URL warning | Same test shows one-time warning and masked value before reveal. |
+| One-time panel close clears secret | Same test closes the panel and verifies the token disappears from UI. |
+| Explicit clipboard copy | Same test verifies clipboard write happens only after user clicks `Copy`. |
+| Share revoke confirmation | `requires confirmation for share link revoke and rotate`; backend revoke is not called before `Confirm`. |
+| Share rotate confirmation | Same test asserts confirmed `POST /share-links/{link_id}/rotate` and one-time rotated URL display. |
+| Subscription list loads | `manages VLESS subscriptions with one-time URL display and confirmed revoke`; renders mocked subscription rows. |
+| Create/rotate VLESS subscription | Same test asserts `POST /api/v1/clients/{id}/subscriptions/rotate`. |
+| Subscription one-time URL | Same test shows the backend returned subscription URL only after reveal. |
+| Subscription revoke confirmation | Same test asserts confirmed `POST /subscriptions/{subscription_id}/revoke`. |
+| Email delivery | `sends client delivery email through the backend and renders status safely`; asserts `POST /api/v1/clients/{id}/deliver-email`. |
+| Backend error safety | Permission test renders backend errors as text and does not use `/legacy`. |
+| No HTML sink | Static guard and raw API test keep delivery code away from unreviewed `dangerouslySetInnerHTML`. |
+
+Backend route coverage added in `internal/api/http/share_links_test.go`:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Share link rotate invalidates old token | `TestRotateShareLinkTokenRevokesOldLinkAndPublishesSameTarget` verifies revoke of old link and publish of a new link for the same target with the requested TTL. |
+
+Client share links workflow works in the new UI without `/legacy/`.
+
+Client subscriptions workflow works in the new UI without `/legacy/`.
+
+Client email delivery workflow works in the new UI without `/legacy/`.
+
+## 5. VLESS Groups Test Evidence
 
 `frontend/src/pages/clients/ClientGroupsPage.test.tsx` verifies the migrated
 VLESS group workflow against mocked backend API responses:
@@ -124,7 +173,7 @@ VLESS group workflow against mocked backend API responses:
 | Preview stale disables apply | `invalidates VLESS membership preview and disables apply when selection inputs change`; apply remains disabled after mode change. |
 | No `/legacy` calls | Every VLESS workflow test asserts no request path starts with `/legacy`. |
 
-## 5. Firewall Test Evidence
+## 6. Firewall Test Evidence
 
 `frontend/src/pages/network-policy/FirewallPage.test.tsx` verifies the migrated
 Firewall workflow against mocked backend API responses:
@@ -146,7 +195,7 @@ Unsupported Firewall sub-action:
 
 - rule reorder remains disabled because the backend has no reorder endpoint.
 
-## 6. Integrated API Smoke
+## 7. Integrated API Smoke
 
 Added script from the VLESS workflow pass:
 
@@ -165,12 +214,12 @@ export MEGAVPN_VLESS_SMOKE_CLIENT_REF=<disposable-client-username-email-or-id>
 scripts/smoke/vless-client-access-groups-smoke.sh
 ```
 
-Current evidence is SKIP, not PASS: no disposable DB/API base URL was available
-in this workstation session. FE8-P0-03A did not add backend routes, so current
-Clients evidence is frontend/API-contract test coverage plus the existing Go
-route tests, not a live DB artifact smoke.
+Current live API smoke evidence is SKIP, not PASS: no disposable DB/API base
+URL was available in this workstation session. FE8-P0-03B added a backend unit
+test for share link rotation and frontend/API-contract tests for delivery, but
+not a live DB delivery smoke.
 
-## 7. Static Serving Evidence
+## 8. Static Serving Evidence
 
 Backend tests and `scripts/ci/frontend-serving-smoke.sh` cover:
 
@@ -180,22 +229,27 @@ Backend tests and `scripts/ci/frontend-serving-smoke.sh` cover:
 - `/api/*` and `/agent/*` are not shadowed by SPA fallback;
 - missing root `/assets/*` return 404 rather than SPA HTML.
 
-## 8. Security / Review Hygiene
+## 9. Security / Review Hygiene
 
 Current enforced hygiene:
 
 - no raw `/api/v1` calls outside `frontend/src/shared/api` and tests;
 - unsafe methods keep the shared API client, cookie credentials and CSRF header;
 - no browser auth token/session storage in new frontend source;
+- no share/subscription token storage in browser storage;
 - no unreviewed `dangerouslySetInnerHTML`;
 - no production console logging in new frontend source;
 - backend errors and job output are rendered as text;
 - artifact download uses a backend URL and is not persisted in browser storage;
+- share and subscription one-time URLs live only in transient component state
+  and are cleared on close;
+- clipboard copy is explicit and user-triggered;
+- share/subscription revoke and rotate require confirmation;
 - VLESS apply actions require backend preview and stale preview disables apply;
 - Clients revoke/delete/artifact delete require confirmation;
 - unsupported non-VLESS services remain catalog-only or legacy-only.
 
-## 9. Write Workflow Summary
+## 10. Write Workflow Summary
 
 Fully connected in the new console:
 
@@ -208,6 +262,8 @@ Fully connected in the new console:
 - `Clients` core list/detail/create/status/delete/revoke, single-client VLESS
   preview/apply/remove, artifact list/build/download/delete and client-scoped
   job tracking;
+- `Clients -> Delivery` share link create/rotate/revoke, VLESS subscription
+  create-or-rotate/revoke and email delivery;
 - `Firewall` address groups, policies, rules, preview, apply, node state and
   emergency disable.
 
@@ -216,7 +272,7 @@ Still disabled, read-only or legacy-only:
 - non-VLESS access group materialization workflows;
 - migration conflict UI for access groups;
 - client routes, access rotation and config cleanup;
-- FE8-P0-03B share links, subscriptions and email delivery;
+- client delivery history;
 - nodes bootstrap/control/terminal/diagnostics mutations;
 - instances create/apply/rollback/lifecycle/delete;
 - certificates import/issue/default/revoke/delete;
@@ -224,41 +280,45 @@ Still disabled, read-only or legacy-only:
 - backhaul mutations;
 - backup/restore browser UI.
 
-## 10. Known Limitations
+## 11. Known Limitations
 
 - Backend binary/version metadata remains `7.1.1.0`; synchronizing it to
   `8.0.0` is a separate release task.
 - Full normal operator work still requires `/legacy/` for many non-Firewall,
-  non-VLESS and non-Clients-core write workflows.
+  non-VLESS and non-Clients workflows.
 - Generic client edit stays disabled because the backend has no generic
   `PATCH/PUT /clients/{id}` endpoint.
 - Client disable stays disabled because the backend exposes activate/suspend
   but no separate browser disable endpoint.
 - Client routes, service access delete/rotation and config cleanup are not part
-  of FE8-P0-03A.
-- Share links, VLESS subscriptions and email delivery are FE8-P0-03B.
+  of FE8-P0-03B.
+- Client delivery history stays unavailable because the backend has no
+  client-scoped delivery history list/status endpoint in this release.
+- Client email delivery is connected, but the backend endpoint is synchronous,
+  sends the client's available artifacts/configs and does not accept an
+  artifact-specific email payload yet.
 - No browser screenshot/responsive Playwright evidence was produced in this
   pass.
-- Integrated VLESS API smoke was not run against a disposable DB/API in this
+- Integrated live API smoke was not run against a disposable DB/API in this
   session.
 
-## 11. Go / No-Go
+## 12. Go / No-Go
 
 Recommendation:
 
 - GO for PR review and CI validation of the 8.0.0 frontend branch.
-- GO for using new UI `Clients -> Groups -> VLESS`, Clients core/artifacts and
-  Firewall preview/apply/disable in controlled staging after operator review.
+- GO for using new UI `Clients -> Groups -> VLESS`, Clients core/artifacts,
+  Clients delivery and Firewall preview/apply/disable in controlled staging
+  after operator review.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
 
 1. run integrated smoke/e2e against disposable DB/API data for VLESS, Clients
-   core/artifacts and Firewall operator flows;
+   core/artifacts/delivery and Firewall operator flows;
 2. migrate Nodes bootstrap/control/diagnostics workflows;
 3. migrate Instances lifecycle/apply/rollback/delete workflows;
-4. migrate Clients routes, access rotation, config cleanup, share links,
-   subscriptions and email delivery;
+4. migrate Clients routes, access rotation and config cleanup;
 5. migrate Certificates and Platform settings write workflows;
 6. add E2E/browser responsive evidence for critical operator flows;
 7. synchronize backend/frontend version and release-chain artifacts to `8.0.0`;
