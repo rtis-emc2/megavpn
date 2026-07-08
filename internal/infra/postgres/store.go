@@ -1304,6 +1304,16 @@ func (s *Store) createInstanceWithOptions(ctx context.Context, x domain.Instance
 		}
 		return x, applyReadyErr
 	}
+	if x.ServiceCode == "xray-core" {
+		if materialized, err := s.materializeGlobalVLESSGroupMembershipsForInstance(ctx, x.ID); err != nil {
+			if cleanupErr := s.discardUnqueuedInstanceDraft(ctx, x.ID); cleanupErr != nil {
+				return x, errors.Join(err, fmt.Errorf("discard unqueueable instance draft: %w", cleanupErr))
+			}
+			return x, fmt.Errorf("materialize global vless group memberships: %w", err)
+		} else if materialized > 0 {
+			_, _ = s.CreateAudit(ctx, "system", "vless_group_members.materialize", "instance", &x.ID, fmt.Sprintf("global vless group memberships materialized before initial apply: %d", materialized))
+		}
+	}
 	if opts.queueInitialApply {
 		payload, payloadErr := s.buildInstanceJobPayload(ctx, x, "apply")
 		if payloadErr != nil {

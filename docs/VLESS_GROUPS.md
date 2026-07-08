@@ -6,31 +6,36 @@ Russian companion: [VLESS_GROUPS_RU.md](VLESS_GROUPS_RU.md).
 
 ## Purpose
 
-VLESS access groups are reusable client-routing templates. They are configured
-once under `Instances -> VLESS groups` and then selected during client
-provisioning. This keeps VLESS client policy out of individual instance forms
-and makes routing behavior auditable.
+VLESS access groups are reusable client access groups for client routing. The
+source of truth is `Clients -> Groups`: a group is assigned to a client once,
+and runtime instances receive materialized `service_accesses` as a projection.
+This keeps VLESS client policy out of individual instance forms and makes
+routing behavior auditable.
 
-A VLESS instance still owns the listener, certificate/Reality settings and
-default egress path. A VLESS group decides what a specific client binding is
-allowed to do on top of that instance.
+A VLESS group is global. Client membership is stored once and is materialized
+into every active Xray/VLESS instance that exposes that group. A VLESS instance
+still owns the listener, certificate/Reality settings and default egress path;
+the group decides what a client is allowed to do across the fleet.
 
 ## Architecture
 
 ```text
 Operator
-  -> Instances / VLESS groups
-  -> vless_group_templates table
+  -> Clients / Groups
+  -> client_access_groups table
+  -> client_access_group_memberships table
+  -> materialized service_accesses per Xray/VLESS instance
   -> Xray instance revision renderer
   -> node agent apply
   -> generated Xray routing rules
-  -> client provisioning bindings
 ```
 
-The Control Plane stores group templates centrally. When an Xray/VLESS instance
-revision is created or updated, the active group catalog is embedded into the
-rendered instance spec. During apply, the driver converts groups into Xray
-routing rules scoped by client user/email.
+The Control Plane stores group policy and membership centrally. Legacy
+`vless_group_templates` remains as a compatibility catalog for one transition
+release, but new membership operations use generic `client_access_groups`. When
+an Xray/VLESS instance revision is created or updated, the active group catalog
+is embedded into the rendered instance spec. During apply, the driver converts
+groups into Xray routing rules scoped by client user/email.
 
 Saving, disabling or deleting a global VLESS group also runs a catalog sync for
 existing Xray/VLESS instances. The sync creates a validated instance revision
@@ -55,9 +60,9 @@ domain data installed.
 
 ### Group catalog
 
-1. Open `Instances`.
-2. Select `VLESS groups`.
-3. Create or edit reusable groups.
+1. Open `Clients`.
+2. Select `Groups`.
+3. Create or edit reusable VLESS access groups.
 4. For `Selected egress node`, choose an egress node and ensure a working
    backhaul route exists.
 5. For `Only selected instance`, choose a target service instance with a valid
@@ -65,27 +70,44 @@ domain data installed.
 6. Save the group.
 7. Review the sync result. Any failed instance is reported with the stage and
    validation error.
-8. Open the target VLESS instance in `Instances -> Manage`.
-9. Select `Default VLESS group` if a default other than `Default access` is
-   required.
-10. During client provisioning, select the appropriate group for each VLESS
-    inbound.
+8. Open the target VLESS instance in `Instances -> Manage` only when you need
+   to inspect runtime materialization or re-apply the instance.
+9. Select `Default VLESS group` if an instance-level fallback other than
+   `Default access` is required.
+10. Client provisioning can still select a group for an inbound, but the primary
+    bulk workflow should use `Clients -> Groups`.
 
 ### Bulk membership
 
 For fleet operations, operators do not need to open every client:
 
-1. Open the concrete Xray/VLESS instance under `Instances -> Manage`.
-2. Use the `VLESS group members` section.
-3. Select the target group.
-4. Search clients or paste usernames, emails or client IDs.
-5. Run `Add to group`.
+1. Open `Clients -> Groups`.
+2. Click `Members` on the target group.
+3. Search clients with server-side pagination. Page size is operator
+   controlled; the UI no longer assumes a hidden fixed limit.
+4. Choose the membership scope:
+   - selected clients on the current page;
+   - all clients matching the current filter;
+   - pasted usernames, emails or client IDs;
+   - any combination of the above.
+5. Choose `Add only` when existing members must stay in their current group, or
+   `Add or move` when existing members may be moved into the selected group.
+6. Run `Preview changes` and review the dry-run result:
+   `will create`, `will move`, `will skip`, `will fail` and `apply job count`.
+7. Run `Apply previewed changes`.
 
-The Control Plane creates or updates existing `service_accesses` for the
-selected instance and group. This remains the membership source of truth; no
-second membership table is introduced. Adding the same client to the same group
-is idempotent, moving a client between groups preserves the VLESS UUID, and the
-bulk update queues at most one `instance.apply` for the affected Xray config.
+The Control Plane writes the desired membership to
+`client_access_group_memberships`, then creates or updates the materialized
+`service_accesses` for every active Xray/VLESS instance whose catalog exposes
+the selected group. Adding the same client to the same group is idempotent,
+moving a client between groups preserves the VLESS UUID, and the bulk update
+queues bounded `instance.apply` jobs by affected instance, not one apply job per
+client.
+
+The legacy `Instances -> VLESS groups` and `Instances -> Manage -> Applied
+client access groups` sections remain read-only/compatibility entry points.
+They show catalog/materialization and link to `Clients -> Groups`; this does
+not mean membership belongs to a concrete instance.
 
 Client configs and artifacts are not rebuilt one-by-one from this bulk flow.
 After membership changes, use the normal build/subscription workflow when
@@ -109,12 +131,16 @@ delivery artifacts must be refreshed.
   during global catalog sync and on demand during client provisioning. This
   prevents a freshly created active group from being visible in the provisioning
   UI while missing from the selected Xray instance revision.
-- Client provisioning stores the selected group key on the client access
-  binding.
-- Instance-level `VLESS group members` uses the same client access binding and
-  does not create duplicate rows. The client VLESS identity is kept in
-  `client_service_identities` and reused when the ingress node changes or when
-  the client is moved between groups.
+- Bulk membership stores one global desired group per client in
+  `client_access_group_memberships`. The Control Plane materializes that
+  desired state into `service_accesses` for all matching active Xray/VLESS
+  instances and for new matching instances created later.
+- Client provisioning can still create a direct VLESS access binding for the
+  selected inbound. If a global membership exists, materialization keeps the
+  instance bindings aligned with that global group.
+- `VLESS group members` does not create duplicate rows. The client VLESS
+  identity is kept in `client_service_identities` and reused when ingress nodes
+  change or when the client is moved between groups.
 - Reprovisioning preserves the existing client binding group. Xray UUID
   rotation is profile-wide: rotating one VLESS access updates the shared
   `client_service_identities` UUID and marks all active/pending Xray accesses
@@ -162,8 +188,9 @@ delivery artifacts must be refreshed.
 Operators should be able to answer:
 
 - who created, edited, disabled or deleted a group;
+- which clients are globally assigned to a group;
 - which VLESS instance revision contains the group catalog;
-- which client bindings use a given group key;
+- which materialized client bindings use a given group key;
 - which apply job rendered and deployed the effective Xray config.
 
 ## Troubleshooting

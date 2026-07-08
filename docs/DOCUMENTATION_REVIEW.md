@@ -22,7 +22,7 @@ Russian review: [DOCUMENTATION_REVIEW_RU.md](DOCUMENTATION_REVIEW_RU.md).
 | Product roadmap, release evidence and operational procedures were not clearly separated | High risk of stale operational instructions in overview docs | README now links to source-of-truth docs instead of duplicating runbooks |
 | Release version was not visible in every primary document | Operators could confuse current release docs with historical roadmap notes | Added a `7.1.1.0` release banner to maintained documentation files |
 | Roadmap and next-step notes mixed languages under default filenames | Documentation ownership was unclear for English and Russian operators | Split roadmap and next-step notes into English defaults and `_RU` companions |
-| VLESS access groups moved out of instance manage but docs still described the old workflow | Operators could configure client groups in the wrong place or miss the required re-apply step | Added paired VLESS access-group docs and updated the operator guide to use `Instances -> VLESS groups` |
+| VLESS access groups moved out of instance manage and into client-owned access groups | Operators could configure client groups in the wrong place or treat an instance as the source of truth | Updated paired VLESS access-group docs and operator guides to use `Clients -> Groups` as the primary workflow |
 
 ## Applied Structure
 

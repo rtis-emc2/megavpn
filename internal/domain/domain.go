@@ -1,12 +1,14 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 )
 
 var ErrServicePackNotFound = errors.New("service pack not found")
 var ErrVLESSGroupTemplateNotFound = errors.New("vless group template not found")
+var ErrClientAccessGroupNotFound = errors.New("client access group not found")
 
 type Node struct {
 	ID                   string     `json:"id"`
@@ -307,11 +309,16 @@ type VLESSGroupAvailableClientsPage struct {
 }
 
 type VLESSGroupMembershipRequest struct {
-	ClientIDs      []string `json:"client_ids"`
-	ClientRefs     []string `json:"client_refs"`
-	Mode           string   `json:"mode"`
-	QueueApply     bool     `json:"queue_apply"`
-	BuildArtifacts bool     `json:"build_artifacts"`
+	ClientIDs        []string `json:"client_ids"`
+	ClientRefs       []string `json:"client_refs"`
+	Mode             string   `json:"mode"`
+	QueueApply       bool     `json:"queue_apply"`
+	BuildArtifacts   bool     `json:"build_artifacts"`
+	DryRun           bool     `json:"dry_run"`
+	AllFiltered      bool     `json:"all_filtered"`
+	FilterSearch     string   `json:"filter_search"`
+	FilterAssignment string   `json:"filter_assignment"`
+	FilterStatus     string   `json:"filter_status"`
 }
 
 type VLESSGroupMembershipFailure struct {
@@ -321,17 +328,193 @@ type VLESSGroupMembershipFailure struct {
 }
 
 type VLESSGroupMembershipResult struct {
-	InstanceID string                        `json:"instance_id"`
-	GroupKey   string                        `json:"group_key,omitempty"`
-	Created    int                           `json:"created"`
-	Updated    int                           `json:"updated"`
-	Removed    int                           `json:"removed,omitempty"`
-	Skipped    int                           `json:"skipped"`
-	Failed     []VLESSGroupMembershipFailure `json:"failed,omitempty"`
-	ApplyJobID string                        `json:"apply_job_id,omitempty"`
-	BulkJobID  string                        `json:"bulk_job_id,omitempty"`
-	Warnings   []string                      `json:"warnings,omitempty"`
-	Clients    []VLESSGroupMemberClient      `json:"clients,omitempty"`
+	InstanceID        string                        `json:"instance_id,omitempty"`
+	InstanceIDs       []string                      `json:"instance_ids,omitempty"`
+	GroupKey          string                        `json:"group_key,omitempty"`
+	DryRun            bool                          `json:"dry_run,omitempty"`
+	AllFiltered       bool                          `json:"all_filtered,omitempty"`
+	Created           int                           `json:"created"`
+	Updated           int                           `json:"updated"`
+	Removed           int                           `json:"removed,omitempty"`
+	Skipped           int                           `json:"skipped"`
+	Failed            []VLESSGroupMembershipFailure `json:"failed,omitempty"`
+	Materialized      int                           `json:"materialized,omitempty"`
+	AffectedInstances int                           `json:"affected_instances,omitempty"`
+	ApplyJobCount     int                           `json:"apply_job_count"`
+	ApplyJobID        string                        `json:"apply_job_id,omitempty"`
+	ApplyJobIDs       []string                      `json:"apply_job_ids,omitempty"`
+	BulkJobID         string                        `json:"bulk_job_id,omitempty"`
+	Warnings          []string                      `json:"warnings,omitempty"`
+	Clients           []VLESSGroupMemberClient      `json:"clients,omitempty"`
+}
+
+type ClientAccessGroup struct {
+	ID                    string          `json:"id"`
+	ServiceCode           string          `json:"service_code"`
+	GroupKey              string          `json:"group_key"`
+	DisplayName           string          `json:"display_name"`
+	Description           string          `json:"description"`
+	Status                string          `json:"status"`
+	PolicyJSON            json.RawMessage `json:"policy_json,omitempty"`
+	ScopeMode             string          `json:"scope_mode"`
+	AutoApplyNewInstances bool            `json:"auto_apply_new_instances"`
+	MemberCount           int             `json:"member_count,omitempty"`
+	ActiveMemberCount     int             `json:"active_member_count,omitempty"`
+	DisabledMemberCount   int             `json:"disabled_member_count,omitempty"`
+	AffectedInstances     int             `json:"affected_instances,omitempty"`
+	PendingSyncCount      int             `json:"pending_sync_count,omitempty"`
+	FailedSyncCount       int             `json:"failed_sync_count,omitempty"`
+	AppliedSyncCount      int             `json:"applied_sync_count,omitempty"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+	DeletedAt             *time.Time      `json:"deleted_at,omitempty"`
+}
+
+type ClientAccessGroupInput struct {
+	ServiceCode           string          `json:"service_code"`
+	GroupKey              string          `json:"group_key"`
+	DisplayName           string          `json:"display_name"`
+	Description           string          `json:"description"`
+	Status                string          `json:"status"`
+	PolicyJSON            json.RawMessage `json:"policy_json,omitempty"`
+	ScopeMode             string          `json:"scope_mode"`
+	AutoApplyNewInstances *bool           `json:"auto_apply_new_instances,omitempty"`
+}
+
+type ClientAccessGroupMember struct {
+	ClientID         string     `json:"client_id"`
+	Username         string     `json:"username"`
+	DisplayName      string     `json:"display_name"`
+	Email            string     `json:"email"`
+	ClientStatus     string     `json:"client_status"`
+	MembershipID     string     `json:"membership_id,omitempty"`
+	MembershipStatus string     `json:"membership_status,omitempty"`
+	GroupID          string     `json:"group_id,omitempty"`
+	GroupKey         string     `json:"group_key,omitempty"`
+	GroupName        string     `json:"group_name,omitempty"`
+	ServiceAccessID  string     `json:"service_access_id,omitempty"`
+	AccessStatus     string     `json:"access_status,omitempty"`
+	XrayUUID         string     `json:"xray_uuid,omitempty"`
+	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
+}
+
+type ClientAccessGroupMembersPage struct {
+	GroupID     string                    `json:"group_id,omitempty"`
+	ServiceCode string                    `json:"service_code,omitempty"`
+	GroupKey    string                    `json:"group_key,omitempty"`
+	Status      string                    `json:"status,omitempty"`
+	Items       []ClientAccessGroupMember `json:"items"`
+	Total       int                       `json:"total"`
+	Limit       int                       `json:"limit"`
+	Offset      int                       `json:"offset"`
+}
+
+type ClientAccessGroupAvailableClientsPage struct {
+	ServiceCode string                    `json:"service_code"`
+	Assignment  string                    `json:"assignment"`
+	Items       []ClientAccessGroupMember `json:"items"`
+	Total       int                       `json:"total"`
+	Limit       int                       `json:"limit"`
+	Offset      int                       `json:"offset"`
+}
+
+type ClientAccessGroupMembershipRequest struct {
+	ClientIDs        []string `json:"client_ids"`
+	ClientRefs       []string `json:"client_refs"`
+	Mode             string   `json:"mode"`
+	QueueApply       bool     `json:"queue_apply"`
+	BuildArtifacts   bool     `json:"build_artifacts"`
+	DryRun           bool     `json:"dry_run"`
+	AllFiltered      bool     `json:"all_filtered"`
+	FilterSearch     string   `json:"filter_search"`
+	FilterAssignment string   `json:"filter_assignment"`
+	FilterStatus     string   `json:"filter_status"`
+}
+
+type ClientAccessGroupMembershipFailure struct {
+	ClientID string `json:"client_id,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+	Error    string `json:"error"`
+}
+
+type ClientAccessGroupMembershipConflict struct {
+	ClientID      string `json:"client_id,omitempty"`
+	ExistingGroup string `json:"existing_group,omitempty"`
+	TargetGroup   string `json:"target_group,omitempty"`
+	Reason        string `json:"reason"`
+}
+
+type ClientAccessGroupMembershipResult struct {
+	GroupID              string                                `json:"group_id,omitempty"`
+	GroupKey             string                                `json:"group_key,omitempty"`
+	ServiceCode          string                                `json:"service_code,omitempty"`
+	DryRun               bool                                  `json:"dry_run,omitempty"`
+	AllFiltered          bool                                  `json:"all_filtered,omitempty"`
+	CreatedMemberships   int                                   `json:"created_memberships"`
+	MovedMemberships     int                                   `json:"moved_memberships"`
+	SkippedExisting      int                                   `json:"skipped_existing"`
+	Failed               []ClientAccessGroupMembershipFailure  `json:"failed,omitempty"`
+	Conflicts            []ClientAccessGroupMembershipConflict `json:"conflicts,omitempty"`
+	AffectedInstances    int                                   `json:"affected_instances,omitempty"`
+	MaterializedCreated  int                                   `json:"materialized_created,omitempty"`
+	MaterializedUpdated  int                                   `json:"materialized_updated,omitempty"`
+	MaterializedDisabled int                                   `json:"materialized_disabled,omitempty"`
+	SyncJobID            string                                `json:"sync_job_id,omitempty"`
+	ApplyJobIDs          []string                              `json:"apply_job_ids,omitempty"`
+	ApplyJobCount        int                                   `json:"apply_job_count"`
+	Warnings             []string                              `json:"warnings,omitempty"`
+	Clients              []ClientAccessGroupMember             `json:"clients,omitempty"`
+}
+
+type ClientAccessGroupScope struct {
+	GroupID               string   `json:"group_id"`
+	ScopeMode             string   `json:"scope_mode"`
+	AutoApplyNewInstances bool     `json:"auto_apply_new_instances"`
+	IncludeInstanceIDs    []string `json:"include_instance_ids,omitempty"`
+	ExcludeInstanceIDs    []string `json:"exclude_instance_ids,omitempty"`
+	AffectedInstances     int      `json:"affected_instances,omitempty"`
+	MaterializedCreated   int      `json:"materialized_created,omitempty"`
+	MaterializedUpdated   int      `json:"materialized_updated,omitempty"`
+	MaterializedDisabled  int      `json:"materialized_disabled,omitempty"`
+	ApplyJobCount         int      `json:"apply_job_count,omitempty"`
+	ApplyJobIDs           []string `json:"apply_job_ids,omitempty"`
+	Warnings              []string `json:"warnings,omitempty"`
+}
+
+type ClientAccessGroupSyncPreview struct {
+	GroupID           string   `json:"group_id"`
+	GroupKey          string   `json:"group_key"`
+	ServiceCode       string   `json:"service_code"`
+	DesiredHash       string   `json:"desired_hash"`
+	AffectedInstances int      `json:"affected_instances"`
+	MemberCount       int      `json:"member_count"`
+	PendingInstances  int      `json:"pending_instances"`
+	AppliedInstances  int      `json:"applied_instances"`
+	FailedInstances   int      `json:"failed_instances"`
+	InstanceIDs       []string `json:"instance_ids,omitempty"`
+	Warnings          []string `json:"warnings,omitempty"`
+}
+
+type ClientAccessGroupSyncState struct {
+	GroupID         string    `json:"group_id"`
+	InstanceID      string    `json:"instance_id"`
+	DesiredHash     string    `json:"desired_hash"`
+	LastAppliedHash string    `json:"last_applied_hash,omitempty"`
+	Status          string    `json:"status"`
+	LastJobID       string    `json:"last_job_id,omitempty"`
+	LastError       string    `json:"last_error,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type ClientAccessGroupMigrationConflict struct {
+	ID              string    `json:"id"`
+	ClientID        string    `json:"client_id"`
+	InstanceID      string    `json:"instance_id,omitempty"`
+	ServiceAccessID string    `json:"service_access_id,omitempty"`
+	ServiceCode     string    `json:"service_code"`
+	GroupKey        string    `json:"group_key"`
+	Reason          string    `json:"reason"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type Instance struct {

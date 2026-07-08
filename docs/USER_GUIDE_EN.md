@@ -242,8 +242,9 @@ In the UI, verify:
    templates are created by the ordered migration set; if the list is empty,
    verify that every migration has run against the same database used by the
    API.
-8. `Instances -> VLESS groups` shows default groups for default route, current
-   node exit, ad-blocked default and blocked access.
+8. `Clients -> Groups` shows VLESS client access groups. `Instances -> VLESS
+   groups` remains a compatibility catalog for default route, current node exit,
+   ad-blocked default and blocked access.
 
 If the installer used self-signed TLS, replace it through:
 
@@ -617,8 +618,8 @@ Where to configure it:
   Use `egress node` when the whole VLESS instance must exit through a remote
   egress node. Select the exact `Egress node` when more than one link exists or
   deterministic output is required.
-- `Instances -> VLESS groups`: configure reusable VLESS access groups once.
-  These groups are provisioning-time access policies, not just labels:
+- `Clients -> Groups`: configure reusable VLESS access groups once. These
+  groups are client access policies, not just labels:
   - `Use instance default route`: follow the instance-level egress policy.
   - `Exit from current node`: force local breakout on the VLESS node.
   - `Exit from selected egress node`: resolve the selected egress node through
@@ -628,13 +629,18 @@ Where to configure it:
   - `Block all traffic`: deny traffic for quarantine or suspended access.
   - `Block ads`: add a managed Xray `geosite:category-ads-all` rule for users
     in that group. The Xray runtime must include the required geosite data.
-  Saving, disabling or deleting a group automatically syncs the catalog into
-  existing Xray/VLESS instances and queues apply jobs for active instances. If
-  sync fails for a specific instance, the UI shows the stage and error.
+- `Instances -> VLESS groups`: compatibility catalog for policy templates.
+  Client membership is no longer edited there; use `Clients -> Groups`.
 - `Instances -> Manage` for the Xray/VLESS instance: `Default VLESS group`
   selects the group used when a client binding does not specify one. Advanced
   JSON override is intentionally collapsed and should be used only for
   non-standard transport experiments.
+- `Clients -> Groups -> Members`: assign clients to a group globally. The
+  Control Plane materializes the membership into every active Xray/VLESS
+  instance that exposes that group. Page through available clients, select
+  visible clients, select all filtered clients or paste usernames/emails/client
+  IDs, then review the dry-run preview before applying bounded instance apply
+  jobs for the affected Xray instances.
 - `Clients -> Provision`: when selecting a VLESS inbound, choose the access
   group. The group is saved in the client access binding and used for
   provisioning. Provisioning synchronizes active catalog groups into the
@@ -675,10 +681,11 @@ Minimal path for “enter through VLESS and exit through another node”:
 4. Either select `Use selected egress node` during `Create from pack`, or open
    `Instances -> Manage`, set `Egress mode = egress node` for the VLESS
    instance and select the target egress node.
-5. Open `Instances -> VLESS groups` if a client-specific group is required.
+5. Open `Clients -> Groups` if a client-specific group is required.
    For example, create `Exit from selected egress node` for users that must use
    a specific egress node, or `Allow only selected instance` for restricted
-   access.
+   access. Use `Members` on the group when clients should be assigned globally
+   and automatically materialized into every matching VLESS ingress.
 6. Click `Apply` on the instance if you changed instance-level `Egress mode`.
    VLESS group changes themselves are propagated automatically by catalog sync.
 7. Run `Inspect route policy` on the ingress node and verify that the
@@ -775,6 +782,10 @@ failure scenarios and public endpoint behavior.
 
 Recommended workflow:
 
+0. Open `Settings -> Firewall safety` and configure control-plane source CIDRs,
+   SSH bootstrap source CIDRs and trusted operator CIDRs. The same values can
+   be seeded from `MEGAVPN_CP_FIREWALL_SOURCE_CIDRS` and
+   `MEGAVPN_CP_SSH_BOOTSTRAP_SOURCE_CIDRS` on API startup.
 1. Open `Firewall -> Address groups` and create reusable source or destination
    groups.
 2. Add entries. Leave entry type on auto-detect unless you need to force CIDR,
@@ -800,6 +811,12 @@ When strict output default is `drop` or `reject`, the agent requires either an
 IP-pinned control-plane URL or an explicit active output accept rule for the
 control-plane TCP port. If that guard is missing, the job fails during render
 before changing nftables.
+
+Strict input also requires trusted management sources and never generates SSH
+from `0.0.0.0/0`. Strict forward on VPN/backhaul/egress nodes requires an
+allow path for active `vpn_client_sources` or `backhaul_sources`. Preview shows
+`ssh_bootstrap_preserved`, `control_plane_egress_preserved`,
+`forward_egress_preserved` and address-group render counts before apply.
 
 Use `Firewall -> Node apply -> Disable` to remove only the managed
 `inet megavpn_firewall` table from a node. This queues `node.firewall.disable`

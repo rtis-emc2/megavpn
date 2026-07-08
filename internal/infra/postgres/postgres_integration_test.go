@@ -639,6 +639,152 @@ func TestPostgresIntegrationInstanceVLESSGroupMembershipBulk(t *testing.T) {
 	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where client_account_id=$1 and instance_id=$2`, 1, first.ID, instance.ID)
 }
 
+func TestPostgresIntegrationGlobalVLESSGroupMembershipMaterializesAllInstances(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	nodeA, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-vless-global-node-a-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.130",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node a: %v", err)
+	}
+	nodeB, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-vless-global-node-b-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.131",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node b: %v", err)
+	}
+	instanceA, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       nodeA.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-vless-global-a-" + suffix,
+		Slug:         "it-vless-global-a-" + suffix,
+		EndpointHost: "global-a.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("global-a.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create xray instance a: %v", err)
+	}
+	instanceB, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       nodeB.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-vless-global-b-" + suffix,
+		Slug:         "it-vless-global-b-" + suffix,
+		EndpointHost: "global-b.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("global-b.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create xray instance b: %v", err)
+	}
+	client, err := store.CreateClient(ctx, domain.Client{Username: "it-vless-global-client-" + suffix, Email: "global-" + suffix + "@example.invalid"})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	result, err := store.AddVLESSGroupMembers(ctx, "out_usa_sf", domain.VLESSGroupMembershipRequest{
+		ClientIDs:  []string{client.ID},
+		Mode:       "add_or_move",
+		QueueApply: true,
+	})
+	if err != nil {
+		t.Fatalf("global add: %v", err)
+	}
+	if result.Created != 1 || result.Updated != 0 || result.Skipped != 0 || len(result.Failed) != 0 {
+		t.Fatalf("global add result = %#v, want one desired membership created", result)
+	}
+	if result.AffectedInstances < 2 || result.Materialized < 2 || result.ApplyJobCount < 2 {
+		t.Fatalf("global add projection = %#v, want materialized/apply across both instances", result)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from vless_group_memberships where client_account_id=$1 and group_key='out_usa_sf' and status='active'`, 1, client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where client_account_id=$1 and instance_id in ($2,$3)`, 2, client.ID, instanceA.ID, instanceB.ID)
+
+	accessA := xrayServiceAccessByInstance(t, ctx, store, client.ID, instanceA.ID)
+	metaA, err := store.EnsureXrayServiceAccessUUID(ctx, accessA.ID)
+	if err != nil {
+		t.Fatalf("ensure uuid a: %v", err)
+	}
+	uuidA := firstString(metaA["xray_uuid"])
+	if uuidA == "" {
+		t.Fatal("instance a uuid is empty")
+	}
+
+	moved, err := store.AddVLESSGroupMembers(ctx, "default", domain.VLESSGroupMembershipRequest{
+		ClientIDs: []string{client.ID},
+		Mode:      "add_or_move",
+	})
+	if err != nil {
+		t.Fatalf("global move: %v", err)
+	}
+	if moved.Created != 0 || moved.Updated != 1 || moved.Skipped != 0 {
+		t.Fatalf("global move result = %#v, want one desired membership moved", moved)
+	}
+	movedAccessA := xrayServiceAccessByInstance(t, ctx, store, client.ID, instanceA.ID)
+	movedMetaA, err := store.EnsureXrayServiceAccessUUID(ctx, movedAccessA.ID)
+	if err != nil {
+		t.Fatalf("ensure moved uuid a: %v", err)
+	}
+	if got := firstString(movedMetaA["xray_uuid"]); got != uuidA {
+		t.Fatalf("moved uuid = %q, want preserved %q", got, uuidA)
+	}
+	if got := firstString(movedMetaA["vless_group"], movedMetaA["xray_group"], movedMetaA["outbound_group"]); got != "default" {
+		t.Fatalf("moved group = %q, want default", got)
+	}
+
+	nodeC, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-vless-global-node-c-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.132",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node c: %v", err)
+	}
+	instanceC, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       nodeC.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-vless-global-c-" + suffix,
+		Slug:         "it-vless-global-c-" + suffix,
+		EndpointHost: "global-c.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("global-c.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create xray instance c: %v", err)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where client_account_id=$1 and instance_id=$2`, 1, client.ID, instanceC.ID)
+	accessC := xrayServiceAccessByInstance(t, ctx, store, client.ID, instanceC.ID)
+	if got := firstString(accessC.Metadata["vless_group"], accessC.Metadata["xray_group"], accessC.Metadata["outbound_group"]); got != "default" {
+		t.Fatalf("new instance materialized group = %q, want default", got)
+	}
+}
+
 func TestPostgresIntegrationInstanceVLESSGroupMembershipRejectsUnknownGroup(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 
@@ -738,6 +884,9 @@ func TestPostgresIntegrationInstanceVLESSGroupMembershipBoundedJobsForLargeBatch
 	if result.Created != 1000 || result.Updated != 0 || len(result.Failed) != 0 {
 		t.Fatalf("bulk 1000 result = %#v, want 1000 created", result)
 	}
+	if result.ApplyJobCount != 1 {
+		t.Fatalf("bulk 1000 apply job count = %d, want 1", result.ApplyJobCount)
+	}
 	var after int
 	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&after); err != nil {
 		t.Fatalf("count jobs after: %v", err)
@@ -746,6 +895,539 @@ func TestPostgresIntegrationInstanceVLESSGroupMembershipBoundedJobsForLargeBatch
 		t.Fatalf("bulk 1000 queued %d jobs, want bounded <= 2", got)
 	}
 	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where instance_id=$1`, 1000, instance.ID)
+}
+
+func TestPostgresIntegrationInstanceVLESSGroupMembershipModes(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-vless-mode-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.33",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	instance, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-vless-mode-" + suffix,
+		Slug:         "it-vless-mode-" + suffix,
+		EndpointHost: "mode.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("mode.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create xray instance: %v", err)
+	}
+	client, err := store.CreateClient(ctx, domain.Client{Username: "it-vless-mode-client-" + suffix})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	initial, err := store.AddInstanceVLESSGroupMembers(ctx, instance.ID, "default", domain.VLESSGroupMembershipRequest{
+		ClientIDs: []string{client.ID},
+		Mode:      "add_or_move",
+	})
+	if err != nil {
+		t.Fatalf("initial add: %v", err)
+	}
+	if initial.Created != 1 {
+		t.Fatalf("initial result = %#v, want one created", initial)
+	}
+	access := xrayServiceAccessByInstance(t, ctx, store, client.ID, instance.ID)
+	metadata, err := store.EnsureXrayServiceAccessUUID(ctx, access.ID)
+	if err != nil {
+		t.Fatalf("ensure uuid: %v", err)
+	}
+	uuid := firstString(metadata["xray_uuid"])
+	if uuid == "" {
+		t.Fatal("initial uuid is empty")
+	}
+
+	addOnly, err := store.AddInstanceVLESSGroupMembers(ctx, instance.ID, "out_usa_sf", domain.VLESSGroupMembershipRequest{
+		ClientIDs: []string{client.ID},
+		Mode:      "add_only",
+	})
+	if err != nil {
+		t.Fatalf("add_only: %v", err)
+	}
+	if addOnly.Created != 0 || addOnly.Updated != 0 || addOnly.Skipped != 1 {
+		t.Fatalf("add_only result = %#v, want one skipped", addOnly)
+	}
+	afterAddOnly := xrayServiceAccessByInstance(t, ctx, store, client.ID, instance.ID)
+	if got := firstString(afterAddOnly.Metadata["vless_group"], afterAddOnly.Metadata["xray_group"], afterAddOnly.Metadata["outbound_group"]); got != "default" {
+		t.Fatalf("add_only moved group to %q, want default", got)
+	}
+
+	moved, err := store.AddInstanceVLESSGroupMembers(ctx, instance.ID, "out_usa_sf", domain.VLESSGroupMembershipRequest{
+		ClientIDs: []string{client.ID},
+		Mode:      "add_or_move",
+	})
+	if err != nil {
+		t.Fatalf("add_or_move: %v", err)
+	}
+	if moved.Created != 0 || moved.Updated != 1 || moved.Skipped != 0 {
+		t.Fatalf("add_or_move result = %#v, want one moved", moved)
+	}
+	afterMove := xrayServiceAccessByInstance(t, ctx, store, client.ID, instance.ID)
+	afterMoveMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, afterMove.ID)
+	if err != nil {
+		t.Fatalf("ensure moved uuid: %v", err)
+	}
+	if got := firstString(afterMoveMetadata["xray_uuid"]); got != uuid {
+		t.Fatalf("moved uuid = %q, want preserved %q", got, uuid)
+	}
+	if got := firstString(afterMoveMetadata["vless_group"], afterMoveMetadata["xray_group"], afterMoveMetadata["outbound_group"]); got != "out_usa_sf" {
+		t.Fatalf("moved group = %q, want out_usa_sf", got)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where client_account_id=$1 and instance_id=$2`, 1, client.ID, instance.ID)
+}
+
+func TestPostgresIntegrationInstanceVLESSGroupMembershipAllFilteredDryRun(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-vless-filter-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.34",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	instance, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-vless-filter-" + suffix,
+		Slug:         "it-vless-filter-" + suffix,
+		EndpointHost: "filter.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("filter.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create xray instance: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := store.CreateClient(ctx, domain.Client{
+			Username: fmt.Sprintf("it-vless-filter-%s-%02d", suffix, i),
+			Email:    fmt.Sprintf("filter-%s-%02d@example.invalid", suffix, i),
+		}); err != nil {
+			t.Fatalf("create filtered client %d: %v", i, err)
+		}
+	}
+	if _, err := store.CreateClient(ctx, domain.Client{Username: "it-vless-other-" + suffix}); err != nil {
+		t.Fatalf("create unrelated client: %v", err)
+	}
+	preview, err := store.AddInstanceVLESSGroupMembers(ctx, instance.ID, "out_usa_sf", domain.VLESSGroupMembershipRequest{
+		DryRun:           true,
+		AllFiltered:      true,
+		FilterSearch:     "it-vless-filter-" + suffix,
+		FilterAssignment: "unassigned",
+		QueueApply:       true,
+		Mode:             "add_or_move",
+	})
+	if err != nil {
+		t.Fatalf("all filtered preview: %v", err)
+	}
+	if !preview.DryRun || !preview.AllFiltered || preview.Created != 5 || preview.Updated != 0 || preview.Skipped != 0 || len(preview.Failed) != 0 {
+		t.Fatalf("all filtered preview = %#v, want dry-run with 5 creates", preview)
+	}
+	if preview.ApplyJobCount != 1 || preview.ApplyJobID != "" {
+		t.Fatalf("all filtered preview apply fields = count %d id %q, want one projected job and no real job id", preview.ApplyJobCount, preview.ApplyJobID)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where instance_id=$1`, 0, instance.ID)
+}
+
+func TestPostgresIntegrationInstanceVLESSGroupMembershipRejectsInactiveGroup(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-vless-inactive-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.35",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	spec := xraySharedClientIdentityTestSpec("inactive.example.test")
+	spec["vless_groups"] = append(spec["vless_groups"].([]any),
+		map[string]any{"key": "disabled_group", "label": "Disabled group", "egress_mode": "default", "outbound_tag": "direct", "status": "disabled"},
+		map[string]any{"key": "deleted_group", "label": "Deleted group", "egress_mode": "default", "outbound_tag": "direct", "status": "deleted"},
+	)
+	instance, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-vless-inactive-" + suffix,
+		Slug:         "it-vless-inactive-" + suffix,
+		EndpointHost: "inactive.example.test",
+		EndpointPort: 7080,
+		Spec:         spec,
+	})
+	if err != nil {
+		t.Fatalf("create xray instance: %v", err)
+	}
+	client, err := store.CreateClient(ctx, domain.Client{Username: "it-vless-inactive-client-" + suffix})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	for _, groupKey := range []string{"disabled_group", "deleted_group"} {
+		_, err = store.AddInstanceVLESSGroupMembers(ctx, instance.ID, groupKey, domain.VLESSGroupMembershipRequest{
+			ClientIDs: []string{client.ID},
+			Mode:      "add_or_move",
+		})
+		if err == nil {
+			t.Fatalf("inactive group %s accepted, want error", groupKey)
+		}
+		if !strings.Contains(err.Error(), "not available") {
+			t.Fatalf("inactive group %s error = %q, want not available", groupKey, err.Error())
+		}
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where client_account_id=$1 and instance_id=$2`, 0, client.ID, instance.ID)
+}
+
+func TestPostgresIntegrationClientAccessGroupsVLESSBulkMaterialization(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	nodeA, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-access-group-node-a-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.140",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node a: %v", err)
+	}
+	nodeB, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-access-group-node-b-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.141",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node b: %v", err)
+	}
+	instanceA, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       nodeA.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-access-group-a-" + suffix,
+		Slug:         "it-access-group-a-" + suffix,
+		EndpointHost: "access-group-a.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("access-group-a.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create xray instance a: %v", err)
+	}
+	instanceB, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       nodeB.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-access-group-b-" + suffix,
+		Slug:         "it-access-group-b-" + suffix,
+		EndpointHost: "access-group-b.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("access-group-b.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create xray instance b: %v", err)
+	}
+	outUSASF := clientAccessGroupByKey(t, ctx, store, "vless", "out_usa_sf")
+	defaultGroup := clientAccessGroupByKey(t, ctx, store, "vless", "default")
+
+	clientIDs := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		client, err := store.CreateClient(ctx, domain.Client{Username: fmt.Sprintf("it-access-group-%s-%04d", suffix, i)})
+		if err != nil {
+			t.Fatalf("create client %d: %v", i, err)
+		}
+		clientIDs = append(clientIDs, client.ID)
+	}
+
+	var jobsBefore int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsBefore); err != nil {
+		t.Fatalf("count jobs before: %v", err)
+	}
+	result, err := store.BulkMoveClientAccessGroupMembers(ctx, outUSASF.ID, domain.ClientAccessGroupMembershipRequest{
+		ClientIDs:  clientIDs,
+		Mode:       "add_or_move",
+		QueueApply: true,
+	})
+	if err != nil {
+		t.Fatalf("bulk move access group: %v", err)
+	}
+	if result.CreatedMemberships != 1000 || result.MovedMemberships != 0 || result.SkippedExisting != 0 || len(result.Failed) != 0 {
+		t.Fatalf("bulk access group result = %#v, want 1000 created", result)
+	}
+	if result.AffectedInstances != 2 || result.ApplyJobCount != 2 {
+		t.Fatalf("bulk access group apply = affected:%d jobs:%d, want 2/2", result.AffectedInstances, result.ApplyJobCount)
+	}
+	var jobsAfter int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsAfter); err != nil {
+		t.Fatalf("count jobs after: %v", err)
+	}
+	if got := jobsAfter - jobsBefore; got > 3 {
+		t.Fatalf("bulk 1000 generic access group queued %d jobs, want bounded <= 3", got)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from client_access_group_memberships where group_id=$1 and status='active'`, 1000, outUSASF.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where instance_id in ($1,$2)`, 2000, instanceA.ID, instanceB.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where client_account_id=$1 and instance_id=$2`, 1, clientIDs[0], instanceA.ID)
+
+	accessBeforeMove := xrayServiceAccessByInstance(t, ctx, store, clientIDs[0], instanceA.ID)
+	beforeMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, accessBeforeMove.ID)
+	if err != nil {
+		t.Fatalf("ensure uuid before move: %v", err)
+	}
+	stableUUID := firstString(beforeMetadata["xray_uuid"])
+	if stableUUID == "" {
+		t.Fatal("stable uuid is empty")
+	}
+
+	var jobsBeforeScope int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsBeforeScope); err != nil {
+		t.Fatalf("count jobs before scope: %v", err)
+	}
+	scope, err := store.UpdateClientAccessGroupScope(ctx, outUSASF.ID, domain.ClientAccessGroupScope{
+		ScopeMode:             "selected_instances",
+		AutoApplyNewInstances: true,
+		IncludeInstanceIDs:    []string{instanceA.ID},
+	}, nil)
+	if err != nil {
+		t.Fatalf("update access group scope: %v", err)
+	}
+	if scope.AffectedInstances != 1 || scope.MaterializedDisabled != 1000 || scope.ApplyJobCount != 2 {
+		t.Fatalf("scope update result = %#v, want one affected instance, 1000 disabled projections and two apply jobs", scope)
+	}
+	var jobsAfterScope int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsAfterScope); err != nil {
+		t.Fatalf("count jobs after scope: %v", err)
+	}
+	if got := jobsAfterScope - jobsBeforeScope; got != 2 {
+		t.Fatalf("scope update queued %d jobs, want 2", got)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where instance_id=$1 and coalesce(metadata_json->>'access_group_id','')=$2 and status='disabled'`, 1000, instanceB.ID, outUSASF.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where instance_id=$1 and coalesce(metadata_json->>'access_group_id','')=$2 and status in ('pending','active')`, 1000, instanceA.ID, outUSASF.ID)
+
+	var jobsBeforePolicy int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsBeforePolicy); err != nil {
+		t.Fatalf("count jobs before policy update: %v", err)
+	}
+	autoApplyOut := outUSASF.AutoApplyNewInstances
+	if _, err := store.UpdateClientAccessGroup(ctx, outUSASF.ID, domain.ClientAccessGroupInput{
+		ServiceCode:           outUSASF.ServiceCode,
+		GroupKey:              outUSASF.GroupKey,
+		DisplayName:           outUSASF.DisplayName,
+		Description:           outUSASF.Description,
+		Status:                "active",
+		PolicyJSON:            []byte(`{"access_mode":"selected_egress","egress_mode":"selected_egress","outbound_tag":"egress-out_usa_sf","rules":[{"type":"field","domain":["geosite:private"],"outbound_tag":"direct"}]}`),
+		ScopeMode:             "selected_instances",
+		AutoApplyNewInstances: &autoApplyOut,
+	}, nil); err != nil {
+		t.Fatalf("update access group policy: %v", err)
+	}
+	var jobsAfterPolicy int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsAfterPolicy); err != nil {
+		t.Fatalf("count jobs after policy update: %v", err)
+	}
+	if got := jobsAfterPolicy - jobsBeforePolicy; got != 1 {
+		t.Fatalf("policy update queued %d jobs, want one apply for the scoped instance", got)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from client_access_group_sync_state where group_id=$1 and instance_id=$2 and status='queued'`, 1, outUSASF.ID, instanceA.ID)
+
+	noApplyClient, err := store.CreateClient(ctx, domain.Client{Username: "it-access-group-no-apply-" + suffix})
+	if err != nil {
+		t.Fatalf("create no-apply client: %v", err)
+	}
+	var jobsBeforeNoApply int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsBeforeNoApply); err != nil {
+		t.Fatalf("count jobs before no-apply: %v", err)
+	}
+	noApply, err := store.BulkMoveClientAccessGroupMembers(ctx, defaultGroup.ID, domain.ClientAccessGroupMembershipRequest{
+		ClientIDs:  []string{noApplyClient.ID},
+		Mode:       "add_or_move",
+		QueueApply: false,
+	})
+	if err != nil {
+		t.Fatalf("generic queue_apply false: %v", err)
+	}
+	if noApply.CreatedMemberships != 1 || noApply.ApplyJobCount != 0 || len(noApply.ApplyJobIDs) != 0 || noApply.MaterializedCreated != 2 {
+		t.Fatalf("queue_apply false result = %#v, want materialized without apply jobs", noApply)
+	}
+	var jobsAfterNoApply int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsAfterNoApply); err != nil {
+		t.Fatalf("count jobs after no-apply: %v", err)
+	}
+	if jobsAfterNoApply != jobsBeforeNoApply {
+		t.Fatalf("queue_apply false created %d jobs, want 0", jobsAfterNoApply-jobsBeforeNoApply)
+	}
+
+	addOnly, err := store.BulkAddClientAccessGroupMembers(ctx, defaultGroup.ID, domain.ClientAccessGroupMembershipRequest{
+		ClientIDs: []string{clientIDs[1]},
+		Mode:      "add_only",
+	})
+	if err != nil {
+		t.Fatalf("generic add_only: %v", err)
+	}
+	if addOnly.CreatedMemberships != 0 || addOnly.MovedMemberships != 0 || addOnly.SkippedExisting != 1 {
+		t.Fatalf("generic add_only result = %#v, want skipped existing", addOnly)
+	}
+	if got := activeClientAccessGroupKey(t, ctx, store, clientIDs[1], "vless"); got != "out_usa_sf" {
+		t.Fatalf("add_only active group = %q, want out_usa_sf", got)
+	}
+
+	moved, err := store.BulkMoveClientAccessGroupMembers(ctx, defaultGroup.ID, domain.ClientAccessGroupMembershipRequest{
+		ClientIDs:  []string{clientIDs[0]},
+		Mode:       "add_or_move",
+		QueueApply: true,
+	})
+	if err != nil {
+		t.Fatalf("generic move: %v", err)
+	}
+	if moved.CreatedMemberships != 0 || moved.MovedMemberships != 1 || moved.SkippedExisting != 0 {
+		t.Fatalf("generic move result = %#v, want one moved", moved)
+	}
+	if got := activeClientAccessGroupKey(t, ctx, store, clientIDs[0], "vless"); got != "default" {
+		t.Fatalf("moved active group = %q, want default", got)
+	}
+	accessAfterMove := xrayServiceAccessByInstance(t, ctx, store, clientIDs[0], instanceA.ID)
+	afterMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, accessAfterMove.ID)
+	if err != nil {
+		t.Fatalf("ensure uuid after move: %v", err)
+	}
+	if got := firstString(afterMetadata["xray_uuid"]); got != stableUUID {
+		t.Fatalf("moved uuid = %q, want stable %q", got, stableUUID)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where client_account_id=$1 and instance_id=$2`, 1, clientIDs[0], instanceA.ID)
+
+	var jobsBeforeDisable int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsBeforeDisable); err != nil {
+		t.Fatalf("count jobs before disable: %v", err)
+	}
+	if _, err := store.SetClientAccessGroupStatus(ctx, defaultGroup.ID, "disabled", nil); err != nil {
+		t.Fatalf("disable default access group: %v", err)
+	}
+	var jobsAfterDisable int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsAfterDisable); err != nil {
+		t.Fatalf("count jobs after disable: %v", err)
+	}
+	if got := jobsAfterDisable - jobsBeforeDisable; got != 2 {
+		t.Fatalf("disable group queued %d jobs, want two apply jobs for materialized instances", got)
+	}
+	var disabledProjections int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from service_accesses where coalesce(metadata_json->>'access_group_id','')=$1 and status='disabled'`, defaultGroup.ID).Scan(&disabledProjections); err != nil {
+		t.Fatalf("count disabled default projections: %v", err)
+	}
+	if disabledProjections == 0 {
+		t.Fatal("disable group left no disabled service access projections")
+	}
+
+	var jobsBeforeEnable int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsBeforeEnable); err != nil {
+		t.Fatalf("count jobs before enable: %v", err)
+	}
+	if _, err := store.SetClientAccessGroupStatus(ctx, defaultGroup.ID, "active", nil); err != nil {
+		t.Fatalf("enable default access group: %v", err)
+	}
+	var jobsAfterEnable int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsAfterEnable); err != nil {
+		t.Fatalf("count jobs after enable: %v", err)
+	}
+	if got := jobsAfterEnable - jobsBeforeEnable; got != 2 {
+		t.Fatalf("enable group queued %d jobs, want two apply jobs for materialized instances", got)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where coalesce(metadata_json->>'access_group_id','')=$1 and status in ('pending','active')`, disabledProjections, defaultGroup.ID)
+
+	nodeC, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-access-group-node-c-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.142",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node c: %v", err)
+	}
+	instanceC, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       nodeC.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-access-group-c-" + suffix,
+		Slug:         "it-access-group-c-" + suffix,
+		EndpointHost: "access-group-c.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("access-group-c.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create scoped xray instance c: %v", err)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where instance_id=$1 and coalesce(metadata_json->>'access_group_id','')=$2`, 0, instanceC.ID, outUSASF.ID)
+
+	disabled, err := store.CreateClientAccessGroup(ctx, domain.ClientAccessGroupInput{
+		ServiceCode: "vless",
+		GroupKey:    "it_disabled_" + suffix,
+		DisplayName: "Disabled " + suffix,
+		Status:      "disabled",
+		PolicyJSON:  []byte(`{}`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("create disabled group: %v", err)
+	}
+	if _, err := store.BulkMoveClientAccessGroupMembers(ctx, disabled.ID, domain.ClientAccessGroupMembershipRequest{ClientIDs: []string{clientIDs[2]}}); err == nil {
+		t.Fatal("disabled client access group accepted membership, want error")
+	}
+	deleted, err := store.CreateClientAccessGroup(ctx, domain.ClientAccessGroupInput{
+		ServiceCode: "vless",
+		GroupKey:    "it_deleted_" + suffix,
+		DisplayName: "Deleted " + suffix,
+		PolicyJSON:  []byte(`{}`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("create deleted group: %v", err)
+	}
+	if _, err := store.DeleteClientAccessGroupSoft(ctx, deleted.ID, nil); err != nil {
+		t.Fatalf("delete group: %v", err)
+	}
+	if _, err := store.BulkMoveClientAccessGroupMembers(ctx, deleted.ID, domain.ClientAccessGroupMembershipRequest{ClientIDs: []string{clientIDs[2]}}); err == nil {
+		t.Fatal("deleted client access group accepted membership, want error")
+	}
 }
 
 func TestPostgresIntegrationDefaultFirewallBaseline(t *testing.T) {
@@ -887,6 +1569,9 @@ func TestPostgresIntegrationFirewallApplyCreatesRevisionJobAndNodeState(t *testi
 	if nodeBase.ID == "" {
 		t.Fatal("node_base firewall policy was not seeded")
 	}
+	if err := store.SeedFirewallManagementCIDRs(ctx, []string{"10.50.0.10/32"}, nil); err != nil {
+		t.Fatalf("seed firewall management CIDRs: %v", err)
+	}
 
 	previewJob, err := store.CreateFirewallPreviewJob(ctx, node.ID, nodeBase.ID, true)
 	if err != nil {
@@ -993,6 +1678,9 @@ func TestPostgresIntegrationStrictFirewallApplyRequiresMatchingPreview(t *testin
 	if nodeBase.ID == "" {
 		t.Fatal("node_base firewall policy was not seeded")
 	}
+	if err := store.SeedFirewallManagementCIDRs(ctx, []string{"10.50.0.10/32"}, nil); err != nil {
+		t.Fatalf("seed firewall management CIDRs: %v", err)
+	}
 
 	_, err = store.CreateFirewallApplyJob(ctx, node.ID, nodeBase.ID, true)
 	if err == nil {
@@ -1077,6 +1765,222 @@ func TestPostgresIntegrationStrictFirewallRejectsDNSOnlyAddressGroup(t *testing.
 	}
 	if !strings.Contains(err.Error(), "DNS-only") || !strings.Contains(err.Error(), list.Key) {
 		t.Fatalf("strict DNS-only preview error = %q, want DNS-only address group message", err.Error())
+	}
+}
+
+func TestPostgresIntegrationStrictFirewallInputRequiresManagementCIDR(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-fw-no-mgmt-" + suffix,
+		Kind:          "remote",
+		Role:          "worker",
+		Status:        "online",
+		Address:       "10.50.8.40",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	inventory, err := store.FirewallInventory(ctx)
+	if err != nil {
+		t.Fatalf("firewall inventory: %v", err)
+	}
+	var nodeBase domain.FirewallPolicy
+	for _, policy := range inventory.Policies {
+		if policy.Key == "node_base" {
+			nodeBase = policy
+			break
+		}
+	}
+	if nodeBase.ID == "" {
+		t.Fatal("node_base firewall policy was not seeded")
+	}
+	_, err = store.CreateFirewallPreviewJob(ctx, node.ID, nodeBase.ID, true)
+	if err == nil {
+		t.Fatal("strict preview without management CIDR succeeded, want validation error")
+	}
+	if !strings.Contains(err.Error(), "trusted_control_plane") {
+		t.Fatalf("strict input error = %q, want trusted_control_plane guidance", err.Error())
+	}
+}
+
+func TestPostgresIntegrationStrictFirewallInputWithManagementCIDRQueuesSSHProtectedPreview(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-fw-mgmt-" + suffix,
+		Kind:          "remote",
+		Role:          "worker",
+		Status:        "online",
+		Address:       "10.50.8.41",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if err := store.SeedFirewallManagementCIDRs(ctx, []string{"10.50.0.10/32"}, []string{"10.50.0.11/32"}); err != nil {
+		t.Fatalf("seed firewall management CIDRs: %v", err)
+	}
+	inventory, err := store.FirewallInventory(ctx)
+	if err != nil {
+		t.Fatalf("firewall inventory: %v", err)
+	}
+	var nodeBase domain.FirewallPolicy
+	for _, policy := range inventory.Policies {
+		if policy.Key == "node_base" {
+			nodeBase = policy
+			break
+		}
+	}
+	if nodeBase.ID == "" {
+		t.Fatal("node_base firewall policy was not seeded")
+	}
+	job, err := store.CreateFirewallPreviewJob(ctx, node.ID, nodeBase.ID, true)
+	if err != nil {
+		t.Fatalf("strict preview with management CIDR: %v", err)
+	}
+	if got := firstString(job.Payload["default_input_policy"]); got != "drop" {
+		t.Fatalf("preview input policy = %q, want drop", got)
+	}
+	lists, _ := job.Payload["address_lists"].([]any)
+	foundControlPlane := false
+	for _, raw := range lists {
+		list, _ := raw.(map[string]any)
+		if firstString(list["key"]) == "trusted_control_plane" {
+			entries, _ := list["entries"].([]any)
+			for _, rawEntry := range entries {
+				entry, _ := rawEntry.(map[string]any)
+				if firstString(entry["value"]) == "10.50.0.10/32" || firstString(entry["value"]) == "10.50.0.11/32" {
+					foundControlPlane = true
+				}
+			}
+		}
+	}
+	if !foundControlPlane {
+		t.Fatalf("preview payload did not include managed trusted_control_plane entries: %#v", job.Payload["address_lists"])
+	}
+}
+
+func TestPostgresIntegrationStrictFirewallRejectsForwardDropWithoutSourceAllow(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-fw-forward-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "online",
+		Address:       "10.50.8.42",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	policy, err := store.CreateFirewallPolicy(ctx, domain.FirewallPolicy{
+		Key:                  "it_forward_drop_" + suffix,
+		Label:                "Integration forward drop " + suffix,
+		Scope:                "node",
+		DefaultInputPolicy:   "accept",
+		DefaultForwardPolicy: "drop",
+		DefaultOutputPolicy:  "accept",
+		Status:               "active",
+	})
+	if err != nil {
+		t.Fatalf("create firewall policy: %v", err)
+	}
+	_, err = store.CreateFirewallPreviewJob(ctx, node.ID, policy.ID, true)
+	if err == nil {
+		t.Fatal("strict forward drop on egress node without source allow succeeded, want validation error")
+	}
+	if !strings.Contains(err.Error(), "strict forward") {
+		t.Fatalf("strict forward error = %q, want strict forward message", err.Error())
+	}
+}
+
+func TestPostgresIntegrationStrictFirewallRejectsOutputDropWithoutControlPlaneEgress(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-fw-output-" + suffix,
+		Kind:          "remote",
+		Role:          "worker",
+		Status:        "online",
+		Address:       "10.50.8.43",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	policy, err := store.CreateFirewallPolicy(ctx, domain.FirewallPolicy{
+		Key:                  "it_output_drop_" + suffix,
+		Label:                "Integration output drop " + suffix,
+		Scope:                "node",
+		DefaultInputPolicy:   "accept",
+		DefaultForwardPolicy: "accept",
+		DefaultOutputPolicy:  "drop",
+		Status:               "active",
+	})
+	if err != nil {
+		t.Fatalf("create firewall policy: %v", err)
+	}
+	_, err = store.CreateFirewallPreviewJob(ctx, node.ID, policy.ID, true)
+	if err == nil {
+		t.Fatal("strict output drop without control-plane egress succeeded, want validation error")
+	}
+	if !strings.Contains(err.Error(), "strict output") {
+		t.Fatalf("strict output error = %q, want strict output message", err.Error())
+	}
+}
+
+func TestPostgresIntegrationFirewallManagementCIDRsRejectDNSAndBroadSources(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	if err := store.SeedFirewallManagementCIDRs(ctx, []string{"control.example.test"}, nil); err == nil {
+		t.Fatal("DNS management CIDR was accepted, want validation error")
+	}
+	if err := store.SeedFirewallManagementCIDRs(ctx, []string{"0.0.0.0/0"}, nil); err == nil {
+		t.Fatal("broad management CIDR was accepted, want validation error")
+	}
+}
+
+func TestPostgresIntegrationFirewallManagementCIDRsReplaceManagedEntries(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	if err := store.SeedFirewallManagementCIDRs(ctx, []string{"10.60.0.10/32"}, []string{"10.60.0.11/32"}); err != nil {
+		t.Fatalf("initial seed firewall management CIDRs: %v", err)
+	}
+	if err := store.SeedFirewallManagementCIDRs(ctx, []string{"10.60.0.20/32"}, nil); err != nil {
+		t.Fatalf("replace control-plane firewall CIDRs: %v", err)
+	}
+	settings, err := store.GetFirewallManagementSettings(ctx)
+	if err != nil {
+		t.Fatalf("get firewall management settings: %v", err)
+	}
+	if strings.Join(settings.ControlPlaneSourceCIDRs, ",") != "10.60.0.20/32" {
+		t.Fatalf("control-plane CIDRs = %#v, want only replacement value", settings.ControlPlaneSourceCIDRs)
+	}
+	if strings.Join(settings.SSHBootstrapSourceCIDRs, ",") != "10.60.0.11/32" {
+		t.Fatalf("SSH bootstrap CIDRs = %#v, want unchanged value when env set is empty", settings.SSHBootstrapSourceCIDRs)
 	}
 }
 
@@ -2887,6 +3791,37 @@ func vlessGroupMemberCount(overview domain.VLESSGroupMembersOverview, key string
 		}
 	}
 	return 0
+}
+
+func clientAccessGroupByKey(t *testing.T, ctx context.Context, store *Store, serviceCode, groupKey string) domain.ClientAccessGroup {
+	t.Helper()
+
+	groups, err := store.ListClientAccessGroups(ctx, serviceCode)
+	if err != nil {
+		t.Fatalf("list client access groups: %v", err)
+	}
+	for _, group := range groups {
+		if group.ServiceCode == normalizeClientAccessGroupServiceCode(serviceCode) && group.GroupKey == normalizeVLESSGroupTemplateKey(groupKey) {
+			return group
+		}
+	}
+	t.Fatalf("client access group %s/%s not found: %#v", serviceCode, groupKey, groups)
+	return domain.ClientAccessGroup{}
+}
+
+func activeClientAccessGroupKey(t *testing.T, ctx context.Context, store *Store, clientID, serviceCode string) string {
+	t.Helper()
+
+	var key string
+	err := store.db.QueryRow(ctx, `select cag.group_key
+		from client_access_group_memberships m
+		join client_access_groups cag on cag.id=m.group_id
+		where m.client_account_id=$1 and m.service_code=$2 and m.status='active'`,
+		clientID, normalizeClientAccessGroupServiceCode(serviceCode)).Scan(&key)
+	if err != nil {
+		t.Fatalf("active client access group key for client %s: %v", clientID, err)
+	}
+	return key
 }
 
 func stringSliceFromAny(value any) []string {

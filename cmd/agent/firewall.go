@@ -66,13 +66,18 @@ type nodeFirewallListElement struct {
 }
 
 type nodeFirewallPlan struct {
-	Script                   string
-	Count                    int
-	SystemRuleCount          int
-	Hash                     string
-	Warnings                 []string
-	AddressListCounts        []map[string]any
-	DefaultPolicyEnforcement string
+	Script                         string
+	Count                          int
+	SystemRuleCount                int
+	Hash                           string
+	Warnings                       []string
+	AddressListCounts              []map[string]any
+	AddressGroupRenderedEntryCount int
+	AddressGroupIgnoredDNSEntries  int
+	DefaultPolicyEnforcement       string
+	SSHBootstrapPreserved          bool
+	ControlPlaneEgressPreserved    bool
+	ForwardEgressPreserved         bool
 }
 
 type nodeFirewallDefaultPolicies struct {
@@ -80,6 +85,15 @@ type nodeFirewallDefaultPolicies struct {
 	Forward string
 	Output  string
 	Enforce bool
+}
+
+type nodeFirewallSafetyRules struct {
+	Lines                       []string
+	Count                       int
+	Warnings                    []string
+	SSHBootstrapPreserved       bool
+	ControlPlaneEgressPreserved bool
+	ForwardEgressPreserved      bool
 }
 
 func (c *client) handleNodeFirewallJob(ctx context.Context, j job, st agentState) (string, map[string]any) {
@@ -94,7 +108,7 @@ func (c *client) handleNodeFirewallJob(ctx context.Context, j job, st agentState
 		if err != nil {
 			return "failed", map[string]any{"error": err.Error(), "stage": "render"}
 		}
-		return "succeeded", map[string]any{"applied": false, "rule_count": plan.Count, "system_rule_count": plan.SystemRuleCount, "rendered_hash": plan.Hash, "warnings": plan.Warnings, "address_list_counts": plan.AddressListCounts, "default_policy_enforcement": plan.DefaultPolicyEnforcement, "script": plan.Script}
+		return "succeeded", nodeFirewallResultPayload(plan, false, "")
 	case "node.firewall.observe":
 		code, out := runInstallCommand(ctx, "nft", "list", "table", firewallNFTFamily, firewallNFTTable)
 		result := map[string]any{"observed": code == 0, "output": truncate(out, 4000)}
@@ -122,14 +136,20 @@ func (c *client) handleNodeFirewallJob(ctx context.Context, j job, st agentState
 		}
 		out, err := runNFTScript(ctx, plan.Script)
 		result := map[string]any{
-			"applied":                    err == nil,
-			"rule_count":                 plan.Count,
-			"system_rule_count":          plan.SystemRuleCount,
-			"rendered_hash":              plan.Hash,
-			"warnings":                   plan.Warnings,
-			"address_list_counts":        plan.AddressListCounts,
-			"default_policy_enforcement": plan.DefaultPolicyEnforcement,
-			"output":                     truncate(out, 4000),
+			"applied":                               err == nil,
+			"rule_count":                            plan.Count,
+			"system_rule_count":                     plan.SystemRuleCount,
+			"rendered_hash":                         plan.Hash,
+			"warnings":                              plan.Warnings,
+			"address_list_counts":                   plan.AddressListCounts,
+			"address_group_rendered_entry_count":    plan.AddressGroupRenderedEntryCount,
+			"address_group_ignored_dns_entry_count": plan.AddressGroupIgnoredDNSEntries,
+			"address_group_ignored_dns_count":       plan.AddressGroupIgnoredDNSEntries,
+			"default_policy_enforcement":            plan.DefaultPolicyEnforcement,
+			"ssh_bootstrap_preserved":               plan.SSHBootstrapPreserved,
+			"control_plane_egress_preserved":        plan.ControlPlaneEgressPreserved,
+			"forward_egress_preserved":              plan.ForwardEgressPreserved,
+			"output":                                truncate(out, 4000),
 		}
 		if err != nil {
 			result["error"] = err.Error()
@@ -164,6 +184,29 @@ func disableNodeFirewall(ctx context.Context) map[string]any {
 	if code != 0 {
 		result["status"] = "failed"
 		result["error"] = "managed firewall table delete failed: " + firstLine(out)
+	}
+	return result
+}
+
+func nodeFirewallResultPayload(plan nodeFirewallPlan, applied bool, output string) map[string]any {
+	result := map[string]any{
+		"applied":                               applied,
+		"rule_count":                            plan.Count,
+		"system_rule_count":                     plan.SystemRuleCount,
+		"rendered_hash":                         plan.Hash,
+		"warnings":                              plan.Warnings,
+		"address_list_counts":                   plan.AddressListCounts,
+		"address_group_rendered_entry_count":    plan.AddressGroupRenderedEntryCount,
+		"address_group_ignored_dns_entry_count": plan.AddressGroupIgnoredDNSEntries,
+		"address_group_ignored_dns_count":       plan.AddressGroupIgnoredDNSEntries,
+		"default_policy_enforcement":            plan.DefaultPolicyEnforcement,
+		"ssh_bootstrap_preserved":               plan.SSHBootstrapPreserved,
+		"control_plane_egress_preserved":        plan.ControlPlaneEgressPreserved,
+		"forward_egress_preserved":              plan.ForwardEgressPreserved,
+		"script":                                plan.Script,
+	}
+	if output != "" {
+		result["output"] = truncate(output, 4000)
 	}
 	return result
 }
@@ -237,12 +280,12 @@ func renderNodeFirewallPlan(payload map[string]any) (nodeFirewallPlan, error) {
 	lines := renderNodeFirewallChainResetLines(defaults)
 	setLines := renderNodeFirewallAddressListSets(addressLists)
 	lines = append(lines, setLines...)
-	safetyLines, safetyCount, safetyWarnings, err := renderNodeFirewallSafetyRules(defaults, payload, rules)
+	safety, err := renderNodeFirewallSafetyRules(defaults, payload, rules, addressLists)
 	if err != nil {
 		return nodeFirewallPlan{}, err
 	}
-	lines = append(lines, safetyLines...)
-	warnings = append(warnings, safetyWarnings...)
+	lines = append(lines, safety.Lines...)
+	warnings = append(warnings, safety.Warnings...)
 	applied := 0
 	for _, rule := range rules {
 		if !rule.Enabled || rule.Status != "active" {
@@ -266,7 +309,27 @@ func renderNodeFirewallPlan(payload map[string]any) (nodeFirewallPlan, error) {
 	if defaults.Enforce {
 		enforcement = "enforced"
 	}
-	return nodeFirewallPlan{Script: script, Count: applied, SystemRuleCount: safetyCount + len(rejectLines), Hash: hex.EncodeToString(sum[:]), Warnings: warnings, AddressListCounts: addressLists.stats(), DefaultPolicyEnforcement: enforcement}, nil
+	stats := addressLists.stats()
+	renderedEntryCount := 0
+	ignoredDNSCount := 0
+	for _, stat := range stats {
+		renderedEntryCount += intFromAny(stat["rendered_entries"])
+		ignoredDNSCount += intFromAny(stat["ignored_dns_entries"])
+	}
+	return nodeFirewallPlan{
+		Script:                         script,
+		Count:                          applied,
+		SystemRuleCount:                safety.Count + len(rejectLines),
+		Hash:                           hex.EncodeToString(sum[:]),
+		Warnings:                       warnings,
+		AddressListCounts:              stats,
+		AddressGroupRenderedEntryCount: renderedEntryCount,
+		AddressGroupIgnoredDNSEntries:  ignoredDNSCount,
+		DefaultPolicyEnforcement:       enforcement,
+		SSHBootstrapPreserved:          safety.SSHBootstrapPreserved,
+		ControlPlaneEgressPreserved:    safety.ControlPlaneEgressPreserved,
+		ForwardEgressPreserved:         safety.ForwardEgressPreserved,
+	}, nil
 }
 
 func parseNodeFirewallDefaultPolicies(payload map[string]any) (nodeFirewallDefaultPolicies, []string, error) {
@@ -333,9 +396,14 @@ func nftBasePolicy(policy string, enforce bool) string {
 	return "drop"
 }
 
-func renderNodeFirewallSafetyRules(defaults nodeFirewallDefaultPolicies, payload map[string]any, rules []nodeFirewallRule) ([]string, int, []string, error) {
+func renderNodeFirewallSafetyRules(defaults nodeFirewallDefaultPolicies, payload map[string]any, rules []nodeFirewallRule, addressLists nodeFirewallAddressLists) (nodeFirewallSafetyRules, error) {
+	out := nodeFirewallSafetyRules{
+		SSHBootstrapPreserved:       defaults.Input == "accept" || !defaults.Enforce,
+		ControlPlaneEgressPreserved: defaults.Output == "accept" || !defaults.Enforce,
+		ForwardEgressPreserved:      defaults.Forward == "accept" || !defaults.Enforce,
+	}
 	if !defaults.Enforce {
-		return nil, 0, nil, nil
+		return out, nil
 	}
 	lines := []string{}
 	warnings := []string{}
@@ -344,16 +412,24 @@ func renderNodeFirewallSafetyRules(defaults nodeFirewallDefaultPolicies, payload
 			fmt.Sprintf("add rule %s %s %s ct state { established, related } accept comment %s", firewallNFTFamily, firewallNFTTable, firewallInputChain, nftQuote(firewallNFTCommentScope+"system-established-input")),
 			fmt.Sprintf("add rule %s %s %s iifname %s accept comment %s", firewallNFTFamily, firewallNFTTable, firewallInputChain, nftQuote("lo"), nftQuote(firewallNFTCommentScope+"system-loopback-input")),
 		)
+		sshLines, preserved, err := renderNodeFirewallSSHBootstrapRules(payload, addressLists)
+		if err != nil {
+			return nodeFirewallSafetyRules{}, err
+		}
+		lines = append(lines, sshLines...)
+		out.SSHBootstrapPreserved = preserved
 	}
 	if defaults.Forward != "accept" {
 		lines = append(lines,
 			fmt.Sprintf("add rule %s %s %s ct state { established, related } accept comment %s", firewallNFTFamily, firewallNFTTable, firewallForwardChain, nftQuote(firewallNFTCommentScope+"system-established-forward")),
 		)
+		requiresForward := boolFromAny(payload["node_requires_forward_preservation"])
+		out.ForwardEgressPreserved = !requiresForward || nodeFirewallHasForwardSourceAllow(rules, addressLists)
 	}
 	if defaults.Output != "accept" {
-		controlPlaneLine, warning, err := renderNodeFirewallControlPlaneOutputRule(payload, rules)
+		controlPlaneLine, warning, preserved, err := renderNodeFirewallControlPlaneOutputRule(payload, rules)
 		if err != nil {
-			return nil, 0, nil, err
+			return nodeFirewallSafetyRules{}, err
 		}
 		lines = append(lines,
 			fmt.Sprintf("add rule %s %s %s ct state { established, related } accept comment %s", firewallNFTFamily, firewallNFTTable, firewallOutputChain, nftQuote(firewallNFTCommentScope+"system-established-output")),
@@ -365,18 +441,127 @@ func renderNodeFirewallSafetyRules(defaults nodeFirewallDefaultPolicies, payload
 		if warning != "" {
 			warnings = append(warnings, warning)
 		}
+		out.ControlPlaneEgressPreserved = preserved
 	}
-	return lines, len(lines), warnings, nil
+	out.Lines = lines
+	out.Count = len(lines)
+	out.Warnings = warnings
+	return out, nil
 }
 
-func renderNodeFirewallControlPlaneOutputRule(payload map[string]any, rules []nodeFirewallRule) (string, string, error) {
+func renderNodeFirewallSSHBootstrapRules(payload map[string]any, addressLists nodeFirewallAddressLists) ([]string, bool, error) {
+	ports := nodeFirewallSSHBootstrapPorts(payload["ssh_bootstrap_ports"])
+	if len(ports) == 0 {
+		ports = []string{"22"}
+	}
+	lines := []string{}
+	for _, listKey := range []string{"trusted_control_plane", "trusted_operators"} {
+		list, ok := addressLists.ByRef[listKey]
+		if !ok {
+			continue
+		}
+		if nodeFirewallListHasAnyCIDR(list) {
+			continue
+		}
+		for _, family := range []string{"ip", "ip6"} {
+			setName := list.setNameForFamily(family)
+			if setName == "" {
+				continue
+			}
+			comment := firewallNFTCommentScope + "system-ssh-bootstrap-" + listKey + "-" + family
+			lines = append(lines, fmt.Sprintf("add rule %s %s %s ct state { new, established } %s saddr @%s tcp dport %s accept comment %s", firewallNFTFamily, firewallNFTTable, firewallInputChain, family, setName, nftSet(ports), nftQuote(comment)))
+		}
+	}
+	return lines, len(lines) > 0, nil
+}
+
+func nodeFirewallListHasAnyCIDR(list nodeFirewallAddressList) bool {
+	for _, value := range append(append([]string{}, list.V4...), list.V6...) {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		if prefix.Bits() == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeFirewallSSHBootstrapPorts(raw any) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	switch typed := raw.(type) {
+	case []any:
+		for _, item := range typed {
+			addNodeFirewallPortValue(&out, seen, item)
+		}
+	case []int:
+		for _, item := range typed {
+			addNodeFirewallPortValue(&out, seen, item)
+		}
+	case []string:
+		for _, item := range typed {
+			addNodeFirewallPortValue(&out, seen, item)
+		}
+	case string:
+		for _, item := range strings.Split(typed, ",") {
+			addNodeFirewallPortValue(&out, seen, item)
+		}
+	default:
+		if raw != nil {
+			addNodeFirewallPortValue(&out, seen, raw)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func addNodeFirewallPortValue(out *[]string, seen map[string]bool, raw any) {
+	port, err := parseNodeFirewallPort(stringify(raw))
+	if err != nil {
+		return
+	}
+	value := strconv.Itoa(port)
+	if seen[value] {
+		return
+	}
+	seen[value] = true
+	*out = append(*out, value)
+}
+
+func nodeFirewallHasForwardSourceAllow(rules []nodeFirewallRule, addressLists nodeFirewallAddressLists) bool {
+	for _, rule := range rules {
+		if !rule.Enabled || rule.Status != "active" || rule.Chain != "forward" || rule.Action != "accept" {
+			continue
+		}
+		if len(rule.StateMatch) > 0 && !containsNodeFirewallState(rule.StateMatch, "new") {
+			continue
+		}
+		listKey := strings.ToLower(strings.TrimSpace(rule.SrcListKey))
+		if listKey == "" && rule.SrcListID != "" {
+			if list, ok := addressLists.ByRef[rule.SrcListID]; ok {
+				listKey = strings.ToLower(strings.TrimSpace(list.Key))
+			}
+		}
+		if listKey != "vpn_client_sources" && listKey != "backhaul_sources" {
+			continue
+		}
+		if list, ok := addressLists.ByRef[first(rule.SrcListKey, rule.SrcListID)]; ok && len(list.families()) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func renderNodeFirewallControlPlaneOutputRule(payload map[string]any, rules []nodeFirewallRule) (string, string, bool, error) {
 	raw := strings.TrimSpace(stringify(payload["agent_control_plane_url"]))
 	if raw == "" {
-		return "", "", fmt.Errorf("strict default output policy requires agent_control_plane_url to keep control-plane egress reachable")
+		return "", "", false, fmt.Errorf("strict default output policy requires agent_control_plane_url to keep control-plane egress reachable")
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Hostname() == "" {
-		return "", "", fmt.Errorf("strict default output policy requires a valid agent_control_plane_url")
+		return "", "", false, fmt.Errorf("strict default output policy requires a valid agent_control_plane_url")
 	}
 	host := parsed.Hostname()
 	port := parsed.Port()
@@ -389,14 +574,14 @@ func renderNodeFirewallControlPlaneOutputRule(payload map[string]any, rules []no
 		}
 	}
 	if _, err := parseNodeFirewallPort(port); err != nil {
-		return "", "", fmt.Errorf("strict default output policy control-plane URL port: %w", err)
+		return "", "", false, fmt.Errorf("strict default output policy control-plane URL port: %w", err)
 	}
 	addr, err := netip.ParseAddr(host)
 	if err != nil {
 		if hasExplicitControlPlaneOutputAllow(rules, port) {
-			return "", fmt.Sprintf("strict default output policy relies on explicit output allow rule for control-plane TCP port %s because control-plane URL host %q is DNS", port, host), nil
+			return "", fmt.Sprintf("strict default output policy relies on explicit output allow rule for control-plane TCP port %s because control-plane URL host %q is DNS", port, host), true, nil
 		}
-		return "", "", fmt.Errorf("strict default output policy requires control-plane URL host to be an IP address or an explicit active output accept rule for TCP port %s; %q is DNS", port, host)
+		return "", "", false, fmt.Errorf("strict default output policy requires control-plane URL host to be an IP address or an explicit active output accept rule for TCP port %s; %q is DNS", port, host)
 	}
 	family := "ip"
 	cidr := addr.String() + "/32"
@@ -405,7 +590,7 @@ func renderNodeFirewallControlPlaneOutputRule(payload map[string]any, rules []no
 		cidr = addr.String() + "/128"
 	}
 	line := fmt.Sprintf("add rule %s %s %s %s daddr %s tcp dport %s accept comment %s", firewallNFTFamily, firewallNFTTable, firewallOutputChain, family, cidr, port, nftQuote(firewallNFTCommentScope+"system-control-plane-output"))
-	return line, "", nil
+	return line, "", true, nil
 }
 
 func hasExplicitControlPlaneOutputAllow(rules []nodeFirewallRule, port string) bool {
@@ -419,10 +604,19 @@ func hasExplicitControlPlaneOutputAllow(rules []nodeFirewallRule, port string) b
 		if len(rule.StateMatch) > 0 && !containsNodeFirewallState(rule.StateMatch, "new") {
 			continue
 		}
-		if rule.Protocol == "any" && rule.DstPorts == "" {
-			return true
+		if rule.Protocol == "tcp" && !nodeFirewallPortsContain(rule.DstPorts, port) {
+			continue
 		}
-		if rule.Protocol == "tcp" && nodeFirewallPortsContain(rule.DstPorts, port) {
+		if rule.Protocol == "any" && strings.TrimSpace(rule.DstPorts) != "" {
+			continue
+		}
+		if rule.DstCIDR != "" {
+			if prefix, err := netip.ParsePrefix(rule.DstCIDR); err == nil && prefix.Bits() > 0 {
+				return true
+			}
+			continue
+		}
+		if strings.TrimSpace(rule.DstListID) != "" || strings.TrimSpace(rule.DstListKey) != "" {
 			return true
 		}
 	}

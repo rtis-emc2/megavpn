@@ -220,9 +220,9 @@ Required evidence before promoting topology/access features beyond the hardening
 - Node map API projection resolves approximate country/city/provider metadata from public node IPs, skips private addresses, and does not expose unnecessary secrets.
 - Managed backhaul graph shows active/degraded/failed links and the last probe reason.
 - Client provisioning clearly shows which inbound services were selected for a client.
-- VLESS access groups are managed centrally under `Instances -> VLESS groups`;
+- VLESS access groups are managed centrally under `Clients -> Groups`;
   default, local-breakout, selected-egress, target-only and blocked behavior is
-  covered by provisioning/apply evidence.
+  covered by group membership/materialization and provisioning/apply evidence.
 - VLESS subscription endpoint uses per-client bearer token rotation, audit events,
   `Cache-Control: no-store`, active-access filtering and one-time plaintext URL
   display.

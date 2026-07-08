@@ -39,6 +39,8 @@
       state.servicePackCatalog = [];
       state.vlessGroupTemplates = [];
       state.vlessGroupCatalog = [];
+      state.clientAccessGroups = [];
+      state.clientAccessGroupMigrationConflicts = [];
       state.serviceInstallers = [];
       state.binaryArtifacts = [];
       state.serviceCapabilitiesByNode = {};
@@ -175,6 +177,12 @@
       const servicesCatalog = await fetchJSON('/api/v1/services', []);
       const servicePacks = await fetchJSON('/api/v1/service-packs', []);
       const vlessGroupTemplates = await fetchJSON('/api/v1/vless-groups', []);
+      const clientAccessGroups = hasPermission('access_group.read')
+        ? await fetchJSON('/api/v1/client-access-groups?service_code=vless', [])
+        : [];
+      const clientAccessGroupMigrationConflicts = hasPermission('access_group.read')
+        ? await fetchJSON('/api/v1/client-access-groups/migration-conflicts?limit=50', [])
+        : [];
       const serviceCapabilitiesByNode = hasPermission('node.read') ? await fetchJSON('/api/v1/nodes/capabilities', {}) : {};
       const servicePackCatalog = hasPermission('settings.manage')
         ? await fetchJSON('/api/v1/service-packs?include_inactive=1', servicePacks)
@@ -226,6 +234,8 @@
       if (!state.vlessGroupTemplates.length && state.vlessGroupCatalog.length) {
         state.vlessGroupTemplates = state.vlessGroupCatalog.filter((group) => String(group.status || 'active').toLowerCase() === 'active');
       }
+      state.clientAccessGroups = Array.isArray(clientAccessGroups) ? clientAccessGroups : [];
+      state.clientAccessGroupMigrationConflicts = Array.isArray(clientAccessGroupMigrationConflicts) ? clientAccessGroupMigrationConflicts : [];
       state.serviceInstallers = Array.isArray(serviceInstallers) ? serviceInstallers : [];
       state.binaryArtifacts = Array.isArray(binaryArtifacts) ? binaryArtifacts : [];
       state.serviceCapabilitiesByNode = serviceCapabilitiesByNode && typeof serviceCapabilitiesByNode === 'object' && !Array.isArray(serviceCapabilitiesByNode) ? serviceCapabilitiesByNode : {};

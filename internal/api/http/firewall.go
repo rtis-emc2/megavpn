@@ -22,6 +22,8 @@ type firewallStore interface {
 	CreateFirewallAddressEntry(context.Context, string, domain.FirewallAddressEntry) (domain.FirewallAddressEntry, error)
 	UpdateFirewallAddressEntry(context.Context, string, string, domain.FirewallAddressEntry) (domain.FirewallAddressEntry, error)
 	DeleteFirewallAddressEntry(context.Context, string, string) (domain.FirewallAddressEntry, error)
+	GetFirewallManagementSettings(context.Context) (domain.FirewallManagementSettings, error)
+	UpdateFirewallManagementSettings(context.Context, domain.FirewallManagementSettings) (domain.FirewallManagementSettings, error)
 	CreateFirewallRule(context.Context, string, domain.FirewallRule) (domain.FirewallRule, error)
 	UpdateFirewallRule(context.Context, string, string, domain.FirewallRule) (domain.FirewallRule, error)
 	DeleteFirewallRule(context.Context, string, string) (domain.FirewallRule, error)
@@ -249,6 +251,42 @@ func (s *Server) deleteFirewallAddressEntry(w nethttp.ResponseWriter, r *nethttp
 		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "firewall.address_entry.delete", "firewall", &deleted.ID, "firewall address entry deleted")
 	}
 	writeJSON(w, 200, deleted)
+}
+
+func (s *Server) getFirewallManagementSettings(w nethttp.ResponseWriter, r *nethttp.Request) {
+	store, ok := s.store.(firewallStore)
+	if !ok {
+		writeErr(w, 501, "firewall catalog is not supported")
+		return
+	}
+	settings, err := store.GetFirewallManagementSettings(r.Context())
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, settings)
+}
+
+func (s *Server) updateFirewallManagementSettings(w nethttp.ResponseWriter, r *nethttp.Request) {
+	store, ok := s.store.(firewallStore)
+	if !ok {
+		writeErr(w, 501, "firewall catalog is not supported")
+		return
+	}
+	var req domain.FirewallManagementSettings
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid firewall management settings payload")
+		return
+	}
+	updated, err := store.UpdateFirewallManagementSettings(r.Context(), req)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if authCtx, ok := authFromRequest(r); ok {
+		_, _ = s.store.CreateAuditForUser(r.Context(), &authCtx.User.ID, "firewall.management_settings.update", "firewall", nil, "firewall management source CIDRs updated")
+	}
+	writeJSON(w, 200, updated)
 }
 
 func (s *Server) createFirewallRule(w nethttp.ResponseWriter, r *nethttp.Request) {

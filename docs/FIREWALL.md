@@ -73,6 +73,26 @@ DNS entries in these groups are catalog context only. Active nftables matchers
 are built from IP, CIDR and IP range entries. Strict preview/apply blocks an
 `accept` rule when the referenced group is active but has no renderable entry.
 
+## Management Source Configuration
+
+Strict firewall rollout is fail-closed around management access. Configure
+management source CIDRs before applying strict input/output defaults:
+
+| Setting | Source | Purpose |
+| --- | --- | --- |
+| Control-plane source CIDRs | `MEGAVPN_CP_FIREWALL_SOURCE_CIDRS`, `Settings -> Firewall safety` | Sources allowed to manage nodes and seed `trusted_control_plane`. |
+| SSH bootstrap source CIDRs | `MEGAVPN_CP_SSH_BOOTSTRAP_SOURCE_CIDRS`, `Settings -> Firewall safety` | Additional sources allowed for node SSH bootstrap. |
+| Trusted operator CIDRs | `Settings -> Firewall safety` | Human/admin source ranges seeded into `trusted_operators`. |
+
+Values must be explicit IP addresses or CIDRs. DNS names are ignored for nft set
+rendering, and `0.0.0.0/0` or `::/0` are rejected for automatic SSH safety.
+This prevents the platform from silently generating SSH-from-any rules.
+
+On API startup the configured control-plane and SSH-bootstrap CIDRs are seeded
+into semantic firewall groups. On preview/apply the selected policy is validated
+against those rendered groups and the agent adds system safety rules only from
+trusted semantic groups.
+
 ## UI Workflow
 
 Open `Firewall` from the control menu.
@@ -136,6 +156,14 @@ The preview dialog uses the same modes. Its result shows:
 - `Preview hash`: the rendered policy hash the agent would apply.
 - `Current hash`: the last observed node hash from `firewall_node_state`.
 - `Diff`: `No changes`, `Changes pending` or `Not applied yet`.
+- `SSH bootstrap`: whether strict input preserves node SSH from trusted
+  management sources.
+- `Control-plane egress`: whether strict output preserves agent-to-control
+  plane communication.
+- `Forward traffic`: whether strict forward preserves active VPN/backhaul
+  traffic paths for nodes that need forwarding.
+- `Address groups`: renderable IP/CIDR/range entry count and ignored DNS-only
+  entry count.
 - `Rendered nftables script`: an expandable script for operator review.
 
 `Apply this policy` is shown only after a successful preview with a valid
@@ -156,10 +184,12 @@ and Apply for the intended policy.
 
 SSH bootstrap and agent reinstall/update use inbound SSH from the control plane
 to the node. When a node has an applied `Strict defaults` firewall, bootstrap is
-blocked before job creation unless the active policy contains an input accept
-rule for the configured SSH port. Disable the managed firewall first, or add a
-source-scoped SSH allow rule for `trusted_control_plane`/`trusted_operators`
-and apply the policy.
+blocked before job creation unless the active policy can preserve the configured
+SSH port from `trusted_control_plane` or `trusted_operators`. The policy may
+contain an explicit source-scoped input accept rule, or strict apply may render
+the managed system SSH rule from configured management CIDRs. Disable the
+managed firewall first, or populate the management CIDRs/groups and re-apply
+the policy.
 
 A generic `whitelist` does not satisfy SSH bootstrap safety by itself. The
 source rule must reference `trusted_control_plane`, `trusted_operators` with
@@ -192,16 +222,40 @@ input, forward and output base chains and applies the policy defaults:
   rule, because nftables base chain policy does not support `reject`.
 
 The agent also adds system safety rules for established/related traffic and
-loopback before catalog rules. If output default policy is `drop` or `reject`,
-the agent must preserve control-plane egress. It does this by either:
+loopback before catalog rules.
+
+If input default policy is `drop` or `reject`, strict preview/apply requires at
+least one renderable management source in `trusted_control_plane` or
+`trusted_operators` and renders a system SSH allow rule for the node SSH port.
+Broad any-source management entries are never generated automatically.
+
+If forward default policy is `drop` or `reject`, strict preview/apply checks
+whether the node has an active VPN, backhaul or egress role. Nodes that require
+forwarding must have an active forward allow path from `vpn_client_sources` or
+`backhaul_sources`; otherwise preview/apply is blocked before node rollout.
+
+If output default policy is `drop` or `reject`, the agent must preserve
+control-plane egress. It does this by either:
 
 - generating a TCP egress allow rule when the agent control-plane URL host is
   an IP address; or
 - accepting an explicit active catalog `output accept` rule for the
   control-plane TCP port when the control-plane URL host is DNS.
 
+The Control Plane also rejects strict output apply when the configured
+control-plane endpoint is DNS-only and no explicit output CIDR/list rule exists.
 If neither condition is true, render fails before touching nftables. This keeps
 strict output rollout from silently isolating a node.
+
+Preview/apply results expose the safety outcome explicitly:
+
+| Field | Meaning |
+| --- | --- |
+| `ssh_bootstrap_preserved` | Strict input keeps SSH bootstrap reachable from trusted management CIDRs. |
+| `control_plane_egress_preserved` | Strict output keeps agent egress to the Control Plane reachable. |
+| `forward_egress_preserved` | Strict forward keeps required VPN/backhaul forwarding paths reachable, or the node does not require forwarding. |
+| `address_group_rendered_entry_count` | IP/CIDR/range entries rendered into nft sets. |
+| `address_group_ignored_dns_entry_count` | DNS-only entries kept as catalog metadata and ignored by nft rendering. |
 
 Address-group entries with DNS type are stored for catalog context only in this
 release. Node-side nftables apply renders CIDR, single IP address and IP range

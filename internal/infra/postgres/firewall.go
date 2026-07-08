@@ -21,6 +21,12 @@ import (
 var firewallKeyRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{1,62}$`)
 var firewallUUIDRE = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
+const (
+	firewallManagedControlPlaneLabel = "managed:control-plane-source"
+	firewallManagedSSHBootstrapLabel = "managed:ssh-bootstrap-source"
+	firewallManagedOperatorLabel     = "managed:trusted-operator-source"
+)
+
 func (s *Store) EnsureDefaultFirewallPolicies(ctx context.Context) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -150,6 +156,147 @@ func (s *Store) FirewallInventory(ctx context.Context) (domain.FirewallInventory
 		Rules:        rules,
 		NodeStates:   states,
 	}, nil
+}
+
+func (s *Store) SeedFirewallManagementCIDRs(ctx context.Context, controlPlaneCIDRs, sshBootstrapCIDRs []string) error {
+	return s.upsertFirewallManagementCIDRs(ctx, domain.FirewallManagementSettings{
+		ControlPlaneSourceCIDRs: controlPlaneCIDRs,
+		SSHBootstrapSourceCIDRs: sshBootstrapCIDRs,
+	}, false)
+}
+
+func (s *Store) GetFirewallManagementSettings(ctx context.Context) (domain.FirewallManagementSettings, error) {
+	if err := s.EnsureDefaultFirewallPolicies(ctx); err != nil {
+		return domain.FirewallManagementSettings{}, err
+	}
+	rows, err := s.db.Query(ctx, `select l.key,e.value,e.label
+from firewall_address_entries e
+join firewall_address_lists l on l.id=e.list_id
+where e.status='active'
+  and l.status='active'
+  and (
+    (l.key='trusted_control_plane' and e.label in ($1,$2))
+    or (l.key='trusted_operators' and e.label=$3)
+  )
+order by l.key,e.label,e.value`, firewallManagedControlPlaneLabel, firewallManagedSSHBootstrapLabel, firewallManagedOperatorLabel)
+	if err != nil {
+		return domain.FirewallManagementSettings{}, err
+	}
+	defer rows.Close()
+	var out domain.FirewallManagementSettings
+	for rows.Next() {
+		var listKey, value, label string
+		if err := rows.Scan(&listKey, &value, &label); err != nil {
+			return domain.FirewallManagementSettings{}, err
+		}
+		switch {
+		case listKey == "trusted_control_plane" && label == firewallManagedControlPlaneLabel:
+			out.ControlPlaneSourceCIDRs = append(out.ControlPlaneSourceCIDRs, value)
+		case listKey == "trusted_control_plane" && label == firewallManagedSSHBootstrapLabel:
+			out.SSHBootstrapSourceCIDRs = append(out.SSHBootstrapSourceCIDRs, value)
+		case listKey == "trusted_operators" && label == firewallManagedOperatorLabel:
+			out.TrustedOperatorCIDRs = append(out.TrustedOperatorCIDRs, value)
+		}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateFirewallManagementSettings(ctx context.Context, input domain.FirewallManagementSettings) (domain.FirewallManagementSettings, error) {
+	if err := s.upsertFirewallManagementCIDRs(ctx, input, true); err != nil {
+		return domain.FirewallManagementSettings{}, err
+	}
+	return s.GetFirewallManagementSettings(ctx)
+}
+
+func (s *Store) upsertFirewallManagementCIDRs(ctx context.Context, input domain.FirewallManagementSettings, replace bool) error {
+	if err := s.EnsureDefaultFirewallPolicies(ctx); err != nil {
+		return err
+	}
+	specs := []struct {
+		listKey string
+		label   string
+		values  []string
+	}{
+		{listKey: "trusted_control_plane", label: firewallManagedControlPlaneLabel, values: input.ControlPlaneSourceCIDRs},
+		{listKey: "trusted_control_plane", label: firewallManagedSSHBootstrapLabel, values: input.SSHBootstrapSourceCIDRs},
+		{listKey: "trusted_operators", label: firewallManagedOperatorLabel, values: input.TrustedOperatorCIDRs},
+	}
+	normalized := make(map[string][]firewallManagementCIDR, len(specs))
+	for _, spec := range specs {
+		entries, err := normalizeFirewallManagementCIDRs(spec.values)
+		if err != nil {
+			return fmt.Errorf("%s: %w", spec.label, err)
+		}
+		normalized[spec.label] = entries
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, spec := range specs {
+		entries := normalized[spec.label]
+		if !replace && len(entries) == 0 {
+			continue
+		}
+		var listID string
+		if err := tx.QueryRow(ctx, `select id::text from firewall_address_lists where key=$1 and status <> 'deleted'`, spec.listKey).Scan(&listID); err != nil {
+			return err
+		}
+		if replace || len(entries) > 0 {
+			if _, err := tx.Exec(ctx, `update firewall_address_entries
+set status='deleted',updated_at=now()
+where list_id=$1 and label=$2 and status <> 'deleted'`, listID, spec.label); err != nil {
+				return err
+			}
+		}
+		for _, entry := range entries {
+			if _, err := tx.Exec(ctx, `insert into firewall_address_entries(id,list_id,value,value_type,label,status,created_at,updated_at)
+values($1,$2,$3,$4,$5,'active',now(),now())
+on conflict(list_id,value) where status <> 'deleted' do update set
+	value_type=excluded.value_type,
+	label=excluded.label,
+	status='active',
+	updated_at=now()`,
+				id.New(), listID, entry.value, entry.valueType, spec.label); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+type firewallManagementCIDR struct {
+	value     string
+	valueType string
+}
+
+func normalizeFirewallManagementCIDRs(values []string) ([]firewallManagementCIDR, error) {
+	out := []firewallManagementCIDR{}
+	seen := map[string]struct{}{}
+	for _, raw := range values {
+		for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+		}) {
+			value, valueType, err := normalizeFirewallAddressEntry(part, "")
+			if err != nil {
+				return nil, err
+			}
+			if valueType == "dns" {
+				return nil, fmt.Errorf("DNS entries are not valid management firewall sources: %s", value)
+			}
+			if firewallAddressValueIsAny(value, valueType) {
+				return nil, fmt.Errorf("management firewall sources must not be 0.0.0.0/0 or ::/0")
+			}
+			key := valueType + ":" + value
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, firewallManagementCIDR{value: value, valueType: valueType})
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) CreateFirewallPolicy(ctx context.Context, input domain.FirewallPolicy) (domain.FirewallPolicy, error) {
@@ -545,23 +692,37 @@ func (s *Store) buildFirewallJobPayload(ctx context.Context, nodeID, policyID st
 	if err != nil {
 		return firewallJobPayload{}, err
 	}
+	methods, err := s.ListNodeAccessMethods(ctx, nodeID)
+	if err != nil {
+		return firewallJobPayload{}, fmt.Errorf("list node SSH access methods: %w", err)
+	}
+	sshPorts := sshBootstrapPorts(methods)
+	if len(sshPorts) == 0 {
+		sshPorts = []int{22}
+	}
+	requiresForwardPreservation, err := s.nodeRequiresFirewallForwardPreservation(ctx, nodeID)
+	if err != nil {
+		return firewallJobPayload{}, err
+	}
 	revisionID := id.New()
 	revisionNo, err := s.nextFirewallRevisionNo(ctx, policy.ID)
 	if err != nil {
 		return firewallJobPayload{}, err
 	}
 	payload := map[string]any{
-		"node_id":                nodeID,
-		"policy_id":              policy.ID,
-		"policy_key":             policy.Key,
-		"revision_id":            revisionID,
-		"revision_no":            revisionNo,
-		"default_input_policy":   policy.DefaultInputPolicy,
-		"default_forward_policy": policy.DefaultForwardPolicy,
-		"default_output_policy":  policy.DefaultOutputPolicy,
-		"enforce_default_policy": enforceDefaultPolicy,
-		"rules":                  rulePayload,
-		"address_lists":          addressListPayload,
+		"node_id":                            nodeID,
+		"policy_id":                          policy.ID,
+		"policy_key":                         policy.Key,
+		"revision_id":                        revisionID,
+		"revision_no":                        revisionNo,
+		"default_input_policy":               policy.DefaultInputPolicy,
+		"default_forward_policy":             policy.DefaultForwardPolicy,
+		"default_output_policy":              policy.DefaultOutputPolicy,
+		"enforce_default_policy":             enforceDefaultPolicy,
+		"rules":                              rulePayload,
+		"address_lists":                      addressListPayload,
+		"ssh_bootstrap_ports":                sshPorts,
+		"node_requires_forward_preservation": requiresForwardPreservation,
 	}
 	payloadHash := firewallStablePayloadHash(payload)
 	payload["firewall_payload_version"] = 1
@@ -671,11 +832,22 @@ func (s *Store) validateFirewallStrictJobSafety(ctx context.Context, nodeID stri
 		return err
 	}
 	if built.policy.DefaultInputPolicy != "accept" {
+		hasManagementSources, err := s.firewallHasRenderableTrustedManagementSources(ctx)
+		if err != nil {
+			return fmt.Errorf("check strict firewall management source groups: %w", err)
+		}
+		if !hasManagementSources {
+			return fmt.Errorf("strict input %s requires at least one active IP/CIDR/range entry in trusted_control_plane or trusted_operators; configure control-plane/operator CIDRs before preview/apply", built.policy.DefaultInputPolicy)
+		}
 		methods, err := s.ListNodeAccessMethods(ctx, nodeID)
 		if err != nil {
 			return fmt.Errorf("check node SSH access methods before strict firewall apply: %w", err)
 		}
-		for _, port := range sshBootstrapPorts(methods) {
+		ports := sshBootstrapPorts(methods)
+		if len(ports) == 0 {
+			ports = []int{22}
+		}
+		for _, port := range ports {
 			allowed, err := s.firewallPolicyAllowsStrictSSHBootstrapPort(ctx, built.policy.ID, port)
 			if err != nil {
 				return fmt.Errorf("check strict firewall SSH safety rules: %w", err)
@@ -683,6 +855,30 @@ func (s *Store) validateFirewallStrictJobSafety(ctx context.Context, nodeID stri
 			if !allowed {
 				return fmt.Errorf("strict input %s requires an active source-scoped input accept rule for SSH bootstrap port %d from trusted_control_plane, trusted_operators, or an explicit control-plane CIDR before apply", built.policy.DefaultInputPolicy, port)
 			}
+		}
+	}
+	if built.policy.DefaultForwardPolicy != "accept" {
+		requiresForward, err := s.nodeRequiresFirewallForwardPreservation(ctx, nodeID)
+		if err != nil {
+			return fmt.Errorf("check node forwarding requirements before strict firewall apply: %w", err)
+		}
+		if requiresForward {
+			allowed, err := s.firewallPolicyAllowsStrictForwardSources(ctx, built.policy.ID)
+			if err != nil {
+				return fmt.Errorf("check strict firewall forwarding safety rules: %w", err)
+			}
+			if !allowed {
+				return fmt.Errorf("strict forward %s on a VPN/backhaul/egress node requires an active accept rule for established,related and an active source-scoped forward allow from vpn_client_sources or backhaul_sources", built.policy.DefaultForwardPolicy)
+			}
+		}
+	}
+	if built.policy.DefaultOutputPolicy != "accept" {
+		allowed, err := s.firewallPolicyAllowsStrictControlPlaneOutput(ctx, built.policy.ID)
+		if err != nil {
+			return fmt.Errorf("check strict firewall control-plane egress safety rules: %w", err)
+		}
+		if !allowed {
+			return fmt.Errorf("strict output %s requires an explicit output allow with an IP/CIDR destination or destination address group for control-plane egress; DNS-only destinations are not enough for fail-closed apply", built.policy.DefaultOutputPolicy)
 		}
 	}
 	return nil
@@ -716,6 +912,209 @@ func (s *Store) validateFirewallStrictAddressLists(ctx context.Context, rules []
 		}
 	}
 	return nil
+}
+
+func (s *Store) nodeRequiresFirewallForwardPreservation(ctx context.Context, nodeID string) (bool, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return false, fmt.Errorf("node id is required")
+	}
+	var role string
+	if err := s.db.QueryRow(ctx, `select lower(role) from nodes where id=$1 and status <> 'retired'`, nodeID).Scan(&role); err != nil {
+		return false, err
+	}
+	if in(role, "ingress", "egress") {
+		return true, nil
+	}
+	var count int
+	if err := s.db.QueryRow(ctx, `select count(*)::int
+from instances i
+join service_definitions sd on sd.id=i.service_definition_id
+where i.node_id=$1
+  and i.enabled=true
+  and i.status not in ('deleted','deleting','disabled')
+  and sd.code in ('xray-core','openvpn','wireguard','ipsec','xl2tpd','shadowsocks','nginx')`, nodeID).Scan(&count); err != nil {
+		return false, err
+	}
+	if count > 0 {
+		return true, nil
+	}
+	if err := s.db.QueryRow(ctx, `select count(*)::int
+from backhaul_links
+where status in ('planned','pending_apply','active')
+  and (ingress_node_id=$1 or egress_node_id=$1)`, nodeID).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (s *Store) firewallHasRenderableTrustedManagementSources(ctx context.Context) (bool, error) {
+	for _, key := range []string{"trusted_control_plane", "trusted_operators"} {
+		ok, err := s.firewallAddressListHasRenderableNonAnyEntries(ctx, "", key)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Store) firewallAddressListHasRenderableNonAnyEntries(ctx context.Context, listID, listKey string) (bool, error) {
+	listID = strings.TrimSpace(listID)
+	listKey = strings.TrimSpace(listKey)
+	if listID == "" && listKey == "" {
+		return false, nil
+	}
+	query := `select e.value,e.value_type
+from firewall_address_entries e
+join firewall_address_lists l on l.id=e.list_id
+where e.status='active'
+  and l.status='active'
+  and e.value_type in ('cidr','address','range')`
+	args := []any{}
+	if listID != "" {
+		query += ` and e.list_id=$1`
+		args = append(args, listID)
+	} else {
+		query += ` and l.key=$1`
+		args = append(args, listKey)
+	}
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var value string
+		var valueType string
+		if err := rows.Scan(&value, &valueType); err != nil {
+			return false, err
+		}
+		if firewallAddressEntryRenderableNonAny(value, valueType) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func firewallAddressEntryRenderableNonAny(value, valueType string) bool {
+	value = strings.TrimSpace(value)
+	valueType = strings.ToLower(strings.TrimSpace(valueType))
+	if value == "" || !in(valueType, "cidr", "address", "range") {
+		return false
+	}
+	if firewallAddressValueIsAny(value, valueType) {
+		return false
+	}
+	switch valueType {
+	case "cidr":
+		_, err := netip.ParsePrefix(value)
+		return err == nil
+	case "address":
+		_, err := netip.ParseAddr(value)
+		return err == nil
+	case "range":
+		left, right, ok := strings.Cut(value, "-")
+		if !ok {
+			return false
+		}
+		start, err := netip.ParseAddr(strings.TrimSpace(left))
+		if err != nil {
+			return false
+		}
+		end, err := netip.ParseAddr(strings.TrimSpace(right))
+		if err != nil {
+			return false
+		}
+		return start.Is4() == end.Is4() && start.Compare(end) <= 0
+	default:
+		return false
+	}
+}
+
+func (s *Store) firewallPolicyAllowsStrictForwardSources(ctx context.Context, policyID string) (bool, error) {
+	rows, err := s.db.Query(ctx, `select coalesce(r.src_list_id::text,''),coalesce(l.key,''),r.state_match
+from firewall_rules r
+left join firewall_address_lists l on l.id=r.src_list_id
+where r.policy_id=$1
+  and r.status='active'
+  and r.enabled=true
+  and r.chain='forward'
+  and r.action='accept'`, policyID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var srcListID string
+		var srcListKey string
+		var stateMatch []string
+		if err := rows.Scan(&srcListID, &srcListKey, &stateMatch); err != nil {
+			return false, err
+		}
+		if !firewallRuleAllowsNewState(stateMatch) {
+			continue
+		}
+		srcListKey = strings.ToLower(strings.TrimSpace(srcListKey))
+		if srcListKey != "vpn_client_sources" && srcListKey != "backhaul_sources" {
+			continue
+		}
+		ok, err := s.firewallAddressListHasRenderableNonAnyEntries(ctx, srcListID, srcListKey)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func (s *Store) firewallPolicyAllowsStrictControlPlaneOutput(ctx context.Context, policyID string) (bool, error) {
+	rows, err := s.db.Query(ctx, `select coalesce(r.dst_cidr,''),coalesce(r.dst_list_id::text,''),coalesce(l.key,''),r.state_match
+from firewall_rules r
+left join firewall_address_lists l on l.id=r.dst_list_id
+where r.policy_id=$1
+  and r.status='active'
+  and r.enabled=true
+  and r.chain='output'
+  and r.action='accept'
+  and r.protocol in ('tcp','any')`, policyID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var dstCIDR string
+		var dstListID string
+		var dstListKey string
+		var stateMatch []string
+		if err := rows.Scan(&dstCIDR, &dstListID, &dstListKey, &stateMatch); err != nil {
+			return false, err
+		}
+		if !firewallRuleAllowsNewState(stateMatch) {
+			continue
+		}
+		if strings.TrimSpace(dstCIDR) != "" {
+			if prefix, err := netip.ParsePrefix(strings.TrimSpace(dstCIDR)); err == nil && !firewallAddressValueIsAny(prefix.String(), "cidr") {
+				return true, nil
+			}
+			continue
+		}
+		if strings.TrimSpace(dstListID) == "" && strings.TrimSpace(dstListKey) == "" {
+			continue
+		}
+		ok, err := s.firewallAddressListHasRenderableNonAnyEntries(ctx, dstListID, dstListKey)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *Store) requireMatchingFirewallPreview(ctx context.Context, nodeID string, built firewallJobPayload) error {
@@ -1387,6 +1786,19 @@ func normalizeFirewallAddressEntry(value, valueType string) (string, string, err
 	default:
 		return "", "", fmt.Errorf("address value type must be cidr, address, range or dns")
 	}
+}
+
+func firewallAddressValueIsAny(value, valueType string) bool {
+	if strings.ToLower(strings.TrimSpace(valueType)) != "cidr" {
+		return false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+	if err != nil {
+		return false
+	}
+	bits := prefix.Bits()
+	addr := prefix.Addr()
+	return bits == 0 && (addr.Is4() || addr.Is6())
 }
 
 func normalizeFirewallCIDR(value string) (string, error) {

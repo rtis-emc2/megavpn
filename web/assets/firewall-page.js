@@ -1395,6 +1395,17 @@
       const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
       const script = String(result.script || '').trim();
       const canApplyPreview = String(job?.status || '').toLowerCase() === 'succeeded' && Boolean(diff.previewHash);
+      const renderedAddressEntries = result.address_group_rendered_entry_count ?? 'n/a';
+      const ignoredDNSEntries = result.address_group_ignored_dns_entry_count ?? result.address_group_ignored_dns_count ?? 'n/a';
+      const safetyItem = (label, value, detail) => {
+        const preserved = value === true || String(value).toLowerCase() === 'true';
+        return `
+          <div class="firewall-safety-item ${preserved ? 'ok' : 'danger'}">
+            <span>${escapeHTML(label)}</span>
+            <strong>${preserved ? 'preserved' : 'blocked'}</strong>
+            <small>${escapeHTML(detail)}</small>
+          </div>`;
+      };
       return `
         <section class="firewall-preview-result">
           <div class="firewall-preview-head">
@@ -1410,6 +1421,16 @@
             <div><span>Current hash</span><code>${escapeHTML(diff.currentHash || 'n/a')}</code></div>
             <div><span>Rules</span><strong>${escapeHTML(String(result.rule_count ?? 'n/a'))}</strong><small>system ${escapeHTML(String(result.system_rule_count ?? 'n/a'))}</small></div>
             <div><span>Defaults</span><strong>${escapeHTML(String(result.default_policy_enforcement || 'n/a'))}</strong><small>${String(result.applied) === 'true' ? 'applied' : 'preview only'}</small></div>
+          </div>
+          <div class="firewall-safety-grid">
+            ${safetyItem('SSH bootstrap', result.ssh_bootstrap_preserved, 'input access for bootstrap/update')}
+            ${safetyItem('Control-plane egress', result.control_plane_egress_preserved, 'agent can reach API')}
+            ${safetyItem('Forward traffic', result.forward_egress_preserved, 'VPN/backhaul forwarding')}
+            <div class="firewall-safety-item info">
+              <span>Address groups</span>
+              <strong>${escapeHTML(String(renderedAddressEntries))}</strong>
+              <small>${escapeHTML(String(ignoredDNSEntries))} DNS-only ignored</small>
+            </div>
           </div>
           ${warnings.length ? `<div class="notice warn">${warnings.map((item) => escapeHTML(String(item))).join('<br>')}</div>` : ''}
           ${script ? `<details class="firewall-script-details"><summary>Rendered nftables script</summary><pre class="firewall-script-preview"><code>${escapeHTML(script)}</code></pre></details>` : ''}

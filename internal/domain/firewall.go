@@ -90,3 +90,9 @@ type FirewallInventory struct {
 	Rules        []FirewallRule         `json:"rules"`
 	NodeStates   []FirewallNodeState    `json:"node_states"`
 }
+
+type FirewallManagementSettings struct {
+	ControlPlaneSourceCIDRs []string `json:"control_plane_source_cidrs"`
+	SSHBootstrapSourceCIDRs []string `json:"ssh_bootstrap_source_cidrs"`
+	TrustedOperatorCIDRs    []string `json:"trusted_operator_cidrs"`
+}

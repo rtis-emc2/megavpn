@@ -549,12 +549,14 @@ func TestNormalizeArtifactBuildRejectsUnsupportedType(t *testing.T) {
 
 func TestNormalizeNodeFirewallApply(t *testing.T) {
 	payload, err := Normalize("node.firewall.apply", map[string]any{
-		"node_id":                " node-1 ",
-		"policy_id":              " policy-1 ",
-		"revision_id":            " rev-1 ",
-		"default_input_policy":   " ACCEPT ",
-		"default_forward_policy": "drop",
-		"enforce_default_policy": true,
+		"node_id":                            " node-1 ",
+		"policy_id":                          " policy-1 ",
+		"revision_id":                        " rev-1 ",
+		"default_input_policy":               " ACCEPT ",
+		"default_forward_policy":             "drop",
+		"enforce_default_policy":             true,
+		"node_requires_forward_preservation": true,
+		"ssh_bootstrap_ports":                []any{22, "2222"},
 		"rules": []any{
 			map[string]any{"chain": "input", "action": "accept"},
 		},
@@ -573,6 +575,13 @@ func TestNormalizeNodeFirewallApply(t *testing.T) {
 	}
 	if got := payload["enforce_default_policy"]; got != true {
 		t.Fatalf("enforce_default_policy = %v, want true", got)
+	}
+	if got := payload["node_requires_forward_preservation"]; got != true {
+		t.Fatalf("node_requires_forward_preservation = %v, want true", got)
+	}
+	ports, ok := payload["ssh_bootstrap_ports"].([]int)
+	if !ok || len(ports) != 2 || ports[0] != 22 || ports[1] != 2222 {
+		t.Fatalf("ssh_bootstrap_ports = %#v, want [22 2222]", payload["ssh_bootstrap_ports"])
 	}
 }
 
