@@ -68,7 +68,27 @@ import type {
   InstanceRollbackRequest,
   InstanceRollbackResult,
   Job,
+  NodeCapability,
+  NodeCapabilityDrift,
+  NodeCapabilityInstallEvent,
+  NodeCapabilityInstallInput,
+  NodeCapabilityInstallResult,
+  NodeCapabilityVerifyInput,
+  NodeCapabilityVerifyResult,
+  NodeAgentState,
+  NodeDetail,
+  NodeDiagnosticResult,
+  NodeDiagnostics,
+  NodeDiagnosticsAction,
   NodeEntity,
+  NodeInventorySnapshot,
+  NodeInventorySyncResult,
+  NodeJobEnvelope,
+  NodeRuntimeReconcileResult,
+  NodeServiceDiscovery,
+  NodeServiceDiscoveryImportResult,
+  NodeServiceDiscoverySummary,
+  NodeServiceInstaller,
   ReadyStatus,
   RuntimeArtifact,
   RuntimeArtifactDeleteResult,
@@ -170,6 +190,127 @@ export function listServiceTypeCapabilities(): Promise<ServiceTypeCapability[]> 
 
 export function listRuntimeTargets(_params: { serviceCode?: string } = {}): Promise<RuntimeTargetNode[]> {
   return apiRequest<RuntimeTargetNode[]>('/api/v1/nodes');
+}
+
+export function listNodes(_params: { search?: string; status?: string; role?: string } = {}): Promise<NodeEntity[]> {
+  return apiRequest<NodeEntity[]>('/api/v1/nodes');
+}
+
+export function getNode(nodeId: string): Promise<NodeDetail> {
+  return apiRequest<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(nodeId)}`);
+}
+
+export function setNodeMaintenance(nodeId: string, enabled: boolean): Promise<NodeDetail> {
+  return sendJSON<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/maintenance/${enabled ? 'enable' : 'disable'}`, 'POST', {});
+}
+
+export function getNodeDiagnostics(nodeId: string): Promise<NodeDiagnostics> {
+  return apiRequest<NodeDiagnostics>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/diagnostics`);
+}
+
+export async function getNodeAgentState(nodeId: string): Promise<NodeAgentState> {
+  const diagnostics = await getNodeDiagnostics(nodeId);
+  return diagnostics.agent || { node_id: nodeId };
+}
+
+export function listNodeDiagnostics(nodeId: string): Promise<NodeDiagnostics> {
+  return getNodeDiagnostics(nodeId);
+}
+
+export function runNodeDiagnosticsAction(nodeId: string, action: NodeDiagnosticsAction): Promise<NodeJobEnvelope | NodeRuntimeReconcileResult> {
+  const suffixByAction: Record<NodeDiagnosticsAction, string> = {
+    'retry-inventory': 'retry-inventory',
+    'retry-discovery': 'retry-discovery',
+    'reconcile-runtime': 'reconcile-runtime',
+    'requeue-stuck-job': 'requeue-stuck-job',
+    'channel-probe': 'channel-probe',
+  };
+  return sendJSON<NodeJobEnvelope | NodeRuntimeReconcileResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/diagnostics/${suffixByAction[action]}`, 'POST', {});
+}
+
+export function runNodeDiagnostics(nodeId: string, input: { action: NodeDiagnosticsAction }): Promise<NodeDiagnosticResult> {
+  return runNodeDiagnosticsAction(nodeId, input.action);
+}
+
+export function retryNodeDiagnostics(nodeId: string, diagnosticId: string): Promise<NodeDiagnosticResult> {
+  const normalized = diagnosticId.trim().toLowerCase();
+  if (normalized === 'inventory' || normalized === 'retry-inventory') {
+    return runNodeDiagnosticsAction(nodeId, 'retry-inventory');
+  }
+  if (normalized === 'discovery' || normalized === 'retry-discovery') {
+    return runNodeDiagnosticsAction(nodeId, 'retry-discovery');
+  }
+  return Promise.reject(new Error('Unsupported node diagnostic retry action.'));
+}
+
+export function getNodeInventory(nodeId: string): Promise<NodeInventorySnapshot> {
+  return apiRequest<NodeInventorySnapshot>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/inventory`);
+}
+
+export function syncNodeInventory(nodeId: string): Promise<NodeInventorySyncResult> {
+  return sendJSON<NodeInventorySyncResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/inventory/sync`, 'POST', {});
+}
+
+export function listServiceInstallers(): Promise<NodeServiceInstaller[]> {
+  return apiRequest<NodeServiceInstaller[]>('/api/v1/services/installers');
+}
+
+export function listNodeCapabilities(nodeId: string): Promise<NodeCapability[]> {
+  return apiRequest<NodeCapability[]>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/capabilities`);
+}
+
+export function getNodeCapabilitiesDrift(nodeId: string): Promise<NodeCapabilityDrift> {
+  return apiRequest<NodeCapabilityDrift>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/capabilities/drift`);
+}
+
+export function listNodeCapabilityInstallEvents(nodeId: string, limit = 25): Promise<NodeCapabilityInstallEvent[]> {
+  return apiRequest<NodeCapabilityInstallEvent[]>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/capabilities/install-events${queryString({ limit })}`);
+}
+
+export function installNodeCapability(nodeId: string, input: NodeCapabilityInstallInput): Promise<NodeCapabilityInstallResult> {
+  return sendJSON<NodeCapabilityInstallResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/capabilities/install`, 'POST', input);
+}
+
+export function installNodeCapabilities(nodeId: string, input: NodeCapabilityInstallInput): Promise<NodeCapabilityInstallResult> {
+  return installNodeCapability(nodeId, input);
+}
+
+export function verifyNodeCapability(nodeId: string, input: NodeCapabilityVerifyInput): Promise<NodeCapabilityVerifyResult> {
+  return sendJSON<NodeCapabilityVerifyResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/capabilities/verify`, 'POST', input);
+}
+
+export function verifyNodeCapabilities(nodeId: string, input: NodeCapabilityVerifyInput): Promise<NodeCapabilityVerifyResult> {
+  return verifyNodeCapability(nodeId, input);
+}
+
+export function listNodeServiceDiscoveries(nodeId: string): Promise<NodeServiceDiscovery[]> {
+  return apiRequest<NodeServiceDiscovery[]>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/services/discovered`);
+}
+
+export function getNodeServiceDiscoverySummary(nodeId: string): Promise<NodeServiceDiscoverySummary> {
+  return apiRequest<NodeServiceDiscoverySummary>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/services/discovery-summary`);
+}
+
+export function discoverNodeServices(nodeId: string): Promise<Job> {
+  return sendJSON<Job>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/services/discover`, 'POST', {});
+}
+
+export function listNodeServiceDiscovery(nodeId: string): Promise<NodeServiceDiscovery[]> {
+  return listNodeServiceDiscoveries(nodeId);
+}
+
+export function importNodeServiceDiscoveryById(nodeId: string, discoveryId: string): Promise<ServiceInstance> {
+  return sendJSON<ServiceInstance>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/services/discovered/${encodeURIComponent(discoveryId)}/import`, 'POST', {});
+}
+
+export function importNodeServiceDiscovery(nodeId: string, input: { discovery_id?: string; import_all?: boolean }): Promise<NodeServiceDiscoveryImportResult> {
+  if (input.import_all) return importAllNodeServiceDiscoveries(nodeId);
+  if (!input.discovery_id) return Promise.reject(new Error('discovery_id is required'));
+  return importNodeServiceDiscoveryById(nodeId, input.discovery_id);
+}
+
+export function importAllNodeServiceDiscoveries(nodeId: string): Promise<ServiceInstance[]> {
+  return sendJSON<ServiceInstance[]>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/services/import-all`, 'POST', {});
 }
 
 export function listServicePacks(params: { includeInactive?: boolean } = {}): Promise<ServicePack[]> {
@@ -611,7 +752,7 @@ export const endpoints = {
   ready: () => apiRequest<ReadyStatus>('/api/v1/ready'),
   version: () => apiRequest<VersionInfo>('/api/v1/version'),
   dashboard: () => apiRequest<Dashboard>('/api/v1/dashboard'),
-  nodes: () => apiRequest<NodeEntity[]>('/api/v1/nodes'),
+  nodes: () => listNodes(),
   instances: () => listInstances(),
   instanceRuntimeStates: () => listInstanceRuntimeStates(),
   serviceTypeCapabilities: () => listServiceTypeCapabilities(),

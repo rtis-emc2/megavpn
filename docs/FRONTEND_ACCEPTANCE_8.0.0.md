@@ -3,7 +3,10 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`24a0d129a0ca89caf3ec0e5f9c18616c0af9d95f`
+`c4a7884d75dea52bb2ecd4e199f23b01e6b08ab8`
+
+FE8-P0-05A Nodes observability/diagnostics/inventory feature commit:
+`pending final feat: connect node diagnostics inventory workflow commit; final SHA is recorded in the task handoff after commit creation`
 
 FE8-P0-04B service pack instance creation feature commit:
 `2c080a555b5d0460fe3b8c876907a67823185917`
@@ -39,12 +42,14 @@ Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
 Current evidence CI:
-Current evidence CI run `28977048826` passed for
-`24a0d129a0ca89caf3ec0e5f9c18616c0af9d95f`.
+Current FE8-P0-05A evidence is local until the final feature commit is pushed.
+Previous accepted service-pack evidence CI run `28977048826` passed for
+`24a0d129a0ca89caf3ec0e5f9c18616c0af9d95f`; the branch head before FE8-P0-05A
+was `c4a7884d75dea52bb2ecd4e199f23b01e6b08ab8`.
 
-Current evidence date UTC: `2026-07-08T21:36:07Z`
+Current evidence date UTC: `2026-07-08T21:55:16Z`
 
-Status: FE8-P0-04B is locally verified and reviewable. Final 8.0.0 cutover
+Status: FE8-P0-05A is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
 validation, integrated disposable-data smoke and backend version synchronization
 are complete.
@@ -55,11 +60,14 @@ UI without `/legacy/`. Client delivery workflows are connected in the new UI
 without `/legacy/`. Existing Instances runtime control is connected in the new
 UI without `/legacy/`. Service pack instance creation, manual instance creation,
 instance spec replace and runtime artifact list/import are connected in the new
-UI without `/legacy/`. Remaining workflows listed below are still not migrated.
+UI without `/legacy/`. Nodes observability, diagnostics, inventory,
+capabilities, service discovery and maintenance workflows for existing nodes are
+connected in the new UI without `/legacy/`. Remaining workflows listed below are
+still not migrated.
 
 ## 1. Summary
 
-This evidence records the current 8.0.0 frontend branch after FE8-P0-04B:
+This evidence records the current 8.0.0 frontend branch after FE8-P0-05A:
 
 - CI push coverage includes `release/8.0.0-frontend-console` and `release/**`;
   pull request coverage remains enabled.
@@ -87,6 +95,10 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-04B:
   through backend `POST /api/v1/instances` and `PUT /api/v1/instances/{id}/spec`.
 - `Services -> Runtime Artifacts` is connected without `/legacy/` for runtime
   artifact list, safe metadata view and URL import.
+- `Nodes` is connected without `/legacy/` for existing node list/detail,
+  agent/runtime state, maintenance mode, inventory view/sync, capability
+  install/verify, diagnostics retry/run, service discovery list/import and async
+  job tracking.
 - Share/subscription one-time URLs are shown only in transient local UI state
   after backend create/rotate responses and are cleared on close.
 - `/legacy/` remains the rollback UI and still covers non-migrated workflows.
@@ -100,22 +112,46 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-04B:
 | `go test ./...` | PASS | All Go package tests pass, including `internal/api/http`. |
 | `go test -race ./...` | PASS | Race detector tests pass. |
 | `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` | PASS | All operational binaries build. |
-| `cd frontend && npm ci` | PASS | npm `11.18.0`; 251 packages installed; audit found 0 vulnerabilities. |
-| `cd frontend && npm run typecheck` | PASS | TypeScript checks pass. |
-| `cd frontend && npm run lint` | PASS | ESLint passes. |
-| `cd frontend && npm run test` | PASS | Vitest: 6 files, 57 tests passed. |
-| `cd frontend && npm run i18n:check` | PASS | i18n key parity ok: 510 keys. |
-| `cd frontend && npm run build` | PASS | Vite build wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-mEHTiV16.js`, `web/assets/index-CMdslovF.css`. |
+| `cd frontend && npm ci` | SKIP | This workstation session exposes bundled Node `v24.14.0`, but no native `npm` or `corepack` binary in `PATH`; existing `frontend/node_modules` was used for script-equivalent verification. GitHub CI remains configured for plain `npm ci`. |
+| `cd frontend && npm run typecheck` | PASS | Equivalent command run through bundled Node and local TypeScript: `tsc --noEmit` plus `tsc -p tsconfig.node.json --noEmit`. |
+| `cd frontend && npm run lint` | PASS | Equivalent command run through bundled Node and local ESLint. |
+| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 7 files, 61 tests passed. |
+| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 589 keys. |
+| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-DgppFDCJ.js`, `web/assets/index-CMdslovF.css`. |
 | `scripts/ci/frontend-serving-smoke.sh` | PASS | Root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
 | `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
 | `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
 | `scripts/smoke/vless-client-access-groups-smoke.sh` | SKIP | No `MEGAVPN_PUBLIC_BASE_URL` or `MEGAVPN_API_URL` was provided for a disposable/local API. |
 | `scripts/smoke/service-pack-smoke.sh --plan <node-id> <endpoint-domain> [certificate-id]` | SKIP | No disposable/local API, target node or endpoint domain was available in this workstation session. |
 
-Local note: this workstation did not expose a native `npm` binary in `PATH`;
-frontend checks were run through npm CLI `11.18.0` on the bundled Node runtime.
-The repository standard and GitHub CI path remain plain `npm ci` and
-`npm run ...`.
+Local note: this workstation did not expose a native `npm` or `corepack` binary
+in `PATH`; frontend checks were run through the bundled Node runtime and local
+`frontend/node_modules` binaries. The repository standard and GitHub CI path
+remain plain `npm ci` and `npm run ...`.
+
+## FE8-P0-05A Nodes Test Evidence
+
+`frontend/src/pages/infrastructure/NodesPage.test.tsx` verifies Nodes
+observability, diagnostics, inventory, capabilities and service discovery
+workflows against mocked backend API responses:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Node list loads | `loads node detail, observability data and renders backend text safely`; asserts `GET /api/v1/nodes`. |
+| Node detail loads | Same test asserts `GET /api/v1/nodes/{id}` and opens the detail drawer. |
+| Agent/runtime state displays | Same test renders heartbeat, communication state, agent metadata and timestamps from `GET /api/v1/nodes/{id}/diagnostics`. |
+| Diagnostics output is text | Same test renders script-like backend strings and asserts no `<script>` element is created. |
+| Inventory view/sync | Inventory tab renders payload as text; `runs maintenance, inventory, capabilities, diagnostics and discovery only after confirmation` asserts confirmed `POST /api/v1/nodes/{id}/inventory/sync` and returned job tracking. |
+| Maintenance mode | Same mutation test asserts maintenance is not called before confirmation and then calls `POST /api/v1/nodes/{id}/maintenance/enable`. |
+| Capability install/verify | Same mutation test asserts confirmed `POST /api/v1/nodes/{id}/capabilities/install` and `/verify` with backend payload. |
+| Diagnostics run/retry | Same mutation test asserts confirmed `POST /diagnostics/channel-probe`, `/retry-inventory`, `/retry-discovery`, `/reconcile-runtime` and `/requeue-stuck-job`. |
+| Service discovery import | Same mutation test asserts confirmed `POST /services/discover` and `POST /services/discovered/{discovery_id}/import`. |
+| Backend error safety | `shows backend 403, 422 and 409 errors safely`; renders permission, validation and conflict errors as text. |
+| No `/legacy` workflow | Tests assert no request path starts with `/legacy` for implemented Nodes workflows. |
+| No raw page API calls | `keeps raw API paths and legacy workflow links out of the Nodes page component`; verifies no `/api/v1`, raw `fetch`, `dangerouslySetInnerHTML` or `/legacy` in the page component. |
+
+Nodes observability, diagnostics and inventory workflows work in the new UI
+without `/legacy/`.
 
 ## 3. Clients Core Test Evidence
 
@@ -372,6 +408,11 @@ Current enforced hygiene:
   text, not HTML;
 - service pack definitions, instance specs and runtime artifact metadata are
   rendered as text/JSON, not HTML;
+- Nodes diagnostics, inventory, capability and discovery payloads are rendered as
+  text/JSON, not HTML;
+- Nodes maintenance, inventory sync, capability install/verify, diagnostics
+  actions and service discovery import require confirmation and use
+  backend-accepted responses before showing success;
 - unsupported non-VLESS services remain catalog-only or legacy-only.
 
 ## 12. Write Workflow Summary
@@ -398,7 +439,10 @@ Fully connected in the new console:
 - `Services -> Service Packs` list/detail/create/update/enable/disable/delete
   and create instance from pack;
 - `Instances` manual create and spec replace;
-- `Services -> Runtime Artifacts` list, safe metadata view and URL import.
+- `Services -> Runtime Artifacts` list, safe metadata view and URL import;
+- `Nodes` existing-node observability: list/detail, agent/runtime state,
+  maintenance mode, inventory view/sync, capability install/verify, diagnostics
+  retry/run, service discovery list/import and async job tracking.
 
 Still disabled, read-only or legacy-only:
 
@@ -406,7 +450,10 @@ Still disabled, read-only or legacy-only:
 - migration conflict UI for access groups;
 - client routes, access rotation and config cleanup;
 - client delivery history;
-- nodes bootstrap/control/terminal/diagnostics mutations;
+- nodes bootstrap, host-key scan, SSH terminal/session launch, enrollment tokens,
+  agent token rotation, reboot, emergency cleanup, retire/force-retire and route
+  policy preview/apply/cleanup;
+- node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance draft-save
   endpoints;
@@ -448,8 +495,8 @@ Still disabled, read-only or legacy-only:
 - No browser screenshot/responsive Playwright evidence was produced in this
   pass.
 - Integrated live API smoke was not run against a disposable DB/API in this
-  session; FE8-P0-04B evidence is frontend/API-contract test coverage against
-  mocked backend responses plus the full local CI command set.
+  session; FE8-P0-05A evidence is frontend/API-contract test coverage against
+  mocked backend responses plus the local command set recorded above.
 
 ## 14. Go / No-Go
 
@@ -458,8 +505,9 @@ Recommendation:
 - GO for PR review and CI validation of the 8.0.0 frontend branch.
 - GO for using new UI `Clients -> Groups -> VLESS`, Clients core/artifacts,
   Clients delivery, Firewall preview/apply/disable, existing Instances runtime
-  control, service pack instance creation, manual instance creation and runtime
-  artifact list/import in controlled staging after operator review.
+  control, service pack instance creation, manual instance creation, runtime
+  artifact list/import and existing Nodes observability/diagnostics/inventory
+  workflows in controlled staging after operator review.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
@@ -467,7 +515,9 @@ Remaining blockers for final cutover:
 1. run integrated smoke/e2e against disposable DB/API data for VLESS, Clients
    core/artifacts/delivery, Firewall and Instances/Service Packs runtime
    operator flows;
-2. migrate Nodes bootstrap/control/diagnostics workflows;
+2. migrate Nodes bootstrap, host-key scan, SSH terminal/session launch,
+   enrollment/token rotation, retire/reboot/emergency cleanup and route policy
+   workflows;
 3. add backend/browser support for runtime artifact delete if it is required for
    final operator parity;
 4. migrate Clients routes, access rotation and config cleanup;

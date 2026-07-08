@@ -26,6 +26,7 @@ import {
   deleteInstance,
   deleteRuntimeArtifact,
   deleteServicePack,
+  discoverNodeServices,
   disableNodeFirewall,
   endpoints,
   forceDeleteInstance,
@@ -44,15 +45,28 @@ import {
   getClientAccessOverview,
   getFirewallSafetySettings,
   getNodeFirewallState,
+  getNode,
+  getNodeAgentState,
+  getNodeCapabilitiesDrift,
+  getNodeInventory,
+  getNodeServiceDiscoverySummary,
   listClientArtifacts,
   listClientDeliveryHistory,
   listClientShareLinks,
   listClientSubscriptions,
   listClientAccessGroups,
+  listNodeCapabilities,
+  listNodeCapabilityInstallEvents,
+  listNodeDiagnostics,
+  listNodeServiceDiscoveries,
   listRuntimeArtifacts,
   listRuntimeTargets,
+  listServiceInstallers,
   listServicePacks,
   listServiceTypeCapabilities,
+  importAllNodeServiceDiscoveries,
+  importNodeServiceDiscoveryById,
+  installNodeCapability,
   previewSingleClientAccessGroupAssignment,
   previewClientAccessGroupMembers,
   previewClientAccessGroupSync,
@@ -67,17 +81,23 @@ import {
   rollbackInstance,
   runInstanceDiagnostics,
   runInstanceLifecycleAction,
+  retryNodeDiagnostics,
+  runNodeDiagnostics,
+  runNodeDiagnosticsAction,
   importRuntimeArtifact,
   rotateClientShareLink,
   rotateClientSubscription,
   sendClientArtifactEmail,
+  setNodeMaintenance,
   updateClientStatus,
   updateClientAccessGroup,
   updateClientAccessGroupScope,
+  syncNodeInventory,
   updateServicePack,
   setServicePackEnabled,
   validateInstanceSpec,
   validateServicePack,
+  verifyNodeCapability,
   saveInstanceDraft,
   updateFirewallAddressGroup,
   updateFirewallAddressGroupEntry,
@@ -153,7 +173,23 @@ import type {
   InstanceSpecDraft,
   InstanceSpecValidationResult,
   Job,
+  NodeAgentState,
+  NodeCapability,
+  NodeCapabilityDrift,
+  NodeCapabilityInstallEvent,
+  NodeCapabilityInstallInput,
+  NodeCapabilityVerifyInput,
+  NodeDetail,
+  NodeDiagnostics,
+  NodeDiagnosticsAction,
+  NodeDiagnosticResult,
   NodeEntity,
+  NodeInventorySnapshot,
+  NodeJobEnvelope,
+  NodeRuntimeReconcileResult,
+  NodeServiceDiscovery,
+  NodeServiceDiscoverySummary,
+  NodeServiceInstaller,
   ReadyStatus,
   RuntimeArtifact,
   RuntimeArtifactDeleteResult,
@@ -200,6 +236,245 @@ export function useDashboard(options?: QueryOptions<Dashboard>) {
 
 export function useNodes(options?: QueryOptions<NodeEntity[]>) {
   return useQuery({ queryKey: ['nodes'], queryFn: endpoints.nodes, staleTime: stale.normal, ...options });
+}
+
+function invalidateNodeQueries(queryClient: ReturnType<typeof useQueryClient>, nodeId?: string) {
+  void queryClient.invalidateQueries({ queryKey: ['nodes'] });
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+  if (nodeId) {
+    void queryClient.invalidateQueries({ queryKey: ['node', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-diagnostics', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-inventory', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-capabilities', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-capability-drift', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-capability-install-events', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-service-discoveries', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-service-discovery-summary', nodeId] });
+  }
+}
+
+export function useNodeDetail(nodeId: string | undefined, options?: QueryOptions<NodeDetail>) {
+  return useQuery({
+    queryKey: ['node', nodeId],
+    queryFn: () => getNode(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useNodeDiagnostics(nodeId: string | undefined, options?: QueryOptions<NodeDiagnostics>) {
+  return useQuery({
+    queryKey: ['node-diagnostics', nodeId],
+    queryFn: () => listNodeDiagnostics(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.fast,
+    refetchInterval: 15_000,
+    ...options,
+  });
+}
+
+export function useNodeAgentState(nodeId: string | undefined, options?: QueryOptions<NodeAgentState>) {
+  return useQuery({
+    queryKey: ['node-agent-state', nodeId],
+    queryFn: () => getNodeAgentState(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.fast,
+    refetchInterval: 15_000,
+    ...options,
+  });
+}
+
+export function useNodeInventory(nodeId: string | undefined, options?: QueryOptions<NodeInventorySnapshot>) {
+  return useQuery({
+    queryKey: ['node-inventory', nodeId],
+    queryFn: () => getNodeInventory(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    retry: false,
+    ...options,
+  });
+}
+
+export function useNodeCapabilities(nodeId: string | undefined, options?: QueryOptions<NodeCapability[]>) {
+  return useQuery({
+    queryKey: ['node-capabilities', nodeId],
+    queryFn: () => listNodeCapabilities(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useNodeCapabilityDrift(nodeId: string | undefined, options?: QueryOptions<NodeCapabilityDrift>) {
+  return useQuery({
+    queryKey: ['node-capability-drift', nodeId],
+    queryFn: () => getNodeCapabilitiesDrift(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    retry: false,
+    ...options,
+  });
+}
+
+export function useNodeCapabilityInstallEvents(nodeId: string | undefined, options?: QueryOptions<NodeCapabilityInstallEvent[]>) {
+  return useQuery({
+    queryKey: ['node-capability-install-events', nodeId],
+    queryFn: () => listNodeCapabilityInstallEvents(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    retry: false,
+    ...options,
+  });
+}
+
+export function useNodeServiceInstallers(options?: QueryOptions<NodeServiceInstaller[]>) {
+  return useQuery({ queryKey: ['node-service-installers'], queryFn: listServiceInstallers, staleTime: stale.slow, retry: false, ...options });
+}
+
+export function useNodeServiceDiscoveries(nodeId: string | undefined, options?: QueryOptions<NodeServiceDiscovery[]>) {
+  return useQuery({
+    queryKey: ['node-service-discoveries', nodeId],
+    queryFn: () => listNodeServiceDiscoveries(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    retry: false,
+    ...options,
+  });
+}
+
+export function useNodeServiceDiscovery(nodeId: string | undefined, options?: QueryOptions<NodeServiceDiscovery[]>) {
+  return useNodeServiceDiscoveries(nodeId, options);
+}
+
+export function useNodeServiceDiscoverySummary(nodeId: string | undefined, options?: QueryOptions<NodeServiceDiscoverySummary>) {
+  return useQuery({
+    queryKey: ['node-service-discovery-summary', nodeId],
+    queryFn: () => getNodeServiceDiscoverySummary(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    retry: false,
+    ...options,
+  });
+}
+
+export function useSetNodeMaintenance() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeDetail, Error, { nodeId: string; enabled: boolean }>({
+    mutationFn: ({ nodeId, enabled }) => setNodeMaintenance(nodeId, enabled),
+    onSuccess: (node, input) => invalidateNodeQueries(queryClient, node.id || input.nodeId),
+  });
+}
+
+export function useSyncNodeInventory() {
+  const queryClient = useQueryClient();
+  return useMutation<Job, Error, { nodeId: string }>({
+    mutationFn: ({ nodeId }) => syncNodeInventory(nodeId),
+    onSuccess: (job, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+    },
+  });
+}
+
+export function useInstallNodeCapability() {
+  const queryClient = useQueryClient();
+  return useMutation<Job, Error, { nodeId: string; input: NodeCapabilityInstallInput }>({
+    mutationFn: ({ nodeId, input }) => installNodeCapability(nodeId, input),
+    onSuccess: (job, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+    },
+  });
+}
+
+export function useInstallNodeCapabilities() {
+  return useInstallNodeCapability();
+}
+
+export function useVerifyNodeCapability() {
+  const queryClient = useQueryClient();
+  return useMutation<Job, Error, { nodeId: string; input: NodeCapabilityVerifyInput }>({
+    mutationFn: ({ nodeId, input }) => verifyNodeCapability(nodeId, input),
+    onSuccess: (job, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+    },
+  });
+}
+
+export function useVerifyNodeCapabilities() {
+  return useVerifyNodeCapability();
+}
+
+export function useRunNodeDiagnosticsAction() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeJobEnvelope | NodeRuntimeReconcileResult, Error, { nodeId: string; action: NodeDiagnosticsAction }>({
+    mutationFn: ({ nodeId, action }) => runNodeDiagnosticsAction(nodeId, action),
+    onSuccess: (result, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      const jobs = 'jobs' in result && Array.isArray(result.jobs) ? result.jobs : 'job' in result && result.job ? [result.job] : [];
+      jobs.forEach((job) => void queryClient.invalidateQueries({ queryKey: ['job', job.id] }));
+    },
+  });
+}
+
+export function useRunNodeDiagnostics() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeDiagnosticResult, Error, { nodeId: string; action: NodeDiagnosticsAction }>({
+    mutationFn: ({ nodeId, action }) => runNodeDiagnostics(nodeId, { action }),
+    onSuccess: (result, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      const jobs = 'jobs' in result && Array.isArray(result.jobs) ? result.jobs : 'job' in result && result.job ? [result.job] : [];
+      jobs.forEach((job) => void queryClient.invalidateQueries({ queryKey: ['job', job.id] }));
+    },
+  });
+}
+
+export function useRetryNodeDiagnostics() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeDiagnosticResult, Error, { nodeId: string; diagnosticId: string }>({
+    mutationFn: ({ nodeId, diagnosticId }) => retryNodeDiagnostics(nodeId, diagnosticId),
+    onSuccess: (result, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      const jobs = 'jobs' in result && Array.isArray(result.jobs) ? result.jobs : 'job' in result && result.job ? [result.job] : [];
+      jobs.forEach((job) => void queryClient.invalidateQueries({ queryKey: ['job', job.id] }));
+    },
+  });
+}
+
+export function useDiscoverNodeServices() {
+  const queryClient = useQueryClient();
+  return useMutation<Job, Error, { nodeId: string }>({
+    mutationFn: ({ nodeId }) => discoverNodeServices(nodeId),
+    onSuccess: (job, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+    },
+  });
+}
+
+export function useImportNodeServiceDiscovery() {
+  const queryClient = useQueryClient();
+  return useMutation<ServiceInstance, Error, { nodeId: string; discoveryId: string }>({
+    mutationFn: ({ nodeId, discoveryId }) => importNodeServiceDiscoveryById(nodeId, discoveryId),
+    onSuccess: (_instance, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      invalidateServicesWorkspace(queryClient);
+    },
+  });
+}
+
+export function useImportAllNodeServiceDiscoveries() {
+  const queryClient = useQueryClient();
+  return useMutation<ServiceInstance[], Error, { nodeId: string }>({
+    mutationFn: ({ nodeId }) => importAllNodeServiceDiscoveries(nodeId),
+    onSuccess: (_instances, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      invalidateServicesWorkspace(queryClient);
+    },
+  });
 }
 
 export function useInstances(options?: QueryOptions<ServiceInstance[]>) {

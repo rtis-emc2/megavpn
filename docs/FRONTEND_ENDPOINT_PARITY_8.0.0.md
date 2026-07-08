@@ -35,8 +35,8 @@ Unsafe methods must preserve `X-MegaVPN-CSRF: 1` and `credentials: include`.
 | Frontend file | Purpose | Current limitation |
 | --- | --- | --- |
 | `frontend/src/shared/api/client.ts` | Fetch wrapper, API base, CSRF, cookie credentials, typed API error. | Field-level validation mapping is currently implemented in focused forms, not as a global helper. |
-| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, delivery, VLESS groups, Firewall and Services/Instances provisioning mutations are wired; other domains remain incomplete. |
-| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, delivery, VLESS groups, Firewall and Services/Instances provisioning invalidation is wired; other domains remain incomplete. |
+| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, delivery, VLESS groups, Firewall, Services/Instances provisioning and Nodes observability/diagnostics/inventory/capability/discovery mutations are wired; other domains remain incomplete. |
+| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, delivery, VLESS groups, Firewall, Services/Instances provisioning and Nodes observability/diagnostics/inventory/capability/discovery invalidation is wired; other domains remain incomplete. |
 
 Raw `/api/v1` strings are allowed only under `frontend/src/shared/api` and
 tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
@@ -100,15 +100,19 @@ tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
 
 | Backend endpoint family | Legacy usage | New wrapper / hook | UI page | Status | Invalidation / security notes |
 | --- | --- | --- | --- | --- | --- |
-| `GET/POST /api/v1/nodes`, `GET/PUT/DELETE /api/v1/nodes/{id}` | node CRUD | `endpoints.nodes`; `useNodes`; mutations missing | Nodes | read-only / legacy-only | Retire/delete require confirmation and audit-friendly reason. |
-| `POST /api/v1/nodes/{id}/force-retire`, `/maintenance/enable`, `/maintenance/disable` | dangerous lifecycle | missing | Nodes | legacy-only | Confirm impact and invalidate nodes/jobs. |
-| `GET /api/v1/nodes/{id}/diagnostics`, `POST /diagnostics/retry-*`, `/reconcile-runtime`, `/requeue-stuck-job`, `/channel-probe`, `/clear-stale-rotation` | diagnostics actions | diagnostics missing | Nodes/Diagnostics | legacy-only | Async jobs need tracking. |
+| `GET/POST /api/v1/nodes`, `GET/PUT/DELETE /api/v1/nodes/{id}` | node CRUD | `listNodes`; `getNode`; `useNodes`; `useNodeDetail`; create/update/delete missing from new UI | Nodes | connected read / legacy-only mutations | Existing node list/detail are connected. Create/edit/retire stay legacy-only; retire/delete require confirmation and audit-friendly reason before migration. |
+| `POST /api/v1/nodes/{id}/maintenance/enable`, `/maintenance/disable` | maintenance lifecycle | `setNodeMaintenance`; `useSetNodeMaintenance` | Nodes | connected | Confirmation required; invalidates nodes, node detail, diagnostics, inventory, capabilities, discovery and jobs. |
+| `POST /api/v1/nodes/{id}/force-retire` | dangerous lifecycle | missing | Nodes | legacy-only | FE8-P0-05B+ scope; requires exact confirmation, reason and cross-domain cleanup visibility. |
+| `GET /api/v1/nodes/{id}/diagnostics`, `POST /diagnostics/retry-inventory`, `/retry-discovery`, `/reconcile-runtime`, `/requeue-stuck-job`, `/channel-probe` | diagnostics actions | `getNodeDiagnostics`; `getNodeAgentState`; `listNodeDiagnostics`; `runNodeDiagnostics`; `retryNodeDiagnostics`; matching hooks | Nodes/Diagnostics | connected | Output is rendered as text, not HTML. Async actions require confirmation and show returned jobs. Runtime reconcile may queue backend-defined dependent runtime jobs. |
+| `POST /api/v1/nodes/{id}/diagnostics/clear-stale-rotation` | token rotation cleanup | missing | Nodes | legacy-only | FE8-P0-05B token rotation scope. |
 | `GET /api/v1/nodes/{id}/routes/preview`, `POST /routes/apply`, `/routes/cleanup` | route policy | missing | Route Policy | legacy-only | Preview-before-apply required. |
 | `GET/PUT /api/v1/nodes/{id}/access-methods`, `POST /ssh/host-key-scan`, `/ssh/sessions`, `GET /ssh/terminal` | bootstrap/terminal | missing | Nodes | legacy-only | Host key pinning, WebSocket terminal, no secret logging. |
 | `POST /api/v1/nodes/{id}/bootstrap`, `GET /bootstrap-runs`, `GET /bootstrap-runs/{run_id}/bundle` | bootstrap | missing | Nodes | legacy-only | Generated material must be one-time/secret-safe. |
 | `POST /api/v1/nodes/{id}/agent-token/rotate`, `/enrollment-token`, `/enrollment-token/rotate`, `/agent-identity/revoke`, `/reboot`, `/emergency-cleanup` | token and control actions | missing | Nodes | legacy-only | Rotate/revoke/reboot require confirmation and job tracking. |
-| `GET /api/v1/nodes/{id}/inventory`, `GET /api/v1/nodes/capabilities`, `GET /nodes/{id}/capabilities`, `POST /capabilities/install`, `/verify`, `GET /capabilities/drift`, `/install-events` | inventory/capabilities | capabilities partially read in legacy only | Nodes/Services | legacy-only | Install/verify async job tracking required. |
-| `GET /api/v1/nodes/{id}/services/discovered`, `/discovery-summary`, `/{discovery_id}`, `POST /ignore`, `/unignore`, `/import`, `/services/import-all`, `/services/discover`, `/inventory/sync` | service discovery | missing | Nodes/Services | legacy-only | Import is a mutating workflow; confirm impact. |
+| `GET /api/v1/nodes/{id}/inventory`, `POST /api/v1/nodes/{id}/inventory/sync` | inventory view/sync | `getNodeInventory`; `syncNodeInventory`; `useNodeInventory`; `useSyncNodeInventory` | Nodes/Inventory | connected | Sync requires confirmation and shows returned job. Inventory payload is rendered as text. |
+| `GET /api/v1/nodes/capabilities`, `GET /nodes/{id}/capabilities`, `POST /capabilities/install`, `/verify`, `GET /capabilities/drift`, `/install-events`, `GET /services/installers` | inventory/capabilities | `listNodeCapabilities`; `installNodeCapability`; `installNodeCapabilities`; `verifyNodeCapability`; `verifyNodeCapabilities`; drift/events/installers hooks | Nodes/Capabilities | connected | Install/verify require confirmation and async job tracking. Installer catalog is backend-driven. |
+| `GET /api/v1/nodes/{id}/services/discovered`, `/discovery-summary`, `/{discovery_id}`, `POST /import`, `/services/import-all`, `/services/discover` | service discovery | `listNodeServiceDiscoveries`; `listNodeServiceDiscovery`; `discoverNodeServices`; `importNodeServiceDiscovery`; `importNodeServiceDiscoveryById`; matching hooks | Nodes/Service Discovery | connected | Discover queues a job; import requires confirmation. Backend-rendered payload is text only. |
+| `POST /api/v1/nodes/{id}/services/discovered/{discovery_id}/ignore`, `/unignore` | service discovery triage | missing | Nodes/Service Discovery | legacy-only | Not exposed in FE8-P0-05A. |
 
 ### 4.6 Instances and Revisions
 

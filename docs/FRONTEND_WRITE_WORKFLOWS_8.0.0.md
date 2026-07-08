@@ -39,7 +39,7 @@ to `/legacy/`.
 | Job detail | fully connected | Detail drawer reads backend job. |
 | Job logs | fully connected | Render text safely; no HTML sink. |
 | Job cancel | fully connected | Backend endpoint wired with confirmation, error display and query invalidation. |
-| Job retry/requeue | legacy-only | Domain-specific retry endpoints exist for selected node diagnostics, not generic retry UX. |
+| Job retry/requeue | legacy-only generic / connected under Nodes diagnostics | Generic retry UX is not migrated. Domain-specific selected node diagnostics retry/requeue is wired under `Nodes`. |
 
 ### Clients
 
@@ -123,20 +123,21 @@ to `/legacy/`.
 
 | Workflow | Status | Notes |
 | --- | --- | --- |
-| Nodes list/detail | fully connected read path | Detail drawer is read-only. |
+| Nodes list/detail | fully connected | Existing node list/detail uses `GET /api/v1/nodes` and `GET /api/v1/nodes/{id}` with search/status/role filters and a detail drawer. |
 | Create/register | disabled intentionally | Backend exists; form not migrated. |
 | Edit metadata | legacy-only | Backend exists. |
 | Retire | legacy-only | Backend exists; destructive confirmation required. |
 | Force retire | legacy-only | Backend exists; stronger confirmation required. |
-| Maintenance mode | legacy-only | Backend exists. |
+| Maintenance mode | fully connected | `POST /api/v1/nodes/{id}/maintenance/enable` and `/disable`; confirmation required, backend error states are rendered safely. |
 | Bootstrap | legacy-only | Backend exists; host-key/secret-safe workflow required. |
 | SSH terminal/session launch | legacy-only | Backend exists; terminal security review required. |
 | Host-key scan | legacy-only | Backend exists; host-key pinning required. |
 | Token rotate/enrollment tokens | legacy-only | Backend exists; one-time token display required. |
-| Diagnostics retry | legacy-only | Backend exists; job tracking required. |
-| Inventory sync | legacy-only | Backend exists; job tracking required. |
-| Capabilities install/verify | legacy-only | Backend exists; job tracking required. |
-| Service discovery import | legacy-only | Backend exists; confirmation required. |
+| Agent/runtime state | fully connected | Node diagnostics payload shows heartbeat, communication state and agent job/inventory/discovery/runtime timestamps without rendering secrets or HTML. |
+| Diagnostics retry/run | fully connected | `GET /diagnostics`, `POST /diagnostics/retry-inventory`, `/retry-discovery`, `/channel-probe`, `/requeue-stuck-job` and `/reconcile-runtime`; confirmation and job tracking required. Runtime reconcile may queue backend-defined dependent runtime jobs. |
+| Inventory view/sync | fully connected | `GET /inventory` and `POST /inventory/sync`; sync requires confirmation and shows returned job. Inventory payload is rendered as text. |
+| Capabilities install/verify | fully connected | `GET /capabilities`, `GET /capabilities/drift`, `GET /capabilities/install-events`, `GET /services/installers`, `POST /capabilities/install`, `POST /capabilities/verify`; install/verify require confirmation and job tracking. |
+| Service discovery list/import | fully connected | `GET /services/discovered`, `GET /services/discovery-summary`, `POST /services/discover`, `POST /services/discovered/{id}/import`, `POST /services/import-all`; import requires confirmation. Ignore/unignore stays legacy-only. |
 | Route policy preview/apply/cleanup | legacy-only | Backend exists; preview-before-apply required. |
 
 ### Platform

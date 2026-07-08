@@ -47,15 +47,199 @@ export type Dashboard = APIRecord & {
 export type NodeEntity = APIRecord & {
   id: string;
   name?: string;
+  kind?: string;
   role?: string;
   address?: string;
+  location_label?: string;
   status?: string;
   agent_status?: string;
   agent_channel_status?: string;
+  agent_version?: string;
+  agent_protocol_version?: string;
+  agent_registered_at?: string;
+  agent_last_seen_at?: string;
   last_heartbeat_at?: string;
+  os_family?: string;
+  os_version?: string;
+  architecture?: string;
+  execution_mode?: string;
   latitude?: number;
   longitude?: number;
+  created_at?: string;
+  updated_at?: string;
 };
+
+export type NodeDetail = NodeEntity;
+
+export type Node = NodeEntity;
+
+export type NodeAgentState = APIRecord & {
+  node_id?: string;
+  status?: string;
+  agent_version?: string;
+  protocol_version?: string;
+  fingerprint?: string;
+  registered_at?: string;
+  last_seen_at?: string;
+  revoked_at?: string;
+  token_hint?: string;
+  token_rotation_status?: string;
+  last_auth_failure_at?: string;
+  last_auth_failure_reason?: string;
+  last_job_poll_at?: string;
+  last_job_claim_at?: string;
+  last_job_claim_job_id?: string;
+  last_job_claim_type?: string;
+  last_job_result_at?: string;
+  last_job_result_job_id?: string;
+  last_job_result_type?: string;
+  last_job_result_status?: string;
+  last_inventory_sync_at?: string;
+  last_discovery_sync_at?: string;
+  last_runtime_sync_at?: string;
+};
+
+export type NodeInventorySnapshot = APIRecord & {
+  id: string;
+  node_id?: string;
+  payload?: APIRecord;
+  created_at?: string;
+};
+
+export type NodeInventory = NodeInventorySnapshot;
+
+export type NodeServiceDiscoverySummary = APIRecord & {
+  node_id?: string;
+  total?: number;
+  available?: number;
+  discovered?: number;
+  imported?: number;
+  ignored?: number;
+  by_service?: Record<string, number>;
+  importable_count?: number;
+};
+
+export type NodeServiceDiscovery = APIRecord & {
+  id: string;
+  node_id?: string;
+  service_code?: string;
+  name?: string;
+  systemd_unit?: string;
+  config_path?: string;
+  status?: string;
+  source?: string;
+  confidence?: number;
+  endpoint_host?: string;
+  endpoint_port?: number;
+  managed_instance_id?: string | null;
+  payload?: APIRecord;
+  detected_at?: string;
+};
+
+export type NodeServiceDiscoveryItem = NodeServiceDiscovery;
+
+export type NodeDiagnostics = APIRecord & {
+  node?: NodeDetail;
+  heartbeat_state?: string;
+  heartbeat_drift_seconds?: number;
+  communication_state?: string;
+  communication_hint?: string;
+  agent?: NodeAgentState;
+  latest_inventory?: NodeInventorySnapshot;
+  discovery_summary?: NodeServiceDiscoverySummary;
+  recent_discoveries?: NodeServiceDiscovery[];
+};
+
+export type NodeDiagnostic = NodeDiagnostics;
+
+export type NodeCapability = APIRecord & {
+  id: string;
+  node_id?: string;
+  capability_code?: string;
+  version?: string;
+  status?: string;
+  source?: string;
+  detected_at?: string;
+};
+
+export type NodeCapabilityInstallEvent = APIRecord & {
+  id: string;
+  node_id?: string;
+  job_id?: string | null;
+  capability_code?: string;
+  strategy?: string;
+  status?: string;
+  summary?: string;
+  payload?: APIRecord;
+  created_at?: string;
+};
+
+export type NodeCapabilityDriftItem = APIRecord & {
+  capability_code?: string;
+  desired?: string;
+  actual?: string;
+  in_sync?: boolean;
+};
+
+export type NodeCapabilityDrift = APIRecord & {
+  node_id?: string;
+  required?: string[];
+  drift?: NodeCapabilityDriftItem[];
+};
+
+export type NodeServiceInstaller = APIRecord & {
+  service_code: string;
+  strategy?: string;
+  channel?: string;
+  description?: string;
+};
+
+export type NodeCapabilityInstallInput = {
+  service_code: string;
+  strategy?: string;
+  channel?: string;
+};
+
+export type NodeCapabilityVerifyInput = {
+  service_code: string;
+};
+
+export type NodeDiagnosticsAction =
+  | 'retry-inventory'
+  | 'retry-discovery'
+  | 'reconcile-runtime'
+  | 'requeue-stuck-job'
+  | 'channel-probe';
+
+export type NodeJobEnvelope = APIRecord & {
+  status?: string;
+  message?: string;
+  job?: Job;
+};
+
+export type NodeRuntimeReconcileResult = APIRecord & {
+  jobs?: Job[];
+  queued?: number;
+  warnings?: string[];
+};
+
+export type NodeDiagnosticResult = NodeDiagnostics | NodeJobEnvelope | NodeRuntimeReconcileResult;
+
+export type NodeMaintenanceRequest = {
+  enabled: boolean;
+};
+
+export type NodeMaintenanceResult = NodeDetail;
+
+export type NodeInventorySyncResult = Job;
+
+export type NodeCapabilityInstallResult = Job;
+
+export type NodeCapabilityVerifyResult = Job;
+
+export type NodeServiceDiscoveryImportResult = ServiceInstance | ServiceInstance[];
+
+export type NodeMutationResult = NodeDetail | Job | NodeJobEnvelope | NodeRuntimeReconcileResult | ServiceInstance | ServiceInstance[];
 
 export type ServiceInstance = APIRecord & {
   id: string;
