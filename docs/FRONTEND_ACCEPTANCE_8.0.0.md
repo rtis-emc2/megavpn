@@ -5,10 +5,8 @@ Branch: `release/8.0.0-frontend-console`
 Implementation commit at evidence time:
 `9044647110cd5cbaeb4d5a866b96f56008fcb338`
 
-FE8-P0-02 Firewall task evidence:
-final pushed commit is reported in the task final response; this document is
-part of that commit and therefore cannot self-reference its own immutable Git
-SHA without changing the SHA.
+FE8-P0-02 Firewall task implementation commit:
+`5bfae8dfd629592dfa44aec9a3cea8b1db4b2c47`
 
 Evidence date UTC: `2026-07-08T18:43:23Z`
 
