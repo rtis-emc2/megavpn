@@ -7,9 +7,12 @@ dist/
 build/
 docs/*
 !docs/*.md
+!docs/releases/
+!docs/releases/*.md
 node_modules/
 .DS_Store
 coverage/
+*.tsbuildinfo
 *.key
 *.pem
 *.crt

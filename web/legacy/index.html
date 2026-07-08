@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>RTIS MegaVPN Control Plane</title>
+  <link rel="stylesheet" href="./assets/styles.css?v=7.1.1.0" />
+</head>
+<body>
+  <div class="auth-gate" id="authGate" hidden></div>
+
+  <div class="app-shell" id="appShell" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">
+          <img src="./assets/rtis-logo.svg?v=7.1.1.0" alt="RTIS" class="brand-logo" />
+        </div>
+        <div>
+          <div class="brand-title">RTIS</div>
+          <div class="brand-subtitle">MegaVPN Control Plane</div>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav"></nav>
+
+      <div class="sidebar-footer">
+        <div class="mini-label">API</div>
+        <div class="api-base" id="apiBaseLabel">current host</div>
+        <div class="release-label" id="releaseLabel">release checking</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Distributed VPN & Edge Platform</div>
+          <h1 id="pageTitle">Dashboard</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-pill" id="readyPill"><span class="dot unknown"></span>checking</div>
+          <button class="secondary-btn" id="refreshBtn" type="button">Refresh</button>
+          <div id="authSlot"></div>
+        </div>
+      </header>
+
+      <section class="notice" id="notice">
+        <strong>Control plane online.</strong> Панель работает поверх backend API напрямую и показывает только активные operational domains текущего релиза.
+      </section>
+
+      <section class="content" id="content"></section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" tabindex="-1">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow" id="modalEyebrow">Dialog</div>
+          <h2 id="modalTitle">Action</h2>
+        </div>
+        <button class="icon-btn" id="closeModalBtn" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <script src="./assets/app-config.js?v=7.1.1.0" defer></script>
+  <script src="./assets/instance-catalog.js?v=7.1.1.0" defer></script>
+  <script src="./assets/app-state.js?v=7.1.1.0" defer></script>
+  <script src="./assets/api-client.js?v=7.1.1.0" defer></script>
+  <script src="./assets/domain-ui.js?v=7.1.1.0" defer></script>
+  <script src="./assets/node-ui.js?v=7.1.1.0" defer></script>
+  <script src="./assets/web-terminal.js?v=7.1.1.0" defer></script>
+  <script src="./assets/ui-primitives.js?v=7.1.1.0" defer></script>
+  <script src="./assets/table-enhancer.js?v=7.1.1.0" defer></script>
+  <script src="./assets/form-enhancer.js?v=7.1.1.0" defer></script>
+  <script src="./assets/shell-ui.js?v=7.1.1.0" defer></script>
+  <script src="./assets/dashboard-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/address-pools-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/firewall-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/traffic-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/instances-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/revisions-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/services-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/ops-pages.js?v=7.1.1.0" defer></script>
+  <script src="./assets/clients-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/artifacts-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/backhaul-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/nodes-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/node-map-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/settings-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/certificates-page.js?v=7.1.1.0" defer></script>
+  <script src="./assets/job-workflows.js?v=7.1.1.0" defer></script>
+  <script src="./assets/auth-workflows.js?v=7.1.1.0" defer></script>
+  <script src="./assets/instance-workflows.js?v=7.1.1.0" defer></script>
+  <script src="./assets/certificate-workflows.js?v=7.1.1.0" defer></script>
+  <script src="./assets/node-workflows.js?v=7.1.1.0" defer></script>
+  <script src="./assets/settings-workflows.js?v=7.1.1.0" defer></script>
+  <script src="./assets/auth-view.js?v=7.1.1.0" defer></script>
+  <script src="./assets/response-view.js?v=7.1.1.0" defer></script>
+  <script src="./assets/app-runtime.js?v=7.1.1.0" defer></script>
+  <script src="./assets/core-loader.js?v=7.1.1.0" defer></script>
+  <script src="./assets/app-router.js?v=7.1.1.0" defer></script>
+  <script src="./assets/app.js?v=7.1.1.0" defer></script>
+</body>
+</html>
