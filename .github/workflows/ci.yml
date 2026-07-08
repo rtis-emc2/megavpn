@@ -87,6 +87,11 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Install CI tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
       - name: Check shell syntax
         run: |
           set -euo pipefail
@@ -147,6 +152,41 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24"
+
+      - name: Prepare self-test host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nginx ripgrep
+
+          sudo mkdir -p /opt/megavpn/bin /etc/megavpn/control-plane-tls /var/lib/megavpn /etc/nginx/conf.d
+          sudo touch /etc/megavpn/megavpn.env /etc/megavpn/agent.env
+          for binary in megavpn-api megavpn-worker megavpn-agent megavpn-migrate; do
+            sudo install -m 0755 /bin/true "/opt/megavpn/bin/${binary}"
+          done
+
+          mkdir -p "$RUNNER_TEMP/megavpn-nginx"/{client_body,proxy,fastcgi,uwsgi,scgi}
+          cat > "$RUNNER_TEMP/megavpn-nginx.conf" <<EOF
+          pid $RUNNER_TEMP/megavpn-nginx/nginx.pid;
+          error_log $RUNNER_TEMP/megavpn-nginx/error.log;
+          events {
+            worker_connections 16;
+          }
+          http {
+            access_log off;
+            client_body_temp_path $RUNNER_TEMP/megavpn-nginx/client_body;
+            proxy_temp_path $RUNNER_TEMP/megavpn-nginx/proxy;
+            fastcgi_temp_path $RUNNER_TEMP/megavpn-nginx/fastcgi;
+            uwsgi_temp_path $RUNNER_TEMP/megavpn-nginx/uwsgi;
+            scgi_temp_path $RUNNER_TEMP/megavpn-nginx/scgi;
+            server {
+              listen 127.0.0.1:18080;
+              location / {
+                return 204;
+              }
+            }
+          }
+          EOF
+          printf 'MEGAVPN_SELF_TEST_NGINX_CONFIG=%s\n' "$RUNNER_TEMP/megavpn-nginx.conf" >> "$GITHUB_ENV"
 
       - name: Self-test
         env:
