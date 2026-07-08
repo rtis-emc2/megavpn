@@ -175,6 +175,22 @@ type ServiceDefinition struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+type ClientAccessService struct {
+	ServiceCode             string         `json:"service_code"`
+	DisplayName             string         `json:"display_name"`
+	Description             string         `json:"description"`
+	Category                string         `json:"category"`
+	Implemented             bool           `json:"implemented"`
+	SupportsGroups          bool           `json:"supports_groups"`
+	SupportsPolicy          bool           `json:"supports_policy"`
+	SupportsScope           bool           `json:"supports_scope"`
+	SupportsMembership      bool           `json:"supports_membership"`
+	SupportsMaterialization bool           `json:"supports_materialization"`
+	Status                  string         `json:"status"`
+	RuntimeServiceCodes     []string       `json:"runtime_service_codes,omitempty"`
+	PolicyCapabilities      map[string]any `json:"policy_capabilities,omitempty"`
+}
+
 type ServicePackComponent struct {
 	Label                string         `json:"label"`
 	Description          string         `json:"description,omitempty"`
@@ -429,6 +445,7 @@ type ClientAccessGroupMembershipRequest struct {
 	FilterSearch     string   `json:"filter_search"`
 	FilterAssignment string   `json:"filter_assignment"`
 	FilterStatus     string   `json:"filter_status"`
+	FilterGroupID    string   `json:"filter_group_id,omitempty"`
 }
 
 type ClientAccessGroupMembershipFailure struct {

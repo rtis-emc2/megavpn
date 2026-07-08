@@ -16,6 +16,7 @@
       setPage,
       openModal,
       closeModal,
+      openActionOutcomeModal,
       renderActionResponse,
     } = ctx;
     if (
@@ -31,6 +32,7 @@
       typeof refresh !== 'function' ||
       typeof openModal !== 'function' ||
       typeof closeModal !== 'function' ||
+      typeof openActionOutcomeModal !== 'function' ||
       typeof renderActionResponse !== 'function'
     ) {
       throw new Error('MegaVPNClientsPage requires page dependencies');
@@ -268,7 +270,11 @@
 
     function compactServiceLabel(value) {
       const normalized = String(value || '').trim();
+      const catalog = clientAccessServiceByCode(normalized);
+      if (catalog) return catalog.display_name || catalog.service_code || normalized;
       switch (normalized) {
+        case 'vless':
+          return 'VLESS / Xray';
         case 'xray-core':
           return 'Xray';
         case 'http_proxy':
@@ -286,6 +292,59 @@
         default:
           return normalized || 'service';
       }
+    }
+
+    function clientAccessServices() {
+      const items = Array.isArray(state.clientAccessServices) ? state.clientAccessServices : [];
+      if (items.length) return items;
+      return [
+        { service_code: 'vless', display_name: 'VLESS / Xray', category: 'vpn', status: 'active', supports_groups: true, supports_membership: true, supports_materialization: true },
+        { service_code: 'openvpn', display_name: 'OpenVPN', category: 'vpn', status: 'coming_soon', supports_groups: false },
+        { service_code: 'wireguard', display_name: 'WireGuard', category: 'vpn', status: 'coming_soon', supports_groups: false },
+        { service_code: 'l2tp', display_name: 'L2TP / IPsec', category: 'vpn', status: 'coming_soon', supports_groups: false },
+        { service_code: 'http_proxy', display_name: 'HTTP Proxy', category: 'proxy', status: 'coming_soon', supports_groups: false },
+        { service_code: 'shadowsocks', display_name: 'Shadowsocks', category: 'proxy', status: 'coming_soon', supports_groups: false },
+        { service_code: 'mtproto', display_name: 'MTProto', category: 'proxy', status: 'coming_soon', supports_groups: false },
+        { service_code: 'socks_proxy', display_name: 'SOCKS Proxy', category: 'proxy', status: 'planned', supports_groups: false },
+      ];
+    }
+
+    function normalizeClientAccessServiceCode(value) {
+      const code = String(value || '').trim().toLowerCase();
+      if (['xray', 'xray-core', 'xray_core'].includes(code)) return 'vless';
+      if (['l2tpd', 'xl2tpd', 'ipsec'].includes(code)) return 'l2tp';
+      if (['http', 'http-proxy'].includes(code)) return 'http_proxy';
+      if (['ss'].includes(code)) return 'shadowsocks';
+      return code;
+    }
+
+    function clientAccessServiceByCode(value) {
+      const code = normalizeClientAccessServiceCode(value);
+      return clientAccessServices().find((service) => normalizeClientAccessServiceCode(service.service_code) === code) || null;
+    }
+
+    function serviceSupportsGroupManagement(serviceOrCode) {
+      const service = typeof serviceOrCode === 'object' ? serviceOrCode : clientAccessServiceByCode(serviceOrCode);
+      return Boolean(service?.supports_groups && service?.supports_membership && service?.supports_materialization);
+    }
+
+    function clientAccessServiceStatusLabel(service) {
+      const status = String(service?.status || (serviceSupportsGroupManagement(service) ? 'active' : 'coming_soon')).trim();
+      if (status === 'coming_soon') return 'coming soon';
+      if (status === 'catalog_only') return 'catalog only';
+      return status || 'unknown';
+    }
+
+    function clientAccessServiceOptions(selectedCode = 'vless', includeAll = false) {
+      const selected = normalizeClientAccessServiceCode(selectedCode || 'vless');
+      const rows = [];
+      if (includeAll) rows.push(`<option value="all"${selected === 'all' ? ' selected' : ''}>All services</option>`);
+      for (const service of clientAccessServices()) {
+        const code = normalizeClientAccessServiceCode(service.service_code);
+        const suffix = serviceSupportsGroupManagement(service) ? '' : ` · ${clientAccessServiceStatusLabel(service)}`;
+        rows.push(`<option value="${escapeHTML(code)}"${selected === code ? ' selected' : ''}>${escapeHTML(service.display_name || code)}${escapeHTML(suffix)}</option>`);
+      }
+      return rows.join('');
     }
 
     function artifactDownloadURL(clientID, artifactID) {
@@ -505,9 +564,9 @@
 
     function renderClientGroupsPage() {
       setTitle('Clients');
-      const serviceFilter = String(state.clientAccessGroupsServiceFilter || 'vless');
+      const serviceFilter = normalizeClientAccessServiceCode(state.clientAccessGroupsServiceFilter || 'all');
       const allGroups = Array.isArray(state.clientAccessGroups) ? state.clientAccessGroups : [];
-      const groups = serviceFilter === 'all' ? allGroups : allGroups.filter((group) => String(group.service_code || '').toLowerCase() === serviceFilter);
+      const groups = serviceFilter === 'all' ? allGroups : allGroups.filter((group) => normalizeClientAccessServiceCode(group.service_code) === serviceFilter);
       const conflicts = Array.isArray(state.clientAccessGroupMigrationConflicts) ? state.clientAccessGroupMigrationConflicts : [];
       el('content').innerHTML = `
         <section class="clients-workspace">
@@ -516,15 +575,11 @@
             <div class="table-head">
               <div>
                 <h2>Client access groups</h2>
-                <p class="table-subtitle">Groups are assigned to clients. Runtime instances receive materialized service access automatically.</p>
+                <p class="table-subtitle">Groups define client access policy. Runtime instances receive materialized service access automatically.</p>
               </div>
               <div class="table-tools">
                 <select id="clientAccessGroupServiceFilter" aria-label="Service filter">
-                  <option value="vless"${serviceFilter === 'vless' ? ' selected' : ''}>VLESS</option>
-                  <option value="openvpn"${serviceFilter === 'openvpn' ? ' selected' : ''} disabled>OpenVPN later</option>
-                  <option value="l2tp"${serviceFilter === 'l2tp' ? ' selected' : ''} disabled>L2TP later</option>
-                  <option value="wireguard"${serviceFilter === 'wireguard' ? ' selected' : ''} disabled>WireGuard later</option>
-                  <option value="all"${serviceFilter === 'all' ? ' selected' : ''}>All enabled</option>
+                  ${clientAccessServiceOptions(serviceFilter, true)}
                 </select>
                 <span class="tag ${conflicts.length ? 'warn' : 'stub'}">${escapeHTML(String(conflicts.length))} migration conflicts</span>
                 <button class="primary-btn" id="createAccessGroupBtn" type="button">New group</button>
@@ -534,12 +589,13 @@
               <table class="clients-table access-groups-table">
                 <thead>
                   <tr>
-                    <th>Group</th>
+                    <th>Group name</th>
+                    <th>Group key</th>
                     <th>Service</th>
                     <th>Status</th>
                     <th>Members</th>
                     <th>Scope</th>
-                    <th>Route</th>
+                    <th>Route / policy</th>
                     <th>Sync</th>
                     <th>Actions</th>
                   </tr>
@@ -555,20 +611,26 @@
 
     function renderAccessGroupRows(groups) {
       if (!groups.length) {
-        return '<tr><td colspan="8"><div class="empty">No client access groups yet. Create a VLESS group or run migrations.</div></td></tr>';
+        return '<tr><td colspan="9"><div class="empty">No client access groups yet. Create a VLESS group or run migrations.</div></td></tr>';
       }
       return groups.map((group) => {
         const pending = Number(group.pending_sync_count || 0);
         const failed = Number(group.failed_sync_count || 0);
         const applied = Number(group.applied_sync_count || 0);
+        const service = clientAccessServiceByCode(group.service_code);
         const syncTag = failed > 0 ? statusTag('failed') : pending > 0 ? statusTag('pending') : statusTag(applied > 0 ? 'applied' : 'unknown');
+        const canManageMembers = serviceSupportsGroupManagement(service);
         return `
           <tr>
             <td>
               <strong>${escapeHTML(group.display_name || group.group_key)}</strong>
-              <div class="timeline-meta">${escapeHTML(group.group_key || group.id)}</div>
+              <div class="timeline-meta">${escapeHTML(group.description || 'Client access policy group')}</div>
             </td>
-            <td>${escapeHTML(compactServiceLabel(group.service_code || 'service'))}</td>
+            <td><code>${escapeHTML(group.group_key || group.id)}</code></td>
+            <td>
+              <div>${escapeHTML(compactServiceLabel(group.service_code || 'service'))}</div>
+              <div class="timeline-meta">${escapeHTML(clientAccessServiceStatusLabel(service))}</div>
+            </td>
             <td>${statusTag(group.status || 'unknown')}</td>
             <td>
               <div class="client-status-cluster">
@@ -584,7 +646,7 @@
             <td>${syncTag}</td>
             <td>
               <div class="table-actions client-action-grid compact-actions">
-                <button class="primary-btn access-group-members-btn" type="button" data-group-id="${escapeHTML(group.id)}">Members</button>
+                <button class="${canManageMembers ? 'primary-btn' : 'secondary-btn'} access-group-members-btn" type="button" data-group-id="${escapeHTML(group.id)}"${canManageMembers ? '' : ' disabled'}>Members</button>
                 <button class="secondary-btn access-group-edit-btn" type="button" data-group-id="${escapeHTML(group.id)}">Policy</button>
                 <button class="secondary-btn access-group-scope-btn" type="button" data-group-id="${escapeHTML(group.id)}">Scope</button>
                 <button class="secondary-btn access-group-sync-btn" type="button" data-group-id="${escapeHTML(group.id)}">Sync</button>
@@ -623,13 +685,24 @@
       const group = groupID ? findAccessGroup(groupID) : null;
       const policy = accessGroupPolicy(group);
       const isEdit = Boolean(group);
+      const serviceCode = normalizeClientAccessServiceCode(group?.service_code || 'vless');
+      const service = clientAccessServiceByCode(serviceCode);
+      const serviceEnabled = serviceSupportsGroupManagement(serviceCode);
       openModal(isEdit ? `Edit group: ${group.display_name || group.group_key}` : 'Create client access group', 'Client access routing policy', `
-        <form id="accessGroupEditorForm" class="form-grid">
-          <div class="field"><label>Service</label><select name="service_code"><option value="vless" selected>VLESS</option></select></div>
+        <form id="accessGroupEditorForm" class="form-grid access-group-editor-form">
+          <div class="field">
+            <label>Service</label>
+            ${isEdit ? `<input type="hidden" name="service_code" value="${escapeHTML(serviceCode)}" />` : ''}
+            <select id="accessGroupEditorServiceCode" name="${isEdit ? 'service_code_display' : 'service_code'}"${isEdit ? ' disabled' : ''}>
+              ${clientAccessServiceOptions(serviceCode, false)}
+            </select>
+            <div class="field-hint">Only services with production group materialization can be created.</div>
+          </div>
           <div class="field"><label>Group key</label><input name="group_key" required ${isEdit ? 'readonly' : ''} value="${escapeHTML(group?.group_key || '')}" placeholder="out_usa_dallas" /></div>
           <div class="field"><label>Name</label><input name="display_name" required value="${escapeHTML(group?.display_name || '')}" placeholder="Outgoing USA Dallas" /></div>
           <div class="field"><label>Status</label><select name="status"><option value="active"${String(group?.status || 'active') === 'active' ? ' selected' : ''}>active</option><option value="disabled"${String(group?.status || '') === 'disabled' ? ' selected' : ''}>disabled</option></select></div>
           <div class="field full"><label>Description</label><input name="description" value="${escapeHTML(group?.description || '')}" placeholder="Operator note" /></div>
+          <div class="field full" id="accessGroupServiceNotice">${renderAccessGroupServiceNotice(service)}</div>
           <div class="field"><label>Route mode</label><select name="access_mode">
             ${['instance_default','local_breakout','egress_node','instance_only','block'].map((mode) => `<option value="${escapeHTML(mode)}"${String(policy.access_mode || 'instance_default') === mode ? ' selected' : ''}>${escapeHTML(mode)}</option>`).join('')}
           </select></div>
@@ -638,13 +711,43 @@
           <label class="checkbox-field"><input type="checkbox" name="ad_block"${policy.ad_block ? ' checked' : ''} /> Block managed ad domains</label>
           <div class="field full"><p class="field-hint">Runtime scope is managed with the Scope action in the group list.</p></div>
           <div class="field full inline-actions">
-            <button class="primary-btn" type="submit">${isEdit ? 'Save group' : 'Create group'}</button>
+            <button class="primary-btn" id="accessGroupEditorSubmitBtn" type="submit"${serviceEnabled ? '' : ' disabled'}>${isEdit ? 'Save group' : 'Create group'}</button>
             <button class="secondary-btn" type="button" id="accessGroupEditorCancelBtn">Cancel</button>
           </div>
         </form>
         <div id="accessGroupEditorResult" class="form-result"></div>`, { size: 'large' });
       document.getElementById('accessGroupEditorCancelBtn')?.addEventListener('click', closeModal);
+      bindAccessGroupEditorService();
       document.getElementById('accessGroupEditorForm')?.addEventListener('submit', (event) => submitAccessGroupEditor(event, group));
+    }
+
+    function renderAccessGroupServiceNotice(service) {
+      const current = service || clientAccessServiceByCode('vless');
+      if (serviceSupportsGroupManagement(current)) {
+        return `
+          <div class="callout ok">
+            <strong>${escapeHTML(current?.display_name || 'Service')} groups are active</strong>
+            <span>Membership, scope, preview and runtime materialization are available for this service.</span>
+          </div>`;
+      }
+      return `
+        <div class="callout warn">
+          <strong>${escapeHTML(current?.display_name || 'Selected service')} groups are not active yet</strong>
+          <span>${escapeHTML(current?.description || 'This service is visible in the catalog, but client access group materialization is not implemented yet.')}</span>
+        </div>`;
+    }
+
+    function bindAccessGroupEditorService() {
+      const serviceSelect = document.getElementById('accessGroupEditorServiceCode');
+      const notice = document.getElementById('accessGroupServiceNotice');
+      const submit = document.getElementById('accessGroupEditorSubmitBtn');
+      const sync = () => {
+        const service = clientAccessServiceByCode(serviceSelect?.value || 'vless');
+        if (notice) notice.innerHTML = renderAccessGroupServiceNotice(service);
+        if (submit) submit.disabled = !serviceSupportsGroupManagement(service);
+      };
+      serviceSelect?.addEventListener('change', sync);
+      sync();
     }
 
     async function submitAccessGroupEditor(event, group) {
@@ -661,7 +764,7 @@
         extra_rules: [],
       };
       const payload = {
-        service_code: String(form.get('service_code') || 'vless'),
+        service_code: normalizeClientAccessServiceCode(String(form.get('service_code') || 'vless')),
         group_key: String(form.get('group_key') || '').trim(),
         display_name: String(form.get('display_name') || '').trim(),
         description: String(form.get('description') || '').trim(),
@@ -852,6 +955,15 @@
     function openAccessGroupMembersModal(groupID) {
       const group = findAccessGroup(groupID);
       if (!group) return;
+      const service = clientAccessServiceByCode(group.service_code);
+      if (!serviceSupportsGroupManagement(service)) {
+        openActionOutcomeModal('Client access groups', 'Membership is not available', 'failed', `${compactServiceLabel(group.service_code)} groups are visible in the catalog, but runtime materialization is not implemented yet.`, [
+          { label: 'Group', value: group.display_name || group.group_key },
+          { label: 'Service', value: compactServiceLabel(group.service_code) },
+          { label: 'Status', value: clientAccessServiceStatusLabel(service) },
+        ]);
+        return;
+      }
       openModal(`Members: ${group.display_name || group.group_key}`, 'Assign clients to this access group', `
         <section id="clientAccessGroupMembersPanel" class="access-group-members-panel" data-group-id="${escapeHTML(group.id)}" data-offset="0" data-preview-ready="false">
           <div class="form-grid">
@@ -863,7 +975,8 @@
               <label>Assignment filter</label>
               <select id="accessGroupAssignmentFilter">
                 <option value="unassigned">Unassigned to this service</option>
-                <option value="assigned">Already assigned</option>
+                <option value="assigned_to_group">Already in this group</option>
+                <option value="assigned_other">Assigned to another group</option>
                 <option value="all">All clients</option>
               </select>
             </div>
@@ -877,26 +990,38 @@
               </select>
             </div>
             <div class="field">
-              <label>Load</label>
-              <button class="secondary-btn" type="button" id="loadAccessGroupClientsBtn">Load clients</button>
+              <label>Page size</label>
+              <select id="accessGroupClientPageSize">
+                <option value="25">25 clients</option>
+                <option value="50" selected>50 clients</option>
+                <option value="100">100 clients</option>
+                <option value="250">250 clients</option>
+              </select>
             </div>
             <div class="field full">
               <label>Paste clients</label>
               <textarea id="accessGroupPasteClients" rows="4" placeholder="usernames, emails or client IDs separated by comma or new line"></textarea>
             </div>
           </div>
-          <div class="access-group-bulk-bar">
+          <div class="access-group-bulk-bar access-group-selection-bar">
             <label class="checkbox-field"><input type="checkbox" id="accessGroupSelectVisible" /> Select visible</label>
             <label class="checkbox-field"><input type="checkbox" id="accessGroupSelectAllFiltered" /> Select all filtered clients</label>
             <select id="accessGroupBulkMode" aria-label="Bulk mode">
               <option value="add_only">Add only, do not move existing members</option>
               <option value="add_or_move">Add or move existing members</option>
             </select>
-            <button class="secondary-btn" type="button" id="previewAccessGroupBulkBtn">Preview</button>
-            <button class="primary-btn" type="button" id="applyAccessGroupBulkBtn" disabled>Apply changes</button>
+            <button class="secondary-btn" type="button" id="loadAccessGroupClientsBtn">Load clients</button>
           </div>
           <div id="accessGroupMembersLoaded" class="table-wrap"></div>
           <div id="accessGroupMembersPreview" class="form-result"></div>
+          <div class="access-group-members-footer">
+            <div id="accessGroupSelectionSummary" class="access-group-selection-summary">0 selected</div>
+            <div class="inline-actions">
+              <button class="secondary-btn" type="button" id="previewAccessGroupBulkBtn" disabled>Preview</button>
+              <button class="primary-btn" type="button" id="applyAccessGroupBulkBtn" disabled>Apply changes</button>
+              <button class="secondary-btn" type="button" id="closeAccessGroupMembersBtn">Close</button>
+            </div>
+          </div>
         </section>`, { size: 'full', bodyClass: 'client-access-groups-modal' });
       bindAccessGroupMembersModal(group);
     }
@@ -904,32 +1029,79 @@
     function bindAccessGroupMembersModal(group) {
       const panel = document.getElementById('clientAccessGroupMembersPanel');
       if (!panel) return;
+      panel._selectedClientIDs = new Set();
+      panel._loadedClientIDs = [];
       const lock = () => { state.vlessMembersInteractionLockUntil = Date.now() + 30000; };
       panel.addEventListener('input', lock);
       panel.addEventListener('focusin', lock);
+      document.getElementById('closeAccessGroupMembersBtn')?.addEventListener('click', closeModal);
       document.getElementById('loadAccessGroupClientsBtn')?.addEventListener('click', () => loadAccessGroupClients(group, 0));
+      document.getElementById('accessGroupClientPageSize')?.addEventListener('change', () => loadAccessGroupClients(group, 0));
+      document.getElementById('accessGroupAssignmentFilter')?.addEventListener('change', () => {
+        markAccessGroupPreviewStale();
+        loadAccessGroupClients(group, 0);
+      });
+      document.getElementById('accessGroupMemberStatus')?.addEventListener('change', () => {
+        markAccessGroupPreviewStale();
+        loadAccessGroupClients(group, 0);
+      });
+      document.getElementById('accessGroupClientSearch')?.addEventListener('input', markAccessGroupPreviewStale);
+      document.getElementById('accessGroupClientSearch')?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          loadAccessGroupClients(group, 0);
+        } else {
+          markAccessGroupPreviewStale();
+        }
+      });
       document.getElementById('accessGroupSelectVisible')?.addEventListener('change', (event) => {
-        panel.querySelectorAll('input[name="access_group_client_ids"]').forEach((input) => { input.checked = event.currentTarget.checked; });
+        const selected = accessGroupSelectedClientIDs(panel);
+        const checked = Boolean(event.currentTarget.checked);
+        for (const clientID of panel._loadedClientIDs || []) {
+          if (checked) selected.add(clientID);
+          else selected.delete(clientID);
+        }
+        syncAccessGroupClientCheckboxes(panel);
         markAccessGroupPreviewStale();
       });
-      document.getElementById('accessGroupSelectAllFiltered')?.addEventListener('change', markAccessGroupPreviewStale);
-      document.getElementById('accessGroupPasteClients')?.addEventListener('input', markAccessGroupPreviewStale);
+      document.getElementById('accessGroupSelectAllFiltered')?.addEventListener('change', () => {
+        syncAccessGroupClientCheckboxes(panel);
+        markAccessGroupPreviewStale();
+      });
+      document.getElementById('accessGroupPasteClients')?.addEventListener('input', () => {
+        markAccessGroupPreviewStale();
+        updateAccessGroupBulkControls();
+      });
       document.getElementById('accessGroupBulkMode')?.addEventListener('change', markAccessGroupPreviewStale);
-      document.getElementById('accessGroupMemberStatus')?.addEventListener('change', markAccessGroupPreviewStale);
       document.getElementById('previewAccessGroupBulkBtn')?.addEventListener('click', () => previewAccessGroupBulk(group));
       document.getElementById('applyAccessGroupBulkBtn')?.addEventListener('click', () => applyAccessGroupBulk(group));
+      updateAccessGroupBulkControls();
       void loadAccessGroupClients(group, 0);
+    }
+
+    function accessGroupSelectedClientIDs(panel = document.getElementById('clientAccessGroupMembersPanel')) {
+      if (!panel) return new Set();
+      if (!(panel._selectedClientIDs instanceof Set)) panel._selectedClientIDs = new Set();
+      return panel._selectedClientIDs;
+    }
+
+    function accessGroupPastedRefs() {
+      return String(document.getElementById('accessGroupPasteClients')?.value || '')
+        .split(/[\n,;\t]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
     }
 
     function accessGroupMembersPayload(group) {
       const panel = document.getElementById('clientAccessGroupMembersPanel');
-      const selected = Array.from(panel?.querySelectorAll('input[name="access_group_client_ids"]:checked') || []).map((input) => input.value).filter(Boolean);
-      const refs = String(document.getElementById('accessGroupPasteClients')?.value || '').split(/[\n,;\t]+/).map((item) => item.trim()).filter(Boolean);
+      const selected = Array.from(accessGroupSelectedClientIDs(panel)).filter(Boolean);
+      const refs = accessGroupPastedRefs();
       return {
         client_ids: selected,
         client_refs: refs,
         mode: String(document.getElementById('accessGroupBulkMode')?.value || 'add_only'),
         all_filtered: Boolean(document.getElementById('accessGroupSelectAllFiltered')?.checked),
+        filter_group_id: group?.id || '',
         filter_search: String(document.getElementById('accessGroupClientSearch')?.value || '').trim(),
         filter_assignment: String(document.getElementById('accessGroupAssignmentFilter')?.value || 'unassigned'),
         filter_status: String(document.getElementById('accessGroupMemberStatus')?.value || '').trim(),
@@ -937,11 +1109,54 @@
       };
     }
 
+    function accessGroupHasSelectableInput() {
+      const panel = document.getElementById('clientAccessGroupMembersPanel');
+      return Boolean(
+        document.getElementById('accessGroupSelectAllFiltered')?.checked ||
+        accessGroupSelectedClientIDs(panel).size > 0 ||
+        accessGroupPastedRefs().length > 0
+      );
+    }
+
+    function updateAccessGroupBulkControls() {
+      const panel = document.getElementById('clientAccessGroupMembersPanel');
+      const selectedCount = accessGroupSelectedClientIDs(panel).size;
+      const pastedCount = accessGroupPastedRefs().length;
+      const allFiltered = Boolean(document.getElementById('accessGroupSelectAllFiltered')?.checked);
+      const preview = document.getElementById('previewAccessGroupBulkBtn');
+      const apply = document.getElementById('applyAccessGroupBulkBtn');
+      const summary = document.getElementById('accessGroupSelectionSummary');
+      if (preview) preview.disabled = !accessGroupHasSelectableInput();
+      if (apply) apply.disabled = panel?.dataset.previewReady !== 'true';
+      if (summary) {
+        const scope = allFiltered ? 'all filtered' : `${selectedCount} selected`;
+        summary.textContent = `${scope} · ${pastedCount} pasted refs`;
+      }
+    }
+
+    function syncAccessGroupClientCheckboxes(panel = document.getElementById('clientAccessGroupMembersPanel')) {
+      if (!panel) return;
+      const selected = accessGroupSelectedClientIDs(panel);
+      const allFiltered = Boolean(document.getElementById('accessGroupSelectAllFiltered')?.checked);
+      panel.querySelectorAll('input[name="access_group_client_ids"]').forEach((input) => {
+        input.checked = selected.has(input.value);
+        input.disabled = allFiltered;
+      });
+      const visible = document.getElementById('accessGroupSelectVisible');
+      const loaded = panel._loadedClientIDs || [];
+      if (visible) {
+        visible.checked = loaded.length > 0 && loaded.every((clientID) => selected.has(clientID));
+        visible.disabled = allFiltered || loaded.length === 0;
+      }
+      updateAccessGroupBulkControls();
+    }
+
     function markAccessGroupPreviewStale() {
       const panel = document.getElementById('clientAccessGroupMembersPanel');
       if (panel) panel.dataset.previewReady = 'false';
       const apply = document.getElementById('applyAccessGroupBulkBtn');
       if (apply) apply.disabled = true;
+      updateAccessGroupBulkControls();
     }
 
     async function loadAccessGroupClients(group, offset = 0) {
@@ -953,22 +1168,33 @@
       markAccessGroupPreviewStale();
       const params = new URLSearchParams();
       params.set('service_code', group.service_code || 'vless');
+      params.set('group_id', group.id);
       params.set('search', String(document.getElementById('accessGroupClientSearch')?.value || '').trim());
       params.set('assignment', String(document.getElementById('accessGroupAssignmentFilter')?.value || 'unassigned'));
       params.set('status', String(document.getElementById('accessGroupMemberStatus')?.value || '').trim());
-      params.set('limit', '50');
+      params.set('limit', String(document.getElementById('accessGroupClientPageSize')?.value || '50'));
       params.set('offset', String(offset));
       try {
         const data = await requestJSON(`/api/v1/client-access-groups/available-clients?${params.toString()}`);
+        panel._loadedClientIDs = (Array.isArray(data?.items) ? data.items : []).map((item) => String(item.client_id || '')).filter(Boolean);
         target.innerHTML = renderAccessGroupAvailableClients(group, data);
         target.querySelectorAll('[data-page-offset]').forEach((button) => {
           button.addEventListener('click', () => loadAccessGroupClients(group, Number(button.dataset.pageOffset || 0)));
         });
         target.querySelectorAll('input[name="access_group_client_ids"]').forEach((input) => {
-          input.addEventListener('change', markAccessGroupPreviewStale);
+          input.addEventListener('change', () => {
+            const selected = accessGroupSelectedClientIDs(panel);
+            if (input.checked) selected.add(input.value);
+            else selected.delete(input.value);
+            markAccessGroupPreviewStale();
+            syncAccessGroupClientCheckboxes(panel);
+          });
         });
+        syncAccessGroupClientCheckboxes(panel);
       } catch (err) {
         target.innerHTML = `<div class="empty compact-empty">${escapeHTML(err.message)}</div>`;
+        panel._loadedClientIDs = [];
+        syncAccessGroupClientCheckboxes(panel);
       }
     }
 
@@ -979,20 +1205,24 @@
       const offset = Number(data?.offset || 0);
       const nextOffset = offset + limit;
       const prevOffset = Math.max(0, offset - limit);
+      const selected = accessGroupSelectedClientIDs();
+      const allFiltered = Boolean(document.getElementById('accessGroupSelectAllFiltered')?.checked);
       const rows = items.map((client) => `
         <tr>
-          <td><label class="checkbox-field"><input type="checkbox" name="access_group_client_ids" value="${escapeHTML(client.client_id)}" /> ${escapeHTML(client.username || client.client_id)}</label></td>
+          <td><label class="checkbox-field"><input type="checkbox" name="access_group_client_ids" value="${escapeHTML(client.client_id)}"${selected.has(client.client_id) ? ' checked' : ''}${allFiltered ? ' disabled' : ''} /> ${escapeHTML(client.username || client.client_id)}</label></td>
           <td>${escapeHTML(client.email || '')}</td>
           <td>${statusTag(client.client_status || 'unknown')}</td>
           <td>${escapeHTML(client.group_name || client.group_key || 'unassigned')}</td>
         </tr>`).join('') || '<tr><td colspan="4"><div class="empty compact-empty">No clients for this filter.</div></td></tr>';
+      const start = total === 0 ? 0 : offset + 1;
+      const end = Math.min(offset + items.length, total);
       return `
         <table class="clients-table access-group-client-picker">
           <thead><tr><th>Client</th><th>Email</th><th>Status</th><th>Current group</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
         <div class="pagination-row">
-          <span class="tag">${escapeHTML(String(offset + 1))}-${escapeHTML(String(Math.min(offset + items.length, total)))} / ${escapeHTML(String(total))}</span>
+          <span class="tag">${escapeHTML(String(start))}-${escapeHTML(String(end))} / ${escapeHTML(String(total))}</span>
           <button class="secondary-btn" type="button" data-page-offset="${escapeHTML(String(prevOffset))}"${offset <= 0 ? ' disabled' : ''}>Previous</button>
           <button class="secondary-btn" type="button" data-page-offset="${escapeHTML(String(nextOffset))}"${nextOffset >= total ? ' disabled' : ''}>Next</button>
         </div>`;
@@ -1010,8 +1240,10 @@
         const panel = document.getElementById('clientAccessGroupMembersPanel');
         if (panel) panel.dataset.previewReady = 'true';
         if (apply) apply.disabled = false;
+        updateAccessGroupBulkControls();
       } catch (err) {
         if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+        updateAccessGroupBulkControls();
       }
     }
 
@@ -1025,12 +1257,11 @@
       if (target) target.innerHTML = '<span class="tag warn">applying</span>';
       try {
         const payload = accessGroupMembersPayload(group);
-        const mode = String(payload.mode || 'add_only');
-        const endpoint = mode === 'add_or_move' ? 'members:bulk-move' : 'members:bulk-add';
-        const data = await sendJSON(`/api/v1/client-access-groups/${encodeURIComponent(group.id)}/${endpoint}`, 'POST', payload);
+        const data = await sendJSON(`/api/v1/client-access-groups/${encodeURIComponent(group.id)}/members:bulk-apply`, 'POST', payload);
         if (target) target.innerHTML = renderAccessGroupBulkPreview(data);
         await refresh();
         markAccessGroupPreviewStale();
+        loadAccessGroupClients(group, Number(panel?.dataset.offset || 0));
       } catch (err) {
         if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
       }

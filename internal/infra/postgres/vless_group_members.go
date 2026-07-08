@@ -138,7 +138,7 @@ func (s *Store) ListVLESSGroupAvailableClients(ctx context.Context, search, assi
 	if !in(assignment, "unassigned", "assigned", "all") {
 		return domain.VLESSGroupAvailableClientsPage{}, fmt.Errorf("unsupported assignment filter %q", assignment)
 	}
-	page, err := s.ListClientAccessGroupAvailableClients(ctx, "vless", search, assignment, "", limit, offset)
+	page, err := s.ListClientAccessGroupAvailableClients(ctx, "", "vless", search, assignment, "", limit, offset)
 	if err != nil {
 		return domain.VLESSGroupAvailableClientsPage{}, err
 	}

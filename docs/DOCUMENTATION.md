@@ -24,12 +24,13 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | 10 | [Node map](NODE_MAP.md) | GeoIP node placement and backhaul topology overlay |
 | 11 | [Firewall policy catalog](FIREWALL.md) | Managed firewall policies, address groups, rules and node apply state |
 | 12 | [Traffic accounting](TRAFFIC_ACCOUNTING.md) | Aggregate traffic counters, privacy boundary and retention |
-| 13 | [VLESS access groups](VLESS_GROUPS.md) | Reusable VLESS client routing groups |
-| 14 | [VLESS subscriptions](VLESS_SUBSCRIPTIONS.md) | Per-client VLESS subscription tokens and delivery workflow |
-| 15 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
-| 16 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
-| 17 | [Security review](SECURITY_REVIEW_7.1.1.0.md) | Security and release review artifact |
-| 18 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
+| 13 | [Client access groups](ACCESS_GROUPS.md) | Generic client access-group source of truth and materialization model |
+| 14 | [VLESS access groups](VLESS_GROUPS.md) | Reusable VLESS client routing groups |
+| 15 | [VLESS subscriptions](VLESS_SUBSCRIPTIONS.md) | Per-client VLESS subscription tokens and delivery workflow |
+| 16 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
+| 17 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
+| 18 | [Security review](SECURITY_REVIEW_7.1.1.0.md) | Security and release review artifact |
+| 19 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
 
 ## Documentation Ownership
 
@@ -44,6 +45,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP node placement, local static map, node owner metadata and backhaul overlay. |
 | Firewall | `docs/FIREWALL.md`, `docs/FIREWALL_RU.md` | Managed firewall catalog, address groups, rules and node apply state. |
 | Traffic accounting | `docs/TRAFFIC_ACCOUNTING.md`, `docs/TRAFFIC_ACCOUNTING_RU.md` | Aggregate counters, privacy boundary, signed agent ingest and retention. |
+| Client access groups | `docs/ACCESS_GROUPS.md`, `docs/ACCESS_GROUPS_RU.md` | Generic source-of-truth model for group membership and runtime projection. |
 | VLESS client routing | `docs/VLESS_GROUPS.md`, `docs/VLESS_GROUPS_RU.md` | Reusable access groups, default VLESS group selection and provisioning behavior. |
 | VLESS subscriptions | `docs/VLESS_SUBSCRIPTIONS.md`, `docs/VLESS_SUBSCRIPTIONS_RU.md` | Per-client bearer-token rotation, public feed behavior and operator delivery workflow. |
 | Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic and tactical product planning. |

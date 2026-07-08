@@ -113,6 +113,7 @@ func (s *Server) listClientAccessGroupAvailableClients(w nethttp.ResponseWriter,
 	}
 	out, err := s.store.ListClientAccessGroupAvailableClients(
 		r.Context(),
+		strings.TrimSpace(r.URL.Query().Get("group_id")),
 		strings.TrimSpace(r.URL.Query().Get("service_code")),
 		strings.TrimSpace(r.URL.Query().Get("search")),
 		assignment,
@@ -171,6 +172,20 @@ func (s *Server) bulkMoveClientAccessGroupMembers(w nethttp.ResponseWriter, r *n
 		return
 	}
 	out, err := s.store.BulkMoveClientAccessGroupMembers(r.Context(), strings.TrimSpace(r.PathValue("group_id")), req)
+	writeClientAccessGroupMembershipResponse(w, out, err, 202)
+}
+
+func (s *Server) bulkApplyClientAccessGroupMembers(w nethttp.ResponseWriter, r *nethttp.Request) {
+	req, ok := decodeClientAccessGroupMembershipRequest(w, r)
+	if !ok {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(req.Mode), "add_or_move") {
+		out, err := s.store.BulkMoveClientAccessGroupMembers(r.Context(), strings.TrimSpace(r.PathValue("group_id")), req)
+		writeClientAccessGroupMembershipResponse(w, out, err, 202)
+		return
+	}
+	out, err := s.store.BulkAddClientAccessGroupMembers(r.Context(), strings.TrimSpace(r.PathValue("group_id")), req)
 	writeClientAccessGroupMembershipResponse(w, out, err, 202)
 }
 

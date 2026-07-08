@@ -69,14 +69,13 @@
       ['create-pack', 'Create from pack', 'template rollout'],
       ['manual', 'Manual instance', 'single service'],
       ['service-packs', 'Service pack catalog', 'pack templates'],
-      ['vless-groups', 'VLESS groups', 'client routing'],
     ];
 
     function openClientAccessGroupsWorkspace() {
       state.clientsTab = 'groups';
-      state.clientAccessGroupsServiceFilter = 'vless';
+      state.clientAccessGroupsServiceFilter = 'all';
       localStorage.setItem('megavpn.clientsTab', 'groups');
-      localStorage.setItem('megavpn.clientAccessGroupsServiceFilter', 'vless');
+      localStorage.setItem('megavpn.clientAccessGroupsServiceFilter', 'all');
       setPage('clients');
     }
 
@@ -2119,10 +2118,6 @@
           ${renderServicePackCatalog()}`;
         bindInstancesTabs();
         bindServicePackCatalogActions();
-        return;
-      }
-      if (view === 'vless-groups') {
-        renderVLESSGroupsPage();
         return;
       }
       state.instancesView = 'list';

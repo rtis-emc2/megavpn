@@ -34,6 +34,7 @@ Start here:
 - [Managed backhaul](docs/BACKHAUL.md)
 - [Node map](docs/NODE_MAP.md)
 - [Traffic accounting](docs/TRAFFIC_ACCOUNTING.md)
+- [Client access groups](docs/ACCESS_GROUPS.md)
 - [VLESS access groups](docs/VLESS_GROUPS.md)
 - [Self-testing](docs/SELF_TESTING.md)
 - [Roadmap and technical specification](ROADMAP_V1_AND_TZ.md)

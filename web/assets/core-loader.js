@@ -29,6 +29,7 @@
       state.firewallInventory = { address_lists: [], entries: [], policies: [], rules: [], node_states: [] };
       state.trafficAccounting = { summary: { retention_days: 180 }, samples: [], collectors: [], clients: [] };
       state.clients = [];
+      state.clientAccessServices = [];
       state.jobs = [];
       state.artifacts = [];
       state.shareLinks = [];
@@ -177,8 +178,11 @@
       const servicesCatalog = await fetchJSON('/api/v1/services', []);
       const servicePacks = await fetchJSON('/api/v1/service-packs', []);
       const vlessGroupTemplates = await fetchJSON('/api/v1/vless-groups', []);
+      const clientAccessServices = hasPermission('access_group.read')
+        ? await fetchJSON('/api/v1/client-access-services', [])
+        : [];
       const clientAccessGroups = hasPermission('access_group.read')
-        ? await fetchJSON('/api/v1/client-access-groups?service_code=vless', [])
+        ? await fetchJSON('/api/v1/client-access-groups', [])
         : [];
       const clientAccessGroupMigrationConflicts = hasPermission('access_group.read')
         ? await fetchJSON('/api/v1/client-access-groups/migration-conflicts?limit=50', [])
@@ -224,6 +228,7 @@
       state.backhaulLinks = Array.isArray(backhaulLinks) ? backhaulLinks : [];
       state.backhaulDrivers = Array.isArray(backhaulDrivers) ? backhaulDrivers : [];
       state.servicesCatalog = Array.isArray(servicesCatalog) ? servicesCatalog : [];
+      state.clientAccessServices = Array.isArray(clientAccessServices) ? clientAccessServices : [];
       state.servicePackCatalog = normalizeServicePackList(servicePackCatalog);
       state.servicePacks = normalizeServicePackList(servicePacks);
       if (!state.servicePacks.length && state.servicePackCatalog.length) {

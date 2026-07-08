@@ -463,6 +463,7 @@
     setPage,
     openModal,
     closeModal,
+    openActionOutcomeModal,
     renderActionResponse,
   });
   if (!clientsPage) throw new Error('MegaVPNClientsPage is not loaded');

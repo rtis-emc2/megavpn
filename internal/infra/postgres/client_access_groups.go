@@ -368,7 +368,8 @@ func (s *Store) ListClientAccessGroupMembers(ctx context.Context, groupID, searc
 	}, nil
 }
 
-func (s *Store) ListClientAccessGroupAvailableClients(ctx context.Context, serviceCode, search, assignment, clientStatus string, limit, offset int) (domain.ClientAccessGroupAvailableClientsPage, error) {
+func (s *Store) ListClientAccessGroupAvailableClients(ctx context.Context, groupID, serviceCode, search, assignment, clientStatus string, limit, offset int) (domain.ClientAccessGroupAvailableClientsPage, error) {
+	groupID = strings.TrimSpace(groupID)
 	serviceCode = normalizeClientAccessGroupServiceCode(serviceCode)
 	if serviceCode == "" {
 		serviceCode = "vless"
@@ -377,11 +378,14 @@ func (s *Store) ListClientAccessGroupAvailableClients(ctx context.Context, servi
 	if assignment == "" {
 		assignment = "unassigned"
 	}
-	if !in(assignment, "unassigned", "assigned", "all") {
+	if !in(assignment, "unassigned", "assigned", "assigned_to_group", "assigned_other", "all") {
 		return domain.ClientAccessGroupAvailableClientsPage{}, fmt.Errorf("unsupported assignment filter %q", assignment)
 	}
+	if in(assignment, "assigned_to_group", "assigned_other") && groupID == "" {
+		return domain.ClientAccessGroupAvailableClientsPage{}, fmt.Errorf("group_id is required for assignment filter %q", assignment)
+	}
 	limit, offset = normalizeClientAccessGroupPage(limit, offset)
-	items, total, err := s.queryClientAccessGroupAvailableClients(ctx, serviceCode, search, assignment, clientStatus, limit, offset)
+	items, total, err := s.queryClientAccessGroupAvailableClients(ctx, groupID, serviceCode, search, assignment, clientStatus, limit, offset)
 	if err != nil {
 		return domain.ClientAccessGroupAvailableClientsPage{}, err
 	}
@@ -782,7 +786,11 @@ func (s *Store) bulkClientAccessGroupMembers(ctx context.Context, groupID string
 		return domain.ClientAccessGroupMembershipResult{}, err
 	}
 	if req.AllFiltered {
-		filteredIDs, err := s.queryClientAccessGroupAvailableClientIDs(ctx, group.ServiceCode, req.FilterSearch, req.FilterAssignment, req.FilterStatus)
+		filterGroupID := strings.TrimSpace(req.FilterGroupID)
+		if filterGroupID == "" {
+			filterGroupID = group.ID
+		}
+		filteredIDs, err := s.queryClientAccessGroupAvailableClientIDs(ctx, filterGroupID, group.ServiceCode, req.FilterSearch, req.FilterAssignment, req.FilterStatus)
 		if err != nil {
 			return domain.ClientAccessGroupMembershipResult{}, err
 		}
@@ -1380,7 +1388,7 @@ func (s *Store) upsertClientAccessGroupSyncState(ctx context.Context, groupID, i
 	return err
 }
 
-func (s *Store) queryClientAccessGroupAvailableClients(ctx context.Context, serviceCode, search, assignment, clientStatus string, limit, offset int) ([]domain.ClientAccessGroupMember, int, error) {
+func (s *Store) queryClientAccessGroupAvailableClients(ctx context.Context, groupID, serviceCode, search, assignment, clientStatus string, limit, offset int) ([]domain.ClientAccessGroupMember, int, error) {
 	where := []string{`ca.status <> 'deleted'`}
 	args := []any{serviceCode}
 	switch strings.ToLower(strings.TrimSpace(assignment)) {
@@ -1388,6 +1396,18 @@ func (s *Store) queryClientAccessGroupAvailableClients(ctx context.Context, serv
 		where = append(where, `m.id is null`)
 	case "assigned":
 		where = append(where, `m.id is not null`)
+	case "assigned_to_group":
+		if strings.TrimSpace(groupID) == "" {
+			return nil, 0, fmt.Errorf("group_id is required for assignment filter %q", assignment)
+		}
+		args = append(args, strings.TrimSpace(groupID))
+		where = append(where, fmt.Sprintf(`m.group_id=$%d::uuid`, len(args)))
+	case "assigned_other":
+		if strings.TrimSpace(groupID) == "" {
+			return nil, 0, fmt.Errorf("group_id is required for assignment filter %q", assignment)
+		}
+		args = append(args, strings.TrimSpace(groupID))
+		where = append(where, fmt.Sprintf(`m.id is not null and m.group_id<>$%d::uuid`, len(args)))
 	case "all":
 	default:
 		return nil, 0, fmt.Errorf("unsupported assignment filter %q", assignment)
@@ -1437,7 +1457,7 @@ func (s *Store) queryClientAccessGroupAvailableClients(ctx context.Context, serv
 	return items, total, err
 }
 
-func (s *Store) queryClientAccessGroupAvailableClientIDs(ctx context.Context, serviceCode, search, assignment, clientStatus string) ([]string, error) {
+func (s *Store) queryClientAccessGroupAvailableClientIDs(ctx context.Context, groupID, serviceCode, search, assignment, clientStatus string) ([]string, error) {
 	where := []string{`ca.status <> 'deleted'`}
 	args := []any{serviceCode}
 	switch strings.ToLower(strings.TrimSpace(assignment)) {
@@ -1445,6 +1465,18 @@ func (s *Store) queryClientAccessGroupAvailableClientIDs(ctx context.Context, se
 		where = append(where, `m.id is null`)
 	case "assigned":
 		where = append(where, `m.id is not null`)
+	case "assigned_to_group":
+		if strings.TrimSpace(groupID) == "" {
+			return nil, fmt.Errorf("group_id is required for assignment filter %q", assignment)
+		}
+		args = append(args, strings.TrimSpace(groupID))
+		where = append(where, fmt.Sprintf(`m.group_id=$%d::uuid`, len(args)))
+	case "assigned_other":
+		if strings.TrimSpace(groupID) == "" {
+			return nil, fmt.Errorf("group_id is required for assignment filter %q", assignment)
+		}
+		args = append(args, strings.TrimSpace(groupID))
+		where = append(where, fmt.Sprintf(`m.id is not null and m.group_id<>$%d::uuid`, len(args)))
 	case "all":
 	default:
 		return nil, fmt.Errorf("unsupported assignment filter %q", assignment)
@@ -1750,6 +1782,9 @@ func normalizeClientAccessGroupInput(input domain.ClientAccessGroupInput, create
 	out.ScopeMode = normalizeClientAccessGroupScopeMode(out.ScopeMode)
 	if out.ServiceCode == "" {
 		return out, fmt.Errorf("service_code is required")
+	}
+	if out.ServiceCode != "vless" {
+		return out, fmt.Errorf("client access groups are not implemented for service %q yet", out.ServiceCode)
 	}
 	if out.GroupKey == "" {
 		return out, fmt.Errorf("group_key is required")

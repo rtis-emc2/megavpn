@@ -237,14 +237,14 @@ In the UI, verify:
 5. `Jobs`, `Nodes`, `Services`, `Instances`, `Clients`, `Backhaul` and
    `Certificates` open without errors.
 6. `Instances` shows the workspace tabs: instance list, create from pack,
-   manual instance, service-pack catalog and VLESS groups.
+   manual instance and service-pack catalog.
 7. `Instances -> Create from pack` shows the service-pack catalog. Default
    templates are created by the ordered migration set; if the list is empty,
    verify that every migration has run against the same database used by the
    API.
-8. `Clients -> Groups` shows VLESS client access groups. `Instances -> VLESS
-   groups` remains a compatibility catalog for default route, current node exit,
-   ad-blocked default and blocked access.
+8. `Clients -> Groups` shows client access groups. VLESS is currently the
+   active materialized service; the other client access services are visible as
+   catalog/planned entries until runtime projection is enabled.
 
 If the installer used self-signed TLS, replace it through:
 
@@ -629,8 +629,6 @@ Where to configure it:
   - `Block all traffic`: deny traffic for quarantine or suspended access.
   - `Block ads`: add a managed Xray `geosite:category-ads-all` rule for users
     in that group. The Xray runtime must include the required geosite data.
-- `Instances -> VLESS groups`: compatibility catalog for policy templates.
-  Client membership is no longer edited there; use `Clients -> Groups`.
 - `Instances -> Manage` for the Xray/VLESS instance: `Default VLESS group`
   selects the group used when a client binding does not specify one. Advanced
   JSON override is intentionally collapsed and should be used only for
@@ -701,8 +699,9 @@ Minimal path for “enter through VLESS and exit through another node”:
    the selected backhaul, then re-apply the Xray instance so `sendThrough`
    points to the live `mgbh*` source address.
 
-See [VLESS access groups](VLESS_GROUPS.md) for the detailed group model,
-runtime behavior and validation rules.
+See [Client access groups](ACCESS_GROUPS.md) for the general model and
+[VLESS access groups](VLESS_GROUPS.md) for VLESS-specific modes, runtime
+behavior and validation rules.
 
 ## 16. Clients And Provisioning
 

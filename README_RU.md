@@ -35,6 +35,7 @@ Operator
 - [Managed backhaul](docs/BACKHAUL.md)
 - [Карта нод](docs/NODE_MAP_RU.md)
 - [Учет трафика](docs/TRAFFIC_ACCOUNTING_RU.md)
+- [Client access groups](docs/ACCESS_GROUPS_RU.md)
 - [VLESS access groups](docs/VLESS_GROUPS_RU.md)
 - [Self-testing](docs/SELF_TESTING.md)
 - [Roadmap и техническая спецификация](ROADMAP_V1_AND_TZ_RU.md)

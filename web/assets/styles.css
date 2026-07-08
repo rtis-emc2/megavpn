@@ -2174,6 +2174,55 @@ tr:hover td { background: #f8fafc; }
   min-width: 0;
   white-space: nowrap;
 }
+.access-groups-table {
+  min-width: 1320px;
+}
+.access-groups-table code,
+.access-group-client-picker code {
+  font-size: 12px;
+}
+.client-access-groups-modal {
+  padding-bottom: 0;
+}
+.access-group-members-panel {
+  display: grid;
+  gap: 14px;
+  min-height: min(720px, calc(100vh - 180px));
+}
+.access-group-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.access-group-selection-bar select {
+  width: min(420px, 100%);
+}
+.access-group-client-picker {
+  min-width: 980px;
+}
+.access-group-members-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255,255,255,0.88), #ffffff 36%);
+}
+.access-group-selection-summary {
+  min-width: 220px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
 .client-provision-form {
   display: grid;
   gap: 14px;
