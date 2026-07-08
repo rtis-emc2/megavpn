@@ -2,159 +2,181 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Commit at evidence time: `b51d0c134c486be3db4686326147cb97872f7a12`
+Implementation commit at evidence time:
+`9044647110cd5cbaeb4d5a866b96f56008fcb338`
 
-Evidence date UTC: `2026-07-08T17:29:40Z`
+Evidence date UTC: `2026-07-08T18:12:48Z`
 
-Status: RC1 groundwork improved; final 8.0.0 frontend cutover is not complete.
+Status: RC1 frontend branch is reviewable and CI-verifiable. Final 8.0.0
+cutover is still blocked by non-VLESS write workflow migration and backend
+version synchronization.
 
 ## 1. Summary
 
-This pass completed the RC1 safety layer:
+This pass makes the current 8.0.0 frontend branch review-ready after the VLESS
+Clients -> Groups implementation:
 
-- created the RC1 execution plan before functional changes;
-- added narrow Go SPA fallback for new frontend deep links;
-- preserved `/legacy/` rollback;
-- added backend serving tests;
-- added frontend serving smoke gate;
-- added frontend static security guards;
-- removed fake local preview/apply enablement from Clients -> Groups and Firewall;
-- connected Jobs cancel with confirmation, backend mutation and query invalidation;
-- updated endpoint parity, write workflow and security review documentation;
-- rebuilt Vite assets into `web/` with a safe pre-build cleanup that does not remove legacy assets.
-
-The new console still does not provide full write-workflow parity with the
-legacy UI. It should not be declared final release-ready as the only operator UI.
+- CI push coverage now includes `release/8.0.0-frontend-console` and
+  `release/**`; pull request coverage remains enabled.
+- The frontend package manager standard is `npm`: `package-lock.json` is kept,
+  `pnpm-lock.yaml` is removed, and CI/docs use `npm ci` / `npm run ...`.
+- `Clients -> Groups -> VLESS` is connected in the new React console without
+  `/legacy/` for create/edit, member preview/apply/remove, scope update and sync
+  preview/apply.
+- Non-VLESS access services remain catalog-only until backend materialization is
+  implemented.
+- A lightweight API smoke script exists for disposable/local VLESS group
+  endpoint checks: `scripts/smoke/vless-client-access-groups-smoke.sh`.
+- `/legacy/` remains the rollback UI and still covers non-migrated workflows.
 
 ## 2. Commands Run
 
 | Check | Status | Evidence |
 | --- | --- | --- |
-| `gofmt -w internal/api/http/server.go internal/api/http/static_serving_test.go` | PASS | Applied formatting before tests. |
-| `go test ./internal/api/http -run 'TestStaticServingRoutes|TestShouldServeFrontendFallback' -count=1` | PASS | Serving route contract passes. |
-| `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend guards pass. |
-| `scripts/ci/frontend-serving-smoke.sh` | PASS | Root/deep links/legacy/API non-shadowing/asset 404 pass. |
-| `cd frontend && pnpm run typecheck` with bundled Node | PASS | TypeScript checks pass. |
-| `cd frontend && pnpm run lint` with bundled Node | PASS | ESLint passes. |
-| `cd frontend && pnpm run test` with bundled Node | PASS | Vitest: 1 file, 1 test passed. |
-| `cd frontend && pnpm run i18n:check` with bundled Node | PASS | i18n key parity ok: 260 keys. |
-| `cd frontend && pnpm run build` with bundled Node | PASS | Vite build wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-B-l2116U.js`, `web/assets/index-C9SCsY-r.css`. |
-| `PATH=... node --check web/assets/*.js` | PASS | Built JS parses. |
-| `PATH=... pnpm dlx npm@11.18.0 ci --ignore-scripts` | PASS | npm-compatible clean install completed; `node_modules` removed afterward to keep workspace clean. |
-| `go test ./cmd/api` | PASS | No test files; package builds for tests. |
+| `gofmt -l cmd internal` | PASS | No files listed. |
 | `go vet ./...` | PASS | No vet findings. |
 | `go test ./...` | PASS | All Go package tests pass. |
+| `go test -race ./...` | PASS | Race detector tests pass. |
 | `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` | PASS | All operational binaries build. |
-| `go test -race ./...` | PASS | Race detector tests pass after removing frontend `node_modules`. |
-| `PATH=... node scripts/ci/frontend-bootstrap-smoke.js` | PASS | Legacy bootstrap smoke ok: 38 assets from `web/legacy/index.html`. |
-| `scripts/ci/install-web-wrapper-smoke.sh` | PASS | Web install wrapper smoke passes. |
-| `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for release `7.1.1.0`. |
-| `bash -n scripts/ci/frontend-static-guards.sh scripts/ci/frontend-serving-smoke.sh scripts/ci/self-test.sh scripts/ci/release-gate.sh` | PASS | Shell syntax passes. |
+| `cd frontend && npm ci` | PASS | npm `11.18.0`; 251 packages installed; audit found 0 vulnerabilities. |
+| `cd frontend && npm run typecheck` | PASS | TypeScript checks pass. |
+| `cd frontend && npm run lint` | PASS | ESLint passes. |
+| `cd frontend && npm run test` | PASS | Vitest: 2 files, 8 tests passed. |
+| `cd frontend && npm run i18n:check` | PASS | i18n key parity ok: 327 keys. |
+| `cd frontend && npm run build` | PASS | Vite build wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-QsEN7-DN.js`, `web/assets/index-C9SCsY-r.css`. |
+| `scripts/ci/frontend-serving-smoke.sh` | PASS | Backend serving smoke passed; root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
+| `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
+| `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
+| `scripts/smoke/vless-client-access-groups-smoke.sh` | SKIP | No `MEGAVPN_PUBLIC_BASE_URL` or `MEGAVPN_API_URL` was provided for a disposable/local API. |
 
-## 3. Not Run
+Local note: this workstation did not expose a native `npm` binary in `PATH`;
+the checks above were run through npm CLI `11.18.0` installed in a temporary
+tooling directory. The repository standard and GitHub CI path remain plain
+`npm ci` and `npm run ...`.
 
-| Check | Status | Reason |
-| --- | --- | --- |
-| Full `scripts/ci/self-test.sh` | SKIP | Component checks were run directly; full self-test also requires broader host/environment evidence and would reinstall frontend dependencies. |
-| Full `scripts/ci/release-gate.sh` | SKIP | Release gate includes govulncheck and environment-dependent production gates. It should be run in the release environment. |
-| PostgreSQL migration drill | SKIP | No disposable release DSN was provided. |
-| Backup/restore drill | SKIP | No disposable source/restore DSNs were provided. |
-| Live API smoke | SKIP | No deployed release base URL was provided. |
-| VPN/service smoke matrix | SKIP | No live node/service matrix environment was provided. |
-| Browser screenshot responsive evidence | SKIP | No Playwright/browser automation was added in this pass. |
+## 3. VLESS Workflow Test Evidence
 
-## 4. Build Evidence
+`frontend/src/pages/clients/ClientGroupsPage.test.tsx` verifies the migrated
+VLESS workflow against mocked backend API responses:
 
-Current frontend build artifacts:
+| Required behavior | Test evidence |
+| --- | --- |
+| Create VLESS group | `creates VLESS groups through the client access group API`; asserts `POST /api/v1/client-access-groups`. |
+| Update VLESS group policy/status | `updates VLESS group policy and status through the client access group API`; asserts `PATCH /api/v1/client-access-groups/{group_id}` with status and policy JSON. |
+| Member preview/apply | `previews and applies VLESS membership with backend bulk endpoints`; asserts `/members:preview` and `/members:bulk-apply`. |
+| Member remove | `removes VLESS group members through the backend member delete endpoint`; asserts `DELETE /members/{client_id}`. |
+| Scope update | `updates VLESS group scope through the backend scope endpoint`; asserts `PATCH /scope`. |
+| Sync preview/apply | `previews and applies VLESS group sync with backend sync endpoints`; asserts `/sync:preview` and `/sync:apply`. |
+| Preview stale disables apply | `invalidates VLESS membership preview and disables apply when selection inputs change`; apply remains disabled after mode change. |
+| No `/legacy` calls | Every VLESS workflow test asserts no request path starts with `/legacy`. |
 
-```text
-web/index.html
-web/.vite/manifest.json
-web/assets/index-B-l2116U.js
-web/assets/index-C9SCsY-r.css
-web/legacy/index.html
-web/legacy/assets/*
+The existing app shell test also remains green:
+`frontend/src/app/App.test.tsx`.
+
+## 4. Integrated API Smoke
+
+Added script:
+
+```bash
+scripts/smoke/vless-client-access-groups-smoke.sh
 ```
 
-The Vite build script now runs `frontend/scripts/clean-build-output.mjs` before
-`vite build`. It removes only root Vite artifacts and leaves `web/legacy/*`
-untouched.
+Required environment for a disposable/local run:
+
+```bash
+export MEGAVPN_PUBLIC_BASE_URL=http://127.0.0.1:8080
+export MEGAVPN_AUTH_TOKEN=<operator-or-test-token>
+export MEGAVPN_VLESS_SMOKE_GROUP_ID=<disposable-vless-group-id>
+export MEGAVPN_VLESS_SMOKE_CLIENT_REF=<disposable-client-username-email-or-id>
+
+scripts/smoke/vless-client-access-groups-smoke.sh
+```
+
+By default the script runs read endpoints, sync preview and membership preview
+only. To apply membership changes against disposable data:
+
+```bash
+MEGAVPN_VLESS_SMOKE_APPLY=1 scripts/smoke/vless-client-access-groups-smoke.sh
+```
+
+Current evidence is SKIP, not PASS: no disposable DB/API base URL was available
+in this workstation session. Do not claim final release readiness without a
+real smoke run against disposable data.
 
 ## 5. Static Serving Evidence
 
-Backend tests cover:
+Backend tests and `scripts/ci/frontend-serving-smoke.sh` cover:
 
-- `GET /` returns new UI;
-- `GET /clients` returns new UI;
-- `GET /operations/jobs` returns new UI;
-- `GET /network-policy/firewall` returns new UI;
-- `GET /legacy/` returns legacy UI;
-- `GET /api/v1/ready` is not shadowed;
-- missing `/assets/*` returns 404;
-- missing `/download/*` does not return SPA HTML.
+- `GET /` returns the new UI;
+- frontend deep links return the new UI;
+- `GET /legacy/` returns the rollback UI;
+- `/api/*` and `/agent/*` are not shadowed by SPA fallback;
+- missing root `/assets/*` return 404 rather than SPA HTML.
 
-## 6. Security Review Summary
+## 6. Security / Review Hygiene
 
-Implemented/enforced in this pass:
+Current enforced hygiene:
 
-- no raw `/api/v1` calls in page/feature components;
-- no auth/session/token storage in browser storage in new frontend source;
+- no raw `/api/v1` calls outside `frontend/src/shared/api` and tests;
+- unsafe methods keep the shared API client, cookie credentials and CSRF header;
+- no browser auth token/session storage in new frontend source;
 - no unreviewed `dangerouslySetInnerHTML`;
 - no production console logging in new frontend source;
-- no fake local preview/apply enablement in Clients -> Groups or Firewall;
-- Jobs cancel uses real backend endpoint and confirmation;
-- Go SPA fallback excludes backend/public/static prefixes.
+- VLESS apply actions require backend preview and stale preview disables apply;
+- unsupported non-VLESS services are visible as catalog-only and fail closed.
 
 ## 7. Write Workflow Summary
 
 Fully connected in the new console:
 
 - auth login/logout/invite/session;
-- dashboard/readiness/version;
-- main read paths for nodes, instances, clients, access groups, firewall,
-  traffic, jobs, audit, settings/certificates subsets;
+- dashboard/readiness/version and primary read paths;
+- jobs list/detail/logs/cancel;
 - traffic export URL;
-- jobs list/detail/logs;
-- jobs cancel.
+- `Clients -> Groups -> VLESS` create/edit, member preview/apply/remove, scope
+  update and sync preview/apply.
 
-Still disabled or legacy-only:
+Still disabled, read-only or legacy-only:
 
-- client access group create/update/delete/scope/member preview/apply/sync;
-- firewall CRUD and node preview/apply/disable;
-- node bootstrap/control/terminal/diagnostics mutations;
-- instance create/apply/rollback/lifecycle/delete;
-- client create/status/delete/provision/revoke/artifacts/share/subscriptions;
+- non-VLESS access group materialization workflows;
+- migration conflict UI for access groups;
+- firewall CRUD and node firewall preview/apply/disable;
+- nodes bootstrap/control/terminal/diagnostics mutations;
+- instances create/apply/rollback/lifecycle/delete;
+- client provisioning, artifacts, shares and subscriptions;
 - certificates import/issue/default/revoke/delete;
-- settings save/mail test/TLS apply;
+- platform settings save, mail test and TLS apply;
 - backhaul mutations;
 - backup/restore browser UI.
 
 ## 8. Known Limitations
 
+- Backend binary/version metadata remains `7.1.1.0`; synchronizing it to
+  `8.0.0` is a separate release task.
 - Full normal operator work still requires `/legacy/` for many write workflows.
-- Version synchronization is incomplete: stable docs and backend version remain
-  `7.1.1.0`; `8.0.0` is documented as frontend RC work.
-- Endpoint DTOs are still broad for multiple domains.
-- Mutation hooks and invalidation are complete only for Jobs cancel among new
-  write workflows added in this pass.
-- No browser-based responsive screenshot evidence was produced.
+- Endpoint DTOs are still broad for multiple non-VLESS domains.
+- No browser screenshot/responsive Playwright evidence was produced in this
+  pass.
+- Integrated VLESS API smoke was added but not run against a disposable DB/API
+  in this session.
 
 ## 9. Go / No-Go
 
 Recommendation:
 
-- GO for RC1 serving/security groundwork and continued domain-by-domain frontend
-  migration.
-- NO-GO for declaring 8.0.0 final or removing operator reliance on `/legacy/`.
+- GO for PR review and CI validation of the 8.0.0 frontend branch.
+- GO for using new UI `Clients -> Groups -> VLESS` workflow in controlled
+  staging after disposable API smoke evidence is produced.
+- NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
-Blocking issues for final cutover:
+Remaining blockers for final cutover:
 
-1. migrate Clients -> Groups member preview/apply/sync with real backend calls;
+1. run the VLESS integrated API smoke against disposable DB/API data;
 2. migrate Firewall CRUD and node preview/apply/disable with safety UX;
 3. migrate Nodes bootstrap/control/diagnostics workflows;
 4. migrate Instances lifecycle/apply/rollback/delete workflows;
 5. migrate Clients provisioning/artifacts/share/subscriptions workflows;
 6. migrate Certificates and Platform settings write workflows;
-7. add E2E or integration tests for critical operator flows;
+7. add E2E/browser responsive evidence for critical operator flows;
 8. synchronize backend/frontend version and release-chain artifacts to `8.0.0`;
 9. run full release gate in the release environment.
