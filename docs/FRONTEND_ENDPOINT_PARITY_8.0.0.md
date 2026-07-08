@@ -35,8 +35,8 @@ Unsafe methods must preserve `X-MegaVPN-CSRF: 1` and `credentials: include`.
 | Frontend file | Purpose | Current limitation |
 | --- | --- | --- |
 | `frontend/src/shared/api/client.ts` | Fetch wrapper, API base, CSRF, cookie credentials, typed API error. | Field-level validation mapping is currently implemented in focused forms, not as a global helper. |
-| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, delivery, routes/access maintenance/config cleanup, VLESS groups, Firewall, Services/Instances provisioning and Nodes observability/diagnostics/inventory/capability/discovery mutations are wired; other domains remain incomplete. |
-| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, delivery, routes/access maintenance/config cleanup, VLESS groups, Firewall, Services/Instances provisioning and Nodes observability/diagnostics/inventory/capability/discovery invalidation is wired; other domains remain incomplete. |
+| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, delivery, routes/access maintenance/config cleanup, VLESS groups, Firewall, Services/Instances provisioning, Nodes observability/diagnostics/inventory/capability/discovery and Certificates/PKI mutations are wired; other domains remain incomplete. |
+| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, delivery, routes/access maintenance/config cleanup, VLESS groups, Firewall, Services/Instances provisioning, Nodes observability/diagnostics/inventory/capability/discovery and Certificates/PKI invalidation is wired; other domains remain incomplete. |
 
 Raw `/api/v1` strings are allowed only under `frontend/src/shared/api` and
 tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
@@ -66,8 +66,8 @@ tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
 | `GET/PUT /api/v1/settings/mail`, `POST /api/v1/settings/mail/test` | mail settings | `endpoints.mailSettings`; mutations missing | Platform / Mail | read-only | Do not log SMTP secrets. |
 | `GET/PUT /api/v1/settings/control-plane-tls`, `POST /api/v1/settings/control-plane-tls/apply` | TLS settings | `endpoints.controlPlaneTLS`; mutations missing | Platform / Settings | read-only | Apply returns job; needs job tracking. |
 | `GET /api/v1/runtime/preflight` | runtime checks | `endpoints.runtimePreflight` | Diagnostics/Settings | connected read | No mutation. |
-| `GET /api/v1/platform/certificates`, `POST /preview`, `/import`, `/self-signed`, `/authorities`, `/issue-from-ca`, `POST /{id}/default`, `POST /{id}/revoke`, `DELETE /{id}` | certificate management | `endpoints.certificates`; mutations missing | Platform / Certificates | read-only / legacy-only | Private key/cert payloads must be redacted; revoke/delete require confirmation. |
-| `GET/POST /api/v1/platform/pki-roots` | service PKI roots | `endpoints.pkiRoots`; create missing | Platform / Certificates | read-only | CA material must be rendered as text only. |
+| `GET /api/v1/platform/certificates`, `POST /preview`, `/import`, `/self-signed`, `/authorities`, `/issue-from-ca`, `POST /{id}/default`, `POST /{id}/revoke`, `DELETE /{id}` | certificate management | `listCertificates`, `getCertificate` derived from list, `previewCertificateImport`, `importCertificate`, `createSelfSignedCertificate`, `createManagedCertificateAuthority`, `issueCertificate`, `setDefaultCertificate`, `revokeCertificate`, `deleteCertificate`; matching hooks | Platform / Certificates | connected | Import requires backend preview before apply; stale preview disables apply. Private key PEM is only form state, cleared on close/success, never logged/stored/rendered. Default/revoke/delete require confirmation. |
+| `GET/POST /api/v1/platform/pki-roots` | service PKI roots | `listPkiRoots`, `createPkiRoot`, `importPkiRoot` alias; `usePkiRoots`, `useCreatePkiRoot` | Platform / Certificates | connected | Managed root creation calls backend; CA private key material is generated/stored backend-side and not returned to the browser. |
 | `POST /api/v1/secret-refs` | secret upload for bootstrap | missing | Nodes legacy flow | legacy-only | Secret values one-way only; never persist in browser storage. |
 
 ### 4.3 Dashboard, Service Catalog, Runtime Artifacts

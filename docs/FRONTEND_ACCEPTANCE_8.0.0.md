@@ -3,10 +3,13 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`pending final FE8-P0-06A feature commit; previous pushed/evidence commit is 7b564e81dd576fbf1de29c7da559090a69debe7a`
+`pending final FE8-P0-07A feature commit; previous pushed/evidence commit is 0934f97b9da38154b87dada4e1387d54ca7df765`
+
+FE8-P0-07A Certificates/PKI feature commit:
+`pending final feat: connect certificates pki workflows commit; final SHA is recorded in the task handoff after commit creation`
 
 FE8-P0-06A client routes/access rotation/config cleanup feature commit:
-`pending final feat: connect client access maintenance workflows commit; final SHA is recorded in the task handoff after commit creation`
+`0934f97b9da38154b87dada4e1387d54ca7df765`
 
 FE8-P0-05B Nodes bootstrap/security/control feature commit:
 `7b564e81dd576fbf1de29c7da559090a69debe7a`
@@ -48,13 +51,14 @@ Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
 Current evidence CI:
-Current FE8-P0-06A evidence is local until the final feature commit is pushed.
-Previous accepted FE8-P0-05B evidence CI run `28980167212` passed for
-`7b564e81dd576fbf1de29c7da559090a69debe7a`.
+Current FE8-P0-07A evidence is the local verification set recorded below;
+GitHub CI run is recorded in the task handoff after push.
+Previous accepted FE8-P0-06A evidence CI run `28982369259` passed for
+`0934f97b9da38154b87dada4e1387d54ca7df765`.
 
-Current evidence date UTC: `2026-07-08T22:43:09Z`
+Current evidence date UTC: `2026-07-08T23:31:41Z`
 
-Status: FE8-P0-06A is locally verified and reviewable. Final 8.0.0 cutover
+Status: FE8-P0-07A is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
 validation, integrated disposable-data smoke and backend version synchronization
 are complete.
@@ -74,12 +78,16 @@ host-key scan/pin, SSH session ticket launch, agent token rotation and
 retire/force-retire. Client routes list/create/delete, service access
 list/rotation/delete and generated config cleanup are connected in the new UI
 without `/legacy/` where the backend supports the operation. Route update and
-per-access revoke remain disabled with backend-missing reasons. Remaining
-workflows listed below are still not migrated.
+per-access revoke remain disabled with backend-missing reasons.
+Certificates/PKI workflows are connected in the new UI without `/legacy/` for
+certificate list/detail, import preview/apply, self-signed create, managed CA
+create, issue-from-CA, set default, revoke/delete and managed service PKI root
+create where the backend supports the exact operation. Remaining workflows
+listed below are still not migrated.
 
 ## 1. Summary
 
-This evidence records the current 8.0.0 frontend branch after FE8-P0-06A:
+This evidence records the current 8.0.0 frontend branch after FE8-P0-07A:
 
 - CI push coverage includes `release/8.0.0-frontend-console` and `release/**`;
   pull request coverage remains enabled.
@@ -119,6 +127,9 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-06A:
   `/legacy/` for enrollment token create/rotate/revoke, bootstrap/reinstall job
   queueing, host-key scan/pin for existing SSH methods, SSH session ticket
   launch, agent token rotation and retire/force-retire.
+- `Platform -> Certificates` is connected without `/legacy/` for certificate
+  list/detail, import preview/apply, self-signed create, managed CA create,
+  issue-from-CA, set default, revoke/delete and managed service PKI root create.
 - Share/subscription one-time URLs are shown only in transient local UI state
   after backend create/rotate responses and are cleared on close.
 - Enrollment token plaintext and SSH terminal ticket URLs are shown only in
@@ -138,9 +149,9 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-06A:
 | `cd frontend && npm ci` | SKIP | This workstation session exposes bundled Node `v24.14.0`, but no native `npm` or `corepack` binary in `PATH`; existing `frontend/node_modules` was used for script-equivalent verification. GitHub CI remains configured for plain `npm ci`. |
 | `cd frontend && npm run typecheck` | PASS | Equivalent command run through bundled Node and local TypeScript: `tsc --noEmit` plus `tsc -p tsconfig.node.json --noEmit`. |
 | `cd frontend && npm run lint` | PASS | Equivalent command run through bundled Node and local ESLint. |
-| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 7 files, 64 tests passed. |
-| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 714 keys. |
-| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-Dtd7j3NN.js`, `web/assets/index-CMdslovF.css`. |
+| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 8 files, 70 tests passed. |
+| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 758 keys. |
+| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-QTN13ZZw.js`, `web/assets/index-CMdslovF.css`. |
 | `scripts/ci/frontend-serving-smoke.sh` | PASS | Root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
 | `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
 | `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
@@ -178,6 +189,31 @@ Client routes/access rotation/config cleanup workflows work in the new UI
 without `/legacy/` where the backend supports the exact sub-action. Route
 update and per-access revoke remain disabled because the backend has no
 corresponding endpoints.
+
+## FE8-P0-07A Certificates/PKI Test Evidence
+
+`frontend/src/pages/platform/CertificatesPage.test.tsx` verifies Certificates
+and PKI workflows against mocked backend API responses:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Certificate list loads | `loads certificate and PKI root inventory and opens safe detail` asserts `GET /api/v1/platform/certificates` and renders certificate inventory. |
+| Certificate detail opens | Same test opens the detail drawer from the list response because backend has no separate detail endpoint. |
+| Expiry/status/usage display | Certificate table renders status, expiry state and usage; detail shows status, validity dates and usage without PEM/secret material. |
+| Import sends real API request | `previews and imports certificates through real endpoints with stale preview protection` asserts `POST /api/v1/platform/certificates/preview` and `POST /api/v1/platform/certificates/import`. |
+| Import preview stale disables apply | Same test changes private-key input after preview and verifies import remains disabled until preview is run again. |
+| Private key is not logged/stored/rendered | `does not log or persist certificate private keys and keeps implemented workflow off legacy` spies on `console.log` and `Storage.setItem`, verifies private-key material is not persisted or rendered after submit, and keeps it only in the backend request body. |
+| Self-signed create is real | `creates self-signed certificates, issues from CA and creates managed service PKI roots` asserts `POST /api/v1/platform/certificates/self-signed`. |
+| Managed CA / issue cert are real | Same test asserts `POST /api/v1/platform/certificates/authorities` and `POST /api/v1/platform/certificates/issue-from-ca`. |
+| PKI root create/list is real | Same test asserts `GET/POST /api/v1/platform/pki-roots`; CA key material is backend-generated and not returned to the browser. |
+| Set default requires confirmation | `requires confirmation for default, revoke and delete actions` asserts `POST /api/v1/platform/certificates/{id}/default` is not called before confirmation. |
+| Revoke/delete require confirmation | Same test asserts confirmed `POST /{id}/revoke` and `DELETE /{id}` CA cascade delete. |
+| 403/409/422 handled | `shows 403, 409 and 422 mutation errors without fake success` renders permission, conflict and validation errors from backend responses. |
+| No `/legacy` workflow | Tests assert no request path starts with `/legacy` and the page component contains no `/legacy` workflow link. |
+| No raw page API calls | Tests verify no raw `/api/v1`, raw `fetch` or production console logging in the page component. |
+| i18n keys exist | `npm run i18n:check` covers new `certificates.*` key parity. |
+
+Certificates/PKI workflows work in the new UI without `/legacy/`.
 
 ## FE8-P0-05B Nodes Security/Control Test Evidence
 
@@ -538,8 +574,8 @@ Still disabled, read-only or legacy-only:
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance draft-save
   endpoints;
-- certificates import/issue/default/revoke/delete;
 - platform settings save, mail test and TLS apply;
+- platform access users/invites/sessions mutations;
 - backhaul mutations;
 - backup/restore browser UI.
 
@@ -547,8 +583,9 @@ Still disabled, read-only or legacy-only:
 
 - Backend binary/version metadata remains `7.1.1.0`; synchronizing it to
   `8.0.0` is a separate release task.
-- Full normal operator work still requires `/legacy/` for many non-Firewall,
-  non-VLESS and non-Clients workflows.
+- Full normal operator work still requires `/legacy/` for many workflows outside
+  the migrated Clients, Firewall, Instances/Services, Nodes and
+  Certificates/PKI surfaces.
 - Generic client edit stays disabled because the backend has no generic
   `PATCH/PUT /clients/{id}` endpoint.
 - Client disable stays disabled because the backend exposes activate/suspend
@@ -595,7 +632,8 @@ Recommendation:
   existing Instances runtime control, service pack instance creation, manual
   instance creation, runtime artifact list/import, existing Nodes
   observability/diagnostics/inventory and Nodes bootstrap/security/control
-  workflows in controlled staging after operator review.
+  workflows, and Certificates/PKI workflows in controlled staging after
+  operator review.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
@@ -608,7 +646,7 @@ Remaining blockers for final cutover:
    revoke, reboot, emergency cleanup and stale rotation cleanup;
 3. add backend/browser support for runtime artifact delete if it is required for
    final operator parity;
-4. migrate Certificates and Platform settings write workflows;
+4. migrate Platform settings, mail and access users/invites/sessions write workflows;
 5. add E2E/browser responsive evidence for critical operator flows;
 6. synchronize backend/frontend version and release-chain artifacts to `8.0.0`;
 7. run full release gate in the release environment.

@@ -6,6 +6,15 @@ import type {
   AuthPayload,
   BackhaulLink,
   Certificate,
+  CertificateActionResult,
+  CertificateAuthorityCreateInput,
+  CertificateCreateInput,
+  CertificateDeleteResult,
+  CertificateDetail,
+  CertificateImportInput,
+  CertificateImportPreview,
+  CertificateIssueInput,
+  CertificateRevokeResult,
   ClientAccessGroup,
   ClientAccessGroupInput,
   ClientAccessGroupMemberQuery,
@@ -84,6 +93,8 @@ import type {
   InstanceRollbackResult,
   Job,
   OneTimeSecretDisplay,
+  PkiRoot,
+  PkiRootCreateInput,
   HostKeyDecisionResult,
   HostKeyScanResult,
   NodeCapability,
@@ -930,6 +941,61 @@ export function listClientDeliveryHistory(_clientId: string): Promise<ClientDeli
   return Promise.reject(new Error('Backend has no client delivery history list endpoint in this release.'));
 }
 
+export function listCertificates(): Promise<Certificate[]> {
+  return apiRequest<Certificate[]>('/api/v1/platform/certificates');
+}
+
+export async function getCertificate(certificateId: string): Promise<CertificateDetail> {
+  const items = await listCertificates();
+  const certificate = items.find((item) => item.id === certificateId);
+  if (!certificate) throw new Error(`certificate ${certificateId} was not found in platform certificate list`);
+  return certificate;
+}
+
+export function previewCertificateImport(input: CertificateImportInput): Promise<CertificateImportPreview> {
+  return sendJSON<CertificateImportPreview>('/api/v1/platform/certificates/preview', 'POST', input);
+}
+
+export function importCertificate(input: CertificateImportInput): Promise<Certificate> {
+  return sendJSON<Certificate>('/api/v1/platform/certificates/import', 'POST', input);
+}
+
+export function createSelfSignedCertificate(input: CertificateCreateInput): Promise<Certificate> {
+  return sendJSON<Certificate>('/api/v1/platform/certificates/self-signed', 'POST', input);
+}
+
+export function createManagedCertificateAuthority(input: CertificateAuthorityCreateInput): Promise<Certificate> {
+  return sendJSON<Certificate>('/api/v1/platform/certificates/authorities', 'POST', input);
+}
+
+export function issueCertificate(input: CertificateIssueInput): Promise<Certificate> {
+  return sendJSON<Certificate>('/api/v1/platform/certificates/issue-from-ca', 'POST', input);
+}
+
+export function setDefaultCertificate(certificateId: string): Promise<CertificateActionResult> {
+  return sendJSON<CertificateActionResult>(`/api/v1/platform/certificates/${encodeURIComponent(certificateId)}/default`, 'POST', {});
+}
+
+export function revokeCertificate(certificateId: string): Promise<CertificateRevokeResult> {
+  return sendJSON<CertificateRevokeResult>(`/api/v1/platform/certificates/${encodeURIComponent(certificateId)}/revoke`, 'POST', {});
+}
+
+export function deleteCertificate(certificateId: string): Promise<CertificateDeleteResult> {
+  return apiRequest<CertificateDeleteResult>(`/api/v1/platform/certificates/${encodeURIComponent(certificateId)}`, { method: 'DELETE' });
+}
+
+export function listPkiRoots(): Promise<PkiRoot[]> {
+  return apiRequest<PkiRoot[]>('/api/v1/platform/pki-roots');
+}
+
+export function createPkiRoot(input: PkiRootCreateInput): Promise<PkiRoot> {
+  return sendJSON<PkiRoot>('/api/v1/platform/pki-roots', 'POST', input);
+}
+
+export function importPkiRoot(input: PkiRootCreateInput): Promise<PkiRoot> {
+  return createPkiRoot(input);
+}
+
 export const endpoints = {
   ready: () => apiRequest<ReadyStatus>('/api/v1/ready'),
   version: () => apiRequest<VersionInfo>('/api/v1/version'),
@@ -948,8 +1014,19 @@ export const endpoints = {
   job: (id: string) => apiRequest<Job>(`/api/v1/jobs/${encodeURIComponent(id)}`),
   jobLogs: (id: string) => apiRequest<Record<string, unknown>[]>(`/api/v1/jobs/${encodeURIComponent(id)}/logs?limit=50`),
   cancelJob: (id: string) => sendJSON<Job>(`/api/v1/jobs/${encodeURIComponent(id)}/cancel`, 'POST', {}),
-  certificates: () => apiRequest<Certificate[]>('/api/v1/platform/certificates'),
-  pkiRoots: () => apiRequest<Record<string, unknown>[]>('/api/v1/platform/pki-roots'),
+  certificates: () => listCertificates(),
+  certificate: getCertificate,
+  certificateImportPreview: previewCertificateImport,
+  importCertificate,
+  createSelfSignedCertificate,
+  createManagedCertificateAuthority,
+  issueCertificate,
+  setDefaultCertificate,
+  revokeCertificate,
+  deleteCertificate,
+  pkiRoots: () => listPkiRoots(),
+  createPkiRoot,
+  importPkiRoot,
   backhaulLinks: () => apiRequest<BackhaulLink[]>('/api/v1/backhaul-links'),
   backhaulDrivers: () => apiRequest<Record<string, unknown>[]>('/api/v1/backhaul/drivers'),
   artifacts: () => apiRequest<Artifact[]>('/api/v1/artifacts'),

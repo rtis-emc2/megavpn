@@ -158,9 +158,11 @@ to `/legacy/`.
 | TLS apply | legacy-only | Backend exists; async job tracking required. |
 | Users/invites/sessions read | read-only | Users/sessions read path exists; invites list missing. |
 | Users/invites/sessions mutations | legacy-only | Backend exists; confirmation and permission states required. |
-| Certificate list | fully connected read path | Expiry/status shown read-only. |
-| Certificate import/self-signed/CA/issue/default/revoke/delete | legacy-only | Backend exists; secret-safe forms and destructive confirmations required. |
-| PKI roots | read-only / legacy-only | List read path exists; create not migrated. |
+| Certificate list/detail | fully connected | `GET /api/v1/platform/certificates`; detail is derived from the real list response because backend has no separate detail route. Expiry/status/usage are shown without rendering secret refs or PEM material. |
+| Certificate import | fully connected | `POST /api/v1/platform/certificates/preview` then `POST /api/v1/platform/certificates/import`; stale preview disables apply. Certificate/private-key PEM is cleared on close/success and is not logged, stored or rendered after submit. |
+| Certificate self-signed / managed CA / issue-from-CA | fully connected | `POST /self-signed`, `/authorities`, `/issue-from-ca`; backend generates key material and stores it server-side. No private key is shown to the browser. |
+| Certificate default/revoke/delete | fully connected | `POST /{id}/default`, `POST /{id}/revoke`, `DELETE /{id}`; confirmations required. Delete is exposed for backend-supported CA cascade delete; unsupported row kinds are disabled. |
+| PKI roots | fully connected | `GET/POST /api/v1/platform/pki-roots`; managed root create calls backend and does not expose CA private key material to the browser. |
 
 ### Backhaul
 

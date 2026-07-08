@@ -261,10 +261,14 @@ curl -fsS http://127.0.0.1:8080/healthz
 
 Если installer использовал self-signed TLS, замените его через:
 
-1. `Certificates -> Add certificate`.
-2. `Settings -> Control Plane TLS`.
-3. Выбор imported/managed certificate.
-4. `Apply edge`.
+1. `Platform -> Certificates -> Import certificate` для загрузки certificate
+   PEM и private key PEM с обязательным backend preview перед apply.
+2. Либо `Create self-signed`, `Create managed CA` и `Issue certificate`, если
+   нужен managed certificate lifecycle в новой UI.
+3. `Set default` для leaf-сертификата после подтверждения.
+4. `Settings -> Control Plane TLS` и `Apply edge` остаются отдельным
+   Platform Settings workflow и пока выполняются через approved/legacy flow до
+   FE8-P0-07B.
 5. Проверка `nginx -t` и публичного HTTPS URL.
 
 ## 6. Первичная настройка системы
@@ -397,6 +401,27 @@ Workflow:
 Managed certificate в service-pack форме нужен для TLS-facing компонентов:
 Nginx edge или Xray TLS. OpenVPN использует Service CA profile, а не TLS edge
 certificate.
+
+Новая React UI без `/legacy/` поддерживает:
+
+1. список сертификатов, expiry/status/usage и detail drawer;
+2. import certificate с backend preview; если certificate/private key/chain
+   изменились после preview, apply блокируется до повторного preview;
+3. self-signed certificate creation;
+4. managed CA creation;
+5. issue certificate from managed CA;
+6. set default/revoke/delete с подтверждением;
+7. managed service PKI root create/list для service/profile.
+
+Private key material вводится только через textarea/file input, отправляется в
+реальный backend endpoint, не логируется, не сохраняется в browser storage и
+очищается из формы при закрытии/успехе. UI не отображает PEM/private key после
+submit; показывает только metadata, status, expiry и usage.
+
+Ограничение текущего релиза: backend не имеет отдельного certificate detail
+endpoint, поэтому detail drawer использует актуальный list response. Control
+Plane TLS apply/settings остаются отдельной Platform Settings задачей
+FE8-P0-07B.
 
 ## 11. Address pools
 

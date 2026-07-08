@@ -735,7 +735,59 @@
     "serviceRoots": "Service PKI roots",
     "import": "Import certificate",
     "selfSigned": "Create self-signed",
-    "managedCa": "Create managed CA"
+    "managedCa": "Create managed CA",
+    "issue": "Issue certificate",
+    "createPkiRoot": "Create PKI root",
+    "serviceCode": "Service code",
+    "pkiProfile": "PKI profile",
+    "certificatePemFile": "Certificate PEM file",
+    "privateKeyFile": "Private key file",
+    "chainPemFile": "Chain PEM file",
+    "certificatePem": "Certificate PEM",
+    "privateKey": "Private key",
+    "chainPem": "Chain PEM",
+    "makeDefault": "Make default after creation",
+    "previewState": "Preview state",
+    "previewCurrent": "Current",
+    "previewStale": "Stale - preview again before import",
+    "keyPairValid": "Key pair valid",
+    "privateKeyType": "Private key type",
+    "importDone": "Certificate import completed.",
+    "selfSignedDone": "Self-signed certificate created.",
+    "authorityDone": "Managed CA created.",
+    "issueDone": "Certificate issued.",
+    "pkiRootDone": "PKI root {{root}} created.",
+    "setDefault": "Set default",
+    "revoke": "Revoke",
+    "default": "Default",
+    "privateKeyStored": "Private key stored",
+    "noPrivateKey": "No private key",
+    "sans": "SANs",
+    "dnsNames": "DNS names",
+    "notBefore": "Not before",
+    "parent": "Parent certificate",
+    "validDays": "Valid days",
+    "authority": "Authority",
+    "noAuthorities": "No active CA certificate is available. Create a managed CA first.",
+    "confirm": {
+      "title": "Confirm certificate action",
+      "default": {
+        "title": "Set default certificate",
+        "body": "Set {{name}} as the default platform TLS certificate.",
+        "done": "Default certificate updated."
+      },
+      "revoke": {
+        "title": "Revoke certificate",
+        "body": "Revoke {{name}}. The certificate cannot be used by runtime resolution after revocation.",
+        "done": "Certificate revoked."
+      },
+      "delete": {
+        "title": "Delete CA certificate",
+        "body": "Delete CA certificate {{name}}.",
+        "cascade": "Backend deletes the selected CA certificate tree as a cascade.",
+        "done": "CA certificate deleted."
+      }
+    }
   },
   "backhaul": {
     "title": "Backhaul",

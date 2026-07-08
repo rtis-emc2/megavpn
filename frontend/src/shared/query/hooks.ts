@@ -14,6 +14,9 @@ import {
   createClientShareLink,
   createClientSubscription,
   createClientAccessGroup,
+  createManagedCertificateAuthority,
+  createPkiRoot,
+  createSelfSignedCertificate,
   createInstanceFromServicePack,
   createInstanceManual,
   createEnrollmentToken,
@@ -30,6 +33,7 @@ import {
   deleteClient,
   deleteClientArtifact,
   deleteClientRoute,
+  deleteCertificate,
   deleteInstance,
   deleteRuntimeArtifact,
   deleteServicePack,
@@ -51,6 +55,7 @@ import {
   getRuntimeArtifact,
   getServicePack,
   getClientAccessOverview,
+  getCertificate,
   getFirewallSafetySettings,
   getNodeFirewallState,
   getNode,
@@ -106,11 +111,16 @@ import {
   runNodeDiagnosticsAction,
   scanNodeHostKey,
   importRuntimeArtifact,
+  importCertificate,
+  previewCertificateImport,
   rotateClientAccess,
   rotateClientShareLink,
   rotateClientSubscription,
   sendClientArtifactEmail,
+  issueCertificate,
+  revokeCertificate,
   setNodeMaintenance,
+  setDefaultCertificate,
   updateClientStatus,
   updateClientAccessGroup,
   updateClientAccessGroupScope,
@@ -136,6 +146,15 @@ import type {
   Artifact,
   BackhaulLink,
   Certificate,
+  CertificateActionResult,
+  CertificateAuthorityCreateInput,
+  CertificateCreateInput,
+  CertificateDeleteResult,
+  CertificateDetail,
+  CertificateImportInput,
+  CertificateImportPreview,
+  CertificateIssueInput,
+  CertificateRevokeResult,
   ClientAccess,
   ClientAccessDeleteResult,
   ClientAccessGroup,
@@ -229,6 +248,8 @@ import type {
   NodeServiceDiscoverySummary,
   NodeServiceInstaller,
   NodeRetireResult,
+  PkiRoot,
+  PkiRootCreateInput,
   ReadyStatus,
   RuntimeArtifact,
   RuntimeArtifactDeleteResult,
@@ -1454,6 +1475,97 @@ export function useCancelJob() {
 
 export function useCertificates(options?: QueryOptions<Certificate[]>) {
   return useQuery({ queryKey: ['certificates'], queryFn: endpoints.certificates, staleTime: stale.normal, ...options });
+}
+
+export function useCertificateDetail(certificateId: string | undefined, options?: QueryOptions<CertificateDetail>) {
+  return useQuery({
+    queryKey: ['certificate', certificateId],
+    queryFn: () => getCertificate(certificateId || ''),
+    enabled: Boolean(certificateId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function usePkiRoots(options?: QueryOptions<PkiRoot[]>) {
+  return useQuery({ queryKey: ['pki-roots'], queryFn: endpoints.pkiRoots, staleTime: stale.normal, ...options });
+}
+
+function invalidateCertificateQueries(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ['certificates'] });
+  void queryClient.invalidateQueries({ queryKey: ['pki-roots'] });
+  void queryClient.invalidateQueries({ queryKey: ['control-plane-tls'] });
+  void queryClient.invalidateQueries({ queryKey: ['runtime-preflight'] });
+}
+
+export function useImportCertificate() {
+  const queryClient = useQueryClient();
+  return useMutation<Certificate, Error, CertificateImportInput>({
+    mutationFn: importCertificate,
+    onSuccess: () => invalidateCertificateQueries(queryClient),
+  });
+}
+
+export function usePreviewCertificateImport() {
+  return useMutation<CertificateImportPreview, Error, CertificateImportInput>({
+    mutationFn: previewCertificateImport,
+  });
+}
+
+export function useCreateSelfSignedCertificate() {
+  const queryClient = useQueryClient();
+  return useMutation<Certificate, Error, CertificateCreateInput>({
+    mutationFn: createSelfSignedCertificate,
+    onSuccess: () => invalidateCertificateQueries(queryClient),
+  });
+}
+
+export function useCreateManagedCertificateAuthority() {
+  const queryClient = useQueryClient();
+  return useMutation<Certificate, Error, CertificateAuthorityCreateInput>({
+    mutationFn: createManagedCertificateAuthority,
+    onSuccess: () => invalidateCertificateQueries(queryClient),
+  });
+}
+
+export function useIssueCertificate() {
+  const queryClient = useQueryClient();
+  return useMutation<Certificate, Error, CertificateIssueInput>({
+    mutationFn: issueCertificate,
+    onSuccess: () => invalidateCertificateQueries(queryClient),
+  });
+}
+
+export function useSetDefaultCertificate() {
+  const queryClient = useQueryClient();
+  return useMutation<CertificateActionResult, Error, string>({
+    mutationFn: setDefaultCertificate,
+    onSuccess: () => invalidateCertificateQueries(queryClient),
+  });
+}
+
+export function useRevokeCertificate() {
+  const queryClient = useQueryClient();
+  return useMutation<CertificateRevokeResult, Error, string>({
+    mutationFn: revokeCertificate,
+    onSuccess: () => invalidateCertificateQueries(queryClient),
+  });
+}
+
+export function useDeleteCertificate() {
+  const queryClient = useQueryClient();
+  return useMutation<CertificateDeleteResult, Error, string>({
+    mutationFn: deleteCertificate,
+    onSuccess: () => invalidateCertificateQueries(queryClient),
+  });
+}
+
+export function useCreatePkiRoot() {
+  const queryClient = useQueryClient();
+  return useMutation<PkiRoot, Error, PkiRootCreateInput>({
+    mutationFn: createPkiRoot,
+    onSuccess: () => invalidateCertificateQueries(queryClient),
+  });
 }
 
 export function useBackhaulLinks(options?: QueryOptions<BackhaulLink[]>) {

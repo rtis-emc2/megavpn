@@ -1349,12 +1349,105 @@ export type BackhaulLink = APIRecord & {
 
 export type Certificate = APIRecord & {
   id: string;
+  name?: string;
+  description?: string;
   common_name?: string;
+  sans?: string[];
   issuer_name?: string;
   status?: string;
   kind?: string;
   source?: string;
+  parent_certificate_id?: string | null;
+  cert_secret_ref_id?: string;
+  key_secret_ref_id?: string | null;
+  chain_secret_ref_id?: string | null;
+  not_before?: string;
   not_after?: string;
+  is_default?: boolean;
+  meta?: APIRecord;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type CertificateDetail = Certificate;
+
+export type CertificateImportInput = {
+  name?: string;
+  description?: string;
+  certificate: string;
+  private_key: string;
+  chain?: string;
+  is_default?: boolean;
+};
+
+export type CertificateImportPreview = APIRecord & {
+  common_name?: string;
+  issuer_name?: string;
+  sans?: string[];
+  not_before?: string;
+  not_after?: string;
+  is_ca?: boolean;
+  private_key_type?: string;
+  key_pair_valid?: boolean;
+  chain_certificate_count?: number;
+};
+
+export type CertificateCreateInput = {
+  name?: string;
+  description?: string;
+  common_name: string;
+  dns_names?: string[];
+  valid_days?: number;
+  is_default?: boolean;
+};
+
+export type CertificateAuthorityCreateInput = {
+  name?: string;
+  description?: string;
+  common_name: string;
+  valid_days?: number;
+};
+
+export type CertificateIssueInput = {
+  authority_certificate_id: string;
+  name?: string;
+  description?: string;
+  common_name: string;
+  dns_names?: string[];
+  valid_days?: number;
+  is_default?: boolean;
+};
+
+export type CertificateActionResult = APIRecord & {
+  certificate_id?: string;
+  action?: string;
+  status?: string;
+  cascade_ids?: string[];
+  cascade_count?: number;
+};
+
+export type CertificateRevokeResult = CertificateActionResult;
+
+export type CertificateDeleteResult = CertificateActionResult;
+
+export type PkiRoot = APIRecord & {
+  id: string;
+  service_code?: string;
+  pki_profile?: string;
+  status?: string;
+  ca_cert_secret_ref_id?: string;
+  common_name?: string;
+  not_before?: string;
+  not_after?: string;
+  created_at?: string;
+  rotated_at?: string | null;
+};
+
+export type PkiRootCreateInput = {
+  service_code: string;
+  pki_profile?: string;
+  common_name?: string;
+  valid_days?: number;
 };
 
 export type AddressPools = {
