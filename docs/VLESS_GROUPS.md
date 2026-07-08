@@ -12,6 +12,11 @@ and runtime instances receive materialized `service_accesses` as a projection.
 This keeps VLESS client policy out of individual instance forms and makes
 routing behavior auditable.
 
+Frontend `8.0.0` wires the primary VLESS workflow in the new React console:
+group create/edit, bulk member preview/apply, member removal, scope update and
+sync preview/apply use `/api/v1/client-access-groups` directly. `/legacy/` is
+not required for this VLESS path.
+
 A VLESS group is global. Client membership is stored once and is materialized
 into every active Xray/VLESS instance that exposes that group. A VLESS instance
 still owns the listener, certificate/Reality settings and default egress path;

@@ -1,11 +1,32 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
-import { endpoints } from '../api/endpoints';
+import {
+  applyClientAccessGroupMembers,
+  applyClientAccessGroupSync,
+  createClientAccessGroup,
+  endpoints,
+  getAvailableClientsForGroup,
+  getClientAccessGroupMembers,
+  getClientAccessGroupScope,
+  getClientAccessGroupSyncState,
+  listClientAccessGroups,
+  previewClientAccessGroupMembers,
+  previewClientAccessGroupSync,
+  removeClientAccessGroupMember,
+  updateClientAccessGroup,
+  updateClientAccessGroupScope,
+} from '../api/endpoints';
 import type {
   AddressPools,
   Artifact,
   BackhaulLink,
   Certificate,
   ClientAccessGroup,
+  ClientAccessGroupInput,
+  ClientAccessGroupMemberQuery,
+  ClientAccessGroupMembersPage,
+  ClientAccessGroupMembershipRequest,
+  ClientAccessGroupScope,
+  ClientAccessGroupSyncState,
   ClientAccessService,
   ClientAccount,
   Dashboard,
@@ -16,6 +37,8 @@ import type {
   ServiceInstance,
   ShareLink,
   TrafficSummary,
+  AvailableClientsForGroupPage,
+  AvailableClientsForGroupQuery,
   VersionInfo,
 } from '../api/types';
 
@@ -55,8 +78,125 @@ export function useClientAccessServices(options?: QueryOptions<ClientAccessServi
   return useQuery({ queryKey: ['client-access-services'], queryFn: endpoints.clientAccessServices, staleTime: stale.slow, ...options });
 }
 
-export function useClientAccessGroups(options?: QueryOptions<ClientAccessGroup[]>) {
-  return useQuery({ queryKey: ['client-access-groups'], queryFn: endpoints.clientAccessGroups, staleTime: stale.normal, ...options });
+export function useClientAccessGroups(serviceCode?: string, options?: QueryOptions<ClientAccessGroup[]>) {
+  return useQuery({
+    queryKey: ['client-access-groups', serviceCode || 'all'],
+    queryFn: () => listClientAccessGroups({ serviceCode }),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+function invalidateClientAccessGroupQueries(queryClient: ReturnType<typeof useQueryClient>, groupID?: string) {
+  void queryClient.invalidateQueries({ queryKey: ['client-access-groups'] });
+  void queryClient.invalidateQueries({ queryKey: ['clients'] });
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  if (groupID) {
+    void queryClient.invalidateQueries({ queryKey: ['client-access-group-members', groupID] });
+    void queryClient.invalidateQueries({ queryKey: ['client-access-group-available-clients', groupID] });
+    void queryClient.invalidateQueries({ queryKey: ['client-access-group-scope', groupID] });
+    void queryClient.invalidateQueries({ queryKey: ['client-access-group-sync-state', groupID] });
+  }
+}
+
+export function useCreateClientAccessGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ClientAccessGroupInput) => createClientAccessGroup(input),
+    onSuccess: (group) => invalidateClientAccessGroupQueries(queryClient, group.id),
+  });
+}
+
+export function useUpdateClientAccessGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ groupId, input }: { groupId: string; input: ClientAccessGroupInput }) => updateClientAccessGroup(groupId, input),
+    onSuccess: (group) => invalidateClientAccessGroupQueries(queryClient, group.id),
+  });
+}
+
+export function useClientAccessGroupMembers(groupId: string | undefined, params: ClientAccessGroupMemberQuery, options?: QueryOptions<ClientAccessGroupMembersPage>) {
+  return useQuery({
+    queryKey: ['client-access-group-members', groupId, params],
+    queryFn: () => getClientAccessGroupMembers(groupId || '', params),
+    enabled: Boolean(groupId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useAvailableClientsForGroup(groupId: string | undefined, params: AvailableClientsForGroupQuery, options?: QueryOptions<AvailableClientsForGroupPage>) {
+  return useQuery({
+    queryKey: ['client-access-group-available-clients', groupId, params],
+    queryFn: () => getAvailableClientsForGroup({ ...params, group_id: groupId }),
+    enabled: Boolean(groupId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function usePreviewClientAccessGroupMembers() {
+  return useMutation({
+    mutationFn: ({ groupId, payload }: { groupId: string; payload: ClientAccessGroupMembershipRequest }) => previewClientAccessGroupMembers(groupId, payload),
+  });
+}
+
+export function useApplyClientAccessGroupMembers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ groupId, payload }: { groupId: string; payload: ClientAccessGroupMembershipRequest }) => applyClientAccessGroupMembers(groupId, payload),
+    onSuccess: (result, input) => invalidateClientAccessGroupQueries(queryClient, result.group_id || input.groupId),
+  });
+}
+
+export function useRemoveClientAccessGroupMember() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ groupId, clientId }: { groupId: string; clientId: string }) => removeClientAccessGroupMember(groupId, clientId),
+    onSuccess: (result, input) => invalidateClientAccessGroupQueries(queryClient, result.group_id || input.groupId),
+  });
+}
+
+export function useClientAccessGroupScope(groupId: string | undefined, options?: QueryOptions<ClientAccessGroupScope>) {
+  return useQuery({
+    queryKey: ['client-access-group-scope', groupId],
+    queryFn: () => getClientAccessGroupScope(groupId || ''),
+    enabled: Boolean(groupId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useUpdateClientAccessGroupScope() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ groupId, payload }: { groupId: string; payload: ClientAccessGroupScope }) => updateClientAccessGroupScope(groupId, payload),
+    onSuccess: (scope, input) => invalidateClientAccessGroupQueries(queryClient, scope.group_id || input.groupId),
+  });
+}
+
+export function usePreviewClientAccessGroupSync() {
+  return useMutation({
+    mutationFn: (groupId: string) => previewClientAccessGroupSync(groupId),
+  });
+}
+
+export function useApplyClientAccessGroupSync() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (groupId: string) => applyClientAccessGroupSync(groupId),
+    onSuccess: (result, groupId) => invalidateClientAccessGroupQueries(queryClient, result.group_id || groupId),
+  });
+}
+
+export function useClientAccessGroupSyncState(groupId: string | undefined, options?: QueryOptions<ClientAccessGroupSyncState[]>) {
+  return useQuery({
+    queryKey: ['client-access-group-sync-state', groupId],
+    queryFn: () => getClientAccessGroupSyncState(groupId || ''),
+    enabled: Boolean(groupId),
+    staleTime: stale.normal,
+    ...options,
+  });
 }
 
 export function useFirewallInventory(options?: QueryOptions<FirewallInventory>) {

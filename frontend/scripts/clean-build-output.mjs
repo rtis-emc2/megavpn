@@ -11,7 +11,7 @@ await Promise.allSettled([
   rm(join(webRoot, '.vite', 'manifest.json'), { force: true }),
 ]);
 
-let assetNames = [];
+let assetNames;
 try {
   assetNames = await readdir(assetsDir);
 } catch (error) {

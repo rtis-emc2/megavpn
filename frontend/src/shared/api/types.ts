@@ -83,11 +83,28 @@ export type ClientAccount = APIRecord & {
 export type ClientAccessService = APIRecord & {
   service_code: string;
   display_name?: string;
+  description?: string;
   category?: string;
+  implemented?: boolean;
   status?: string;
   supports_groups?: boolean;
+  supports_policy?: boolean;
+  supports_scope?: boolean;
   supports_membership?: boolean;
   supports_materialization?: boolean;
+  runtime_service_codes?: string[];
+  policy_capabilities?: APIRecord;
+};
+
+export type VLESSAccessGroupPolicy = {
+  access_mode?: string;
+  egress_mode?: string;
+  egress_node_id?: string;
+  target_instance_id?: string;
+  outbound_tag?: string;
+  ad_block?: boolean;
+  rules?: APIRecord[];
+  extra_rules?: APIRecord[];
 };
 
 export type ClientAccessGroup = APIRecord & {
@@ -95,11 +112,175 @@ export type ClientAccessGroup = APIRecord & {
   service_code?: string;
   group_key?: string;
   display_name?: string;
+  description?: string;
   status?: string;
+  policy_json?: VLESSAccessGroupPolicy | APIRecord;
   member_count?: number;
+  active_member_count?: number;
+  disabled_member_count?: number;
   affected_instances?: number;
+  pending_sync_count?: number;
+  failed_sync_count?: number;
+  applied_sync_count?: number;
   scope_mode?: string;
   auto_apply_new_instances?: boolean;
+};
+
+export type ClientAccessGroupInput = {
+  service_code: string;
+  group_key: string;
+  display_name: string;
+  description?: string;
+  status?: string;
+  policy_json?: VLESSAccessGroupPolicy;
+  scope_mode?: string;
+  auto_apply_new_instances?: boolean;
+};
+
+export type ClientAccessGroupMember = APIRecord & {
+  client_id: string;
+  username?: string;
+  display_name?: string;
+  email?: string;
+  client_status?: string;
+  membership_id?: string;
+  membership_status?: string;
+  group_id?: string;
+  group_key?: string;
+  group_name?: string;
+  service_access_id?: string;
+  access_status?: string;
+  xray_uuid?: string;
+  updated_at?: string;
+};
+
+export type ClientAccessGroupMembersPage = {
+  group_id?: string;
+  service_code?: string;
+  group_key?: string;
+  status?: string;
+  items: ClientAccessGroupMember[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type AvailableClientsForGroupPage = {
+  service_code: string;
+  assignment: string;
+  items: ClientAccessGroupMember[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type ClientAccessGroupMemberQuery = {
+  search?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type AvailableClientsForGroupQuery = ClientAccessGroupMemberQuery & {
+  group_id?: string;
+  service_code?: string;
+  assignment?: string;
+};
+
+export type ClientAccessGroupMembershipRequest = {
+  client_ids?: string[];
+  client_refs?: string[];
+  mode?: 'add_only' | 'add_or_move';
+  queue_apply?: boolean;
+  build_artifacts?: boolean;
+  dry_run?: boolean;
+  all_filtered?: boolean;
+  filter_search?: string;
+  filter_assignment?: string;
+  filter_status?: string;
+  filter_group_id?: string;
+};
+
+export type ClientAccessGroupMembershipFailure = {
+  client_id?: string;
+  ref?: string;
+  error: string;
+};
+
+export type ClientAccessGroupMembershipConflict = {
+  client_id?: string;
+  existing_group?: string;
+  target_group?: string;
+  reason: string;
+};
+
+export type ClientAccessGroupMembershipResult = {
+  group_id?: string;
+  group_key?: string;
+  service_code?: string;
+  dry_run?: boolean;
+  all_filtered?: boolean;
+  created_memberships: number;
+  moved_memberships: number;
+  skipped_existing: number;
+  failed?: ClientAccessGroupMembershipFailure[];
+  conflicts?: ClientAccessGroupMembershipConflict[];
+  affected_instances?: number;
+  materialized_created?: number;
+  materialized_updated?: number;
+  materialized_disabled?: number;
+  sync_job_id?: string;
+  apply_job_ids?: string[];
+  apply_job_count: number;
+  warnings?: string[];
+  clients?: ClientAccessGroupMember[];
+};
+
+export type ClientAccessGroupScope = {
+  group_id: string;
+  scope_mode: string;
+  auto_apply_new_instances: boolean;
+  include_instance_ids?: string[];
+  exclude_instance_ids?: string[];
+  affected_instances?: number;
+  materialized_created?: number;
+  materialized_updated?: number;
+  materialized_disabled?: number;
+  apply_job_count?: number;
+  apply_job_ids?: string[];
+  warnings?: string[];
+};
+
+export type ClientAccessGroupSyncPreview = {
+  group_id: string;
+  group_key: string;
+  service_code: string;
+  desired_hash: string;
+  affected_instances: number;
+  member_count: number;
+  pending_instances: number;
+  applied_instances: number;
+  failed_instances: number;
+  instance_ids?: string[];
+  warnings?: string[];
+};
+
+export type ClientAccessGroupSyncState = {
+  group_id: string;
+  instance_id: string;
+  desired_hash: string;
+  last_applied_hash?: string;
+  status: string;
+  last_job_id?: string;
+  last_error?: string;
+  updated_at?: string;
+};
+
+export type APIValidationError = {
+  error?: string;
+  field?: string;
+  fields?: Record<string, string>;
+  details?: unknown;
 };
 
 export type FirewallPolicy = APIRecord & {

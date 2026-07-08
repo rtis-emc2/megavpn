@@ -85,13 +85,16 @@ tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
 | Backend endpoint family | Legacy usage | New wrapper / hook | UI page | Status | Invalidation / security notes |
 | --- | --- | --- | --- | --- | --- |
 | `GET /api/v1/client-access-services` | services for access groups | `endpoints.clientAccessServices`; `useClientAccessServices` | Clients -> Groups | connected |
-| `GET/POST /api/v1/client-access-groups` | group list/create | `endpoints.clientAccessGroups`; `useClientAccessGroups`; create missing | Clients -> Groups | read-only |
-| `GET /api/v1/client-access-groups/available-clients`, `/migration-conflicts` | member picker/conflicts | missing | Clients -> Groups | legacy-only |
-| `GET/PATCH/DELETE /api/v1/client-access-groups/{group_id}` | group policy | get/update/delete missing | Clients -> Groups | legacy-only |
-| `POST /api/v1/client-access-groups/{group_id}/enable`, `/disable` | status change | missing | Clients -> Groups | legacy-only |
-| `GET /api/v1/client-access-groups/{group_id}/members` | member list | missing | Clients -> Groups | legacy-only |
-| `POST /api/v1/client-access-groups/{group_id}/members:preview`, `/members:bulk-apply`, `/members:bulk-add`, `/members:bulk-move`, `DELETE /members/{client_id}` | bulk member operations | missing | Clients -> Groups | disabled / legacy-only | No fake preview/apply; one backend bulk mutation only. |
-| `GET/PATCH /api/v1/client-access-groups/{group_id}/scope`, `POST /sync:preview`, `POST /sync:apply`, `GET /sync-state` | scope/sync | missing | Clients -> Groups | legacy-only | Preview invalidates on selection or scope changes. |
+| `GET/POST /api/v1/client-access-groups` | group list/create | `listClientAccessGroups`; `createClientAccessGroup`; `useClientAccessGroups`; `useCreateClientAccessGroup` | Clients -> Groups | connected for VLESS |
+| `GET /api/v1/client-access-groups/available-clients` | member picker | `getAvailableClientsForGroup`; `useAvailableClientsForGroup` | Clients -> Groups | connected for VLESS |
+| `GET /api/v1/client-access-groups/migration-conflicts` | migration conflict inventory | missing | Clients -> Groups | legacy-only |
+| `GET/PATCH /api/v1/client-access-groups/{group_id}` | group policy/status edit | `getClientAccessGroup`; `updateClientAccessGroup`; `useUpdateClientAccessGroup` | Clients -> Groups | connected for VLESS | Policy edit preserves backend validation and CSRF. |
+| `DELETE /api/v1/client-access-groups/{group_id}` | destructive group removal | `deleteOrDisableClientAccessGroup`; UI confirmation missing | Clients -> Groups | legacy-only |
+| `POST /api/v1/client-access-groups/{group_id}/enable`, `/disable` | status change | missing separate action | Clients -> Groups | partial | VLESS status can be changed through PATCH; explicit enable/disable buttons are not exposed. |
+| `GET /api/v1/client-access-groups/{group_id}/members` | member list | `getClientAccessGroupMembers`; `useClientAccessGroupMembers` | Clients -> Groups | connected for VLESS |
+| `POST /api/v1/client-access-groups/{group_id}/members:preview`, `/members:bulk-apply`, `DELETE /members/{client_id}` | preview/apply/remove members | `previewClientAccessGroupMembers`; `applyClientAccessGroupMembers`; `removeClientAccessGroupMember` hooks | Clients -> Groups | connected for VLESS | Apply stays disabled until successful backend preview; selection/filter/mode changes invalidate preview. |
+| `POST /api/v1/client-access-groups/{group_id}/members:bulk-add`, `/members:bulk-move` | direct add/move aliases | backend-compatible | Clients -> Groups | deprecated in new UI | New UI uses `/members:bulk-apply` with `mode=add_only` or `mode=add_or_move`. |
+| `GET/PATCH /api/v1/client-access-groups/{group_id}/scope`, `POST /sync:preview`, `POST /sync:apply`, `GET /sync-state` | scope/sync | typed wrappers and hooks for scope/sync preview/apply/state | Clients -> Groups | connected for VLESS | Scope and sync apply return materialization/job state and invalidate groups, jobs and sync-state. |
 
 ### 4.5 Nodes, Bootstrap, Inventory
 

@@ -6,6 +6,14 @@ import type {
   BackhaulLink,
   Certificate,
   ClientAccessGroup,
+  ClientAccessGroupInput,
+  ClientAccessGroupMemberQuery,
+  ClientAccessGroupMembersPage,
+  ClientAccessGroupMembershipRequest,
+  ClientAccessGroupMembershipResult,
+  ClientAccessGroupScope,
+  ClientAccessGroupSyncPreview,
+  ClientAccessGroupSyncState,
   ClientAccessService,
   ClientAccount,
   Dashboard,
@@ -16,8 +24,20 @@ import type {
   ServiceInstance,
   ShareLink,
   TrafficSummary,
+  AvailableClientsForGroupPage,
+  AvailableClientsForGroupQuery,
   VersionInfo,
 } from './types';
+
+function queryString(params: object): string {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === '' || value === false) return;
+    query.set(key, String(value));
+  });
+  const raw = query.toString();
+  return raw ? `?${raw}` : '';
+}
 
 export async function getSession(): Promise<AuthPayload | null> {
   try {
@@ -44,6 +64,78 @@ export function acceptInvite(token: string, password: string): Promise<unknown> 
   return sendJSON(`/api/v1/auth/invites/${encodeURIComponent(token)}/accept`, 'POST', { password });
 }
 
+export function listClientAccessServices(): Promise<ClientAccessService[]> {
+  return apiRequest<ClientAccessService[]>('/api/v1/client-access-services');
+}
+
+export function listClientAccessGroups(params: { serviceCode?: string } = {}): Promise<ClientAccessGroup[]> {
+  return apiRequest<ClientAccessGroup[]>(`/api/v1/client-access-groups${queryString({ service_code: params.serviceCode })}`);
+}
+
+export function getClientAccessGroup(groupId: string): Promise<ClientAccessGroup> {
+  return apiRequest<ClientAccessGroup>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}`);
+}
+
+export function createClientAccessGroup(input: ClientAccessGroupInput): Promise<ClientAccessGroup> {
+  return sendJSON<ClientAccessGroup>('/api/v1/client-access-groups', 'POST', input);
+}
+
+export function updateClientAccessGroup(groupId: string, input: ClientAccessGroupInput): Promise<ClientAccessGroup> {
+  return sendJSON<ClientAccessGroup>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}`, 'PATCH', input);
+}
+
+export function deleteOrDisableClientAccessGroup(groupId: string): Promise<ClientAccessGroup> {
+  return apiRequest<ClientAccessGroup>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' });
+}
+
+export function getClientAccessGroupMembers(groupId: string, params: ClientAccessGroupMemberQuery = {}): Promise<ClientAccessGroupMembersPage> {
+  return apiRequest<ClientAccessGroupMembersPage>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/members${queryString(params)}`);
+}
+
+export function getAvailableClientsForGroup(params: AvailableClientsForGroupQuery): Promise<AvailableClientsForGroupPage> {
+  return apiRequest<AvailableClientsForGroupPage>(`/api/v1/client-access-groups/available-clients${queryString({
+    group_id: params.group_id,
+    service_code: params.service_code,
+    search: params.search,
+    assignment: params.assignment,
+    status: params.status,
+    limit: params.limit,
+    offset: params.offset,
+  })}`);
+}
+
+export function previewClientAccessGroupMembers(groupId: string, payload: ClientAccessGroupMembershipRequest): Promise<ClientAccessGroupMembershipResult> {
+  return sendJSON<ClientAccessGroupMembershipResult>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/members:preview`, 'POST', payload);
+}
+
+export function applyClientAccessGroupMembers(groupId: string, payload: ClientAccessGroupMembershipRequest): Promise<ClientAccessGroupMembershipResult> {
+  return sendJSON<ClientAccessGroupMembershipResult>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/members:bulk-apply`, 'POST', payload);
+}
+
+export function removeClientAccessGroupMember(groupId: string, clientId: string): Promise<ClientAccessGroupMembershipResult> {
+  return apiRequest<ClientAccessGroupMembershipResult>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
+}
+
+export function getClientAccessGroupScope(groupId: string): Promise<ClientAccessGroupScope> {
+  return apiRequest<ClientAccessGroupScope>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/scope`);
+}
+
+export function updateClientAccessGroupScope(groupId: string, payload: ClientAccessGroupScope): Promise<ClientAccessGroupScope> {
+  return sendJSON<ClientAccessGroupScope>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/scope`, 'PATCH', payload);
+}
+
+export function previewClientAccessGroupSync(groupId: string): Promise<ClientAccessGroupSyncPreview> {
+  return sendJSON<ClientAccessGroupSyncPreview>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/sync:preview`, 'POST', {});
+}
+
+export function applyClientAccessGroupSync(groupId: string): Promise<ClientAccessGroupMembershipResult> {
+  return sendJSON<ClientAccessGroupMembershipResult>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/sync:apply`, 'POST', {});
+}
+
+export function getClientAccessGroupSyncState(groupId: string): Promise<ClientAccessGroupSyncState[]> {
+  return apiRequest<ClientAccessGroupSyncState[]>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/sync-state`);
+}
+
 export const endpoints = {
   ready: () => apiRequest<ReadyStatus>('/api/v1/ready'),
   version: () => apiRequest<VersionInfo>('/api/v1/version'),
@@ -52,8 +144,8 @@ export const endpoints = {
   instances: () => apiRequest<ServiceInstance[]>('/api/v1/instances'),
   instanceRuntimeStates: () => apiRequest<Record<string, unknown>[]>('/api/v1/instances/runtime-states'),
   clients: () => apiRequest<ClientAccount[]>('/api/v1/clients'),
-  clientAccessServices: () => apiRequest<ClientAccessService[]>('/api/v1/client-access-services'),
-  clientAccessGroups: () => apiRequest<ClientAccessGroup[]>('/api/v1/client-access-groups'),
+  clientAccessServices: listClientAccessServices,
+  clientAccessGroups: () => listClientAccessGroups(),
   firewallInventory: () => apiRequest<FirewallInventory>('/api/v1/firewall'),
   trafficAccounting: () => apiRequest<TrafficSummary>('/api/v1/traffic/accounting?limit=250'),
   jobs: () => apiRequest<Job[]>('/api/v1/jobs?limit=100'),

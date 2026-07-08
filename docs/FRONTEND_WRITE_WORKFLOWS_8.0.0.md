@@ -68,16 +68,18 @@ to `/legacy/`.
 | --- | --- | --- |
 | List access groups | fully connected | `GET /api/v1/client-access-groups`. |
 | List access services | fully connected | `GET /api/v1/client-access-services`. |
-| Create group | disabled intentionally | Backend exists; form not wired. |
-| Update policy | legacy-only | Backend exists; validation mapping required. |
-| Delete/disable group | legacy-only | Backend exists; destructive/status confirmation required. |
-| Scope read/update | legacy-only | Backend exists; scope editor not migrated. |
-| Member list | legacy-only | Backend exists; paginated picker not migrated. |
-| Member preview | disabled intentionally | Backend exists; local fake preview was removed. |
-| Member apply | disabled intentionally | Backend exists; must follow successful backend preview. |
-| Member remove | legacy-only | Backend exists; confirmation required. |
-| Sync preview | legacy-only | Backend exists; not migrated. |
-| Sync apply | legacy-only | Backend exists; must follow backend preview. |
+| Create VLESS group | fully connected | `POST /api/v1/client-access-groups`; unsupported services stay catalog-only/disabled. |
+| Update VLESS policy/status | fully connected | `PATCH /api/v1/client-access-groups/{group_id}`; group key remains immutable in UI. |
+| Delete group | legacy-only | Backend exists; destructive confirmation is not exposed in the new VLESS workflow. |
+| Disable VLESS group | fully connected | Status can be changed through the edit form and backend PATCH validation. |
+| Scope read/update | fully connected | `GET/PATCH /api/v1/client-access-groups/{group_id}/scope`; selected/all/except modes are wired. |
+| Member list | fully connected | `GET /api/v1/client-access-groups/{group_id}/members`. |
+| Available client picker | fully connected | `GET /api/v1/client-access-groups/available-clients` with search/status/assignment/page size. |
+| Member preview | fully connected | `POST /api/v1/client-access-groups/{group_id}/members:preview`; no local fake preview. |
+| Member apply | fully connected | `POST /api/v1/client-access-groups/{group_id}/members:bulk-apply`; requires a fresh successful backend preview. |
+| Member remove | fully connected | `DELETE /api/v1/client-access-groups/{group_id}/members/{client_id}` with confirmation. |
+| Sync preview | fully connected | `POST /api/v1/client-access-groups/{group_id}/sync:preview`. |
+| Sync apply | fully connected | `POST /api/v1/client-access-groups/{group_id}/sync:apply`; requires backend preview. |
 | Migration conflict handling | legacy-only | Backend exists; conflict UI not migrated. |
 
 ### Network Policy

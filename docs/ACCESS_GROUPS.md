@@ -13,6 +13,12 @@ policies. Operators manage them only in `Clients -> Groups`.
 target: it receives materialized `service_accesses`, applies a revision and
 deploys config on the node.
 
+Frontend `8.0.0` connects the VLESS `Clients -> Groups` workflow directly to
+the generic client access group backend: create/edit, member preview/apply,
+member removal, scope update and sync preview/apply do not require `/legacy/`.
+Non-VLESS services remain visible as catalog-only until their backend
+materialization is enabled.
+
 ## Data Model
 
 ```text
