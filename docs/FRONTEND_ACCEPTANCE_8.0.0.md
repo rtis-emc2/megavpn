@@ -3,13 +3,16 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`e07b2b766949d3aa867717972b4834fa51aa84d2`
+`cb9b0f3e97043ec9d2bb8a6499472e75536354dc`
 
 FE8-P0-04A instance runtime control feature commit:
 `e07b2b766949d3aa867717972b4834fa51aa84d2`
 
 FE8-P0-03B client delivery feature commit:
 `8dbcb97bcf225d34686c0eb555a6697425f12c37`
+
+FE8-P0-03B evidence commit:
+`70c5242fa9d9e99763aa60a797bdc4729980179f`
 
 FE8-P0-03A feature commit:
 `326499a6691833dc3d9be406cf9e84a91544a358`
@@ -29,11 +32,11 @@ Firewall implementation commit:
 Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
-Previous accepted evidence CI:
-GitHub Actions run `28967364873` passed for
-`f1d8769b63cdfe705afb29a71b8927d4c4abe147`.
+Current evidence CI:
+GitHub Actions run `28974567628` passed for
+`cb9b0f3e97043ec9d2bb8a6499472e75536354dc`.
 
-Current evidence date UTC: `2026-07-08T20:42:53Z`
+Current evidence date UTC: `2026-07-08T20:51:41Z`
 
 Status: FE8-P0-04A is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
