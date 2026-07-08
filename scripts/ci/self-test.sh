@@ -224,6 +224,10 @@ require_frontend_bootstrap_smoke() {
   "$NODE_BIN" scripts/ci/frontend-bootstrap-smoke.js
 }
 
+require_install_web_wrapper_smoke() {
+  scripts/ci/install-web-wrapper-smoke.sh
+}
+
 require_service_pack_smoke_regression() {
   if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
     skip_check "node is unavailable; service-pack smoke regression was not run"
@@ -467,6 +471,7 @@ run_check "actions-pinning" "GitHub Actions use pinned commit SHA refs" require_
 run_check "control-plane-install-validation" "Control Plane installer validates non-interactive clean-install inputs" require_control_plane_install_validation
 run_check "frontend-js-syntax" "Static Web UI JavaScript parses under node --check" require_frontend_js_syntax
 run_check "frontend-bootstrap-smoke" "Static Web UI assets bootstrap with browser-like runtime dependencies" require_frontend_bootstrap_smoke
+run_check "install-web-wrapper-smoke" "Deploy Web UI wrapper copies static frontend assets from the repository root" require_install_web_wrapper_smoke
 run_check "service-pack-smoke-regression" "Service-pack smoke script handles matrix planning, provision apply, artifacts and cleanup against a mock API" require_service_pack_smoke_regression
 run_check "frontend-asset-manifest" "Static Web UI index references only existing assets" require_frontend_asset_manifest
 run_check "frontend-page-module-exports" "Static Web UI page modules export the create contract expected by app.js" require_frontend_page_module_exports

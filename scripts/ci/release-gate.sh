@@ -130,6 +130,10 @@ run_frontend_bootstrap_smoke() {
   "$NODE_BIN" scripts/ci/frontend-bootstrap-smoke.js
 }
 
+run_install_web_wrapper_smoke() {
+  scripts/ci/install-web-wrapper-smoke.sh
+}
+
 run_service_pack_smoke_regression() {
   "$NODE_BIN" scripts/ci/service-pack-smoke-regression.js
 }
@@ -268,6 +272,7 @@ run_gate "actions-pinning" require_actions_pinning
 run_gate "docs-consistency" require_docs_consistency
 run_gate "control-plane-install-validation" require_control_plane_install_validation
 run_gate "smoke-auth-coverage" require_smoke_auth_coverage
+run_gate "install-web-wrapper-smoke" run_install_web_wrapper_smoke
 if command -v "$NODE_BIN" >/dev/null 2>&1; then
   run_gate "frontend-js-syntax" require_frontend_js_syntax
   run_gate "frontend-bootstrap-smoke" run_frontend_bootstrap_smoke

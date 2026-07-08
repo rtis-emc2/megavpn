@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TARGET_DIR="${1:-/opt/megavpn/web}"
 
 if [[ ! -d "$SRC_DIR/web" ]]; then
