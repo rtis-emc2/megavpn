@@ -2,7 +2,14 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Implementation commit at evidence time:
+Evidence HEAD/current commit:
+`f1d8769b63cdfe705afb29a71b8927d4c4abe147`
+
+Evidence CI:
+GitHub Actions run `28967364873` passed for
+`f1d8769b63cdfe705afb29a71b8927d4c4abe147`.
+
+FE8-RC1 hygiene implementation commit:
 `9044647110cd5cbaeb4d5a866b96f56008fcb338`
 
 FE8-P0-02 Firewall task implementation commit:
