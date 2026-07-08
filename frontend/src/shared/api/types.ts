@@ -713,6 +713,81 @@ export type ClientServiceAccess = APIRecord & {
   updated_at?: string;
 };
 
+export type ClientAccess = ClientServiceAccess;
+
+export type ClientRoute = APIRecord & {
+  id: string;
+  client_account_id?: string;
+  service_access_id?: string | null;
+  instance_id?: string | null;
+  node_id?: string | null;
+  name?: string;
+  status?: string;
+  action?: string;
+  destination_type?: string;
+  destination?: string;
+  protocol?: string;
+  ports?: string;
+  description?: string;
+  policy?: APIRecord;
+  metadata?: APIRecord;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type ClientRouteInput = {
+  service_access_id?: string;
+  instance_id?: string;
+  node_id?: string;
+  name: string;
+  status?: string;
+  action: string;
+  destination_type: string;
+  destination: string;
+  protocol?: string;
+  ports?: string;
+  description?: string;
+  policy?: APIRecord;
+  metadata?: APIRecord;
+};
+
+export type ClientAccessRotationInput = {
+  driver: 'openvpn' | 'xray-core' | 'xray' | 'xray_core' | 'vless' | 'wireguard' | 'mtproto' | 'ipsec' | 'http_proxy' | 'http-proxy' | 'shadowsocks';
+};
+
+export type ClientAccessRotationResult = Job & {
+  one_time_secret?: OneTimeSecretDisplay;
+};
+
+export type ClientAccessRevokeResult = APIRecord & {
+  client_id?: string;
+  service_access_id?: string;
+  revoked?: boolean;
+};
+
+export type ClientAccessDeleteResult = APIRecord & {
+  client_id?: string;
+  service_access_id?: string;
+  instance_id?: string;
+  deleted?: boolean;
+  config_cleanup?: ClientConfigCleanupResult;
+  service_accesses_deleted?: number;
+  access_routes_deleted?: number;
+  secret_refs_deleted?: number;
+  instance_apply_jobs_queued?: number;
+  route_policy_jobs_queued?: number;
+  queue_errors?: string[];
+};
+
+export type ClientConfigCleanupResult = APIRecord & {
+  client_id?: string;
+  artifacts_deleted?: number;
+  share_links_deleted?: number;
+  subscriptions_deleted?: number;
+  files_deleted?: number;
+  file_errors?: string[];
+};
+
 export type ClientAccessService = APIRecord & {
   service_code: string;
   display_name?: string;
@@ -1253,7 +1328,7 @@ export type ClientEmailDeliveryResult = APIRecord & {
 export type ClientDeliveryHistoryItem = ClientEmailDelivery;
 
 export type OneTimeSecretDisplay = {
-  kind: 'share_link' | 'subscription';
+  kind: 'share_link' | 'subscription' | 'client_access_rotation';
   label: string;
   value: string;
   object_id?: string;

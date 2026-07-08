@@ -52,9 +52,15 @@ to `/legacy/`.
 | Delete client | fully connected | `DELETE /api/v1/clients/{id}` with confirmation and client list invalidation. |
 | Provision through access groups | fully connected for single-client VLESS | Client detail uses the same access-group member preview/apply backend model as `Clients -> Groups`; no one-job-per-client bulk path is introduced. Non-VLESS provisioning remains legacy-only. |
 | Revoke client | fully connected | `POST /api/v1/clients/{id}/revoke`; returned job is shown in the client workspace. |
-| Routes | legacy-only | Backend exists; detail workflow not migrated. |
-| Accesses | read-only / legacy-only | Current service access identity and group assignment are shown without secrets; access delete/rotation remains legacy-only. |
-| Config cleanup | legacy-only | Backend exists; destructive confirmation required. |
+| Routes list | fully connected | `GET /api/v1/clients/{id}/routes`; routes render in the client detail drawer without `/legacy/`. |
+| Route create | fully connected | `POST /api/v1/clients/{id}/routes`; form targets an active service access, preserves backend validation errors and does not fake success. |
+| Route delete | fully connected | `DELETE /api/v1/clients/{id}/routes/{route_id}` with destructive confirmation; backend revokes the route and queues route policy convergence where applicable. |
+| Route update | backend-missing | No `PUT/PATCH /api/v1/clients/{id}/routes/{route_id}` endpoint exists; edit action stays disabled with reason. |
+| Accesses list | fully connected | `GET /api/v1/clients/{id}/accesses`; service access identity is redacted and UUID/credential metadata is not displayed. |
+| Access rotation | fully connected | `POST /api/v1/clients/{id}/accesses/{access_id}/rotate-*`; driver suffix is whitelisted, confirmation is required, returned job is linked/tracked and no frontend secret generation is used. Backend has no preview endpoint. |
+| Access delete | fully connected | `DELETE /api/v1/clients/{id}/accesses/{access_id}` with confirmation; cleanup counts and queued job counts are shown. |
+| Access revoke | backend-missing | Backend has client-level revoke and service-access delete, but no per-access revoke endpoint; action stays disabled with reason. |
+| Config cleanup | fully connected | `DELETE /api/v1/clients/{id}/configs` with destructive confirmation; result counts are shown and no config payloads/tokens are rendered. |
 | Artifact build | fully connected | `POST /api/v1/clients/{id}/artifacts`; returned job is tracked in the drawer. |
 | Artifact download | fully connected | `GET /api/v1/clients/{id}/artifacts/{artifact_id}/download` opened through a backend URL; no token storage. |
 | Artifact delete | fully connected | `DELETE /api/v1/clients/{id}/artifacts/{artifact_id}` with confirmation and artifact invalidation. |

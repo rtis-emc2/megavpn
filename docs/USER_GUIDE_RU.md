@@ -809,10 +809,19 @@ VLESS-специфичные режимы и runtime validation - в
     delivery через backend.
 11. Одноразовые share/subscription URL показываются только в transient panel.
     Скопируйте значение явно через `Copy` и закройте panel после сохранения.
-12. Для перевыпуска без удаления доступа используйте `Clients -> Access ->
-    Client Configs -> Clear configs`, затем заново выполните `Build configs` в
-    legacy workflow, пока config cleanup не мигрирован.
-13. Для полного удаления клиента используйте `Clients -> Delete`. Операция
+12. На вкладке `Routes` просматривайте client routes, создавайте route для
+    active service access и удаляйте route только через confirmation. Route
+    update остается disabled, потому что backend не предоставляет
+    `PUT/PATCH /clients/{id}/routes/{route_id}`.
+13. На вкладке `Maintenance` выполняйте access rotation, service access delete
+    и cleanup generated configs. Все destructive actions требуют confirmation,
+    rotation возвращает backend job, а cleanup/delete показывают только counts.
+    Full UUID, config payloads, private keys, tokens и credentials не
+    отображаются и не сохраняются в browser storage.
+14. Per-access revoke остается disabled: backend поддерживает client-level
+    revoke и service-access delete, но не предоставляет отдельный per-access
+    revoke endpoint.
+15. Для полного удаления клиента используйте `Clients -> Delete`. Операция
     удаляет client account, service accesses, routes, generated configs,
     delivery links, VLESS subscriptions и service-access secret refs, после чего
     ставит apply jobs для затронутых service instances.

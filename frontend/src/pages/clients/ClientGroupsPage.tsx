@@ -44,7 +44,7 @@ import {
   Textarea,
   TextField,
 } from '../../shared/ui';
-import { text, useLocaleFormat } from '../../shared/utils/format';
+import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
 type GroupForm = {
@@ -649,7 +649,7 @@ function MembersDrawerContent({ group, onSuccess }: {
           columns={[
             { key: 'client', header: t('clients.client'), render: (row) => <strong>{text(row.display_name || row.username || row.client_id)}</strong> },
             { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.membership_status || row.client_status} /> },
-            { key: 'uuid', header: 'VLESS UUID', render: (row) => <code>{text(row.xray_uuid || row.service_access_id || 'n/a')}</code> },
+            { key: 'identity', header: t('clients.core.identity'), render: (row) => row.xray_uuid ? t('clients.core.redactedIdentity') : <code>{shortID(row.service_access_id)}</code> },
             { key: 'actions', header: t('common.actions'), render: (row) => <Button variant="danger" onClick={() => setRemoveTarget(row)}>{t('clients.groups.removeMember')}</Button> },
           ]}
         />

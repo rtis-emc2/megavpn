@@ -7,7 +7,9 @@ import {
   acceptNodeHostKey,
   bootstrapNode,
   buildClientArtifact,
+  cleanupClientConfigs,
   createClient,
+  createClientRoute,
   applyNodeFirewall,
   createClientShareLink,
   createClientSubscription,
@@ -24,8 +26,10 @@ import {
   deleteFirewallAddressGroupEntry,
   deleteFirewallPolicy,
   deleteFirewallRule,
+  deleteClientAccess,
   deleteClient,
   deleteClientArtifact,
+  deleteClientRoute,
   deleteInstance,
   deleteRuntimeArtifact,
   deleteServicePack,
@@ -55,7 +59,9 @@ import {
   getNodeInventory,
   getNodeServiceDiscoverySummary,
   listClientArtifacts,
+  listClientAccesses,
   listClientDeliveryHistory,
+  listClientRoutes,
   listClientShareLinks,
   listClientSubscriptions,
   listClientAccessGroups,
@@ -88,6 +94,7 @@ import {
   revokeEnrollmentToken,
   revokeClientShareLink,
   revokeClientSubscription,
+  revokeClientAccess,
   revokeClient,
   rollbackInstance,
   rotateEnrollmentToken,
@@ -99,6 +106,7 @@ import {
   runNodeDiagnosticsAction,
   scanNodeHostKey,
   importRuntimeArtifact,
+  rotateClientAccess,
   rotateClientShareLink,
   rotateClientSubscription,
   sendClientArtifactEmail,
@@ -128,6 +136,8 @@ import type {
   Artifact,
   BackhaulLink,
   Certificate,
+  ClientAccess,
+  ClientAccessDeleteResult,
   ClientAccessGroup,
   ClientAccessGroupInput,
   ClientAccessGroupMembershipResult,
@@ -135,6 +145,9 @@ import type {
   ClientAccessGroupMembersPage,
   ClientAccessGroupMembershipRequest,
   ClientAccessOverview,
+  ClientAccessRevokeResult,
+  ClientAccessRotationInput,
+  ClientAccessRotationResult,
   ClientAccessGroupScope,
   ClientAccessGroupSyncState,
   ClientAccessService,
@@ -149,6 +162,8 @@ import type {
   ClientDeleteResult,
   ClientDetail,
   ClientDeliveryHistoryItem,
+  ClientRoute,
+  ClientRouteInput,
   ClientShareLink,
   ClientShareLinkCreateInput,
   ClientShareLinkCreateResult,
@@ -160,6 +175,7 @@ import type {
   ClientSubscriptionCreateResult,
   ClientSubscriptionRevokeResult,
   ClientSubscriptionRotateResult,
+  ClientConfigCleanupResult,
   Dashboard,
   BootstrapRequest,
   BootstrapResult,
@@ -946,6 +962,8 @@ function invalidateClientQueries(queryClient: ReturnType<typeof useQueryClient>,
   if (clientId) {
     void queryClient.invalidateQueries({ queryKey: ['client', clientId] });
     void queryClient.invalidateQueries({ queryKey: ['client-access-overview', clientId] });
+    void queryClient.invalidateQueries({ queryKey: ['client-accesses', clientId] });
+    void queryClient.invalidateQueries({ queryKey: ['client-routes', clientId] });
     void queryClient.invalidateQueries({ queryKey: ['client-artifacts', clientId] });
     void queryClient.invalidateQueries({ queryKey: ['client-share-links', clientId] });
     void queryClient.invalidateQueries({ queryKey: ['client-subscriptions', clientId] });
@@ -985,6 +1003,75 @@ export function useRevokeClient() {
       invalidateClientQueries(queryClient, clientId);
       void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
     },
+  });
+}
+
+export function useClientRoutes(clientId: string | undefined, options?: QueryOptions<ClientRoute[]>) {
+  return useQuery({
+    queryKey: ['client-routes', clientId],
+    queryFn: () => listClientRoutes(clientId || ''),
+    enabled: Boolean(clientId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useCreateClientRoute() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientRoute, Error, { clientId: string; input: ClientRouteInput }>({
+    mutationFn: ({ clientId, input }) => createClientRoute(clientId, input),
+    onSuccess: (_result, input) => invalidateClientQueries(queryClient, input.clientId),
+  });
+}
+
+export function useDeleteClientRoute() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientRoute, Error, { clientId: string; routeId: string }>({
+    mutationFn: ({ clientId, routeId }) => deleteClientRoute(clientId, routeId),
+    onSuccess: (_result, input) => invalidateClientQueries(queryClient, input.clientId),
+  });
+}
+
+export function useClientAccesses(clientId: string | undefined, options?: QueryOptions<ClientAccess[]>) {
+  return useQuery({
+    queryKey: ['client-accesses', clientId],
+    queryFn: () => listClientAccesses(clientId || ''),
+    enabled: Boolean(clientId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useRotateClientAccess() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientAccessRotationResult, Error, { clientId: string; accessId: string; input: ClientAccessRotationInput }>({
+    mutationFn: ({ clientId, accessId, input }) => rotateClientAccess(clientId, accessId, input),
+    onSuccess: (result, input) => {
+      invalidateClientQueries(queryClient, input.clientId);
+      if (result.id) void queryClient.invalidateQueries({ queryKey: ['job', result.id] });
+    },
+  });
+}
+
+export function useRevokeClientAccess() {
+  return useMutation<ClientAccessRevokeResult, Error, { clientId: string; accessId: string }>({
+    mutationFn: ({ clientId, accessId }) => revokeClientAccess(clientId, accessId),
+  });
+}
+
+export function useDeleteClientAccess() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientAccessDeleteResult, Error, { clientId: string; accessId: string }>({
+    mutationFn: ({ clientId, accessId }) => deleteClientAccess(clientId, accessId),
+    onSuccess: (_result, input) => invalidateClientQueries(queryClient, input.clientId),
+  });
+}
+
+export function useCleanupClientConfigs() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientConfigCleanupResult, Error, { clientId: string }>({
+    mutationFn: ({ clientId }) => cleanupClientConfigs(clientId),
+    onSuccess: (_result, input) => invalidateClientQueries(queryClient, input.clientId),
   });
 }
 

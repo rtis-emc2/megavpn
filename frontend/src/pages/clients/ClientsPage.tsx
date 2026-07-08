@@ -1,31 +1,38 @@
-import { Download, Hammer, LinkIcon, Mail, Plus, RefreshCw, RotateCw, Search, ShieldCheck, Trash2, UserCheck, UserMinus, UserPlus } from 'lucide-react';
+import { Ban, Download, Eraser, Hammer, KeyRound, LinkIcon, Mail, Plus, RefreshCw, RotateCw, Route, Search, ShieldCheck, Trash2, UserCheck, UserMinus, UserPlus } from 'lucide-react';
 import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { APIError } from '../../shared/api/client';
 import { getClientArtifactDownload } from '../../shared/api/endpoints';
-import type { ClientAccessGroup, ClientAccessGroupMembershipResult, ClientAccount, ClientArtifact, ClientArtifactBuildResult, ClientDetail, ClientEmailDeliveryResult, ClientServiceAccess, ClientShareLink, ClientSubscription, Job, OneTimeSecretDisplay } from '../../shared/api/types';
+import type { ClientAccess, ClientAccessDeleteResult, ClientAccessGroup, ClientAccessGroupMembershipResult, ClientAccessRotationResult, ClientAccount, ClientArtifact, ClientArtifactBuildResult, ClientConfigCleanupResult, ClientDetail, ClientEmailDeliveryResult, ClientRoute, ClientRouteInput, ClientServiceAccess, ClientShareLink, ClientSubscription, Job, OneTimeSecretDisplay } from '../../shared/api/types';
 import {
   useApplySingleClientAccessGroupAssignment,
   useBuildClientArtifact,
   useClientAccessGroups,
   useClientAccessOverview,
+  useClientAccesses,
   useClientArtifacts,
+  useCleanupClientConfigs,
   useClientShareLinks,
   useClientSubscriptions,
   useClientDetail,
+  useClientRoutes,
   useClients,
   useCreateClientShareLink,
   useCreateClientSubscription,
   useCreateClient,
+  useCreateClientRoute,
+  useDeleteClientAccess,
   useDeleteClient,
   useDeleteClientArtifact,
+  useDeleteClientRoute,
   useJobs,
   usePreviewSingleClientAccessGroupAssignment,
   useRevokeClientShareLink,
   useRevokeClientSubscription,
   useRemoveClientAccessGroupMembership,
   useRevokeClient,
+  useRotateClientAccess,
   useRotateClientShareLink,
   useRotateClientSubscription,
   useSendClientArtifactEmail,
@@ -35,7 +42,7 @@ import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Draw
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
-type ClientTab = 'overview' | 'access' | 'artifacts' | 'delivery' | 'jobs';
+type ClientTab = 'overview' | 'access' | 'routes' | 'maintenance' | 'artifacts' | 'delivery' | 'jobs';
 type ConfirmAction =
   | { type: 'suspend' | 'activate' | 'revoke' | 'delete'; client: ClientDetail }
   | { type: 'remove-vless'; client: ClientDetail; group: ClientAccessGroup }
@@ -43,6 +50,19 @@ type ConfirmAction =
 
 const statusOptions = ['all', 'active', 'suspended', 'revoked', 'expired'];
 const artifactTypes = ['all', 'zip_bundle', 'vless_url', 'ovpn', 'wg_conf', 'mtproto_url', 'http_proxy_bundle', 'ss_url', 'ipsec_bundle'];
+const routeActions = ['allow', 'deny'];
+const routeDestinationTypes = ['cidr', 'endpoint', 'dns', 'service'];
+const routeProtocols = ['any', 'tcp', 'udp', 'icmp'];
+const rotationDrivers = [
+  { value: 'xray-core', label: 'Xray / VLESS' },
+  { value: 'openvpn', label: 'OpenVPN' },
+  { value: 'wireguard', label: 'WireGuard' },
+  { value: 'mtproto', label: 'MTProto' },
+  { value: 'ipsec', label: 'IPsec' },
+  { value: 'http_proxy', label: 'HTTP proxy' },
+  { value: 'shadowsocks', label: 'Shadowsocks' },
+] as const;
+type RotationDriver = typeof rotationDrivers[number]['value'];
 
 function formatAPIError(error: unknown): string {
   if (!(error instanceof APIError)) {
@@ -100,6 +120,47 @@ function jobIDsFromMembership(result?: ClientAccessGroupMembershipResult | null)
 
 function parseInstanceIDs(value: string): string[] {
   return value.split(/[,\s]+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeDriver(value: unknown): RotationDriver | '' {
+  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-');
+  if (normalized === 'vless' || normalized === 'xray' || normalized === 'xray-core') return 'xray-core';
+  if (normalized === 'http-proxy') return 'http_proxy';
+  return rotationDrivers.some((driver) => driver.value === normalized) ? normalized as RotationDriver : '';
+}
+
+function accessDriverHint(access?: ClientAccess | ClientServiceAccess | null): RotationDriver | '' {
+  if (!access) return '';
+  return normalizeDriver(
+    access.metadata?.service_code ||
+    access.metadata?.driver ||
+    access.metadata?.runtime_driver ||
+    access.policy?.service_code ||
+    access.policy?.driver,
+  );
+}
+
+function redactedAccessIdentity(access: ClientAccess | ClientServiceAccess): string {
+  const metadata = access.metadata || {};
+  const hasSecretLikeIdentity = Boolean(
+    metadata.xray_uuid ||
+    metadata.uuid ||
+    metadata.password ||
+    metadata.secret ||
+    metadata.private_key ||
+    metadata.token,
+  );
+  if (hasSecretLikeIdentity) return 'redacted';
+  return shortID(access.id);
+}
+
+function oneTimeSecretFromResult(result: ClientAccessRotationResult | null): OneTimeSecretDisplay | null {
+  const candidate = result?.one_time_secret;
+  return candidate?.value ? candidate : null;
+}
+
+function queuedJobCount(result?: Pick<ClientAccessDeleteResult, 'instance_apply_jobs_queued' | 'route_policy_jobs_queued'> | null): number {
+  return Number(result?.instance_apply_jobs_queued || 0) + Number(result?.route_policy_jobs_queued || 0);
 }
 
 export function ClientsPage() {
@@ -274,7 +335,7 @@ function ClientDetailDrawer({
         {client.data ? (
           <div className="page-stack">
             <div className="tabs" role="tablist" aria-label={t('clients.core.detailTabs')}>
-              {(['overview', 'access', 'artifacts', 'delivery', 'jobs'] as ClientTab[]).map((tab) => (
+              {(['overview', 'access', 'routes', 'maintenance', 'artifacts', 'delivery', 'jobs'] as ClientTab[]).map((tab) => (
                 <button
                   key={tab}
                   className={`tab-link ${activeTab === tab ? 'active' : ''}`.trim()}
@@ -290,6 +351,8 @@ function ClientDetailDrawer({
 
             {activeTab === 'overview' ? <OverviewTab client={client.data} onConfirm={setConfirm} /> : null}
             {activeTab === 'access' ? <AccessTab client={client.data} onConfirm={setConfirm} /> : null}
+            {activeTab === 'routes' ? <RoutesTab client={client.data} /> : null}
+            {activeTab === 'maintenance' ? <MaintenanceTab client={client.data} /> : null}
             {activeTab === 'artifacts' ? <ArtifactsTab client={client.data} onConfirm={setConfirm} onOpenDelivery={onOpenDelivery} /> : null}
             {activeTab === 'delivery' ? <DeliveryTab client={client.data} initialArtifactId={deliveryArtifactId} /> : null}
             {activeTab === 'jobs' ? <JobsTab client={client.data} /> : null}
@@ -470,7 +533,7 @@ function ServiceAccessList({ accesses }: { accesses: ClientServiceAccess[] }) {
         { key: 'instance', header: t('clients.core.instance'), render: (row) => <code>{shortID(row.instance_id)}</code> },
         { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
         { key: 'mode', header: t('clients.core.provisionMode'), render: (row) => text(row.provision_mode) },
-        { key: 'identity', header: t('clients.core.identity'), render: (row) => text(row.metadata?.xray_uuid || row.metadata?.uuid || shortID(row.id)) },
+        { key: 'identity', header: t('clients.core.identity'), render: (row) => redactedAccessIdentity(row) === 'redacted' ? t('clients.core.redactedIdentity') : redactedAccessIdentity(row) },
       ]}
     />
   );
@@ -505,6 +568,389 @@ function MembershipResult({ title, result }: { title: string; result: ClientAcce
           ) : null}
         </div>
     </div>
+  );
+}
+
+function RoutesTab({ client }: { client: ClientDetail }) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const routes = useClientRoutes(client.id);
+  const accesses = useClientAccesses(client.id);
+  const createRoute = useCreateClientRoute();
+  const deleteRoute = useDeleteClientRoute();
+  const activeAccesses = useMemo(() => (accesses.data || []).filter((access) => access.status !== 'revoked' && access.status !== 'deleted'), [accesses.data]);
+  const [form, setForm] = useState<ClientRouteInput>({
+    service_access_id: '',
+    name: '',
+    status: 'active',
+    action: 'allow',
+    destination_type: 'cidr',
+    destination: '',
+    protocol: 'any',
+    ports: '*',
+    description: '',
+  });
+  const [confirmRoute, setConfirmRoute] = useState<ClientRoute | null>(null);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+
+  const effectiveAccessId = form.service_access_id || activeAccesses[0]?.id || '';
+  const routeUpdateReason = t('clients.routes.updateUnavailable');
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setNotice('');
+    setError('');
+    try {
+      await createRoute.mutateAsync({
+        clientId: client.id,
+        input: {
+          ...form,
+          service_access_id: effectiveAccessId,
+          name: form.name.trim(),
+          destination: form.destination.trim(),
+          ports: (form.ports || '*').trim(),
+          description: form.description?.trim(),
+        },
+      });
+      setNotice(t('clients.routes.created'));
+      setForm({ ...form, name: '', destination: '', description: '' });
+    } catch (err) {
+      setError(formatAPIError(err));
+    }
+  };
+
+  const runDelete = async () => {
+    if (!confirmRoute) return;
+    setNotice('');
+    setError('');
+    try {
+      await deleteRoute.mutateAsync({ clientId: client.id, routeId: confirmRoute.id });
+      setNotice(t('clients.routes.deleted'));
+      setConfirmRoute(null);
+    } catch (err) {
+      setError(formatAPIError(err));
+    }
+  };
+
+  const busy = createRoute.isPending || deleteRoute.isPending;
+
+  return (
+    <QueryBoundary
+      isLoading={routes.isLoading || accesses.isLoading}
+      isError={routes.isError || accesses.isError}
+      error={routes.error || accesses.error}
+      refetch={() => { void routes.refetch(); void accesses.refetch(); }}
+    >
+      <div className="page-stack">
+        {notice ? <div role="status">{notice}</div> : null}
+        {error ? <div role="alert" className="error-state-inline">{error}</div> : null}
+
+        <Card>
+          <CardBody>
+            <form className="page-stack" onSubmit={(event) => void submit(event)}>
+              <h3 className="card-title">{t('clients.routes.createRoute')}</h3>
+              <FormGrid>
+                <FormField label={t('clients.core.serviceAccess')}>
+                  <Select value={effectiveAccessId} onChange={(event) => setForm({ ...form, service_access_id: event.target.value })}>
+                    {activeAccesses.length ? null : <option value="">{t('clients.routes.noAccessTarget')}</option>}
+                    {activeAccesses.map((access) => (
+                      <option key={access.id} value={access.id}>{shortID(access.id)} / {shortID(access.instance_id)}</option>
+                    ))}
+                  </Select>
+                </FormField>
+                <FormField label={t('common.name')}>
+                  <TextField required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+                </FormField>
+                <FormField label={t('clients.routes.action')}>
+                  <Select value={form.action} onChange={(event) => setForm({ ...form, action: event.target.value })}>
+                    {routeActions.map((action) => <option key={action} value={action}>{action}</option>)}
+                  </Select>
+                </FormField>
+                <FormField label={t('clients.routes.destinationType')}>
+                  <Select value={form.destination_type} onChange={(event) => setForm({ ...form, destination_type: event.target.value })}>
+                    {routeDestinationTypes.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+                  </Select>
+                </FormField>
+                <FormField label={t('clients.routes.destination')}>
+                  <TextField required value={form.destination} onChange={(event) => setForm({ ...form, destination: event.target.value })} placeholder="10.10.0.0/16" />
+                </FormField>
+                <FormField label={t('clients.routes.protocol')}>
+                  <Select value={form.protocol} onChange={(event) => setForm({ ...form, protocol: event.target.value })}>
+                    {routeProtocols.map((protocol) => <option key={protocol} value={protocol}>{protocol}</option>)}
+                  </Select>
+                </FormField>
+                <FormField label={t('clients.routes.ports')}>
+                  <TextField value={form.ports} onChange={(event) => setForm({ ...form, ports: event.target.value })} />
+                </FormField>
+                <FormField label={t('common.description')} full>
+                  <Textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
+                </FormField>
+              </FormGrid>
+              <Toolbar>
+                <Button variant="primary" type="submit" icon={<Route size={16} />} disabled={!effectiveAccessId || busy}>{t('clients.routes.createRoute')}</Button>
+                <Button type="button" icon={<RefreshCw size={16} />} onClick={() => { void routes.refetch(); void accesses.refetch(); }}>{t('common.refresh')}</Button>
+              </Toolbar>
+              {!effectiveAccessId ? <p className="muted">{t('clients.routes.createRequiresAccess')}</p> : null}
+            </form>
+          </CardBody>
+        </Card>
+
+        <DataTable
+          title={t('clients.routes.routes')}
+          rows={routes.data || []}
+          columns={[
+            { key: 'name', header: t('common.name'), render: (row) => <strong>{text(row.name || row.id)}</strong> },
+            { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+            { key: 'target', header: t('clients.routes.target'), render: (row) => <code>{shortID(row.service_access_id || row.instance_id || row.node_id)}</code> },
+            { key: 'destination', header: t('clients.routes.destination'), render: (row) => text(row.destination) },
+            { key: 'protocol', header: t('clients.routes.protocol'), render: (row) => `${text(row.protocol)} / ${text(row.ports)}` },
+            { key: 'updated', header: t('common.updated'), render: (row) => fmt.date(row.updated_at || row.created_at) },
+            {
+              key: 'actions',
+              header: t('common.actions'),
+              render: (row) => (
+                <Toolbar>
+                  <Button disabled title={routeUpdateReason}>{t('common.edit')}</Button>
+                  <Button variant="danger" icon={<Trash2 size={16} />} disabled={busy} onClick={() => setConfirmRoute(row)}>{t('common.delete')}</Button>
+                </Toolbar>
+              ),
+            },
+          ]}
+        />
+
+        <ConfirmDialog title={t('clients.routes.deleteRoute')} open={Boolean(confirmRoute)} onClose={() => setConfirmRoute(null)}>
+          <div className="page-stack">
+            <p>{t('clients.routes.confirmDelete', { route: shortID(confirmRoute?.id), client: clientLabel(client) })}</p>
+            <p className="muted">{t('clients.routes.deleteImpact')}</p>
+            <Toolbar>
+              <Button variant="danger" disabled={busy} onClick={() => void runDelete()}>{t('clients.core.confirm')}</Button>
+              <Button onClick={() => setConfirmRoute(null)}>{t('common.cancel')}</Button>
+            </Toolbar>
+          </div>
+        </ConfirmDialog>
+      </div>
+    </QueryBoundary>
+  );
+}
+
+type MaintenanceConfirmAction =
+  | { type: 'rotate-access'; access: ClientAccess; driver: RotationDriver }
+  | { type: 'delete-access'; access: ClientAccess }
+  | { type: 'cleanup-configs' };
+
+function MaintenanceTab({ client }: { client: ClientDetail }) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const accesses = useClientAccesses(client.id);
+  const rotateAccess = useRotateClientAccess();
+  const deleteAccess = useDeleteClientAccess();
+  const cleanupConfigs = useCleanupClientConfigs();
+  const [selectedAccessId, setSelectedAccessId] = useState('');
+  const [driver, setDriver] = useState<RotationDriver | ''>('');
+  const [confirm, setConfirm] = useState<MaintenanceConfirmAction | null>(null);
+  const [rotationResult, setRotationResult] = useState<ClientAccessRotationResult | null>(null);
+  const [deleteResult, setDeleteResult] = useState<ClientAccessDeleteResult | null>(null);
+  const [cleanupResult, setCleanupResult] = useState<ClientConfigCleanupResult | null>(null);
+  const [oneTimeSecret, setOneTimeSecret] = useState<OneTimeSecretDisplay | null>(null);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+
+  const activeAccesses = useMemo(() => (accesses.data || []).filter((access) => access.status !== 'revoked' && access.status !== 'deleted'), [accesses.data]);
+  const selectedAccess = activeAccesses.find((access) => access.id === selectedAccessId) || activeAccesses[0] || null;
+  const effectiveAccessId = selectedAccess?.id || '';
+  const effectiveDriver = driver || accessDriverHint(selectedAccess);
+  const busy = rotateAccess.isPending || deleteAccess.isPending || cleanupConfigs.isPending;
+
+  const selectAccess = (accessId: string) => {
+    const nextAccess = activeAccesses.find((access) => access.id === accessId) || null;
+    setSelectedAccessId(accessId);
+    setDriver(accessDriverHint(nextAccess));
+  };
+
+  const clearResultState = () => {
+    setError('');
+    setNotice('');
+    setRotationResult(null);
+    setDeleteResult(null);
+    setCleanupResult(null);
+  };
+
+  const runConfirmed = async () => {
+    if (!confirm) return;
+    clearResultState();
+    try {
+      if (confirm.type === 'rotate-access') {
+        const result = await rotateAccess.mutateAsync({ clientId: client.id, accessId: confirm.access.id, input: { driver: confirm.driver } });
+        setRotationResult(result);
+        setOneTimeSecret(oneTimeSecretFromResult(result));
+        setNotice(t('clients.maintenance.rotationQueued'));
+      } else if (confirm.type === 'delete-access') {
+        const result = await deleteAccess.mutateAsync({ clientId: client.id, accessId: confirm.access.id });
+        setDeleteResult(result);
+        setNotice(t('clients.maintenance.accessDeleted'));
+      } else {
+        const result = await cleanupConfigs.mutateAsync({ clientId: client.id });
+        setCleanupResult(result);
+        setNotice(t('clients.maintenance.configsCleaned'));
+      }
+      setConfirm(null);
+    } catch (err) {
+      setError(formatAPIError(err));
+    }
+  };
+
+  const openRotateConfirm = () => {
+    if (!selectedAccess || !effectiveDriver) return;
+    setConfirm({ type: 'rotate-access', access: selectedAccess, driver: effectiveDriver });
+  };
+
+  return (
+    <QueryBoundary isLoading={accesses.isLoading} isError={accesses.isError} error={accesses.error} refetch={() => void accesses.refetch()}>
+      <div className="page-stack">
+        {oneTimeSecret ? (
+          <OneTimeSecretPanel
+            label={oneTimeSecret.label}
+            value={oneTimeSecret.value}
+            expiresAt={oneTimeSecret.expires_at ? fmt.date(oneTimeSecret.expires_at) : undefined}
+            onClose={() => setOneTimeSecret(null)}
+          />
+        ) : null}
+        {notice ? <div role="status">{notice}</div> : null}
+        {error ? <div role="alert" className="error-state-inline">{error}</div> : null}
+
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <h3 className="card-title">{t('clients.maintenance.accessMaintenance')}</h3>
+              <FormGrid>
+                <FormField label={t('clients.core.serviceAccess')}>
+                  <Select value={effectiveAccessId} onChange={(event) => selectAccess(event.target.value)}>
+                    {activeAccesses.length ? null : <option value="">{t('clients.maintenance.noAccesses')}</option>}
+                    {activeAccesses.map((access) => (
+                      <option key={access.id} value={access.id}>{shortID(access.id)} / {shortID(access.instance_id)}</option>
+                    ))}
+                  </Select>
+                </FormField>
+                <FormField label={t('clients.maintenance.rotationDriver')}>
+                  <Select value={effectiveDriver} onChange={(event) => setDriver(normalizeDriver(event.target.value))}>
+                    <option value="">{t('clients.maintenance.selectDriver')}</option>
+                    {rotationDrivers.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </Select>
+                </FormField>
+              </FormGrid>
+              <Toolbar>
+                <Button variant="danger" icon={<KeyRound size={16} />} disabled={!selectedAccess || !effectiveDriver || busy} onClick={openRotateConfirm}>{t('clients.maintenance.rotateAccess')}</Button>
+                <Button disabled title={t('clients.maintenance.revokeUnavailable')} icon={<Ban size={16} />}>{t('clients.maintenance.revokeAccess')}</Button>
+                <Button variant="danger" icon={<Trash2 size={16} />} disabled={!selectedAccess || busy} onClick={() => selectedAccess && setConfirm({ type: 'delete-access', access: selectedAccess })}>{t('clients.maintenance.deleteAccess')}</Button>
+                <Button icon={<RefreshCw size={16} />} onClick={() => void accesses.refetch()}>{t('common.refresh')}</Button>
+              </Toolbar>
+              <p className="muted">{t('clients.maintenance.previewUnavailable')}</p>
+            </div>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <h3 className="card-title">{t('clients.maintenance.configCleanup')}</h3>
+              <p className="muted">{t('clients.maintenance.configCleanupImpact')}</p>
+              <Toolbar>
+                <Button variant="danger" icon={<Eraser size={16} />} disabled={busy} onClick={() => setConfirm({ type: 'cleanup-configs' })}>{t('clients.maintenance.cleanupConfigs')}</Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+
+        <DataTable
+          title={t('clients.core.serviceAccesses')}
+          rows={activeAccesses}
+          columns={[
+            { key: 'id', header: t('common.id'), render: (row) => <code>{shortID(row.id)}</code> },
+            { key: 'instance', header: t('clients.core.instance'), render: (row) => <code>{shortID(row.instance_id)}</code> },
+            { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+            { key: 'driver', header: t('clients.maintenance.rotationDriver'), render: (row) => text(accessDriverHint(row) || t('clients.maintenance.driverUnknown')) },
+            { key: 'identity', header: t('clients.core.identity'), render: (row) => redactedAccessIdentity(row) === 'redacted' ? t('clients.core.redactedIdentity') : redactedAccessIdentity(row) },
+          ]}
+        />
+
+        {rotationResult?.id ? (
+          <div className="inline-panel">
+            <div className="page-stack">
+              <h3 className="card-title">{t('clients.maintenance.rotationJob')}</h3>
+              <Toolbar>
+                <Link to="/operations/jobs"><code>{rotationResult.id}</code></Link>
+              </Toolbar>
+              <JobStatusPanel jobID={rotationResult.id} />
+            </div>
+          </div>
+        ) : null}
+
+        {deleteResult ? <AccessDeleteResultPanel result={deleteResult} /> : null}
+        {cleanupResult ? <ConfigCleanupResultPanel result={cleanupResult} /> : null}
+
+        <MaintenanceConfirmDialog action={confirm} client={client} busy={busy} onConfirm={() => void runConfirmed()} onClose={() => setConfirm(null)} />
+      </div>
+    </QueryBoundary>
+  );
+}
+
+function AccessDeleteResultPanel({ result }: { result: ClientAccessDeleteResult }) {
+  const { t } = useTranslation();
+  const jobsQueued = queuedJobCount(result);
+  return (
+    <div className="inline-panel">
+      <div className="definition-grid">
+        <span>{t('clients.maintenance.deleted')}</span><strong>{result.deleted ? t('common.yes') : t('common.no')}</strong>
+        <span>{t('clients.maintenance.routesDeleted')}</span><strong>{result.access_routes_deleted || 0}</strong>
+        <span>{t('clients.maintenance.secretRefsDeleted')}</span><strong>{result.secret_refs_deleted || 0}</strong>
+        <span>{t('clients.maintenance.jobsQueued')}</span><strong>{jobsQueued}</strong>
+      </div>
+      {jobsQueued ? <Link to="/operations/jobs">{t('clients.maintenance.openJobs')}</Link> : null}
+      {result.queue_errors?.length ? <div role="alert" className="error-state-inline">{result.queue_errors.join('; ')}</div> : null}
+    </div>
+  );
+}
+
+function ConfigCleanupResultPanel({ result }: { result: ClientConfigCleanupResult }) {
+  const { t } = useTranslation();
+  return (
+    <div className="inline-panel">
+      <div className="definition-grid">
+        <span>{t('clients.maintenance.artifactsDeleted')}</span><strong>{result.artifacts_deleted || 0}</strong>
+        <span>{t('clients.maintenance.shareLinksDeleted')}</span><strong>{result.share_links_deleted || 0}</strong>
+        <span>{t('clients.maintenance.subscriptionsDeleted')}</span><strong>{result.subscriptions_deleted || 0}</strong>
+        <span>{t('clients.maintenance.filesDeleted')}</span><strong>{result.files_deleted || 0}</strong>
+      </div>
+      {result.file_errors?.length ? <div role="alert" className="error-state-inline">{result.file_errors.join('; ')}</div> : null}
+    </div>
+  );
+}
+
+function MaintenanceConfirmDialog({ action, client, busy, onConfirm, onClose }: { action: MaintenanceConfirmAction | null; client: ClientDetail; busy: boolean; onConfirm: () => void; onClose: () => void }) {
+  const { t } = useTranslation();
+  if (!action) return null;
+  const title = action.type === 'rotate-access'
+    ? t('clients.maintenance.rotateAccess')
+    : action.type === 'delete-access'
+      ? t('clients.maintenance.deleteAccess')
+      : t('clients.maintenance.cleanupConfigs');
+  const object = action.type === 'cleanup-configs' ? clientLabel(client) : shortID(action.access.id);
+  const impact = action.type === 'rotate-access'
+    ? t('clients.maintenance.rotateImpact', { access: object, driver: action.driver })
+    : action.type === 'delete-access'
+      ? t('clients.maintenance.deleteImpact', { access: object })
+      : t('clients.maintenance.cleanupConfirmImpact', { client: clientLabel(client) });
+  return (
+    <ConfirmDialog title={title} open={Boolean(action)} onClose={onClose}>
+      <div className="page-stack">
+        <p>{impact}</p>
+        <Toolbar>
+          <Button variant="danger" disabled={busy} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </div>
+    </ConfirmDialog>
   );
 }
 

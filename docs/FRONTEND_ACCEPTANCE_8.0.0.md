@@ -3,10 +3,13 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`5be5a33e16c7eef0578e122f919f9932ef5cbcf0`
+`pending final FE8-P0-06A feature commit; previous pushed/evidence commit is 7b564e81dd576fbf1de29c7da559090a69debe7a`
+
+FE8-P0-06A client routes/access rotation/config cleanup feature commit:
+`pending final feat: connect client access maintenance workflows commit; final SHA is recorded in the task handoff after commit creation`
 
 FE8-P0-05B Nodes bootstrap/security/control feature commit:
-`pending final feat: connect node bootstrap security workflows commit; final SHA is recorded in the task handoff after commit creation`
+`7b564e81dd576fbf1de29c7da559090a69debe7a`
 
 FE8-P0-05A Nodes observability/diagnostics/inventory feature commit:
 `5be5a33e16c7eef0578e122f919f9932ef5cbcf0`
@@ -45,13 +48,13 @@ Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
 Current evidence CI:
-Current FE8-P0-05B evidence is local until the final feature commit is pushed.
-Previous accepted FE8-P0-05A evidence CI run `28979061764` passed for
-`5be5a33e16c7eef0578e122f919f9932ef5cbcf0`.
+Current FE8-P0-06A evidence is local until the final feature commit is pushed.
+Previous accepted FE8-P0-05B evidence CI run `28980167212` passed for
+`7b564e81dd576fbf1de29c7da559090a69debe7a`.
 
-Current evidence date UTC: `2026-07-08T22:21:57Z`
+Current evidence date UTC: `2026-07-08T22:43:09Z`
 
-Status: FE8-P0-05B is locally verified and reviewable. Final 8.0.0 cutover
+Status: FE8-P0-06A is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
 validation, integrated disposable-data smoke and backend version synchronization
 are complete.
@@ -68,11 +71,15 @@ connected in the new UI without `/legacy/`. Nodes bootstrap/security/control
 workflows are connected in the new UI without `/legacy/` for configured nodes:
 enrollment token create/rotate/revoke, bootstrap/reinstall job queueing,
 host-key scan/pin, SSH session ticket launch, agent token rotation and
-retire/force-retire. Remaining workflows listed below are still not migrated.
+retire/force-retire. Client routes list/create/delete, service access
+list/rotation/delete and generated config cleanup are connected in the new UI
+without `/legacy/` where the backend supports the operation. Route update and
+per-access revoke remain disabled with backend-missing reasons. Remaining
+workflows listed below are still not migrated.
 
 ## 1. Summary
 
-This evidence records the current 8.0.0 frontend branch after FE8-P0-05B:
+This evidence records the current 8.0.0 frontend branch after FE8-P0-06A:
 
 - CI push coverage includes `release/8.0.0-frontend-console` and `release/**`;
   pull request coverage remains enabled.
@@ -89,6 +96,10 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-05B:
 - `Clients -> Delivery` is connected without `/legacy/` for share link
   create/rotate/revoke, VLESS subscription create-or-rotate/revoke and email
   delivery.
+- `Clients -> Routes/Maintenance` is connected without `/legacy/` for route
+  list/create/delete, service access list/rotation/delete and generated config
+  cleanup. Route update and per-access revoke stay disabled because the backend
+  has no endpoints for those exact sub-actions.
 - Existing `Instances` runtime control is connected without `/legacy/` for
   list/detail, runtime state, revisions/rollback, apply/reapply, lifecycle
   actions, diagnostics, delete/force-delete, read-only access group
@@ -127,9 +138,9 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-05B:
 | `cd frontend && npm ci` | SKIP | This workstation session exposes bundled Node `v24.14.0`, but no native `npm` or `corepack` binary in `PATH`; existing `frontend/node_modules` was used for script-equivalent verification. GitHub CI remains configured for plain `npm ci`. |
 | `cd frontend && npm run typecheck` | PASS | Equivalent command run through bundled Node and local TypeScript: `tsc --noEmit` plus `tsc -p tsconfig.node.json --noEmit`. |
 | `cd frontend && npm run lint` | PASS | Equivalent command run through bundled Node and local ESLint. |
-| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 7 files, 62 tests passed. |
-| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 666 keys. |
-| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-CbDfBc6_.js`, `web/assets/index-CMdslovF.css`. |
+| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 7 files, 64 tests passed. |
+| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 714 keys. |
+| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-Dtd7j3NN.js`, `web/assets/index-CMdslovF.css`. |
 | `scripts/ci/frontend-serving-smoke.sh` | PASS | Root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
 | `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
 | `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
@@ -140,6 +151,33 @@ Local note: this workstation did not expose a native `npm` or `corepack` binary
 in `PATH`; frontend checks were run through the bundled Node runtime and local
 `frontend/node_modules` binaries. The repository standard and GitHub CI path
 remain plain `npm ci` and `npm run ...`.
+
+## FE8-P0-06A Client Routes/Access Maintenance Test Evidence
+
+`frontend/src/pages/clients/ClientsPage.test.tsx` verifies client
+routes/access rotation/config cleanup workflows against mocked backend API
+responses:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Client routes load if supported | `loads, creates and deletes client routes through the backend` asserts `GET /api/v1/clients/{id}/routes` and renders the returned route. |
+| Route create calls backend | Same test asserts `POST /api/v1/clients/{id}/routes` with `service_access_id`, name and destination from the form. |
+| Route delete requires confirmation | Same test asserts `DELETE /api/v1/clients/{id}/routes/{route_id}` is not called before `Confirm`. |
+| Access list loads | Access and Maintenance tabs render `GET /api/v1/clients/{id}/accesses` data. |
+| Access identity is redacted | Access/Maintenance tests assert full `xray_uuid` test value is not rendered and redacted identity text is shown instead. |
+| Rotate requires confirmation | `rotates and deletes access and cleans configs with confirmation and job tracking` asserts `POST /api/v1/clients/{id}/accesses/{access_id}/rotate-xray` is not called before `Confirm`. |
+| Rotation calls backend and tracks job | Same test asserts confirmed rotate endpoint call and renders returned `job-rotate` job link/status panel. Current backend returns a redacted job, not a plaintext secret/config/token. |
+| Revoke/delete access handling | Same test verifies per-access revoke is disabled because backend has no exact endpoint, and confirmed service-access delete calls `DELETE /api/v1/clients/{id}/accesses/{access_id}`. |
+| Config cleanup requires confirmation | Same test asserts `DELETE /api/v1/clients/{id}/configs` is not called before `Confirm` and renders result counts after success. |
+| 403/409/422 handled | Existing Clients tests render `403` permission denial and client create `409` conflict / `422` field validation errors through shared API error handling. |
+| No secret storage/logging | Maintenance test spies on `Storage.setItem`, verifies secret-like values are not persisted, and asserts no production console logging. |
+| No `/legacy` calls | Client tests assert implemented workflows never request `/legacy`. |
+| No raw page API calls | Client static test keeps raw `/api/v1`, raw `fetch` and `dangerouslySetInnerHTML` out of the page component. |
+
+Client routes/access rotation/config cleanup workflows work in the new UI
+without `/legacy/` where the backend supports the exact sub-action. Route
+update and per-access revoke remain disabled because the backend has no
+corresponding endpoints.
 
 ## FE8-P0-05B Nodes Security/Control Test Evidence
 
@@ -484,12 +522,14 @@ Fully connected in the new console:
 - `Nodes` bootstrap/security/control for configured nodes: enrollment token
   create/rotate/revoke, bootstrap/reinstall job queueing, host-key scan/pin,
   SSH session ticket launch, agent token rotation and retire/force-retire.
+- `Clients -> Routes/Maintenance` route list/create/delete, service access
+  list/rotation/delete and generated config cleanup.
 
 Still disabled, read-only or legacy-only:
 
 - non-VLESS access group materialization workflows;
 - migration conflict UI for access groups;
-- client routes, access rotation and config cleanup;
+- client route update and per-access revoke;
 - client delivery history;
 - nodes create/register/edit, new SSH access method creation with secret
   material, manual bootstrap bundle reveal, agent identity revoke, reboot,
@@ -513,8 +553,13 @@ Still disabled, read-only or legacy-only:
   `PATCH/PUT /clients/{id}` endpoint.
 - Client disable stays disabled because the backend exposes activate/suspend
   but no separate browser disable endpoint.
-- Client routes, service access delete/rotation and config cleanup are not part
-  of FE8-P0-03B.
+- Client route update stays disabled because the backend has no
+  `PUT/PATCH /clients/{id}/routes/{route_id}` endpoint.
+- Per-access revoke stays disabled because the backend exposes client-level
+  revoke and service-access delete, but no per-access revoke endpoint.
+- Client access rotation/config cleanup have no backend preview endpoints; the
+  new UI requires explicit confirmation and then calls the real backend
+  mutation with backend validation and job/result tracking.
 - Client delivery history stays unavailable because the backend has no
   client-scoped delivery history list/status endpoint in this release.
 - Client email delivery is connected, but the backend endpoint is synchronous,
@@ -536,7 +581,7 @@ Still disabled, read-only or legacy-only:
 - No browser screenshot/responsive Playwright evidence was produced in this
   pass.
 - Integrated live API smoke was not run against a disposable DB/API in this
-  session; FE8-P0-05B evidence is frontend/API-contract test coverage against
+  session; FE8-P0-06A evidence is frontend/API-contract test coverage against
   mocked backend responses plus the local command set recorded above.
 
 ## 14. Go / No-Go
@@ -545,25 +590,25 @@ Recommendation:
 
 - GO for PR review and CI validation of the 8.0.0 frontend branch.
 - GO for using new UI `Clients -> Groups -> VLESS`, Clients core/artifacts,
-  Clients delivery, Firewall preview/apply/disable, existing Instances runtime
-  control, service pack instance creation, manual instance creation, runtime
-  artifact list/import, existing Nodes observability/diagnostics/inventory and
-  Nodes bootstrap/security/control workflows in controlled staging after
-  operator review.
+  Clients delivery, Clients routes/access maintenance/config cleanup where the
+  backend supports the exact sub-action, Firewall preview/apply/disable,
+  existing Instances runtime control, service pack instance creation, manual
+  instance creation, runtime artifact list/import, existing Nodes
+  observability/diagnostics/inventory and Nodes bootstrap/security/control
+  workflows in controlled staging after operator review.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
 
 1. run integrated smoke/e2e against disposable DB/API data for VLESS, Clients
-   core/artifacts/delivery, Firewall and Instances/Service Packs runtime
-   operator flows;
+   core/artifacts/delivery/routes/access maintenance/config cleanup, Firewall
+   and Instances/Service Packs runtime operator flows;
 2. migrate remaining Nodes create/register/edit, route policy and destructive
    remediation workflows not included in FE8-P0-05B, including agent identity
    revoke, reboot, emergency cleanup and stale rotation cleanup;
 3. add backend/browser support for runtime artifact delete if it is required for
    final operator parity;
-4. migrate Clients routes, access rotation and config cleanup;
-5. migrate Certificates and Platform settings write workflows;
-6. add E2E/browser responsive evidence for critical operator flows;
-7. synchronize backend/frontend version and release-chain artifacts to `8.0.0`;
-8. run full release gate in the release environment.
+4. migrate Certificates and Platform settings write workflows;
+5. add E2E/browser responsive evidence for critical operator flows;
+6. synchronize backend/frontend version and release-chain artifacts to `8.0.0`;
+7. run full release gate in the release environment.

@@ -53,6 +53,33 @@ const artifact = {
   created_at: '2026-07-08T10:10:00Z',
 };
 
+const access = {
+  id: 'access-1',
+  client_account_id: 'client-1',
+  instance_id: 'instance-1',
+  status: 'active',
+  provision_mode: 'managed',
+  metadata: { xray_uuid: 'uuid-secret-full', service_code: 'xray-core' },
+};
+
+const route = {
+  id: 'route-1',
+  client_account_id: 'client-1',
+  service_access_id: 'access-1',
+  instance_id: 'instance-1',
+  node_id: 'node-1',
+  name: 'office-cidr',
+  status: 'active',
+  action: 'allow',
+  destination_type: 'cidr',
+  destination: '10.42.0.0/16',
+  protocol: 'any',
+  ports: '*',
+  description: 'Office network',
+  created_at: '2026-07-08T10:15:00Z',
+  updated_at: '2026-07-08T10:15:00Z',
+};
+
 const shareLink = {
   id: 'share-1',
   client_account_id: 'client-1',
@@ -112,6 +139,7 @@ describe('ClientsPage', () => {
   const calls: FetchCall[] = [];
   let openSpy: ReturnType<typeof vi.spyOn>;
   let consoleSpy: ReturnType<typeof vi.spyOn>;
+  let storageSetSpy: ReturnType<typeof vi.spyOn>;
   let clipboardWrite: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -120,6 +148,7 @@ describe('ClientsPage', () => {
     await i18n.changeLanguage('en');
     openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    storageSetSpy = vi.spyOn(Storage.prototype, 'setItem');
     clipboardWrite = vi.fn(async () => undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -158,7 +187,36 @@ describe('ClientsPage', () => {
         return json({ client_id: 'client-1', deleted: true, config_cleanup: {} });
       }
       if (method === 'GET' && url.pathname === '/api/v1/clients/client-1/accesses') {
-        return json([{ id: 'access-1', client_account_id: 'client-1', instance_id: 'instance-1', status: 'active', provision_mode: 'managed', metadata: { xray_uuid: 'uuid-safe' } }]);
+        return json([access]);
+      }
+      if (method === 'DELETE' && url.pathname === '/api/v1/clients/client-1/accesses/access-1') {
+        return json({
+          client_id: 'client-1',
+          service_access_id: 'access-1',
+          instance_id: 'instance-1',
+          deleted: true,
+          config_cleanup: { client_id: 'client-1', artifacts_deleted: 1, share_links_deleted: 1, subscriptions_deleted: 1, files_deleted: 1 },
+          service_accesses_deleted: 1,
+          access_routes_deleted: 1,
+          secret_refs_deleted: 1,
+          instance_apply_jobs_queued: 1,
+          route_policy_jobs_queued: 1,
+        });
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/accesses/access-1/rotate-xray') {
+        return json({ id: 'job-rotate', type: 'client.access.rotate', status: 'queued', scope_type: 'client', scope_id: 'client-1', token: 'rotated-access-secret', result: { token: 'nested-rotated-secret' } }, 202);
+      }
+      if (method === 'DELETE' && url.pathname === '/api/v1/clients/client-1/configs') {
+        return json({ client_id: 'client-1', artifacts_deleted: 1, share_links_deleted: 1, subscriptions_deleted: 1, files_deleted: 1 });
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/clients/client-1/routes') {
+        return json([route]);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/routes') {
+        return json({ ...route, id: 'route-2', name: body.name, destination: body.destination, service_access_id: body.service_access_id }, 201);
+      }
+      if (method === 'DELETE' && url.pathname === '/api/v1/clients/client-1/routes/route-1') {
+        return json({ ...route, status: 'revoked' });
       }
       if (method === 'GET' && url.pathname === '/api/v1/clients/client-1/access-groups') {
         return json([group]);
@@ -240,6 +298,7 @@ describe('ClientsPage', () => {
       if (method === 'GET' && url.pathname === '/api/v1/jobs') {
         return json([
           { id: 'job-artifact', type: 'artifact.build', status: 'queued', scope_type: 'client', scope_id: 'client-1', payload: { client_id: 'client-1' }, created_at: '2026-07-08T10:20:00Z', result: {} },
+          { id: 'job-rotate', type: 'client.access.rotate', status: 'queued', scope_type: 'client', scope_id: 'client-1', payload: { client_id: 'client-1' }, created_at: '2026-07-08T10:25:00Z', result: {} },
         ]);
       }
       if (method === 'GET' && url.pathname.startsWith('/api/v1/jobs/') && url.pathname.endsWith('/logs')) {
@@ -255,6 +314,7 @@ describe('ClientsPage', () => {
   afterEach(() => {
     openSpy.mockRestore();
     consoleSpy.mockRestore();
+    storageSetSpy.mockRestore();
     delete (navigator as { clipboard?: unknown }).clipboard;
     vi.unstubAllGlobals();
   });
@@ -312,7 +372,8 @@ describe('ClientsPage', () => {
     await openClient();
     await userEvent.click(screen.getByRole('tab', { name: 'Access' }));
     expect((await screen.findAllByText('Core access')).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('uuid-safe').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Backend-held identity (redacted)').length).toBeGreaterThan(0);
+    expect(screen.queryByText('uuid-secret-full')).not.toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText('Group key'), 'group-1');
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
@@ -336,6 +397,74 @@ describe('ClientsPage', () => {
     expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/client-access-groups/group-1/members/client-1')).toBe(false);
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/client-access-groups/group-1/members/client-1')).toBe(true));
+  });
+
+  it('loads, creates and deletes client routes through the backend', async () => {
+    await openClient();
+    await userEvent.click(screen.getByRole('tab', { name: 'Routes' }));
+    expect((await screen.findAllByText('office-cidr')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('10.42.0.0/16').length).toBeGreaterThan(0);
+
+    await userEvent.type(screen.getByLabelText('Name'), 'branch-cidr');
+    await userEvent.clear(screen.getByLabelText('Destination'));
+    await userEvent.type(screen.getByLabelText('Destination'), '10.43.0.0/16');
+    await userEvent.click(screen.getByRole('button', { name: 'Create route' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/routes')).toBe(true));
+    expect(calls.find((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/routes')?.body).toMatchObject({
+      service_access_id: 'access-1',
+      name: 'branch-cidr',
+      destination: '10.43.0.0/16',
+    });
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
+    expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/clients/client-1/routes/route-1')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/clients/client-1/routes/route-1')).toBe(true));
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+  });
+
+  it('rotates and deletes access and cleans configs with confirmation and job tracking', async () => {
+    await openClient();
+    await userEvent.click(screen.getByRole('tab', { name: 'Maintenance' }));
+    expect((await screen.findAllByText('Backend-held identity (redacted)')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('uuid-secret-full')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Revoke access' })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Rotate access' }));
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/accesses/access-1/rotate-xray')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/accesses/access-1/rotate-xray')).toBe(true));
+    expect((await screen.findAllByText('job-rotate')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('rotated-access-secret')).not.toBeInTheDocument();
+    expect(screen.queryByText('nested-rotated-secret')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reveal' }));
+    expect(screen.getByText('rotated-access-secret')).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1)!);
+    expect(screen.queryByText('rotated-access-secret')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete access' }));
+    expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/clients/client-1/accesses/access-1')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/clients/client-1/accesses/access-1')).toBe(true));
+    expect(screen.getByText('Routes deleted')).toBeInTheDocument();
+    expect(screen.getByText('Open jobs')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cleanup generated configs' }));
+    expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/clients/client-1/configs')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/clients/client-1/configs')).toBe(true));
+    expect(screen.getByText('Artifacts deleted')).toBeInTheDocument();
+
+    expect(storageSetSpy.mock.calls.some((call: unknown[]) => {
+      const key = String(call[0]).toLowerCase();
+      const value = String(call[1]);
+      return key.includes('token') ||
+        value.includes('uuid-secret-full') ||
+        value.includes('rotated-access-secret') ||
+        value.includes('nested-rotated-secret');
+    })).toBe(false);
+    expect(consoleSpy).not.toHaveBeenCalled();
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
   });
 
   it('lists, builds, downloads and deletes client artifacts through backend endpoints', async () => {

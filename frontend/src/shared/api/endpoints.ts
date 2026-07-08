@@ -16,19 +16,27 @@ import type {
   ClientAccessGroupSyncPreview,
   ClientAccessGroupSyncState,
   ClientAccessService,
+  ClientAccess,
+  ClientAccessDeleteResult,
   ClientAccount,
   ClientAccessOverview,
+  ClientAccessRevokeResult,
+  ClientAccessRotationInput,
+  ClientAccessRotationResult,
   ClientArtifact,
   ClientArtifactBuildRequest,
   ClientArtifactBuildResult,
   ClientArtifactDeleteResult,
   ClientArtifactDownloadResult,
+  ClientConfigCleanupResult,
   ClientEmailDeliveryInput,
   ClientEmailDeliveryResult,
   ClientCreateInput,
   ClientDeleteResult,
   ClientDetail,
   ClientDeliveryHistoryItem,
+  ClientRoute,
+  ClientRouteInput,
   ClientShareLink,
   ClientShareLinkCreateInput,
   ClientShareLinkCreateResult,
@@ -75,6 +83,7 @@ import type {
   InstanceRollbackRequest,
   InstanceRollbackResult,
   Job,
+  OneTimeSecretDisplay,
   HostKeyDecisionResult,
   HostKeyScanResult,
   NodeCapability,
@@ -192,6 +201,89 @@ export function deleteClient(clientId: string): Promise<ClientDeleteResult> {
 
 export function revokeClient(clientId: string): Promise<Job> {
   return sendJSON<Job>(`/api/v1/clients/${encodeURIComponent(clientId)}/revoke`, 'POST', {});
+}
+
+export function listClientRoutes(clientId: string): Promise<ClientRoute[]> {
+  return apiRequest<ClientRoute[]>(`/api/v1/clients/${encodeURIComponent(clientId)}/routes`);
+}
+
+export function createClientRoute(clientId: string, input: ClientRouteInput): Promise<ClientRoute> {
+  return sendJSON<ClientRoute>(`/api/v1/clients/${encodeURIComponent(clientId)}/routes`, 'POST', input);
+}
+
+export function updateClientRoute(_clientId: string, _routeId: string, _input: Partial<ClientRouteInput>): Promise<never> {
+  return Promise.reject(new Error('Backend has no client route update endpoint in this release.'));
+}
+
+export function deleteClientRoute(clientId: string, routeId: string): Promise<ClientRoute> {
+  return apiRequest<ClientRoute>(`/api/v1/clients/${encodeURIComponent(clientId)}/routes/${encodeURIComponent(routeId)}`, { method: 'DELETE' });
+}
+
+export function listClientAccesses(clientId: string): Promise<ClientAccess[]> {
+  return apiRequest<ClientAccess[]>(`/api/v1/clients/${encodeURIComponent(clientId)}/accesses`);
+}
+
+const clientAccessRotationSuffix: Record<ClientAccessRotationInput['driver'], string> = {
+  openvpn: 'rotate-openvpn',
+  'xray-core': 'rotate-xray',
+  xray: 'rotate-xray',
+  xray_core: 'rotate-xray',
+  vless: 'rotate-xray',
+  wireguard: 'rotate-wireguard',
+  mtproto: 'rotate-mtproto',
+  ipsec: 'rotate-ipsec',
+  http_proxy: 'rotate-http-proxy',
+  'http-proxy': 'rotate-http-proxy',
+  shadowsocks: 'rotate-shadowsocks',
+};
+
+const clientAccessRotationSecretFields = ['token', 'secret', 'password', 'private_key', 'config', 'config_payload', 'subscription_url', 'share_url', 'uri'];
+
+function sanitizeClientAccessRotationResult(result: ClientAccessRotationResult, accessId: string): ClientAccessRotationResult {
+  const safeResult = { ...result };
+  let secret = safeResult.one_time_secret;
+  for (const field of clientAccessRotationSecretFields) {
+    const value = safeResult[field];
+    if (!secret?.value && typeof value === 'string' && value.trim()) {
+      secret = {
+        kind: 'client_access_rotation',
+        label: 'Rotated access one-time value',
+        value,
+        object_id: accessId,
+      } satisfies OneTimeSecretDisplay;
+    }
+    delete safeResult[field];
+  }
+  if (safeResult.result && typeof safeResult.result === 'object') {
+    const nested = { ...safeResult.result };
+    for (const field of clientAccessRotationSecretFields) {
+      delete nested[field];
+    }
+    safeResult.result = nested;
+  }
+  if (secret?.value) safeResult.one_time_secret = secret;
+  return safeResult;
+}
+
+export async function rotateClientAccess(clientId: string, accessId: string, input: ClientAccessRotationInput): Promise<ClientAccessRotationResult> {
+  const suffix = clientAccessRotationSuffix[input.driver];
+  if (!suffix) {
+    return Promise.reject(new Error('Unsupported client access rotation driver.'));
+  }
+  const result = await sendJSON<ClientAccessRotationResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/accesses/${encodeURIComponent(accessId)}/${suffix}`, 'POST', {});
+  return sanitizeClientAccessRotationResult(result, accessId);
+}
+
+export function revokeClientAccess(_clientId: string, _accessId: string): Promise<ClientAccessRevokeResult> {
+  return Promise.reject(new Error('Backend has no per-access revoke endpoint in this release; delete service access is available.'));
+}
+
+export function deleteClientAccess(clientId: string, accessId: string): Promise<ClientAccessDeleteResult> {
+  return apiRequest<ClientAccessDeleteResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/accesses/${encodeURIComponent(accessId)}`, { method: 'DELETE' });
+}
+
+export function cleanupClientConfigs(clientId: string): Promise<ClientConfigCleanupResult> {
+  return apiRequest<ClientConfigCleanupResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/configs`, { method: 'DELETE' });
 }
 
 export function listInstances(_params: { search?: string; status?: string; serviceCode?: string; nodeId?: string } = {}): Promise<ServiceInstance[]> {
@@ -581,7 +673,7 @@ export function removeClientAccessGroupMember(groupId: string, clientId: string)
 export async function getClientAccessOverview(clientId: string): Promise<ClientAccessOverview> {
   const [client, accesses, groups] = await Promise.all([
     getClient(clientId),
-    apiRequest<ClientAccessOverview['accesses']>(`/api/v1/clients/${encodeURIComponent(clientId)}/accesses`),
+    listClientAccesses(clientId),
     apiRequest<ClientAccessGroup[]>(`/api/v1/clients/${encodeURIComponent(clientId)}/access-groups`),
   ]);
   const vlessGroup = groups.find((group) => group.service_code === 'vless') || null;
