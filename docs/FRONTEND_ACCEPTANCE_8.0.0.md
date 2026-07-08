@@ -3,7 +3,7 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`8dbcb97bcf225d34686c0eb555a6697425f12c37`
+`70c5242fa9d9e99763aa60a797bdc4729980179f`
 
 FE8-P0-03B client delivery feature commit:
 `8dbcb97bcf225d34686c0eb555a6697425f12c37`
@@ -30,7 +30,7 @@ Previous accepted evidence CI:
 GitHub Actions run `28967364873` passed for
 `f1d8769b63cdfe705afb29a71b8927d4c4abe147`.
 
-Current evidence date UTC: `2026-07-08T20:14:36Z`
+Current evidence date UTC: `2026-07-08T20:22:28Z`
 
 Status: FE8-P0-03B is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
@@ -38,8 +38,8 @@ validation, integrated disposable-data smoke and backend version synchronization
 are complete.
 
 VLESS is connected in the new UI without `/legacy/`. Firewall is connected in
-the new UI without `/legacy/`. Clients core, single-client VLESS assignment,
-client artifacts and client delivery workflows are connected in the new UI
+the new UI without `/legacy/`. Clients core/artifacts are connected in the new
+UI without `/legacy/`. Client delivery workflows are connected in the new UI
 without `/legacy/`. Remaining workflows listed below are still not migrated.
 
 ## 1. Summary
