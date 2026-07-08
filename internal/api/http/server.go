@@ -565,6 +565,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("GET /api/v1/clients/{id}/share-links", "artifact.read", s.clientShareLinks)
 	protected("POST /api/v1/clients/{id}/share-links", "share_link.manage", s.publishShareLink)
 	protected("POST /api/v1/clients/{id}/share-links/{link_id}/revoke", "share_link.manage", s.revokeShareLink)
+	protected("POST /api/v1/clients/{id}/share-links/{link_id}/rotate", "share_link.manage", s.rotateShareLink)
 	protected("GET /api/v1/clients/{id}/subscriptions", "client.read", s.clientSubscriptions)
 	protected("POST /api/v1/clients/{id}/subscriptions/rotate", "client.provision", s.rotateClientSubscription)
 	protected("POST /api/v1/clients/{id}/subscriptions/{subscription_id}/revoke", "client.provision", s.revokeClientSubscription)
@@ -634,6 +635,9 @@ type rollbackRevisionRequest struct {
 type shareLinkRequest struct {
 	TargetID string `json:"target_id"`
 	TTLHours int    `json:"ttl_hours"`
+}
+type shareLinkRotateRequest struct {
+	TTLHours int `json:"ttl_hours"`
 }
 type subscriptionRequest struct {
 	TTLHours int `json:"ttl_hours"`
@@ -1983,6 +1987,33 @@ func (s *Server) revokeShareLink(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	writeJSON(w, 200, x)
+}
+
+type shareLinkRotator interface {
+	RevokeShareLink(context.Context, string, string) (domain.ShareLink, error)
+	PublishShareLink(context.Context, string, string, time.Duration) (domain.ShareLink, error)
+}
+
+func rotateShareLinkToken(ctx context.Context, store shareLinkRotator, clientID, linkID string, ttl time.Duration) (domain.ShareLink, error) {
+	revoked, err := store.RevokeShareLink(ctx, clientID, linkID)
+	if err != nil {
+		return domain.ShareLink{}, err
+	}
+	return store.PublishShareLink(ctx, clientID, revoked.TargetID, ttl)
+}
+
+func (s *Server) rotateShareLink(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req shareLinkRotateRequest
+	if !decodeOptional(r, &req) {
+		writeErr(w, 400, "invalid share link rotate payload")
+		return
+	}
+	x, err := rotateShareLinkToken(r.Context(), s.store, idParam(r), strings.TrimSpace(r.PathValue("link_id")), time.Duration(req.TTLHours)*time.Hour)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 201, x)
 }
 func (s *Server) clientSubscriptions(w nethttp.ResponseWriter, r *nethttp.Request) {
 	x, err := s.store.ListClientSubscriptions(r.Context(), idParam(r))

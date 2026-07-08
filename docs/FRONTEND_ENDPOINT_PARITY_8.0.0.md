@@ -35,8 +35,8 @@ Unsafe methods must preserve `X-MegaVPN-CSRF: 1` and `credentials: include`.
 | Frontend file | Purpose | Current limitation |
 | --- | --- | --- |
 | `frontend/src/shared/api/client.ts` | Fetch wrapper, API base, CSRF, cookie credentials, typed API error. | Field-level validation mapping is currently implemented in focused forms, not as a global helper. |
-| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, VLESS groups and Firewall mutations are wired; other domains remain incomplete. |
-| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, VLESS groups and Firewall invalidation is wired; other domains remain incomplete. |
+| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, delivery, VLESS groups and Firewall mutations are wired; other domains remain incomplete. |
+| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, delivery, VLESS groups and Firewall invalidation is wired; other domains remain incomplete. |
 
 Raw `/api/v1` strings are allowed only under `frontend/src/shared/api` and
 tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
@@ -142,9 +142,9 @@ tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
 | `GET/POST/DELETE /api/v1/clients/{id}/routes` | client routes | missing | Clients detail | legacy-only |
 | `GET /api/v1/clients/{id}/access-groups`, `PATCH /access-groups/{service_code}` | per-client group membership | read through `getClientAccessOverview`; assignment uses `previewSingleClientAccessGroupAssignment` / `applySingleClientAccessGroupAssignment` against `/client-access-groups/{group_id}/members:*` | Clients detail / Access | connected for VLESS | Preview is mandatory; group/mode/client changes make preview stale and disable Apply. |
 | `GET/POST/DELETE /api/v1/clients/{id}/artifacts`, `GET /content`, `GET /download` | client artifacts | `listClientArtifacts`; `buildClientArtifact`; `getClientArtifactDownload`; `deleteClientArtifact`; matching hooks | Clients detail / Artifacts | connected | Build returns job tracking; download opens backend URL without token storage; delete is confirmed. Inline content preview is not exposed in this task. |
-| `GET/POST /api/v1/clients/{id}/share-links`, `POST /share-links/{link_id}/revoke` | share links | aggregate `endpoints.shareLinks`; mutations missing | Delivery | FE8-P0-03B / legacy-only | Share token visible only on creation response. Not part of FE8-P0-03A. |
-| `GET /api/v1/clients/{id}/subscriptions`, `POST /subscriptions/rotate`, `POST /subscriptions/{subscription_id}/revoke` | subscriptions | missing | Subscriptions | FE8-P0-03B / legacy-only | Subscription token should not persist in long-lived UI state. Not part of FE8-P0-03A. |
-| `POST /api/v1/clients/{id}/deliver-email` | email delivery | missing | Delivery | FE8-P0-03B / legacy-only | Email delivery errors shown safely. Not part of FE8-P0-03A. |
+| `GET/POST /api/v1/clients/{id}/share-links`, `POST /share-links/{link_id}/rotate`, `POST /share-links/{link_id}/revoke` | share links | `listClientShareLinks`; `createClientShareLink`; `rotateClientShareLink`; `revokeClientShareLink`; matching hooks | Clients detail / Delivery | connected | Share token is converted to a one-time `/share/{token}` URL, stripped from the cached share row and shown only in transient local UI state after create/rotate. Rotate revokes the old link and publishes a new token for the same target. |
+| `GET /api/v1/clients/{id}/subscriptions`, `POST /subscriptions/rotate`, `POST /subscriptions/{subscription_id}/revoke` | VLESS subscriptions | `listClientSubscriptions`; `createClientSubscription`; `rotateClientSubscription`; `revokeClientSubscription`; matching hooks | Clients detail / Delivery | connected for VLESS | Backend has a create-or-rotate endpoint rather than a separate create route. Returned subscription URL is shown only in transient local UI state. Non-VLESS subscriptions are not exposed. |
+| `POST /api/v1/clients/{id}/deliver-email` | email delivery | `sendClientArtifactEmail`; `useSendClientArtifactEmail` | Clients detail / Delivery | connected | Backend returns a synchronous delivery result rather than an async job. The endpoint sends the client's available artifacts/configs; artifact-specific email payload and delivery history list endpoints are backend-missing. Errors are rendered as text. |
 
 ### 4.9 Backhaul, Artifacts Aggregate, Jobs, Audit
 

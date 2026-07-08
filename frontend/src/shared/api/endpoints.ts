@@ -22,10 +22,23 @@ import type {
   ClientArtifactBuildResult,
   ClientArtifactDeleteResult,
   ClientArtifactDownloadResult,
+  ClientEmailDeliveryInput,
+  ClientEmailDeliveryResult,
   ClientCreateInput,
   ClientDeleteResult,
   ClientDetail,
+  ClientDeliveryHistoryItem,
+  ClientShareLink,
+  ClientShareLinkCreateInput,
+  ClientShareLinkCreateResult,
+  ClientShareLinkRevokeResult,
+  ClientShareLinkRotateResult,
   ClientStatusUpdateInput,
+  ClientSubscription,
+  ClientSubscriptionCreateInput,
+  ClientSubscriptionCreateResult,
+  ClientSubscriptionRevokeResult,
+  ClientSubscriptionRotateResult,
   Dashboard,
   FirewallAddressGroup,
   FirewallAddressGroupEntry,
@@ -354,6 +367,79 @@ export function getClientArtifactDownload(clientId: string, artifactId: string):
 
 export function deleteClientArtifact(clientId: string, artifactId: string): Promise<ClientArtifactDeleteResult> {
   return apiRequest<ClientArtifactDeleteResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/artifacts/${encodeURIComponent(artifactId)}`, { method: 'DELETE' });
+}
+
+function publicShareURL(link: ClientShareLink): string | undefined {
+  return link.token ? apiURL(`/share/${encodeURIComponent(link.token)}`) : undefined;
+}
+
+function shareLinkCreateResult(link: ClientShareLink): ClientShareLinkCreateResult {
+  const shareURL = publicShareURL(link);
+  const safeLink = { ...link };
+  delete safeLink.token;
+  return {
+    share_link: safeLink,
+    share_url: shareURL,
+    one_time_secret: shareURL ? {
+      kind: 'share_link',
+      label: 'Share link URL',
+      value: shareURL,
+      object_id: link.id,
+      expires_at: link.expires_at,
+    } : undefined,
+  };
+}
+
+export function listClientShareLinks(clientId: string): Promise<ClientShareLink[]> {
+  return apiRequest<ClientShareLink[]>(`/api/v1/clients/${encodeURIComponent(clientId)}/share-links`);
+}
+
+export async function createClientShareLink(clientId: string, input: ClientShareLinkCreateInput): Promise<ClientShareLinkCreateResult> {
+  const link = await sendJSON<ClientShareLink>(`/api/v1/clients/${encodeURIComponent(clientId)}/share-links`, 'POST', input);
+  return shareLinkCreateResult(link);
+}
+
+export function revokeClientShareLink(clientId: string, shareId: string): Promise<ClientShareLinkRevokeResult> {
+  return sendJSON<ClientShareLinkRevokeResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/share-links/${encodeURIComponent(shareId)}/revoke`, 'POST', {});
+}
+
+export async function rotateClientShareLink(clientId: string, shareId: string, ttlHours?: number): Promise<ClientShareLinkRotateResult> {
+  const link = await sendJSON<ClientShareLink>(`/api/v1/clients/${encodeURIComponent(clientId)}/share-links/${encodeURIComponent(shareId)}/rotate`, 'POST', { ttl_hours: ttlHours || 0 });
+  return { ...shareLinkCreateResult(link), rotated_from: shareId };
+}
+
+export function listClientSubscriptions(clientId: string): Promise<ClientSubscription[]> {
+  return apiRequest<ClientSubscription[]>(`/api/v1/clients/${encodeURIComponent(clientId)}/subscriptions`);
+}
+
+export async function createClientSubscription(clientId: string, input: ClientSubscriptionCreateInput = {}): Promise<ClientSubscriptionCreateResult> {
+  return rotateClientSubscription(clientId, input);
+}
+
+export async function rotateClientSubscription(clientId: string, input: ClientSubscriptionCreateInput = {}): Promise<ClientSubscriptionRotateResult> {
+  const result = await sendJSON<ClientSubscriptionRotateResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/subscriptions/rotate`, 'POST', { ttl_hours: input.ttl_hours || 0 });
+  return {
+    ...result,
+    one_time_secret: result.subscription_url ? {
+      kind: 'subscription',
+      label: 'VLESS subscription URL',
+      value: result.subscription_url,
+      object_id: result.subscription?.id,
+      expires_at: result.subscription?.expires_at,
+    } : undefined,
+  };
+}
+
+export function revokeClientSubscription(clientId: string, subscriptionId: string): Promise<ClientSubscriptionRevokeResult> {
+  return sendJSON<ClientSubscriptionRevokeResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/subscriptions/${encodeURIComponent(subscriptionId)}/revoke`, 'POST', {});
+}
+
+export function sendClientArtifactEmail(clientId: string, _artifactId: string | undefined, input: ClientEmailDeliveryInput): Promise<ClientEmailDeliveryResult> {
+  return sendJSON<ClientEmailDeliveryResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/deliver-email`, 'POST', input);
+}
+
+export function listClientDeliveryHistory(_clientId: string): Promise<ClientDeliveryHistoryItem[]> {
+  return Promise.reject(new Error('Backend has no client delivery history list endpoint in this release.'));
 }
 
 export const endpoints = {

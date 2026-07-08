@@ -1,32 +1,41 @@
-import { Download, Hammer, Plus, RefreshCw, Search, ShieldCheck, Trash2, UserCheck, UserMinus, UserPlus } from 'lucide-react';
+import { Download, Hammer, LinkIcon, Mail, Plus, RefreshCw, RotateCw, Search, ShieldCheck, Trash2, UserCheck, UserMinus, UserPlus } from 'lucide-react';
 import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { APIError } from '../../shared/api/client';
 import { getClientArtifactDownload } from '../../shared/api/endpoints';
-import type { ClientAccessGroup, ClientAccessGroupMembershipResult, ClientAccount, ClientArtifact, ClientArtifactBuildResult, ClientDetail, ClientServiceAccess, Job } from '../../shared/api/types';
+import type { ClientAccessGroup, ClientAccessGroupMembershipResult, ClientAccount, ClientArtifact, ClientArtifactBuildResult, ClientDetail, ClientEmailDeliveryResult, ClientServiceAccess, ClientShareLink, ClientSubscription, Job, OneTimeSecretDisplay } from '../../shared/api/types';
 import {
   useApplySingleClientAccessGroupAssignment,
   useBuildClientArtifact,
   useClientAccessGroups,
   useClientAccessOverview,
   useClientArtifacts,
+  useClientShareLinks,
+  useClientSubscriptions,
   useClientDetail,
   useClients,
+  useCreateClientShareLink,
+  useCreateClientSubscription,
   useCreateClient,
   useDeleteClient,
   useDeleteClientArtifact,
   useJobs,
   usePreviewSingleClientAccessGroupAssignment,
+  useRevokeClientShareLink,
+  useRevokeClientSubscription,
   useRemoveClientAccessGroupMembership,
   useRevokeClient,
+  useRotateClientShareLink,
+  useRotateClientSubscription,
+  useSendClientArtifactEmail,
   useUpdateClientStatus,
 } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, Select, StatusBadge, TextField, Textarea, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, TextField, Textarea, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
-type ClientTab = 'overview' | 'access' | 'artifacts' | 'jobs';
+type ClientTab = 'overview' | 'access' | 'artifacts' | 'delivery' | 'jobs';
 type ConfirmAction =
   | { type: 'suspend' | 'activate' | 'revoke' | 'delete'; client: ClientDetail }
   | { type: 'remove-vless'; client: ClientDetail; group: ClientAccessGroup }
@@ -102,6 +111,7 @@ export function ClientsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedClientID, setSelectedClientID] = useState('');
   const [activeTab, setActiveTab] = useState<ClientTab>('overview');
+  const [deliveryArtifactId, setDeliveryArtifactId] = useState('');
 
   const filteredClients = useMemo(() => (clients.data || []).filter((client) => matchClient(client, search, status)), [clients.data, search, status]);
 
@@ -176,6 +186,11 @@ export function ClientsPage() {
         clientId={selectedClientID}
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        deliveryArtifactId={deliveryArtifactId}
+        onOpenDelivery={(artifactId) => {
+          setDeliveryArtifactId(artifactId);
+          setActiveTab('delivery');
+        }}
         onClose={() => setSelectedClientID('')}
       />
     </PageScaffold>
@@ -234,7 +249,21 @@ function CreateClientModal({ open, onClose, onCreated }: { open: boolean; onClos
   );
 }
 
-function ClientDetailDrawer({ clientId, activeTab, onTabChange, onClose }: { clientId: string; activeTab: ClientTab; onTabChange: (tab: ClientTab) => void; onClose: () => void }) {
+function ClientDetailDrawer({
+  clientId,
+  activeTab,
+  deliveryArtifactId,
+  onTabChange,
+  onOpenDelivery,
+  onClose,
+}: {
+  clientId: string;
+  activeTab: ClientTab;
+  deliveryArtifactId: string;
+  onTabChange: (tab: ClientTab) => void;
+  onOpenDelivery: (artifactId: string) => void;
+  onClose: () => void;
+}) {
   const { t } = useTranslation();
   const client = useClientDetail(clientId);
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
@@ -245,7 +274,7 @@ function ClientDetailDrawer({ clientId, activeTab, onTabChange, onClose }: { cli
         {client.data ? (
           <div className="page-stack">
             <div className="tabs" role="tablist" aria-label={t('clients.core.detailTabs')}>
-              {(['overview', 'access', 'artifacts', 'jobs'] as ClientTab[]).map((tab) => (
+              {(['overview', 'access', 'artifacts', 'delivery', 'jobs'] as ClientTab[]).map((tab) => (
                 <button
                   key={tab}
                   className={`tab-link ${activeTab === tab ? 'active' : ''}`.trim()}
@@ -261,7 +290,8 @@ function ClientDetailDrawer({ clientId, activeTab, onTabChange, onClose }: { cli
 
             {activeTab === 'overview' ? <OverviewTab client={client.data} onConfirm={setConfirm} /> : null}
             {activeTab === 'access' ? <AccessTab client={client.data} onConfirm={setConfirm} /> : null}
-            {activeTab === 'artifacts' ? <ArtifactsTab client={client.data} onConfirm={setConfirm} /> : null}
+            {activeTab === 'artifacts' ? <ArtifactsTab client={client.data} onConfirm={setConfirm} onOpenDelivery={onOpenDelivery} /> : null}
+            {activeTab === 'delivery' ? <DeliveryTab client={client.data} initialArtifactId={deliveryArtifactId} /> : null}
             {activeTab === 'jobs' ? <JobsTab client={client.data} /> : null}
 
             <ActionConfirmDialog action={confirm} onClose={() => setConfirm(null)} />
@@ -478,7 +508,7 @@ function MembershipResult({ title, result }: { title: string; result: ClientAcce
   );
 }
 
-function ArtifactsTab({ client, onConfirm }: { client: ClientDetail; onConfirm: (action: ConfirmAction) => void }) {
+function ArtifactsTab({ client, onConfirm, onOpenDelivery }: { client: ClientDetail; onConfirm: (action: ConfirmAction) => void; onOpenDelivery: (artifactId: string) => void }) {
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
   const artifacts = useClientArtifacts(client.id);
@@ -545,6 +575,8 @@ function ArtifactsTab({ client, onConfirm }: { client: ClientDetail; onConfirm: 
               render: (row) => (
                 <Toolbar>
                   <Button icon={<Download size={16} />} disabled={row.status !== 'ready'} onClick={() => void runDownload(row)}>{t('common.download')}</Button>
+                  <Button icon={<LinkIcon size={16} />} disabled={row.status !== 'ready'} onClick={() => onOpenDelivery(row.id)}>{t('clients.delivery.createShareLink')}</Button>
+                  <Button icon={<Mail size={16} />} disabled={row.status !== 'ready'} onClick={() => onOpenDelivery(row.id)}>{t('clients.delivery.sendEmail')}</Button>
                   <Button variant="danger" icon={<Trash2 size={16} />} onClick={() => onConfirm({ type: 'delete-artifact', client, artifact: row })}>{t('common.delete')}</Button>
                 </Toolbar>
               ),
@@ -553,6 +585,301 @@ function ArtifactsTab({ client, onConfirm }: { client: ClientDetail; onConfirm: 
         />
       </div>
     </QueryBoundary>
+  );
+}
+
+type DeliveryConfirmAction =
+  | { type: 'revoke-share' | 'rotate-share'; share: ClientShareLink }
+  | { type: 'revoke-subscription' | 'rotate-subscription'; subscription: ClientSubscription };
+
+function DeliveryTab({ client, initialArtifactId }: { client: ClientDetail; initialArtifactId: string }) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const artifacts = useClientArtifacts(client.id);
+  const shareLinks = useClientShareLinks(client.id);
+  const subscriptions = useClientSubscriptions(client.id);
+  const createShare = useCreateClientShareLink();
+  const revokeShare = useRevokeClientShareLink();
+  const rotateShare = useRotateClientShareLink();
+  const createSubscription = useCreateClientSubscription();
+  const rotateSubscription = useRotateClientSubscription();
+  const revokeSubscription = useRevokeClientSubscription();
+  const sendEmail = useSendClientArtifactEmail();
+  const readyArtifacts = useMemo(() => (artifacts.data || []).filter((artifact) => artifact.status === 'ready'), [artifacts.data]);
+  const [artifactId, setArtifactId] = useState(initialArtifactId);
+  const [shareTTL, setShareTTL] = useState(72);
+  const [subscriptionTTL, setSubscriptionTTL] = useState(720);
+  const [emailTTL, setEmailTTL] = useState(72);
+  const [emailSubject, setEmailSubject] = useState('RTIS MegaVPN access package');
+  const [emailMessage, setEmailMessage] = useState('');
+  const [emailCreateShare, setEmailCreateShare] = useState(false);
+  const [confirm, setConfirm] = useState<DeliveryConfirmAction | null>(null);
+  const [oneTimeSecret, setOneTimeSecret] = useState<OneTimeSecretDisplay | null>(null);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [emailResult, setEmailResult] = useState<ClientEmailDeliveryResult | null>(null);
+
+  const artifactCandidate = artifactId || initialArtifactId;
+  const effectiveArtifactId = readyArtifacts.some((artifact) => artifact.id === artifactCandidate)
+    ? artifactCandidate
+    : readyArtifacts[0]?.id || '';
+  const selectedArtifact = readyArtifacts.find((artifact) => artifact.id === effectiveArtifactId);
+
+  const clearRequestState = () => {
+    setError('');
+    setNotice('');
+    setEmailResult(null);
+  };
+
+  const showSecret = (secret?: OneTimeSecretDisplay) => {
+    if (secret?.value) setOneTimeSecret(secret);
+  };
+
+  const runCreateShare = async () => {
+    clearRequestState();
+    try {
+      const result = await createShare.mutateAsync({ clientId: client.id, input: { target_id: effectiveArtifactId, ttl_hours: shareTTL } });
+      showSecret(result.one_time_secret);
+      createShare.reset();
+      setNotice(t('clients.delivery.shareCreated'));
+    } catch (err) {
+      setError(formatAPIError(err));
+    }
+  };
+
+  const runCreateSubscription = async () => {
+    clearRequestState();
+    try {
+      const result = await createSubscription.mutateAsync({ clientId: client.id, input: { ttl_hours: subscriptionTTL } });
+      showSecret(result.one_time_secret);
+      createSubscription.reset();
+      setNotice(t('clients.delivery.subscriptionCreated'));
+    } catch (err) {
+      setError(formatAPIError(err));
+    }
+  };
+
+  const runSendEmail = async () => {
+    clearRequestState();
+    try {
+      const result = await sendEmail.mutateAsync({
+        clientId: client.id,
+        artifactId: effectiveArtifactId,
+        input: {
+          subject: emailSubject.trim(),
+          message: emailMessage.trim(),
+          ttl_hours: emailTTL,
+          create_share_link: emailCreateShare,
+        },
+      });
+      setEmailResult(result);
+      setNotice(t('clients.delivery.emailAccepted'));
+    } catch (err) {
+      setError(formatAPIError(err));
+    }
+  };
+
+  const runConfirmedDeliveryAction = async () => {
+    if (!confirm) return;
+    clearRequestState();
+    try {
+      if (confirm.type === 'revoke-share') {
+        await revokeShare.mutateAsync({ clientId: client.id, shareId: confirm.share.id });
+        setNotice(t('clients.delivery.shareRevoked'));
+      } else if (confirm.type === 'rotate-share') {
+        const result = await rotateShare.mutateAsync({ clientId: client.id, shareId: confirm.share.id, ttlHours: shareTTL });
+        showSecret(result.one_time_secret);
+        rotateShare.reset();
+        setNotice(t('clients.delivery.shareRotated'));
+      } else if (confirm.type === 'revoke-subscription') {
+        await revokeSubscription.mutateAsync({ clientId: client.id, subscriptionId: confirm.subscription.id });
+        setNotice(t('clients.delivery.subscriptionRevoked'));
+      } else if (confirm.type === 'rotate-subscription') {
+        const result = await rotateSubscription.mutateAsync({ clientId: client.id, input: { ttl_hours: subscriptionTTL } });
+        showSecret(result.one_time_secret);
+        rotateSubscription.reset();
+        setNotice(t('clients.delivery.subscriptionRotated'));
+      }
+      setConfirm(null);
+    } catch (err) {
+      setError(formatAPIError(err));
+    }
+  };
+
+  const busy = createShare.isPending || revokeShare.isPending || rotateShare.isPending || createSubscription.isPending || rotateSubscription.isPending || revokeSubscription.isPending || sendEmail.isPending;
+
+  return (
+    <QueryBoundary
+      isLoading={artifacts.isLoading || shareLinks.isLoading || subscriptions.isLoading}
+      isError={artifacts.isError || shareLinks.isError || subscriptions.isError}
+      error={artifacts.error || shareLinks.error || subscriptions.error}
+      refetch={() => { void artifacts.refetch(); void shareLinks.refetch(); void subscriptions.refetch(); }}
+    >
+      <div className="page-stack">
+        {oneTimeSecret ? (
+          <OneTimeSecretPanel
+            label={oneTimeSecret.label}
+            value={oneTimeSecret.value}
+            expiresAt={oneTimeSecret.expires_at ? fmt.date(oneTimeSecret.expires_at) : undefined}
+            onClose={() => setOneTimeSecret(null)}
+          />
+        ) : null}
+        {notice ? <div role="status">{notice}</div> : null}
+        {error ? <div role="alert" className="error-state-inline">{error}</div> : null}
+
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <h3 className="card-title">{t('clients.delivery.shareLinks')}</h3>
+              <FormGrid>
+                <FormField label={t('clients.delivery.artifact')}>
+                  <Select value={effectiveArtifactId} onChange={(event) => setArtifactId(event.target.value)}>
+                    <option value="">{t('clients.delivery.selectReadyArtifact')}</option>
+                    {readyArtifacts.map((artifact) => (
+                      <option key={artifact.id} value={artifact.id}>{artifact.artifact_type || artifact.type || artifact.id}</option>
+                    ))}
+                  </Select>
+                </FormField>
+                <FormField label={t('clients.delivery.ttlHours')}>
+                  <TextField type="number" min={1} max={8760} value={shareTTL} onChange={(event) => setShareTTL(Number(event.target.value) || 0)} />
+                </FormField>
+              </FormGrid>
+              <Toolbar>
+                <Button variant="primary" icon={<LinkIcon size={16} />} disabled={!effectiveArtifactId || busy} onClick={() => void runCreateShare()}>{t('clients.delivery.createShareLink')}</Button>
+                <Button icon={<RefreshCw size={16} />} onClick={() => { void shareLinks.refetch(); void artifacts.refetch(); }}>{t('common.refresh')}</Button>
+              </Toolbar>
+              {selectedArtifact ? <p className="muted">{t('clients.delivery.selectedArtifact', { artifact: selectedArtifact.artifact_type || selectedArtifact.id })}</p> : null}
+            </div>
+          </CardBody>
+        </Card>
+
+        <DataTable
+          title={t('clients.delivery.shareLinks')}
+          rows={shareLinks.data || []}
+          columns={[
+            { key: 'target', header: t('clients.delivery.artifact'), render: (row) => <code>{shortID(row.target_id)}</code> },
+            { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+            { key: 'hint', header: t('clients.delivery.tokenHint'), render: (row) => text(row.token_hint) },
+            { key: 'downloads', header: t('clients.delivery.downloads'), render: (row) => fmt.number(row.download_count || 0) },
+            { key: 'expires', header: t('common.expires'), render: (row) => fmt.date(row.expires_at) },
+            {
+              key: 'actions',
+              header: t('common.actions'),
+              render: (row) => (
+                <Toolbar>
+                  <Button icon={<RotateCw size={16} />} disabled={row.status !== 'active' || busy} onClick={() => setConfirm({ type: 'rotate-share', share: row })}>{t('clients.delivery.rotate')}</Button>
+                  <Button variant="danger" icon={<Trash2 size={16} />} disabled={row.status === 'revoked' || busy} onClick={() => setConfirm({ type: 'revoke-share', share: row })}>{t('clients.delivery.revoke')}</Button>
+                </Toolbar>
+              ),
+            },
+          ]}
+        />
+
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <h3 className="card-title">{t('clients.delivery.subscriptions')}</h3>
+              <FormGrid>
+                <FormField label={t('clients.delivery.ttlHours')}>
+                  <TextField type="number" min={1} max={8760} value={subscriptionTTL} onChange={(event) => setSubscriptionTTL(Number(event.target.value) || 0)} />
+                </FormField>
+              </FormGrid>
+              <Toolbar>
+                <Button variant="primary" icon={<LinkIcon size={16} />} disabled={busy} onClick={() => void runCreateSubscription()}>{t('clients.delivery.createSubscription')}</Button>
+                <Button icon={<RefreshCw size={16} />} onClick={() => void subscriptions.refetch()}>{t('common.refresh')}</Button>
+              </Toolbar>
+              <p className="muted">{t('clients.delivery.vlessOnly')}</p>
+            </div>
+          </CardBody>
+        </Card>
+
+        <DataTable
+          title={t('clients.delivery.subscriptions')}
+          rows={subscriptions.data || []}
+          columns={[
+            { key: 'id', header: t('common.id'), render: (row) => <code>{shortID(row.id)}</code> },
+            { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+            { key: 'hint', header: t('clients.delivery.tokenHint'), render: (row) => text(row.token_hint) },
+            { key: 'downloads', header: t('clients.delivery.downloads'), render: (row) => fmt.number(row.download_count || 0) },
+            { key: 'lastUsed', header: t('clients.delivery.lastUsed'), render: (row) => fmt.date(row.last_used_at) },
+            { key: 'expires', header: t('common.expires'), render: (row) => fmt.date(row.expires_at) },
+            {
+              key: 'actions',
+              header: t('common.actions'),
+              render: (row) => (
+                <Toolbar>
+                  <Button icon={<RotateCw size={16} />} disabled={busy} onClick={() => setConfirm({ type: 'rotate-subscription', subscription: row })}>{t('clients.delivery.rotate')}</Button>
+                  <Button variant="danger" icon={<Trash2 size={16} />} disabled={row.status === 'revoked' || busy} onClick={() => setConfirm({ type: 'revoke-subscription', subscription: row })}>{t('clients.delivery.revoke')}</Button>
+                </Toolbar>
+              ),
+            },
+          ]}
+        />
+
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <h3 className="card-title">{t('clients.delivery.emailDelivery')}</h3>
+              <p className="muted">{client.email ? t('clients.delivery.emailTarget', { email: client.email }) : t('clients.delivery.noClientEmail')}</p>
+              <FormGrid>
+                <FormField label={t('clients.delivery.subject')}>
+                  <TextField value={emailSubject} onChange={(event) => setEmailSubject(event.target.value)} />
+                </FormField>
+                <FormField label={t('clients.delivery.ttlHours')}>
+                  <TextField type="number" min={1} max={8760} value={emailTTL} onChange={(event) => setEmailTTL(Number(event.target.value) || 0)} />
+                </FormField>
+                <FormField label={t('clients.delivery.message')} full>
+                  <Textarea value={emailMessage} onChange={(event) => setEmailMessage(event.target.value)} />
+                </FormField>
+              </FormGrid>
+              <Checkbox checked={emailCreateShare} onChange={(event) => setEmailCreateShare(event.target.checked)} label={t('clients.delivery.createShareForEmail')} />
+              <p className="muted">{t('clients.delivery.emailBackendScope')}</p>
+              <Toolbar>
+                <Button variant="primary" icon={<Mail size={16} />} disabled={!client.email || busy} onClick={() => void runSendEmail()}>{t('clients.delivery.sendEmail')}</Button>
+              </Toolbar>
+              {emailResult?.delivery ? (
+                <div className="inline-panel">
+                  <div className="definition-grid">
+                    <span>{t('common.status')}</span><strong>{emailResult.status || emailResult.delivery.status}</strong>
+                    <span>{t('common.id')}</span><strong>{emailResult.delivery.id}</strong>
+                    <span>{t('clients.delivery.artifacts')}</span><strong>{emailResult.delivery.artifact_ids?.length || 0}</strong>
+                    <span>{t('clients.delivery.shareLinks')}</span><strong>{emailResult.delivery.share_link_ids?.length || 0}</strong>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardBody>
+            <h3 className="card-title">{t('clients.delivery.history')}</h3>
+            <p className="muted">{t('clients.delivery.historyUnavailable')}</p>
+          </CardBody>
+        </Card>
+
+        <DeliveryConfirmDialog action={confirm} busy={busy} client={client} onConfirm={() => void runConfirmedDeliveryAction()} onClose={() => setConfirm(null)} />
+      </div>
+    </QueryBoundary>
+  );
+}
+
+function DeliveryConfirmDialog({ action, client, busy, onConfirm, onClose }: { action: DeliveryConfirmAction | null; client: ClientDetail; busy: boolean; onConfirm: () => void; onClose: () => void }) {
+  const { t } = useTranslation();
+  if (!action) return null;
+  const objectType = action.type.includes('subscription') ? t('clients.delivery.subscription') : t('clients.delivery.shareLink');
+  const operation = action.type.includes('rotate') ? t('clients.delivery.rotate') : t('clients.delivery.revoke');
+  const objectId = 'share' in action ? action.share.id : action.subscription.id;
+  return (
+    <ConfirmDialog title={`${operation} ${objectType}`} open={Boolean(action)} onClose={onClose}>
+      <div className="page-stack">
+        <p>{t('clients.delivery.confirmImpact', { operation, objectType, client: clientLabel(client), object: shortID(objectId) })}</p>
+        <Toolbar>
+          <Button variant="danger" disabled={busy} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </div>
+    </ConfirmDialog>
   );
 }
 

@@ -53,6 +53,30 @@ const artifact = {
   created_at: '2026-07-08T10:10:00Z',
 };
 
+const shareLink = {
+  id: 'share-1',
+  client_account_id: 'client-1',
+  target_type: 'artifact',
+  target_id: 'artifact-1',
+  token_hint: 'share...hint',
+  status: 'active',
+  expires_at: '2026-07-09T10:10:00Z',
+  download_count: 0,
+  created_at: '2026-07-08T10:12:00Z',
+};
+
+const subscription = {
+  id: 'sub-1',
+  client_account_id: 'client-1',
+  token_hint: 'sub...hint',
+  status: 'active',
+  expires_at: '2026-08-08T10:10:00Z',
+  download_count: 1,
+  last_used_at: '2026-07-08T10:30:00Z',
+  created_at: '2026-07-08T10:12:00Z',
+  updated_at: '2026-07-08T10:12:00Z',
+};
+
 function json(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -88,6 +112,7 @@ describe('ClientsPage', () => {
   const calls: FetchCall[] = [];
   let openSpy: ReturnType<typeof vi.spyOn>;
   let consoleSpy: ReturnType<typeof vi.spyOn>;
+  let clipboardWrite: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     calls.length = 0;
@@ -95,6 +120,11 @@ describe('ClientsPage', () => {
     await i18n.changeLanguage('en');
     openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    clipboardWrite = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: clipboardWrite },
+    });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://megavpn.test');
       const method = String(init?.method || 'GET').toUpperCase();
@@ -183,6 +213,30 @@ describe('ClientsPage', () => {
       if (method === 'DELETE' && url.pathname === '/api/v1/clients/client-1/artifacts/artifact-1') {
         return json({ client_id: 'client-1', artifact_id: 'artifact-1', artifact_type: 'vless_url', deleted: true });
       }
+      if (method === 'GET' && url.pathname === '/api/v1/clients/client-1/share-links') {
+        return json([shareLink]);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/share-links') {
+        return json({ ...shareLink, id: 'share-2', token: 'share-once-token', token_hint: 'share...token', target_id: body.target_id, expires_at: '2026-07-11T10:10:00Z' }, 201);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/share-links/share-1/revoke') {
+        return json({ ...shareLink, status: 'revoked' });
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/share-links/share-1/rotate') {
+        return json({ ...shareLink, id: 'share-3', token: 'share-rotated-token', token_hint: 'share...ated', expires_at: '2026-07-12T10:10:00Z' }, 201);
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/clients/client-1/subscriptions') {
+        return json([subscription]);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/subscriptions/rotate') {
+        return json({ subscription: { ...subscription, id: 'sub-2', token_hint: 'sub...ated' }, subscription_url: 'https://control.example/subscribe/vless/sub-once-token', message: 'copy now' }, 201);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/subscriptions/sub-1/revoke') {
+        return json({ ...subscription, status: 'revoked' });
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/deliver-email') {
+        return json({ status: 'ok', delivery: { id: 'delivery-1', client_account_id: 'client-1', email: 'alpha@example.test', subject: body.subject, status: 'sent', artifact_ids: ['artifact-1'], share_link_ids: body.create_share_link ? ['share-2'] : [], created_at: '2026-07-08T10:40:00Z' } });
+      }
       if (method === 'GET' && url.pathname === '/api/v1/jobs') {
         return json([
           { id: 'job-artifact', type: 'artifact.build', status: 'queued', scope_type: 'client', scope_id: 'client-1', payload: { client_id: 'client-1' }, created_at: '2026-07-08T10:20:00Z', result: {} },
@@ -201,6 +255,7 @@ describe('ClientsPage', () => {
   afterEach(() => {
     openSpy.mockRestore();
     consoleSpy.mockRestore();
+    delete (navigator as { clipboard?: unknown }).clipboard;
     vi.unstubAllGlobals();
   });
 
@@ -222,7 +277,7 @@ describe('ClientsPage', () => {
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients')).toBe(true));
     expect(calls.find((call) => call.method === 'POST' && call.path === '/api/v1/clients')?.body).toMatchObject({ username: 'bravo' });
     await screen.findByRole('heading', { name: 'Bravo User' });
-    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await userEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1)!);
 
     await userEvent.click(screen.getByRole('button', { name: 'Create client' }));
     await userEvent.clear(screen.getByLabelText('Username'));
@@ -302,6 +357,81 @@ describe('ClientsPage', () => {
     await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/clients/client-1/artifacts/artifact-1')).toBe(true));
   });
 
+  it('opens delivery from an artifact row and creates a one-time share link safely', async () => {
+    await openClient();
+    await userEvent.click(screen.getByRole('tab', { name: 'Artifacts' }));
+    expect((await screen.findAllByText('vless_url')).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Create share link' })[0]);
+    await screen.findByRole('tab', { name: 'Delivery' });
+    expect((await screen.findAllByText('share...hint')).length).toBeGreaterThan(0);
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Create share link' }).at(-1)!);
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/share-links')).toBe(true));
+    expect(await screen.findByText('This value may be shown only once. Copy it now and store it securely.')).toBeInTheDocument();
+    expect(screen.queryByText('/share/share-once-token')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reveal' }));
+    expect(screen.getByText('/share/share-once-token')).toBeInTheDocument();
+    expect(window.localStorage.getItem('share-once-token')).toBeNull();
+    expect(window.sessionStorage.getItem('share-once-token')).toBeNull();
+
+    expect(clipboardWrite).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    expect(clipboardWrite).toHaveBeenCalledWith('/share/share-once-token');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1)!);
+    expect(screen.queryByText('/share/share-once-token')).not.toBeInTheDocument();
+    expect(consoleSpy).not.toHaveBeenCalled();
+  });
+
+  it('requires confirmation for share link revoke and rotate', async () => {
+    await openClient();
+    await userEvent.click(screen.getByRole('tab', { name: 'Delivery' }));
+    expect((await screen.findAllByText('share...hint')).length).toBeGreaterThan(0);
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Rotate' })[0]);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/share-links/share-1/rotate')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/share-links/share-1/rotate')).toBe(true));
+    await userEvent.click(screen.getByRole('button', { name: 'Reveal' }));
+    expect(screen.getByText('/share/share-rotated-token')).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1)!);
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Revoke' })[0]);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/share-links/share-1/revoke')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/share-links/share-1/revoke')).toBe(true));
+  });
+
+  it('manages VLESS subscriptions with one-time URL display and confirmed revoke', async () => {
+    await openClient();
+    await userEvent.click(screen.getByRole('tab', { name: 'Delivery' }));
+    expect((await screen.findAllByText('sub...hint')).length).toBeGreaterThan(0);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Create / rotate VLESS subscription' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/subscriptions/rotate')).toBe(true));
+    await userEvent.click(screen.getByRole('button', { name: 'Reveal' }));
+    expect(screen.getByText('https://control.example/subscribe/vless/sub-once-token')).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1)!);
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Revoke' }).at(-1)!);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/subscriptions/sub-1/revoke')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/subscriptions/sub-1/revoke')).toBe(true));
+  });
+
+  it('sends client delivery email through the backend and renders status safely', async () => {
+    await openClient();
+    await userEvent.click(screen.getByRole('tab', { name: 'Delivery' }));
+    await screen.findByText('Target email: alpha@example.test');
+    await userEvent.clear(screen.getByLabelText('Subject'));
+    await userEvent.type(screen.getByLabelText('Subject'), 'Access package');
+    await userEvent.click(screen.getByLabelText('Create a share link for email delivery if needed'));
+    await userEvent.click(screen.getByRole('button', { name: 'Send by email' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/deliver-email')).toBe(true));
+    expect(calls.find((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/deliver-email')?.body).toMatchObject({ subject: 'Access package', create_share_link: true });
+    expect(screen.getByText('delivery-1')).toBeInTheDocument();
+  });
+
   it('shows permission errors safely and keeps Clients workflows away from legacy', async () => {
     vi.mocked(fetch).mockImplementationOnce(async () => json([client]));
     vi.mocked(fetch).mockImplementationOnce(async () => json(client));
@@ -320,5 +450,6 @@ describe('ClientsPage', () => {
   it('keeps raw API paths out of the Clients page component', () => {
     expect(String(ClientsPage)).not.toContain('/api/v1');
     expect(String(ClientsPage)).not.toMatch(/(^|[^A-Za-z0-9_])fetch\s*\(/);
+    expect(String(ClientsPage)).not.toContain('dangerouslySetInnerHTML');
   });
 });

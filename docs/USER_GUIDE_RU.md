@@ -727,14 +727,18 @@ VLESS-специфичные режимы и runtime validation - в
 7. Для удаления VLESS membership используйте `Remove VLESS membership`; действие
    требует confirmation и использует backend member delete endpoint.
 8. На вкладке `Artifacts` соберите artifact, скачайте ready artifact через
-   backend download endpoint или удалите artifact с confirmation.
+   backend download endpoint, создайте share link, откройте email delivery или
+   удалите artifact с confirmation.
 9. На вкладке `Activity / Jobs` отслеживайте client-scoped jobs.
-10. Share links, VLESS subscriptions и email delivery в новой 8.0.0 UI остаются
-    за FE8-P0-03B; для этих операций используйте `/legacy/`.
-11. Для перевыпуска без удаления доступа используйте `Clients -> Access ->
+10. На вкладке `Delivery` создавайте/rotate/revoke share links, создавайте или
+    rotate VLESS subscription URL, revoke subscription и отправляйте email
+    delivery через backend.
+11. Одноразовые share/subscription URL показываются только в transient panel.
+    Скопируйте значение явно через `Copy` и закройте panel после сохранения.
+12. Для перевыпуска без удаления доступа используйте `Clients -> Access ->
     Client Configs -> Clear configs`, затем заново выполните `Build configs` в
     legacy workflow, пока config cleanup не мигрирован.
-12. Для полного удаления клиента используйте `Clients -> Delete`. Операция
+13. Для полного удаления клиента используйте `Clients -> Delete`. Операция
     удаляет client account, service accesses, routes, generated configs,
     delivery links, VLESS subscriptions и service-access secret refs, после чего
     ставит apply jobs для затронутых service instances.
@@ -754,7 +758,7 @@ endpoint без ручного редактирования профиля.
 
 `Delete` на отдельной строке в `Artifacts` удаляет выбранный artifact.
 `Delete` на отдельной строке в `Client Configs` и `Clear configs` остаются
-legacy-only в FE8-P0-03A. Эти действия не отзывают сам доступ: клиентские
+legacy-only. Эти действия не отзывают сам доступ: клиентские
 service bindings остаются, а оператор может собрать новые artifacts. `Delete
 client` - необратимая операция удаления клиента из runtime-модели; audit/job
 history при этом сохраняется для traceability.
@@ -769,8 +773,10 @@ Share link - bearer URL. Его безопасность зависит от:
 - `token_hash` в базе вместо plaintext token;
 - audit events.
 
-Plaintext token показывается только при создании ссылки. Если он потерян,
-создайте новую ссылку.
+Plaintext token показывается только при создании или rotation ссылки. В новой
+UI он отображается как одноразовый `/share/{token}` URL во вкладке
+`Clients -> Delivery` или при delivery action из строки ready artifact. Если
+URL потерян, выполните rotate/create новой ссылки.
 
 VLESS subscription - это тоже bearer URL, но он не отдает статический artifact.
 Endpoint собирает текущие активные VLESS service accesses клиента и возвращает
@@ -778,13 +784,49 @@ profile feed, разделенный переносами строк. Испол
 успешного provisioning, потому что feed требует сгенерированный VLESS UUID из
 service access metadata.
 
-Операторский workflow:
+Операторский workflow для share links:
+
+1. Откройте `Clients -> Artifacts` и убедитесь, что нужный artifact имеет
+   статус `ready`.
+2. Нажмите `Create share link` на строке artifact или откройте
+   `Clients -> Delivery`.
+3. Выберите ready artifact и TTL.
+4. Нажмите `Create share link`.
+5. Скопируйте одноразовый URL из transient panel. После закрытия panel значение
+   исчезает из UI state.
+6. Для rotation или revoke используйте действия в таблице share links. Оба
+   действия требуют confirmation.
+
+Операторский workflow для VLESS subscription:
 
 1. Откройте `Clients -> Access`.
 2. Убедитесь, что у клиента есть active VLESS inbound access.
-3. В блоке `VLESS Subscription` нажмите `Rotate subscription`.
-4. Сразу скопируйте сгенерированный URL. Plaintext token не хранится.
-5. Отзовите subscription, если URL больше нельзя считать доверенным.
+3. Откройте `Clients -> Delivery`.
+4. В блоке `VLESS subscriptions` нажмите `Create / rotate VLESS subscription`.
+   Backend использует create-or-rotate endpoint, поэтому отдельного create URL
+   нет.
+5. Сразу скопируйте сгенерированный URL. Plaintext token не хранится и исчезает
+   после закрытия transient panel.
+6. Отзовите subscription, если URL больше нельзя считать доверенным.
+
+Операторский workflow для email delivery:
+
+1. Убедитесь, что у клиента задан email.
+2. Откройте `Clients -> Delivery` или нажмите `Send by email` в строке ready
+   artifact.
+3. Заполните subject/message/TTL и при необходимости включите создание share
+   link для email.
+4. Нажмите `Send by email`. UI показывает backend delivery status только после
+   успешного ответа backend.
+
+Ограничения текущего backend:
+
+- email endpoint отправляет доступные artifacts/configs клиента и пока не
+  принимает artifact-specific payload;
+- delivery history не отображается, потому что в backend нет client-scoped
+  delivery history list endpoint;
+- delivery endpoints в этой версии возвращают synchronous status, а не async
+  job.
 
 Подробности: [VLESS-подписки](VLESS_SUBSCRIPTIONS_RU.md) - lifecycle token,
 типовые проблемы и public endpoint behavior.

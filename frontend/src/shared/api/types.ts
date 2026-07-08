@@ -585,11 +585,102 @@ export type ClientArtifactDeleteResult = APIRecord & {
 export type ShareLink = APIRecord & {
   id: string;
   client_id?: string;
+  client_account_id?: string;
+  target_type?: string;
+  target_id?: string;
+  token?: string;
   status?: string;
   token_hint?: string;
   url?: string;
   expires_at?: string;
+  download_count?: number;
+  created_at?: string;
 };
+
+export type ClientShareLink = ShareLink;
+
+export type ClientShareLinkCreateInput = {
+  target_id: string;
+  ttl_hours?: number;
+};
+
+export type ClientShareLinkCreateResult = {
+  share_link: ClientShareLink;
+  share_url?: string;
+  one_time_secret?: OneTimeSecretDisplay;
+};
+
+export type ClientShareLinkRevokeResult = ClientShareLink;
+
+export type ClientShareLinkRotateResult = ClientShareLinkCreateResult & {
+  rotated_from?: string;
+};
+
+export type ClientSubscription = APIRecord & {
+  id: string;
+  client_account_id?: string;
+  token_hint?: string;
+  status?: string;
+  expires_at?: string;
+  download_count?: number;
+  last_used_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type ClientSubscriptionCreateInput = {
+  ttl_hours?: number;
+};
+
+export type ClientSubscriptionCreateResult = APIRecord & {
+  subscription: ClientSubscription;
+  subscription_url?: string;
+  message?: string;
+  one_time_secret?: OneTimeSecretDisplay;
+};
+
+export type ClientSubscriptionRotateResult = ClientSubscriptionCreateResult;
+
+export type ClientSubscriptionRevokeResult = ClientSubscription;
+
+export type ClientEmailDeliveryInput = {
+  subject?: string;
+  message?: string;
+  ttl_hours?: number;
+  create_share_link?: boolean;
+};
+
+export type ClientEmailDelivery = APIRecord & {
+  id: string;
+  client_account_id?: string;
+  email?: string;
+  subject?: string;
+  status?: string;
+  artifact_ids?: string[];
+  share_link_ids?: string[];
+  payload?: APIRecord;
+  error_text?: string;
+  sent_at?: string | null;
+  created_at?: string;
+};
+
+export type ClientEmailDeliveryResult = APIRecord & {
+  status?: string;
+  delivery?: ClientEmailDelivery;
+  error?: string;
+};
+
+export type ClientDeliveryHistoryItem = ClientEmailDelivery;
+
+export type OneTimeSecretDisplay = {
+  kind: 'share_link' | 'subscription';
+  label: string;
+  value: string;
+  object_id?: string;
+  expires_at?: string;
+};
+
+export type DeliveryJobRef = JobRef;
 
 export type BackhaulLink = APIRecord & {
   id: string;

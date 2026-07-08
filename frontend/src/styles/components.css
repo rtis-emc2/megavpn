@@ -407,6 +407,13 @@
   white-space: pre-wrap;
 }
 
+.secret-value {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 @media (max-width: 1279px) {
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -6,6 +6,8 @@ import {
   buildClientArtifact,
   createClient,
   applyNodeFirewall,
+  createClientShareLink,
+  createClientSubscription,
   createClientAccessGroup,
   createFirewallAddressGroup,
   createFirewallAddressGroupEntry,
@@ -28,6 +30,9 @@ import {
   getFirewallSafetySettings,
   getNodeFirewallState,
   listClientArtifacts,
+  listClientDeliveryHistory,
+  listClientShareLinks,
+  listClientSubscriptions,
   listClientAccessGroups,
   previewSingleClientAccessGroupAssignment,
   previewClientAccessGroupMembers,
@@ -35,7 +40,12 @@ import {
   previewNodeFirewall,
   removeClientAccessGroupMember,
   removeClientAccessGroupMembership,
+  revokeClientShareLink,
+  revokeClientSubscription,
   revokeClient,
+  rotateClientShareLink,
+  rotateClientSubscription,
+  sendClientArtifactEmail,
   updateClientStatus,
   updateClientAccessGroup,
   updateClientAccessGroupScope,
@@ -69,10 +79,23 @@ import type {
   ClientArtifactBuildRequest,
   ClientArtifactBuildResult,
   ClientArtifactDeleteResult,
+  ClientEmailDeliveryInput,
+  ClientEmailDeliveryResult,
   ClientCreateInput,
   ClientDeleteResult,
   ClientDetail,
+  ClientDeliveryHistoryItem,
+  ClientShareLink,
+  ClientShareLinkCreateInput,
+  ClientShareLinkCreateResult,
+  ClientShareLinkRevokeResult,
+  ClientShareLinkRotateResult,
   ClientStatusUpdateInput,
+  ClientSubscription,
+  ClientSubscriptionCreateInput,
+  ClientSubscriptionCreateResult,
+  ClientSubscriptionRevokeResult,
+  ClientSubscriptionRotateResult,
   Dashboard,
   FirewallAddressGroup,
   FirewallApplyRequest,
@@ -145,6 +168,9 @@ function invalidateClientQueries(queryClient: ReturnType<typeof useQueryClient>,
     void queryClient.invalidateQueries({ queryKey: ['client', clientId] });
     void queryClient.invalidateQueries({ queryKey: ['client-access-overview', clientId] });
     void queryClient.invalidateQueries({ queryKey: ['client-artifacts', clientId] });
+    void queryClient.invalidateQueries({ queryKey: ['client-share-links', clientId] });
+    void queryClient.invalidateQueries({ queryKey: ['client-subscriptions', clientId] });
+    void queryClient.invalidateQueries({ queryKey: ['client-delivery-history', clientId] });
   }
 }
 
@@ -602,6 +628,101 @@ export function useDeleteClientArtifact() {
       invalidateClientQueries(queryClient, input.clientId);
       void queryClient.invalidateQueries({ queryKey: ['artifacts'] });
     },
+  });
+}
+
+export function useClientShareLinks(clientId: string | undefined, options?: QueryOptions<ClientShareLink[]>) {
+  return useQuery({
+    queryKey: ['client-share-links', clientId],
+    queryFn: () => listClientShareLinks(clientId || ''),
+    enabled: Boolean(clientId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useCreateClientShareLink() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientShareLinkCreateResult, Error, { clientId: string; input: ClientShareLinkCreateInput }>({
+    mutationFn: ({ clientId, input }) => createClientShareLink(clientId, input),
+    onSuccess: (_result, input) => {
+      invalidateClientQueries(queryClient, input.clientId);
+      void queryClient.invalidateQueries({ queryKey: ['share-links'] });
+    },
+  });
+}
+
+export function useRevokeClientShareLink() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientShareLinkRevokeResult, Error, { clientId: string; shareId: string }>({
+    mutationFn: ({ clientId, shareId }) => revokeClientShareLink(clientId, shareId),
+    onSuccess: (_result, input) => {
+      invalidateClientQueries(queryClient, input.clientId);
+      void queryClient.invalidateQueries({ queryKey: ['share-links'] });
+    },
+  });
+}
+
+export function useRotateClientShareLink() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientShareLinkRotateResult, Error, { clientId: string; shareId: string; ttlHours?: number }>({
+    mutationFn: ({ clientId, shareId, ttlHours }) => rotateClientShareLink(clientId, shareId, ttlHours),
+    onSuccess: (_result, input) => {
+      invalidateClientQueries(queryClient, input.clientId);
+      void queryClient.invalidateQueries({ queryKey: ['share-links'] });
+    },
+  });
+}
+
+export function useClientSubscriptions(clientId: string | undefined, options?: QueryOptions<ClientSubscription[]>) {
+  return useQuery({
+    queryKey: ['client-subscriptions', clientId],
+    queryFn: () => listClientSubscriptions(clientId || ''),
+    enabled: Boolean(clientId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useCreateClientSubscription() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientSubscriptionCreateResult, Error, { clientId: string; input: ClientSubscriptionCreateInput }>({
+    mutationFn: ({ clientId, input }) => createClientSubscription(clientId, input),
+    onSuccess: (_result, input) => invalidateClientQueries(queryClient, input.clientId),
+  });
+}
+
+export function useRotateClientSubscription() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientSubscriptionRotateResult, Error, { clientId: string; input: ClientSubscriptionCreateInput }>({
+    mutationFn: ({ clientId, input }) => rotateClientSubscription(clientId, input),
+    onSuccess: (_result, input) => invalidateClientQueries(queryClient, input.clientId),
+  });
+}
+
+export function useRevokeClientSubscription() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientSubscriptionRevokeResult, Error, { clientId: string; subscriptionId: string }>({
+    mutationFn: ({ clientId, subscriptionId }) => revokeClientSubscription(clientId, subscriptionId),
+    onSuccess: (_result, input) => invalidateClientQueries(queryClient, input.clientId),
+  });
+}
+
+export function useSendClientArtifactEmail() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientEmailDeliveryResult, Error, { clientId: string; artifactId?: string; input: ClientEmailDeliveryInput }>({
+    mutationFn: ({ clientId, artifactId, input }) => sendClientArtifactEmail(clientId, artifactId, input),
+    onSuccess: (_result, input) => invalidateClientQueries(queryClient, input.clientId),
+  });
+}
+
+export function useClientDeliveryHistory(clientId: string | undefined, options?: QueryOptions<ClientDeliveryHistoryItem[]>) {
+  return useQuery({
+    queryKey: ['client-delivery-history', clientId],
+    queryFn: () => listClientDeliveryHistory(clientId || ''),
+    enabled: false,
+    staleTime: stale.normal,
+    ...options,
   });
 }
 

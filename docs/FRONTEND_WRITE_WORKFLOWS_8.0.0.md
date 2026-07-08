@@ -58,9 +58,10 @@ to `/legacy/`.
 | Artifact build | fully connected | `POST /api/v1/clients/{id}/artifacts`; returned job is tracked in the drawer. |
 | Artifact download | fully connected | `GET /api/v1/clients/{id}/artifacts/{artifact_id}/download` opened through a backend URL; no token storage. |
 | Artifact delete | fully connected | `DELETE /api/v1/clients/{id}/artifacts/{artifact_id}` with confirmation and artifact invalidation. |
-| Email delivery | FE8-P0-03B / legacy-only | Backend exists; form not migrated in FE8-P0-03A. |
-| Share link create/revoke | FE8-P0-03B / legacy-only | Backend exists; token one-time display is deferred to FE8-P0-03B. |
-| Subscription rotate/revoke | FE8-P0-03B / legacy-only | Backend exists; token safety UX is deferred to FE8-P0-03B. |
+| Email delivery | fully connected | `POST /api/v1/clients/{id}/deliver-email`; synchronous backend result is shown safely. Backend sends the client's available artifacts/configs and has no artifact-specific email payload yet. |
+| Share link create/rotate/revoke | fully connected | `GET/POST /api/v1/clients/{id}/share-links`, `POST /share-links/{link_id}/rotate`, `POST /share-links/{link_id}/revoke`; create/rotate show one-time URL only in transient UI state and revoke/rotate require confirmation. |
+| VLESS subscription create-or-rotate/revoke | fully connected for VLESS | `GET /api/v1/clients/{id}/subscriptions`, `POST /subscriptions/rotate`, `POST /subscriptions/{subscription_id}/revoke`; backend exposes create-or-rotate rather than separate create. One-time subscription URL is not persisted. |
+| Delivery history | backend-missing | No client-scoped delivery history list/status endpoint exists in this release. |
 
 ### Clients -> Groups
 

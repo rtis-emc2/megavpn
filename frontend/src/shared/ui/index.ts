@@ -4,6 +4,7 @@ export * from './Card';
 export * from './DataTable';
 export * from './Form';
 export * from './JobStatusPanel';
+export * from './OneTimeSecretPanel';
 export * from './Overlay';
 export * from './PageHeader';
 export * from './PageTabs';
