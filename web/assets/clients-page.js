@@ -513,8 +513,8 @@
       return `
         <nav class="page-tabs control-tabs clients-tabs" role="tablist" aria-label="Client workspace sections">
           ${tabs.map(([key, label, caption, count]) => `
-            <button class="tab-card ${active === key ? 'active' : ''}" type="button" data-clients-tab="${escapeHTML(key)}">
-              <strong>${escapeHTML(label)} <span>${escapeHTML(count)}</span></strong>
+            <button class="page-tab${active === key ? ' is-active' : ''}" type="button" role="tab" aria-selected="${active === key ? 'true' : 'false'}" data-clients-tab="${escapeHTML(key)}">
+              <span>${escapeHTML(label)} <em>${escapeHTML(count)}</em></span>
               <small>${escapeHTML(caption)}</small>
             </button>`).join('')}
         </nav>`;
@@ -590,7 +590,6 @@
                 <thead>
                   <tr>
                     <th>Group name</th>
-                    <th>Group key</th>
                     <th>Service</th>
                     <th>Status</th>
                     <th>Members</th>
@@ -611,7 +610,7 @@
 
     function renderAccessGroupRows(groups) {
       if (!groups.length) {
-        return '<tr><td colspan="9"><div class="empty">No client access groups yet. Create a VLESS group or run migrations.</div></td></tr>';
+        return '<tr><td colspan="8"><div class="empty">No client access groups yet. Create a VLESS group or run migrations.</div></td></tr>';
       }
       return groups.map((group) => {
         const pending = Number(group.pending_sync_count || 0);
@@ -624,9 +623,8 @@
           <tr>
             <td>
               <strong>${escapeHTML(group.display_name || group.group_key)}</strong>
-              <div class="timeline-meta">${escapeHTML(group.description || 'Client access policy group')}</div>
+              <div class="timeline-meta">${escapeHTML(group.group_key || group.id)}</div>
             </td>
-            <td><code>${escapeHTML(group.group_key || group.id)}</code></td>
             <td>
               <div>${escapeHTML(compactServiceLabel(group.service_code || 'service'))}</div>
               <div class="timeline-meta">${escapeHTML(clientAccessServiceStatusLabel(service))}</div>
@@ -645,7 +643,7 @@
             <td>${escapeHTML(accessGroupRouteLabel(group))}</td>
             <td>${syncTag}</td>
             <td>
-              <div class="table-actions client-action-grid compact-actions">
+              <div class="table-actions compact-actions access-group-actions">
                 <button class="${canManageMembers ? 'primary-btn' : 'secondary-btn'} access-group-members-btn" type="button" data-group-id="${escapeHTML(group.id)}"${canManageMembers ? '' : ' disabled'}>Members</button>
                 <button class="secondary-btn access-group-edit-btn" type="button" data-group-id="${escapeHTML(group.id)}">Policy</button>
                 <button class="secondary-btn access-group-scope-btn" type="button" data-group-id="${escapeHTML(group.id)}">Scope</button>

@@ -2086,6 +2086,13 @@ tr:hover td { background: #f8fafc; }
   display: grid;
   gap: 16px;
 }
+.clients-tabs {
+  max-width: 1280px;
+  margin: 0 0 4px;
+}
+.clients-tabs .page-tab {
+  min-width: 184px;
+}
 .client-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2175,7 +2182,50 @@ tr:hover td { background: #f8fafc; }
   white-space: nowrap;
 }
 .access-groups-table {
-  min-width: 1320px;
+  min-width: 1240px;
+  table-layout: fixed;
+}
+.access-groups-table th:nth-child(1),
+.access-groups-table td:nth-child(1) {
+  width: 18%;
+}
+.access-groups-table th:nth-child(2),
+.access-groups-table td:nth-child(2) {
+  width: 9%;
+}
+.access-groups-table th:nth-child(3),
+.access-groups-table td:nth-child(3) {
+  width: 9%;
+}
+.access-groups-table th:nth-child(4),
+.access-groups-table td:nth-child(4) {
+  width: 12%;
+}
+.access-groups-table th:nth-child(5),
+.access-groups-table td:nth-child(5) {
+  width: 14%;
+}
+.access-groups-table th:nth-child(6),
+.access-groups-table td:nth-child(6) {
+  width: 15%;
+}
+.access-groups-table th:nth-child(7),
+.access-groups-table td:nth-child(7) {
+  width: 8%;
+}
+.access-groups-table th:nth-child(8),
+.access-groups-table td:nth-child(8) {
+  width: 15%;
+}
+.access-group-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 180px;
+  max-width: 220px;
+}
+.access-group-actions .primary-btn,
+.access-group-actions .secondary-btn {
+  min-width: 0;
+  white-space: nowrap;
 }
 .access-groups-table code,
 .access-group-client-picker code {
