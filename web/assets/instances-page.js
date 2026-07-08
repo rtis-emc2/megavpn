@@ -72,6 +72,14 @@
       ['vless-groups', 'VLESS groups', 'client routing'],
     ];
 
+    function openClientAccessGroupsWorkspace() {
+      state.clientsTab = 'groups';
+      state.clientAccessGroupsServiceFilter = 'vless';
+      localStorage.setItem('megavpn.clientsTab', 'groups');
+      localStorage.setItem('megavpn.clientAccessGroupsServiceFilter', 'vless');
+      setPage('clients');
+    }
+
     function normalizedInstancesView() {
       const view = String(state.instancesView || 'list');
       return INSTANCE_TABS.some(([key]) => key === view) ? view : 'list';
@@ -1786,7 +1794,8 @@
                   <span>${escapeHTML(vlessGroupRouteDetails(group))}</span>
                 </div>
                 <div class="vless-template-actions">
-                  ${manage ? `<button class="secondary-btn vless-group-edit-btn" type="button" data-group-key="${escapeHTML(group.key)}">Edit</button>` : ''}
+                  <button class="primary-btn open-client-access-groups-btn" type="button">Open in Clients</button>
+                  ${manage ? `<button class="secondary-btn vless-group-edit-btn" type="button" data-group-key="${escapeHTML(group.key)}">Policy</button>` : ''}
                   ${manage && status === 'active' ? `<button class="secondary-btn vless-group-disable-btn" type="button" data-group-key="${escapeHTML(group.key)}">Disable</button>` : ''}
                   ${manage && status === 'disabled' ? `<button class="secondary-btn vless-group-enable-btn" type="button" data-group-key="${escapeHTML(group.key)}">Enable</button>` : ''}
                   ${manage ? `<button class="danger-btn vless-group-delete-btn" type="button" data-group-key="${escapeHTML(group.key)}">Delete</button>` : ''}
@@ -1806,22 +1815,22 @@
           <div class="table-head">
             <div>
               <h2>VLESS groups</h2>
-              <div class="metric-caption">Reusable client routing groups applied to every saved VLESS instance.</div>
+              <div class="metric-caption">Compatibility catalog. Client membership is managed in Clients -> Groups.</div>
             </div>
             <div class="table-tools">
               <span class="tag">${escapeHTML(String(active.length))} active</span>
               <span class="tag">${escapeHTML(String(groups.length))} templates</span>
-              ${canManageVLESSGroups() ? '<button class="secondary-btn" id="addVLESSGroupBtn" type="button">Add group</button>' : '<span class="tag">settings.manage required</span>'}
+              <button class="primary-btn" id="openClientAccessGroupsBtn" type="button">Open Clients -> Groups</button>
             </div>
           </div>
           <div class="vless-groups-intro">
             <div>
-              <strong>Routing model</strong>
-              <span>Set groups once here, then assign clients to a group during provisioning. VLESS instance forms only choose the default group.</span>
+              <strong>Source of truth</strong>
+              <span>Groups belong to clients. Instances are runtime materialization targets and should not be used as the primary membership editor.</span>
             </div>
             <div>
-              <strong>Safe defaults</strong>
-              <span>Default, current-node exit, ad-blocked default and blocked groups are seeded automatically.</span>
+              <strong>Compatibility</strong>
+              <span>Policy templates remain visible here during migration; bulk assignment, preview and sync are available in Clients -> Groups.</span>
             </div>
           </div>
           ${renderVLESSGroupCards(groups)}
@@ -1831,7 +1840,10 @@
     }
 
     function bindVLESSGroupActions() {
-      document.getElementById('addVLESSGroupBtn')?.addEventListener('click', () => openVLESSGroupEditor(''));
+      document.getElementById('openClientAccessGroupsBtn')?.addEventListener('click', openClientAccessGroupsWorkspace);
+      document.querySelectorAll('.open-client-access-groups-btn').forEach((button) => {
+        button.addEventListener('click', openClientAccessGroupsWorkspace);
+      });
       document.querySelectorAll('.vless-group-edit-btn').forEach((button) => {
         button.addEventListener('click', () => openVLESSGroupEditor(button.dataset.groupKey || ''));
       });
@@ -1880,7 +1892,7 @@
       const instances = (state.instances || [])
         .filter((instance) => String(instance.status || '').toLowerCase() !== 'deleted')
         .sort((left, right) => instanceLabelByID(left.id).localeCompare(instanceLabelByID(right.id), 'en'));
-      const rows = ['<option value="">Select target instance</option>'];
+      const rows = ['<option value="">Select allowed service</option>'];
       for (const instance of instances) {
         rows.push(`<option value="${escapeHTML(instance.id)}"${instance.id === selected ? ' selected' : ''}>${escapeHTML(instanceLabelByID(instance.id))}</option>`);
       }
@@ -1915,8 +1927,9 @@
             <select name="egress_node_id">${nodeOptions(model.egress_node_id || '', { roles: ['egress'], includeEmpty: true, emptyLabel: 'Select egress node' })}</select>
           </div>
           <div class="field" data-vless-target-field>
-            <label>Target instance</label>
+            <label>Allowed target service</label>
             <select name="target_instance_id">${targetInstanceOptionsForGroup(model.target_instance_id || '')}</select>
+            <div class="field-hint">Only for "Only selected instance" mode. This restricts destination access; it does not scope group membership.</div>
           </div>
           <div class="field">
             <label>Order</label>

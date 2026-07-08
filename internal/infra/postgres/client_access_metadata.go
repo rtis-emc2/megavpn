@@ -454,6 +454,17 @@ func (s *Store) SyncVLESSGroupCatalog(ctx context.Context) (domain.VLESSGroupCat
 			})
 			continue
 		}
+		if materialized, err := s.materializeGlobalVLESSGroupMembershipsForInstance(ctx, instance.ID); err != nil {
+			result.FailedInstances = append(result.FailedInstances, domain.VLESSGroupCatalogSyncFailure{
+				InstanceID: instance.ID,
+				NodeID:     instance.NodeID,
+				Stage:      "materialize_global_membership",
+				Error:      err.Error(),
+			})
+			continue
+		} else if materialized > 0 {
+			record.Reason = fmt.Sprintf("global memberships materialized: %d", materialized)
+		}
 		result.ChangedInstances++
 		record.Changed = true
 		record.RevisionID = revision.ID

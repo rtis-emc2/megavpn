@@ -364,6 +364,13 @@ where policy_id=$1
 }
 
 func (s *Store) firewallPolicyAllowsStrictSSHBootstrapPort(ctx context.Context, policyID string, port int) (bool, error) {
+	managedSources, err := s.firewallHasRenderableTrustedManagementSources(ctx)
+	if err != nil {
+		return false, err
+	}
+	if managedSources {
+		return true, nil
+	}
 	rows, err := s.db.Query(ctx, `select r.protocol,coalesce(r.dst_ports,''),coalesce(r.src_cidr,''),coalesce(r.src_list_id::text,''),coalesce(l.key,''),r.state_match
 from firewall_rules r
 left join firewall_address_lists l on l.id=r.src_list_id
@@ -401,7 +408,7 @@ where r.policy_id=$1
 
 func firewallRuleHasTrustedControlSource(ctx context.Context, s *Store, srcCIDR, srcListID, srcListKey string) bool {
 	if strings.TrimSpace(srcCIDR) != "" {
-		if _, err := netip.ParsePrefix(strings.TrimSpace(srcCIDR)); err == nil {
+		if prefix, err := netip.ParsePrefix(strings.TrimSpace(srcCIDR)); err == nil && !firewallAddressValueIsAny(prefix.String(), "cidr") {
 			return true
 		}
 		return false
@@ -413,7 +420,7 @@ func firewallRuleHasTrustedControlSource(ctx context.Context, s *Store, srcCIDR,
 	if srcListKey != "trusted_control_plane" && srcListKey != "trusted_operators" {
 		return false
 	}
-	hasEntries, err := s.firewallAddressListHasRenderableEntries(ctx, srcListID)
+	hasEntries, err := s.firewallAddressListHasRenderableNonAnyEntries(ctx, srcListID, srcListKey)
 	return err == nil && hasEntries
 }
 

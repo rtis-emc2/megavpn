@@ -162,6 +162,9 @@
         state.instanceManageData = null;
         state.instanceManageDirty = false;
       }
+      if (page !== 'clients') {
+        state.vlessMembersInteractionLockUntil = 0;
+      }
       state.page = page;
       render();
       if (page === 'nodeMap' && state.authUser) {
@@ -176,6 +179,9 @@
       if (state.page === 'nodeManage' && state.nodeTerminalActive) return false;
       if (state.page === 'nodeManage' && state.nodeManageDirty) return false;
       if (state.page === 'instanceManage' && state.instanceManageDirty) return false;
+      if (state.page === 'clients' && Number(state.vlessMembersInteractionLockUntil || 0) > Date.now()) return false;
+      if (state.page === 'clients' && document.querySelector('#clientAccessGroupMembersPanel')) return false;
+      if (state.page === 'clients' && document.activeElement?.closest?.('#clientAccessGroupMembersPanel')) return false;
       if (state.page === 'instances' && state.instancesView === 'create-pack') return false;
       return autoRefreshPages.has(state.page);
     }

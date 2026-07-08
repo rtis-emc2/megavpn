@@ -8,6 +8,55 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
+func (s *Server) listVLESSGroupMembers(w nethttp.ResponseWriter, r *nethttp.Request) {
+	out, err := s.store.ListVLESSGroupMembers(
+		r.Context(),
+		strings.TrimSpace(r.PathValue("key")),
+		strings.TrimSpace(r.URL.Query().Get("search")),
+		strings.TrimSpace(r.URL.Query().Get("status")),
+		boundedQueryInt(r, "limit", 50, 1, 500),
+		boundedQueryInt(r, "offset", 0, 0, 100000),
+	)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) listVLESSGroupAvailableClients(w nethttp.ResponseWriter, r *nethttp.Request) {
+	assignment := strings.TrimSpace(r.URL.Query().Get("assignment"))
+	if assignment == "" {
+		assignment = "unassigned"
+	}
+	out, err := s.store.ListVLESSGroupAvailableClients(
+		r.Context(),
+		strings.TrimSpace(r.URL.Query().Get("search")),
+		assignment,
+		boundedQueryInt(r, "limit", 50, 1, 500),
+		boundedQueryInt(r, "offset", 0, 0, 100000),
+	)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) addVLESSGroupMembers(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req domain.VLESSGroupMembershipRequest
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid vless group membership payload")
+		return
+	}
+	out, err := s.store.AddVLESSGroupMembers(r.Context(), strings.TrimSpace(r.PathValue("key")), req)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 202, out)
+}
+
 func (s *Server) listInstanceVLESSGroupMembers(w nethttp.ResponseWriter, r *nethttp.Request) {
 	out, err := s.store.ListInstanceVLESSGroupMembers(r.Context(), idParam(r))
 	if err != nil {

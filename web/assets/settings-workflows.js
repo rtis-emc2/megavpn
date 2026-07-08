@@ -72,21 +72,26 @@
     async function loadAdminSettings(canManageAuth, canDeleteUsers = hasRole('superadmin')) {
       try {
         const canManageSettings = hasPermission('settings.manage');
+        const canReadFirewallSafety = hasPermission('firewall.read') || hasPermission('firewall.manage');
+        const canManageFirewallSafety = hasPermission('firewall.manage');
         const userList = canManageAuth ? await requestJSON('/api/v1/admin/users') : [{ ...state.authUser, roles: state.authRoles || [] }];
         const sessions = canManageAuth ? await requestJSON('/api/v1/admin/sessions') : [];
         const mailSettings = canManageAuth ? await requestJSON('/api/v1/settings/mail') : null;
         const controlPlaneTLSSettings = canManageSettings ? await requestJSON('/api/v1/settings/control-plane-tls') : null;
+        const firewallManagementSettings = canReadFirewallSafety ? await requestJSON('/api/v1/firewall/management-settings') : null;
         const runtimePreflight = canManageSettings ? await requestJSON('/api/v1/runtime/preflight') : null;
         const pkiRoots = hasPermission('instance.read') ? await requestJSON('/api/v1/platform/pki-roots') : [];
         const invites = canManageAuth ? await requestJSON('/api/v1/admin/user-invites') : [];
         if (state.page !== 'settings') return;
         state.mailSettings = mailSettings;
         state.controlPlaneTLSSettings = controlPlaneTLSSettings;
+        state.firewallManagementSettings = firewallManagementSettings;
         state.runtimePreflight = runtimePreflight;
         state.platformInvites = invites || [];
         state.platformPKIRoots = pkiRoots || [];
         renderRuntimePreflight(runtimePreflight, canManageSettings);
         renderControlPlaneTLSSettings(controlPlaneTLSSettings, canManageSettings);
+        renderFirewallManagementSettings(firewallManagementSettings, canReadFirewallSafety, canManageFirewallSafety);
         renderPlatformUsers(userList || [], canManageAuth, canDeleteUsers);
         renderMailSettings(mailSettings, canManageAuth);
         renderPlatformPKIRoots(pkiRoots || [], hasPermission('instance.read'));
@@ -98,6 +103,7 @@
         document.getElementById('runtimePreflightMount').innerHTML = `<div class="empty">Failed to load runtime preflight: ${escapeHTML(err.message)}</div>`;
         document.getElementById('mailSettingsMount').innerHTML = `<div class="empty">Failed to load mail settings: ${escapeHTML(err.message)}</div>`;
         document.getElementById('controlPlaneTLSMount').innerHTML = `<div class="empty">Failed to load TLS settings: ${escapeHTML(err.message)}</div>`;
+        document.getElementById('firewallManagementSettingsMount').innerHTML = `<div class="empty">Failed to load firewall safety settings: ${escapeHTML(err.message)}</div>`;
         document.getElementById('platformPKIRootsMount').innerHTML = `<div class="empty">Failed to load CA center inventory: ${escapeHTML(err.message)}</div>`;
         document.getElementById('platformInvitesMount').innerHTML = `<div class="empty">Failed to load invites: ${escapeHTML(err.message)}</div>`;
         document.getElementById('platformSessionsMount').innerHTML = `<div class="empty">Failed to load sessions: ${escapeHTML(err.message)}</div>`;
@@ -306,6 +312,67 @@
         document.getElementById('controlPlaneTLSForm').addEventListener('submit', saveControlPlaneTLSSettings);
         document.getElementById('applyControlPlaneTLSBtn').addEventListener('click', applyControlPlaneTLSSettings);
         document.getElementById('openCertificateManagerBtn').addEventListener('click', () => setPage('certificates'));
+      }
+    }
+
+    function firewallCIDRText(values) {
+      return Array.isArray(values) ? values.join('\n') : '';
+    }
+
+    function parseCIDRTextarea(value) {
+      return String(value || '')
+        .split(/[\n,;\t ]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    function renderFirewallManagementSettings(settings, canReadFirewallSafety, canManageFirewallSafety) {
+      const mount = document.getElementById('firewallManagementSettingsMount');
+      if (!mount) return;
+      if (!canReadFirewallSafety) {
+        mount.innerHTML = '<div class="empty">Firewall safety settings require firewall.read permission.</div>';
+        return;
+      }
+      const current = settings || {};
+      const cpCIDRs = Array.isArray(current.control_plane_source_cidrs) ? current.control_plane_source_cidrs : [];
+      const sshCIDRs = Array.isArray(current.ssh_bootstrap_source_cidrs) ? current.ssh_bootstrap_source_cidrs : [];
+      const operatorCIDRs = Array.isArray(current.trusted_operator_cidrs) ? current.trusted_operator_cidrs : [];
+      mount.innerHTML = `
+        ${canManageFirewallSafety ? `
+          <form id="firewallManagementSettingsForm" class="form-grid operator-form" style="margin-bottom:18px">
+            <div class="field full">
+              <label>Control-plane source CIDRs</label>
+              <textarea name="control_plane_source_cidrs" rows="4" placeholder="203.0.113.10/32">${escapeHTML(firewallCIDRText(cpCIDRs))}</textarea>
+              <div class="field-hint">Sources allowed to preserve agent/control-plane management traffic during strict firewall apply.</div>
+            </div>
+            <div class="field full">
+              <label>SSH bootstrap source CIDRs</label>
+              <textarea name="ssh_bootstrap_source_cidrs" rows="4" placeholder="203.0.113.11/32">${escapeHTML(firewallCIDRText(sshCIDRs))}</textarea>
+              <div class="field-hint">Additional control-plane-side sources allowed to preserve SSH bootstrap and agent reinstall paths.</div>
+            </div>
+            <div class="field full">
+              <label>Trusted operator CIDRs</label>
+              <textarea name="trusted_operator_cidrs" rows="4" placeholder="198.51.100.0/24">${escapeHTML(firewallCIDRText(operatorCIDRs))}</textarea>
+              <div class="field-hint">Operator networks for privileged node access. DNS names and 0.0.0.0/0 are rejected for automatic SSH safety.</div>
+            </div>
+            <div class="field full inline-actions">
+              <button class="primary-btn apply-btn" type="submit">Save firewall sources</button>
+            </div>
+          </form>
+          <div id="firewallManagementSettingsResult" class="form-result"></div>
+        ` : `<div class="empty">Editing firewall safety settings requires firewall.manage permission.</div>`}
+        <div class="inventory-facts">
+          ${renderInventoryFact('Control-plane CIDRs', String(cpCIDRs.length), 'trusted_control_plane managed entries')}
+          ${renderInventoryFact('SSH bootstrap CIDRs', String(sshCIDRs.length), 'additional trusted_control_plane entries')}
+          ${renderInventoryFact('Operator CIDRs', String(operatorCIDRs.length), 'trusted_operators managed entries')}
+          <div class="fact-card">
+            <div class="mini-label">Strict safety</div>
+            <div class="metric-caption strong">${statusTag(cpCIDRs.length + sshCIDRs.length + operatorCIDRs.length > 0 ? 'configured' : 'missing')}</div>
+            <div class="metric-caption">Strict input apply is blocked until at least one valid management CIDR exists.</div>
+          </div>
+        </div>`;
+      if (canManageFirewallSafety) {
+        document.getElementById('firewallManagementSettingsForm')?.addEventListener('submit', saveFirewallManagementSettings);
       }
     }
 
@@ -593,6 +660,25 @@
         await loadAdminSettings(hasPermission('auth.manage'));
       } catch (err) {
         target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
+      }
+    }
+
+    async function saveFirewallManagementSettings(event) {
+      event.preventDefault();
+      const target = document.getElementById('firewallManagementSettingsResult');
+      if (target) target.innerHTML = '<span class="tag warn">saving</span>';
+      try {
+        const form = new FormData(event.currentTarget);
+        const updated = await sendJSON('/api/v1/firewall/management-settings', 'PUT', {
+          control_plane_source_cidrs: parseCIDRTextarea(form.get('control_plane_source_cidrs')),
+          ssh_bootstrap_source_cidrs: parseCIDRTextarea(form.get('ssh_bootstrap_source_cidrs')),
+          trusted_operator_cidrs: parseCIDRTextarea(form.get('trusted_operator_cidrs')),
+        });
+        state.firewallManagementSettings = updated;
+        if (target) target.innerHTML = '<span class="tag ok">firewall sources saved</span>';
+        renderFirewallManagementSettings(updated, hasPermission('firewall.read') || hasPermission('firewall.manage'), hasPermission('firewall.manage'));
+      } catch (err) {
+        if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
       }
     }
 

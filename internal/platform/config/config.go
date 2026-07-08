@@ -20,16 +20,18 @@ type Config struct {
 }
 
 type APIConfig struct {
-	ListenAddr        string
-	PublicBaseURL     string
-	ProductionMode    bool
-	WebRoot           string
-	TrustProxyHeaders bool
-	MaxRequestBytes   int64
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
-	ShutdownTimeout   time.Duration
+	ListenAddr              string
+	PublicBaseURL           string
+	ProductionMode          bool
+	WebRoot                 string
+	TrustProxyHeaders       bool
+	MaxRequestBytes         int64
+	ReadTimeout             time.Duration
+	WriteTimeout            time.Duration
+	IdleTimeout             time.Duration
+	ShutdownTimeout         time.Duration
+	FirewallSourceCIDRs     []string
+	SSHBootstrapSourceCIDRs []string
 }
 
 type AgentConfig struct {
@@ -85,16 +87,18 @@ func Load() Config {
 	publicBaseURL := getEnv("MEGAVPN_PUBLIC_BASE_URL", "http://127.0.0.1:8080")
 	return Config{
 		API: APIConfig{
-			ListenAddr:        getEnv("MEGAVPN_API_LISTEN_ADDR", "0.0.0.0:8080"),
-			PublicBaseURL:     publicBaseURL,
-			ProductionMode:    getEnvBool("MEGAVPN_PRODUCTION_MODE", false),
-			WebRoot:           strings.TrimSpace(getEnv("MEGAVPN_WEB_ROOT", "")),
-			TrustProxyHeaders: getEnvBool("MEGAVPN_TRUST_PROXY_HEADERS", false),
-			MaxRequestBytes:   getEnvInt64("MEGAVPN_API_MAX_REQUEST_BYTES", 16*1024*1024),
-			ReadTimeout:       getEnvDuration("MEGAVPN_API_READ_TIMEOUT", 10*time.Second),
-			WriteTimeout:      getEnvDuration("MEGAVPN_API_WRITE_TIMEOUT", 20*time.Second),
-			IdleTimeout:       getEnvDuration("MEGAVPN_API_IDLE_TIMEOUT", 60*time.Second),
-			ShutdownTimeout:   getEnvDuration("MEGAVPN_API_SHUTDOWN_TIMEOUT", 10*time.Second),
+			ListenAddr:              getEnv("MEGAVPN_API_LISTEN_ADDR", "0.0.0.0:8080"),
+			PublicBaseURL:           publicBaseURL,
+			ProductionMode:          getEnvBool("MEGAVPN_PRODUCTION_MODE", false),
+			WebRoot:                 strings.TrimSpace(getEnv("MEGAVPN_WEB_ROOT", "")),
+			TrustProxyHeaders:       getEnvBool("MEGAVPN_TRUST_PROXY_HEADERS", false),
+			MaxRequestBytes:         getEnvInt64("MEGAVPN_API_MAX_REQUEST_BYTES", 16*1024*1024),
+			ReadTimeout:             getEnvDuration("MEGAVPN_API_READ_TIMEOUT", 10*time.Second),
+			WriteTimeout:            getEnvDuration("MEGAVPN_API_WRITE_TIMEOUT", 20*time.Second),
+			IdleTimeout:             getEnvDuration("MEGAVPN_API_IDLE_TIMEOUT", 60*time.Second),
+			ShutdownTimeout:         getEnvDuration("MEGAVPN_API_SHUTDOWN_TIMEOUT", 10*time.Second),
+			FirewallSourceCIDRs:     getEnvList("MEGAVPN_CP_FIREWALL_SOURCE_CIDRS"),
+			SSHBootstrapSourceCIDRs: getEnvList("MEGAVPN_CP_SSH_BOOTSTRAP_SOURCE_CIDRS"),
 		},
 		Agent: AgentConfig{
 			NodeName:          getEnv("MEGAVPN_AGENT_NODE_NAME", hostname()),
@@ -205,4 +209,28 @@ func getEnvInt(k string, d int) int {
 		return d
 	}
 	return n
+}
+
+func getEnvList(k string) []string {
+	raw := strings.TrimSpace(os.Getenv(k))
+	if raw == "" {
+		return nil
+	}
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
+	out := make([]string, 0, len(fields))
+	seen := map[string]struct{}{}
+	for _, field := range fields {
+		value := strings.TrimSpace(field)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }

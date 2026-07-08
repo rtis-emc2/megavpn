@@ -52,6 +52,17 @@ func main() {
 	} else {
 		seedCancel()
 	}
+	firewallSeedCtx, firewallSeedCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := store.SeedFirewallManagementCIDRs(firewallSeedCtx, cfg.API.FirewallSourceCIDRs, cfg.API.SSHBootstrapSourceCIDRs); err != nil {
+		firewallSeedCancel()
+		if cfg.API.ProductionMode {
+			log.Error("firewall management source CIDR seed failed", "error", err)
+			os.Exit(1)
+		}
+		log.Warn("firewall management source CIDR seed failed; continuing outside production mode", "error", err)
+	} else {
+		firewallSeedCancel()
+	}
 	secretStorageReady := false
 	if strings.TrimSpace(cfg.Secrets.MasterKeyPath) != "" {
 		secretSvc, err := secrets.LoadFromFile(cfg.Secrets.MasterKeyPath, cfg.Secrets.MasterKeyVersion)

@@ -311,6 +311,73 @@ func TestRenderNodeFirewallPlanEnforcesDefaultPolicies(t *testing.T) {
 	}
 }
 
+func TestRenderNodeFirewallPlanRendersManagedSSHBootstrapAllow(t *testing.T) {
+	t.Parallel()
+
+	plan, err := renderNodeFirewallPlan(map[string]any{
+		"node_id":                "node-1",
+		"enforce_default_policy": true,
+		"default_input_policy":   "drop",
+		"ssh_bootstrap_ports":    []any{22, "2222"},
+		"address_lists": []any{
+			map[string]any{
+				"id":     "trusted-control-plane",
+				"key":    "trusted_control_plane",
+				"status": "active",
+				"entries": []any{
+					map[string]any{"value": "203.0.113.10", "value_type": "address", "status": "active"},
+				},
+			},
+		},
+		"rules": []any{},
+	})
+	if err != nil {
+		t.Fatalf("renderNodeFirewallPlan returned error: %v", err)
+	}
+	if !plan.SSHBootstrapPreserved {
+		t.Fatal("expected ssh_bootstrap_preserved")
+	}
+	for _, check := range []string{
+		"add set inet megavpn_firewall fwlist_trusted_control_plane_v4",
+		`ip saddr @fwlist_trusted_control_plane_v4 tcp dport { 22, 2222 } accept comment "megavpn:firewall:system-ssh-bootstrap-trusted_control_plane-ip"`,
+	} {
+		if !strings.Contains(plan.Script, check) {
+			t.Fatalf("expected script to contain %q, got:\n%s", check, plan.Script)
+		}
+	}
+}
+
+func TestRenderNodeFirewallPlanSkipsBroadManagedSSHBootstrapSource(t *testing.T) {
+	t.Parallel()
+
+	plan, err := renderNodeFirewallPlan(map[string]any{
+		"node_id":                "node-1",
+		"enforce_default_policy": true,
+		"default_input_policy":   "drop",
+		"ssh_bootstrap_ports":    []any{22},
+		"address_lists": []any{
+			map[string]any{
+				"id":     "trusted-control-plane",
+				"key":    "trusted_control_plane",
+				"status": "active",
+				"entries": []any{
+					map[string]any{"value": "0.0.0.0/0", "value_type": "cidr", "status": "active"},
+				},
+			},
+		},
+		"rules": []any{},
+	})
+	if err != nil {
+		t.Fatalf("renderNodeFirewallPlan returned error: %v", err)
+	}
+	if plan.SSHBootstrapPreserved {
+		t.Fatal("expected broad management source not to preserve SSH bootstrap")
+	}
+	if strings.Contains(plan.Script, "system-ssh-bootstrap") {
+		t.Fatalf("expected no generated SSH bootstrap rule for broad source, got:\n%s", plan.Script)
+	}
+}
+
 func TestRenderNodeFirewallPlanRejectsStrictOutputWithoutPinnedControlPlane(t *testing.T) {
 	t.Parallel()
 
@@ -324,6 +391,60 @@ func TestRenderNodeFirewallPlanRejectsStrictOutputWithoutPinnedControlPlane(t *t
 	})
 	if err == nil {
 		t.Fatal("expected strict output policy to require an IP-pinned control-plane URL")
+	}
+}
+
+func TestRenderNodeFirewallPlanReportsForwardPreservation(t *testing.T) {
+	t.Parallel()
+
+	blocked, err := renderNodeFirewallPlan(map[string]any{
+		"node_id":                            "node-1",
+		"enforce_default_policy":             true,
+		"default_forward_policy":             "drop",
+		"node_requires_forward_preservation": true,
+		"rules":                              []any{},
+		"address_lists":                      []any{},
+	})
+	if err != nil {
+		t.Fatalf("renderNodeFirewallPlan blocked case returned error: %v", err)
+	}
+	if blocked.ForwardEgressPreserved {
+		t.Fatal("expected forward egress not preserved without source-scoped allow")
+	}
+
+	preserved, err := renderNodeFirewallPlan(map[string]any{
+		"node_id":                            "node-1",
+		"enforce_default_policy":             true,
+		"default_forward_policy":             "drop",
+		"node_requires_forward_preservation": true,
+		"address_lists": []any{
+			map[string]any{
+				"id":     "vpn-client-sources",
+				"key":    "vpn_client_sources",
+				"status": "active",
+				"entries": []any{
+					map[string]any{"value": "10.0.0.0/8", "value_type": "cidr", "status": "active"},
+				},
+			},
+		},
+		"rules": []any{
+			map[string]any{
+				"id":           "allow-vpn-forward",
+				"chain":        "forward",
+				"action":       "accept",
+				"protocol":     "any",
+				"src_list_key": "vpn_client_sources",
+				"state_match":  []any{"new", "established"},
+				"enabled":      true,
+				"status":       "active",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderNodeFirewallPlan preserved case returned error: %v", err)
+	}
+	if !preserved.ForwardEgressPreserved {
+		t.Fatal("expected forward egress preserved")
 	}
 }
 
@@ -342,6 +463,7 @@ func TestRenderNodeFirewallPlanAllowsStrictOutputWithExplicitControlPlaneRule(t 
 				"chain":       "output",
 				"action":      "accept",
 				"protocol":    "tcp",
+				"dst_cidr":    "198.51.100.10/32",
 				"dst_ports":   "8443",
 				"state_match": []any{"new", "established"},
 				"enabled":     true,

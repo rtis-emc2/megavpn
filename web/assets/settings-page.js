@@ -42,6 +42,7 @@
     const tabs = [
       ['runtime', 'Runtime', 'Endpoints and preflight'],
       ['tls', 'TLS & PKI', 'Control-plane TLS and service roots'],
+      ['firewall', 'Firewall safety', 'Management CIDRs'],
       ['operators', 'Operators', 'Users and sessions'],
       ['delivery', 'Delivery', 'SMTP and invites'],
       ['account', 'Account', 'Password and local UI'],
@@ -132,6 +133,15 @@
               <section class="table-card">
                 <div class="table-head"><h2>Platform CA Center</h2><div class="table-tools"><span class="tag">${hasPermission('instance.read') ? 'instance.read' : 'read-only'}</span></div></div>
                 <div class="card-body" id="platformPKIRootsMount"><div class="empty">Loading PKI roots...</div></div>
+              </section>
+            </div>
+          </div>
+
+          <div class="settings-tab-panel" data-tab-panel="firewall" ${activeTab === 'firewall' ? '' : 'hidden'}>
+            <div class="bounded-stack">
+              <section class="table-card">
+                <div class="table-head"><h2>Firewall Management Sources</h2><div class="table-tools"><span class="tag">${hasPermission('firewall.manage') ? 'firewall.manage' : hasPermission('firewall.read') ? 'firewall.read' : 'read-only'}</span></div></div>
+                <div class="card-body" id="firewallManagementSettingsMount"><div class="empty">Loading firewall safety settings...</div></div>
               </section>
             </div>
           </div>

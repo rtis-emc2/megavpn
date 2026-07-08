@@ -573,7 +573,7 @@
         <div class="vless-global-summary">
           <div>
             <strong>${escapeHTML(String(groups.length))} global VLESS groups</strong>
-            <span>Managed in Instances / VLESS groups. Every saved VLESS instance receives this catalog.</span>
+            <span>Managed in Clients / Groups. VLESS instances receive this catalog as runtime materialization.</span>
           </div>
           <span class="tag">${escapeHTML(selected)} default</span>
         </div>`;

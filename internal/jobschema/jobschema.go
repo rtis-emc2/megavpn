@@ -3,6 +3,7 @@ package jobschema
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/rtis-emc2/megavpn/internal/backhaul"
@@ -450,6 +451,16 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else {
 			normalized["enforce_default_policy"] = false
 		}
+		if v, ok, err := optionalBool(payload, "node_requires_forward_preservation"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["node_requires_forward_preservation"] = v
+		}
+		if ports, ok, err := optionalIntSlice(payload, "ssh_bootstrap_ports"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["ssh_bootstrap_ports"] = ports
+		}
 		if rawRules, ok := payload["rules"]; ok {
 			rules, ok := rawRules.([]any)
 			if !ok {
@@ -815,6 +826,59 @@ func optionalStringSlice(payload map[string]any, key string) ([]string, bool, er
 		return out, true, nil
 	default:
 		return nil, false, validationf("payload.%s must be an array of strings", key)
+	}
+}
+
+func optionalIntSlice(payload map[string]any, key string) ([]int, bool, error) {
+	raw, ok := payload[key]
+	if !ok || raw == nil {
+		return nil, false, nil
+	}
+	add := func(out *[]int, value any) error {
+		var port int
+		switch typed := value.(type) {
+		case int:
+			port = typed
+		case int32:
+			port = int(typed)
+		case int64:
+			port = int(typed)
+		case float64:
+			port = int(typed)
+		case string:
+			parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+			if err != nil {
+				return validationf("payload.%s must be an array of numbers", key)
+			}
+			port = parsed
+		default:
+			return validationf("payload.%s must be an array of numbers", key)
+		}
+		if port < 1 || port > 65535 {
+			return validationf("payload.%s contains invalid port %d", key, port)
+		}
+		*out = append(*out, port)
+		return nil
+	}
+	switch value := raw.(type) {
+	case []int:
+		out := make([]int, 0, len(value))
+		for _, item := range value {
+			if err := add(&out, item); err != nil {
+				return nil, false, err
+			}
+		}
+		return out, true, nil
+	case []any:
+		out := make([]int, 0, len(value))
+		for _, item := range value {
+			if err := add(&out, item); err != nil {
+				return nil, false, err
+			}
+		}
+		return out, true, nil
+	default:
+		return nil, false, validationf("payload.%s must be an array of numbers", key)
 	}
 }
 
