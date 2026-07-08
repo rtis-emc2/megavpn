@@ -153,7 +153,9 @@ func (s *Store) ResolveClientVLESSSubscription(ctx context.Context, token string
 		return domain.ClientSubscriptionDocument{}, errors.New("subscription token is not active")
 	}
 	if sub.ExpiresAt.Before(now) {
-		_, _ = s.db.Exec(ctx, `update client_subscriptions set status='expired',updated_at=now() where id=$1 and status='active'`, sub.ID)
+		if _, err := s.db.Exec(ctx, `update client_subscriptions set status='expired',updated_at=now() where id=$1 and status='active'`, sub.ID); err != nil {
+			return domain.ClientSubscriptionDocument{}, err
+		}
 		return domain.ClientSubscriptionDocument{}, errors.New("subscription token has expired")
 	}
 	if client.Status != "active" {
@@ -173,7 +175,9 @@ func (s *Store) ResolveClientVLESSSubscription(ctx context.Context, token string
 			profiles = append(profiles, profile)
 		}
 	}
-	_, _ = s.db.Exec(ctx, `update client_subscriptions set download_count=download_count+1,last_used_at=now(),updated_at=now() where id=$1`, sub.ID)
+	if _, err := s.db.Exec(ctx, `update client_subscriptions set download_count=download_count+1,last_used_at=now(),updated_at=now() where id=$1`, sub.ID); err != nil {
+		return domain.ClientSubscriptionDocument{}, err
+	}
 	sub.DownloadCount++
 	sub.LastUsedAt = &now
 	sub.UpdatedAt = now

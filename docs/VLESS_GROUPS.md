@@ -1,6 +1,6 @@
 # VLESS Access Groups
 
-**Release:** `7.1.0.30`
+**Release:** `7.1.1.0`
 
 Russian companion: [VLESS_GROUPS_RU.md](VLESS_GROUPS_RU.md).
 
@@ -53,6 +53,8 @@ domain data installed.
 
 ## Operator Flow
 
+### Group catalog
+
 1. Open `Instances`.
 2. Select `VLESS groups`.
 3. Create or edit reusable groups.
@@ -68,6 +70,26 @@ domain data installed.
    required.
 10. During client provisioning, select the appropriate group for each VLESS
     inbound.
+
+### Bulk membership
+
+For fleet operations, operators do not need to open every client:
+
+1. Open the concrete Xray/VLESS instance under `Instances -> Manage`.
+2. Use the `VLESS group members` section.
+3. Select the target group.
+4. Search clients or paste usernames, emails or client IDs.
+5. Run `Add to group`.
+
+The Control Plane creates or updates existing `service_accesses` for the
+selected instance and group. This remains the membership source of truth; no
+second membership table is introduced. Adding the same client to the same group
+is idempotent, moving a client between groups preserves the VLESS UUID, and the
+bulk update queues at most one `instance.apply` for the affected Xray config.
+
+Client configs and artifacts are not rebuilt one-by-one from this bulk flow.
+After membership changes, use the normal build/subscription workflow when
+delivery artifacts must be refreshed.
 
 ## Validation Rules
 
@@ -89,10 +111,18 @@ domain data installed.
   UI while missing from the selected Xray instance revision.
 - Client provisioning stores the selected group key on the client access
   binding.
-- Reprovisioning and Xray UUID rotation preserve the existing client binding
-  group. Empty group input never becomes a synthetic `route` group; stale
-  implicit metadata falls back to an active catalog/default group, while an
-  explicitly selected invalid group remains a validation error.
+- Instance-level `VLESS group members` uses the same client access binding and
+  does not create duplicate rows. The client VLESS identity is kept in
+  `client_service_identities` and reused when the ingress node changes or when
+  the client is moved between groups.
+- Reprovisioning preserves the existing client binding group. Xray UUID
+  rotation is profile-wide: rotating one VLESS access updates the shared
+  `client_service_identities` UUID and marks all active/pending Xray accesses
+  for the same client identity profile as `pending`, so every affected ingress
+  is re-applied with the new credential. Empty group input never becomes a
+  synthetic `route` group; stale implicit metadata falls back to an active
+  catalog/default group, while an explicitly selected invalid group remains a
+  validation error.
 - Provisioning validates the chosen group after catalog sync. If a group is not
   active or selected egress cannot be resolved through active backhaul, the API
   returns the available group keys and the blocking resolution error.

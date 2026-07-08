@@ -301,9 +301,11 @@ func (s *Store) CreateBackhaulDeleteJobs(ctx context.Context, linkID string) (do
 		where id=$1`, link.ID, mustJSON(link.Metadata)); err != nil {
 		return domain.BackhaulLink{}, jobs, err
 	}
-	_, _ = s.db.Exec(ctx, `update backhaul_transports
+	if _, err := s.db.Exec(ctx, `update backhaul_transports
 		set status='disabled', last_error='', updated_at=now()
-		where link_id=$1`, link.ID)
+		where link_id=$1`, link.ID); err != nil {
+		return domain.BackhaulLink{}, jobs, err
+	}
 	_, _ = s.CreateAudit(ctx, "system", "backhaul.delete", "backhaul", &link.ID, "managed backhaul cleanup queued")
 	link.Status = "disabled"
 	return link, jobs, nil
@@ -379,9 +381,11 @@ func (s *Store) SetBackhaulRouteEnabled(ctx context.Context, linkID string, enab
 	link.Metadata["route_disable_mode"] = "policy_only"
 	delete(link.Metadata, "route_disable_batch_id")
 	delete(link.Metadata, "route_disable_requested_at")
-	_, _ = s.db.Exec(ctx, `update backhaul_links
+	if _, err := s.db.Exec(ctx, `update backhaul_links
 		set status='disabled', metadata_json=$2, updated_at=now()
-		where id=$1`, link.ID, mustJSON(link.Metadata))
+		where id=$1`, link.ID, mustJSON(link.Metadata)); err != nil {
+		return domain.BackhaulLink{}, nil, err
+	}
 	routeJob, err := s.CreateNodeRoutePolicyApplyJob(ctx, link.IngressNodeID)
 	if err != nil {
 		return domain.BackhaulLink{}, nil, fmt.Errorf("queue route policy refresh after backhaul route disable: %w", err)
@@ -512,47 +516,60 @@ func (s *Store) CreateBackhaulApplyJobs(ctx context.Context, linkID string) ([]d
 			jobs = append(jobs, job)
 		}
 	}
-	_, _ = s.db.Exec(ctx, `update backhaul_links set status='pending_apply', updated_at=now() where id=$1`, link.ID)
+	if _, err := s.db.Exec(ctx, `update backhaul_links set status='pending_apply', updated_at=now() where id=$1`, link.ID); err != nil {
+		return nil, err
+	}
 	for _, transport := range link.Transports {
-		_, _ = s.db.Exec(ctx, `update backhaul_transports set status='pending_apply', last_error='', updated_at=now() where id=$1`, transport.ID)
+		if _, err := s.db.Exec(ctx, `update backhaul_transports set status='pending_apply', last_error='', updated_at=now() where id=$1`, transport.ID); err != nil {
+			return nil, err
+		}
 	}
 	_, _ = s.CreateAudit(ctx, "system", "backhaul.apply", "backhaul", &link.ID, "managed backhaul profile apply queued")
 	return jobs, nil
 }
 
-func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, status string, result map[string]any) {
+func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, status string, result map[string]any) error {
 	linkID, transportID, role := backhaulJobIdentity(job, result)
 	if linkID == "" || transportID == "" {
-		return
+		return nil
 	}
 	if status != "succeeded" {
 		health, lastError := normalizeBackhaulApplyHealth(status, result, time.Now().UTC())
 		errText := firstNonEmptyBackhaulString(lastError, "backhaul apply failed")
 		if role != "" {
-			_, _ = s.db.Exec(ctx, `update backhaul_transports
+			if _, err := s.db.Exec(ctx, `update backhaul_transports
 				set status='failed',
 				    last_error=$2,
 				    health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $3::text[], $4::jsonb, true),
 				    updated_at=now()
-				where id=$1`, transportID, errText, []string{role}, mustJSON(health))
+				where id=$1`, transportID, errText, []string{role}, mustJSON(health)); err != nil {
+				return err
+			}
 		} else {
-			_, _ = s.db.Exec(ctx, `update backhaul_transports set status='failed', last_error=$2, updated_at=now() where id=$1`, transportID, errText)
+			if _, err := s.db.Exec(ctx, `update backhaul_transports set status='failed', last_error=$2, updated_at=now() where id=$1`, transportID, errText); err != nil {
+				return err
+			}
 		}
-		s.refreshBackhaulLinkApplyStatus(ctx, linkID)
-		return
+		return s.refreshBackhaulLinkApplyStatus(ctx, linkID)
 	}
 	switch role {
 	case "ingress":
-		_, _ = s.db.Exec(ctx, `update backhaul_transports set applied_ingress_at=now(), last_error='', updated_at=now() where id=$1`, transportID)
+		if _, err := s.db.Exec(ctx, `update backhaul_transports set applied_ingress_at=now(), last_error='', updated_at=now() where id=$1`, transportID); err != nil {
+			return err
+		}
 	case "egress":
-		_, _ = s.db.Exec(ctx, `update backhaul_transports set applied_egress_at=now(), last_error='', updated_at=now() where id=$1`, transportID)
+		if _, err := s.db.Exec(ctx, `update backhaul_transports set applied_egress_at=now(), last_error='', updated_at=now() where id=$1`, transportID); err != nil {
+			return err
+		}
 	default:
-		return
+		return nil
 	}
 	if health, ok := result["health"].(map[string]any); ok && health != nil {
-		_, _ = s.db.Exec(ctx, `update backhaul_transports
+		if _, err := s.db.Exec(ctx, `update backhaul_transports
 			set health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $2::text[], $3::jsonb, true), updated_at=now()
-			where id=$1`, transportID, []string{role}, mustJSON(health))
+			where id=$1`, transportID, []string{role}, mustJSON(health)); err != nil {
+			return err
+		}
 	}
 	var activationMode, driver string
 	var ingressApplied, egressApplied bool
@@ -563,22 +580,33 @@ func (s *Store) ApplyBackhaulJobResult(ctx context.Context, job domain.Job, stat
 		applied_egress_at is not null
 	from backhaul_transports
 	where id=$1`, transportID).Scan(&activationMode, &driver, &ingressApplied, &egressApplied); err == nil && ingressApplied && egressApplied {
-		_, _ = s.db.Exec(ctx, `update backhaul_transports
+		if _, err := s.db.Exec(ctx, `update backhaul_transports
 			set status=$2, updated_at=now()
-			where id=$1`, transportID, backhaulApplyCompleteStatus(activationMode, driver))
+			where id=$1`, transportID, backhaulApplyCompleteStatus(activationMode, driver)); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
 	}
-	s.refreshBackhaulLinkApplyStatus(ctx, linkID)
-	s.queueBackhaulRoutePolicyRefresh(ctx, linkID)
+	if err := s.refreshBackhaulLinkApplyStatus(ctx, linkID); err != nil {
+		return err
+	}
+	if err := s.queueBackhaulRoutePolicyRefresh(ctx, linkID); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (s *Store) queueBackhaulRoutePolicyRefresh(ctx context.Context, linkID string) {
+func (s *Store) queueBackhaulRoutePolicyRefresh(ctx context.Context, linkID string) error {
 	link, err := s.GetBackhaulLink(ctx, strings.TrimSpace(linkID))
 	if err != nil {
-		return
+		return err
 	}
 	if _, err := s.queueBackhaulRouteRefreshOrXrayConvergence(ctx, link, "system:backhaul-apply"); err != nil {
 		_, _ = s.CreateAudit(ctx, "system", "backhaul.route_policy.queue_failed", "backhaul", &link.ID, err.Error())
+		return err
 	}
+	return nil
 }
 
 func normalizeBackhaulApplyHealth(jobStatus string, result map[string]any, checkedAt time.Time) (map[string]any, string) {
@@ -614,8 +642,8 @@ func normalizeBackhaulApplyHealth(jobStatus string, result map[string]any, check
 	return out, lastError
 }
 
-func (s *Store) refreshBackhaulLinkApplyStatus(ctx context.Context, linkID string) {
-	_, _ = s.db.Exec(ctx, `update backhaul_links bl
+func (s *Store) refreshBackhaulLinkApplyStatus(ctx context.Context, linkID string) error {
+	_, err := s.db.Exec(ctx, `update backhaul_links bl
 		set status=case
 				when st.status='active' then 'active'
 				when st.status='materialized' then 'materialized'
@@ -628,19 +656,21 @@ func (s *Store) refreshBackhaulLinkApplyStatus(ctx context.Context, linkID strin
 	where bl.id=$1
 	  and bl.selected_transport_id=st.id
 	  and bl.status not in ('deleted','disabled')`, linkID)
+	return err
 }
 
-func (s *Store) ApplyBackhaulProbeResult(ctx context.Context, job domain.Job, status string, result map[string]any) {
+func (s *Store) ApplyBackhaulProbeResult(ctx context.Context, job domain.Job, status string, result map[string]any) error {
 	_, transportID, role := backhaulJobIdentity(job, result)
 	if transportID == "" || role == "" {
-		return
+		return nil
 	}
 	health, lastError := normalizeBackhaulProbeHealth(status, result, time.Now().UTC())
-	_, _ = s.db.Exec(ctx, `update backhaul_transports
+	_, err := s.db.Exec(ctx, `update backhaul_transports
 		set health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $2::text[], $3::jsonb, true),
 		    last_error=$4,
 		    updated_at=now()
 		where id=$1`, transportID, []string{role}, mustJSON(health), lastError)
+	return err
 }
 
 func normalizeBackhaulProbeHealth(jobStatus string, result map[string]any, checkedAt time.Time) (map[string]any, string) {
@@ -693,10 +723,10 @@ func firstNonEmptyBackhaulString(values ...string) string {
 	return ""
 }
 
-func (s *Store) ApplyBackhaulCleanupResult(ctx context.Context, job domain.Job, status string, result map[string]any) {
+func (s *Store) ApplyBackhaulCleanupResult(ctx context.Context, job domain.Job, status string, result map[string]any) error {
 	linkID, transportID, role := backhaulJobIdentity(job, result)
 	if linkID == "" || transportID == "" || role == "" {
-		return
+		return nil
 	}
 	cleanup := map[string]any{
 		"status":      status,
@@ -714,43 +744,60 @@ func (s *Store) ApplyBackhaulCleanupResult(ctx context.Context, job domain.Job, 
 	if status != "succeeded" {
 		errText := firstNonEmptyRouteValue(stringify(result["error"]), "backhaul cleanup failed")
 		cleanup["error"] = errText
-		_, _ = s.db.Exec(ctx, `update backhaul_transports set status='failed', last_error=$2, updated_at=now() where id=$1`, transportID, errText)
-		_, _ = s.db.Exec(ctx, `update backhaul_links set status='failed', updated_at=now() where id=$1`, linkID)
+		if _, err := s.db.Exec(ctx, `update backhaul_transports set status='failed', last_error=$2, updated_at=now() where id=$1`, transportID, errText); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(ctx, `update backhaul_links set status='failed', updated_at=now() where id=$1`, linkID); err != nil {
+			return err
+		}
 	} else {
-		_, _ = s.db.Exec(ctx, `update backhaul_transports set status='disabled', last_error='', updated_at=now() where id=$1`, transportID)
+		if _, err := s.db.Exec(ctx, `update backhaul_transports set status='disabled', last_error='', updated_at=now() where id=$1`, transportID); err != nil {
+			return err
+		}
 	}
-	_, _ = s.db.Exec(ctx, `update backhaul_transports
+	if _, err := s.db.Exec(ctx, `update backhaul_transports
 		set health_json=jsonb_set(coalesce(health_json,'{}'::jsonb), $2::text[], $3::jsonb, true), updated_at=now()
-		where id=$1`, transportID, []string{"cleanup", role}, mustJSON(cleanup))
+		where id=$1`, transportID, []string{"cleanup", role}, mustJSON(cleanup)); err != nil {
+		return err
+	}
 
 	deleteBatchID := firstNonEmptyRouteValue(stringify(result["delete_batch_id"]), stringify(job.Payload["delete_batch_id"]))
 	disableBatchID := firstNonEmptyRouteValue(stringify(result["route_disable_batch_id"]), stringify(job.Payload["route_disable_batch_id"]))
 	switch {
 	case deleteBatchID != "":
 		var pending, failed int
-		_ = s.db.QueryRow(ctx, `select
+		if err := s.db.QueryRow(ctx, `select
 			count(*) filter (where status in ('queued','running','retrying'))::int,
 			count(*) filter (where status in ('failed','cancelled'))::int
 		from jobs
 		where type='node.backhaul.cleanup'
 		  and scope_id=$1
-		  and payload_json->>'delete_batch_id'=$2`, linkID, deleteBatchID).Scan(&pending, &failed)
+		  and payload_json->>'delete_batch_id'=$2`, linkID, deleteBatchID).Scan(&pending, &failed); err != nil {
+			return err
+		}
 		if pending == 0 && failed == 0 {
-			_, _ = s.db.Exec(ctx, `update backhaul_links set status='deleted', updated_at=now() where id=$1`, linkID)
+			if _, err := s.db.Exec(ctx, `update backhaul_links set status='deleted', updated_at=now() where id=$1`, linkID); err != nil {
+				return err
+			}
 		}
 	case disableBatchID != "":
 		var pending, failed int
-		_ = s.db.QueryRow(ctx, `select
+		if err := s.db.QueryRow(ctx, `select
 			count(*) filter (where status in ('queued','running','retrying'))::int,
 			count(*) filter (where status in ('failed','cancelled'))::int
 		from jobs
 		where type='node.backhaul.cleanup'
 		  and scope_id=$1
-		  and payload_json->>'route_disable_batch_id'=$2`, linkID, disableBatchID).Scan(&pending, &failed)
+		  and payload_json->>'route_disable_batch_id'=$2`, linkID, disableBatchID).Scan(&pending, &failed); err != nil {
+			return err
+		}
 		if pending == 0 && failed == 0 {
-			_, _ = s.db.Exec(ctx, `update backhaul_links set status='disabled', updated_at=now() where id=$1 and status <> 'deleted'`, linkID)
+			if _, err := s.db.Exec(ctx, `update backhaul_links set status='disabled', updated_at=now() where id=$1 and status <> 'deleted'`, linkID); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 func backhaulJobIdentity(job domain.Job, result map[string]any) (string, string, string) {
@@ -1342,8 +1389,12 @@ func scanBackhaulLink(row pgx.Row) (domain.BackhaulLink, error) {
 		return domain.BackhaulLink{}, err
 	}
 	link.SelectedTransportID = selectedTransportID
-	_ = json.Unmarshal(failoverRaw, &link.FailoverPolicy)
-	_ = json.Unmarshal(metadataRaw, &link.Metadata)
+	if err := decodeJSONField(failoverRaw, &link.FailoverPolicy, "backhaul_links.failover_policy_json"); err != nil {
+		return domain.BackhaulLink{}, err
+	}
+	if err := decodeJSONField(metadataRaw, &link.Metadata, "backhaul_links.metadata_json"); err != nil {
+		return domain.BackhaulLink{}, err
+	}
 	if link.FailoverPolicy == nil {
 		link.FailoverPolicy = map[string]any{}
 	}
@@ -1380,9 +1431,15 @@ func scanBackhaulTransport(row pgx.Row) (domain.BackhaulTransport, error) {
 	); err != nil {
 		return domain.BackhaulTransport{}, err
 	}
-	_ = json.Unmarshal(configRaw, &transport.Config)
-	_ = json.Unmarshal(secretRefsRaw, &transport.SecretRefs)
-	_ = json.Unmarshal(healthRaw, &transport.Health)
+	if err := decodeJSONField(configRaw, &transport.Config, "backhaul_transports.config_json"); err != nil {
+		return domain.BackhaulTransport{}, err
+	}
+	if err := decodeJSONField(secretRefsRaw, &transport.SecretRefs, "backhaul_transports.secret_refs_json"); err != nil {
+		return domain.BackhaulTransport{}, err
+	}
+	if err := decodeJSONField(healthRaw, &transport.Health, "backhaul_transports.health_json"); err != nil {
+		return domain.BackhaulTransport{}, err
+	}
 	if transport.Config == nil {
 		transport.Config = map[string]any{}
 	}

@@ -152,7 +152,10 @@ func (c client) submit(ctx context.Context, id, status string, result map[string
 }
 
 func (c client) post(ctx context.Context, path string, payload any, out any) error {
-	b, _ := json.Marshal(payload)
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal agent request payload: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(b))
 	if err != nil {
 		return err

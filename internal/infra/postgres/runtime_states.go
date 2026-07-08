@@ -207,11 +207,15 @@ func scanInstanceRuntimeState(row instanceRuntimeStateScanner) (domain.InstanceR
 	); err != nil {
 		return domain.InstanceRuntimeState{}, err
 	}
-	_ = json.Unmarshal(resultRaw, &item.Result)
+	if err := decodeJSONField(resultRaw, &item.Result, "instance_runtime_states.result_json"); err != nil {
+		return domain.InstanceRuntimeState{}, err
+	}
 	if item.Result == nil {
 		item.Result = map[string]any{}
 	}
-	_ = json.Unmarshal(listeningPortsRaw, &item.ListeningPorts)
+	if err := decodeJSONField(listeningPortsRaw, &item.ListeningPorts, "instance_runtime_states.listening_ports_json"); err != nil {
+		return domain.InstanceRuntimeState{}, err
+	}
 	if item.ListeningPorts == nil {
 		item.ListeningPorts = []map[string]any{}
 	}
@@ -252,11 +256,15 @@ func scanInstanceRuntimeObservation(row instanceRuntimeObservationScanner) (doma
 	); err != nil {
 		return domain.InstanceRuntimeObservation{}, err
 	}
-	_ = json.Unmarshal(resultRaw, &item.Result)
+	if err := decodeJSONField(resultRaw, &item.Result, "instance_runtime_observations.result_json"); err != nil {
+		return domain.InstanceRuntimeObservation{}, err
+	}
 	if item.Result == nil {
 		item.Result = map[string]any{}
 	}
-	_ = json.Unmarshal(listeningPortsRaw, &item.ListeningPorts)
+	if err := decodeJSONField(listeningPortsRaw, &item.ListeningPorts, "instance_runtime_observations.listening_ports_json"); err != nil {
+		return domain.InstanceRuntimeObservation{}, err
+	}
 	if item.ListeningPorts == nil {
 		item.ListeningPorts = []map[string]any{}
 	}

@@ -113,7 +113,9 @@ func (c client) installBinaryRepositoryCapabilityFromPayload(ctx context.Context
 		}
 	case "deb_package":
 		if !run("dpkg", "-i", artifact.Path) {
-			_ = run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-f", "install", "-y")
+			if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-f", "install", "-y") {
+				return map[string]any{"ok": false, "message": "binary repository deb dependency repair failed", "steps": steps, "binary_repository": repositoryResult}
+			}
 		}
 	default:
 		return map[string]any{"ok": false, "message": "unsupported binary repository install_mode", "install_mode": mode, "steps": steps, "binary_repository": repositoryResult}

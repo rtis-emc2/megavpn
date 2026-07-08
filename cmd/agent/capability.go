@@ -475,9 +475,11 @@ func installNginxUbuntuRepo(ctx context.Context, reason string) map[string]any {
 	if os.Geteuid() != 0 {
 		return map[string]any{"ok": false, "message": "nginx install requires root", "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason}
 	}
-	_ = os.Remove(nginxOrgSourceListPath)
-	_ = os.Remove(nginxOrgPreferencesPath)
-	_ = os.Remove(nginxOrgKeyringPath)
+	for _, path := range []string{nginxOrgSourceListPath, nginxOrgPreferencesPath, nginxOrgKeyringPath} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return map[string]any{"ok": false, "message": "nginx.org repository cleanup failed before ubuntu nginx install", "error": err.Error(), "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason}
+		}
+	}
 	if !run("apt-get", "update") {
 		if !aptPackageCandidateAvailable(ctx, "nginx", &steps) {
 			res := aptInstallFailureResult("nginx", "nginx", "apt update failed before ubuntu nginx install", steps)
@@ -499,15 +501,21 @@ func installNginxUbuntuRepo(ctx context.Context, reason string) map[string]any {
 	if aptPolicyMentionsNginxOrg(policyOut) {
 		return map[string]any{"ok": false, "message": "ubuntu_repo fallback still resolves to nginx.org package; refusing unsafe reinstall", "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason, "apt_policy": truncate(policyOut, 4000)}
 	}
-	_ = run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "purge", "-y", "nginx")
-	_ = run("systemctl", "daemon-reload")
+	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "purge", "-y", "nginx") {
+		return map[string]any{"ok": false, "message": "ubuntu nginx purge before reinstall failed", "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason}
+	}
+	if !run("systemctl", "daemon-reload") {
+		return map[string]any{"ok": false, "message": "systemd daemon reload failed before ubuntu nginx install", "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason}
+	}
 	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "nginx") {
 		res := aptInstallFailureResult("nginx", "nginx", "ubuntu nginx package install failed", steps)
 		res["effective_strategy"] = "ubuntu_repo"
 		res["fallback_reason"] = reason
 		return res
 	}
-	_ = run("systemctl", "enable", "--now", "nginx")
+	if !run("systemctl", "enable", "--now", "nginx") {
+		return map[string]any{"ok": false, "message": "nginx service enable/start failed after ubuntu nginx install", "steps": steps, "effective_strategy": "ubuntu_repo", "fallback_reason": reason}
+	}
 	verify := verifyNginx(ctx)
 	verify["steps"] = steps
 	verify["effective_strategy"] = "ubuntu_repo"
@@ -627,7 +635,9 @@ func installNginxOrg(ctx context.Context, channel string) map[string]any {
 	if !run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "nginx") {
 		return map[string]any{"ok": false, "message": "nginx package install failed", "steps": steps}
 	}
-	_ = run("systemctl", "enable", "--now", "nginx")
+	if !run("systemctl", "enable", "--now", "nginx") {
+		return map[string]any{"ok": false, "message": "nginx service enable/start failed after nginx.org install", "steps": steps}
+	}
 	verify := verifyNginx(ctx)
 	verify["steps"] = steps
 	return verify
@@ -759,8 +769,12 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 		detail := lastFailedInstallCommand(steps)
 		if aptFailureSuggestsRepair(detail.output) {
 			steps = append(steps, map[string]any{"stage": "apt_repair", "reason": detail.outputLine})
-			_ = run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "dpkg", "--configure", "-a")
-			_ = run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-f", "install", "-y")
+			if !run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "dpkg", "--configure", "-a") {
+				return aptInstallFailureResult(capabilityCode, packageName, "dpkg configure repair failed", steps)
+			}
+			if !run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-f", "install", "-y") {
+				return aptInstallFailureResult(capabilityCode, packageName, "apt dependency repair failed", steps)
+			}
 			if !run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "UCF_FORCE_CONFFOLD=1", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "install", "-y", packageName) {
 				return aptInstallFailureResult(capabilityCode, packageName, "package install failed after apt repair", steps)
 			}
@@ -769,7 +783,9 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 		}
 	}
 	for _, unit := range enableUnits {
-		_ = run("systemctl", "enable", "--now", unit)
+		if !run("systemctl", "enable", "--now", unit) {
+			return map[string]any{"ok": false, "message": capabilityCode + " service enable/start failed", "steps": steps, "package": packageName, "unit": unit}
+		}
 	}
 	var verify map[string]any
 	switch capabilityCode {

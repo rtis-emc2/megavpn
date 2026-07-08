@@ -1,6 +1,6 @@
 # Firewall Policy Catalog
 
-**Release:** `7.1.0.30`
+**Release:** `7.1.1.0`
 
 Firewall is the managed policy workspace for node and control-plane boundaries.
 It is intentionally modeled as a catalog before apply: operators prepare address
@@ -54,6 +54,24 @@ Existing installations upgraded from an earlier `7.0.1` build must run database
 migrations through `000009_firewall_schema_repair` before creating address
 lists. If migrations are behind, the API can return
 `relation "firewall_address_lists" does not exist`.
+
+## Semantic Address Groups
+
+The default seed creates semantic groups with explicit operational meaning.
+They must not be replaced by one generic `whitelist`:
+
+| Group | Purpose |
+| --- | --- |
+| `trusted_control_plane` | Control-plane sources for agent management and SSH bootstrap. |
+| `trusted_operators` | Operator/admin source ranges for privileged node access. |
+| `vpn_client_sources` | Managed VPN client ranges allowed to route traffic. |
+| `backhaul_sources` | Ingress-to-egress tunnel and backhaul ranges. |
+| `public_service_sources` | Public or restricted sources for service listeners. |
+| `blocked_destinations` | Reusable deny/quarantine destination ranges. |
+
+DNS entries in these groups are catalog context only. Active nftables matchers
+are built from IP, CIDR and IP range entries. Strict preview/apply blocks an
+`accept` rule when the referenced group is active but has no renderable entry.
 
 ## UI Workflow
 
@@ -124,6 +142,12 @@ The preview dialog uses the same modes. Its result shows:
 rendered hash and preserves the selected `Rules only` or `Strict defaults`
 mode.
 
+For `Strict defaults`, preview is also a backend gate: `Apply` is accepted only
+after a successful `node.firewall.preview` for the same node, policy, rules,
+address groups and `safety_mode=strict`. If an operator changes a rule or
+address group after preview, the payload hash changes and apply must be
+previewed again.
+
 `Disable` queues `node.firewall.disable` for the selected node. It deletes only
 the managed `inet megavpn_firewall` nftables table and leaves instances,
 backhaul, route policy and service runtimes untouched. Use it for staged
@@ -136,6 +160,11 @@ blocked before job creation unless the active policy contains an input accept
 rule for the configured SSH port. Disable the managed firewall first, or add a
 source-scoped SSH allow rule for `trusted_control_plane`/`trusted_operators`
 and apply the policy.
+
+A generic `whitelist` does not satisfy SSH bootstrap safety by itself. The
+source rule must reference `trusted_control_plane`, `trusted_operators` with
+active IP/CIDR/range entries, or an explicit control-plane CIDR. SSH-from-any
+is never generated automatically.
 
 ## Security Model
 
@@ -178,6 +207,10 @@ Address-group entries with DNS type are stored for catalog context only in this
 release. Node-side nftables apply renders CIDR, single IP address and IP range
 entries; a DNS-only list cannot be used as an active rule matcher. The rule
 protocol model supports `any`, `tcp`, `udp`, `icmp` and `icmpv6`.
+
+Preview/apply results include address-group counts, including ignored DNS
+entries. This gives operators audit evidence for what actually entered nft sets
+and what remained metadata only.
 
 The managed table is owned by MegaVPN. Do not place hand-written rules in
 `inet megavpn_firewall`; strict apply replaces that table as a single managed

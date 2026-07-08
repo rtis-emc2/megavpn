@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -954,11 +955,15 @@ func buildZipBundle(clientName string, files []generatedArtifactFile) ([]byte, e
 	for _, file := range files {
 		entry, err := zw.Create(file.Filename)
 		if err != nil {
-			_ = zw.Close()
+			if closeErr := zw.Close(); closeErr != nil {
+				return nil, errors.Join(err, closeErr)
+			}
 			return nil, err
 		}
 		if _, err := entry.Write(file.Content); err != nil {
-			_ = zw.Close()
+			if closeErr := zw.Close(); closeErr != nil {
+				return nil, errors.Join(err, closeErr)
+			}
 			return nil, err
 		}
 		manifest = append(manifest, "- "+file.Filename+" ("+file.ArtifactType+")")
@@ -966,11 +971,15 @@ func buildZipBundle(clientName string, files []generatedArtifactFile) ([]byte, e
 
 	readme, err := zw.Create("README.txt")
 	if err != nil {
-		_ = zw.Close()
+		if closeErr := zw.Close(); closeErr != nil {
+			return nil, errors.Join(err, closeErr)
+		}
 		return nil, err
 	}
 	if _, err := readme.Write([]byte(strings.Join(manifest, "\n") + "\n")); err != nil {
-		_ = zw.Close()
+		if closeErr := zw.Close(); closeErr != nil {
+			return nil, errors.Join(err, closeErr)
+		}
 		return nil, err
 	}
 	if err := zw.Close(); err != nil {

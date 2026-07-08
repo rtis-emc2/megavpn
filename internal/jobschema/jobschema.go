@@ -418,11 +418,16 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 			return nil, err
 		}
 		normalized["node_id"] = nodeID
-		trimOptionalStrings(normalized, payload, "policy_id", "policy_key", "revision_id", "disable_reason")
+		trimOptionalStrings(normalized, payload, "policy_id", "policy_key", "revision_id", "disable_reason", "firewall_payload_hash", "safety_mode", "agent_control_plane_url")
 		if v, ok, err := optionalInt(payload, "revision_no"); err != nil {
 			return nil, err
 		} else if ok {
 			normalized["revision_no"] = v
+		}
+		if v, ok, err := optionalInt(payload, "firewall_payload_version"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["firewall_payload_version"] = v
 		}
 		for _, key := range []string{"default_input_policy", "default_forward_policy", "default_output_policy"} {
 			value, err := optionalString(payload, key)

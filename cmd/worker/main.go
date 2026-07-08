@@ -67,6 +67,7 @@ func main() {
 func runOnce(ctx context.Context, log interface {
 	Info(string, ...any)
 	Error(string, ...any)
+	Warn(string, ...any)
 }, store *postgres.Store, cfg config.Config) {
 	workerID := cfg.Worker.WorkerID
 	expiredTickets, deletedTickets, err := store.CleanupBinaryDownloadTickets(ctx, binaryDownloadTicketRetention)
@@ -83,7 +84,9 @@ func runOnce(ctx context.Context, log interface {
 	if !ok {
 		return
 	}
-	_ = store.AddJobLog(ctx, job.ID, "info", "worker started job", map[string]any{"type": job.Type})
+	if err := store.AddJobLog(ctx, job.ID, "info", "worker started job", map[string]any{"type": job.Type}); err != nil {
+		log.Warn("job start log write failed", "job_id", job.ID, "type", job.Type, "error", err)
+	}
 	result := map[string]any{"handled_by": "worker", "type": job.Type}
 	status := "succeeded"
 	switch job.Type {
@@ -109,6 +112,8 @@ func runOnce(ctx context.Context, log interface {
 		log.Error("complete job failed", "job_id", job.ID, "error", err)
 		return
 	}
-	_ = store.AddJobLog(ctx, job.ID, "info", "worker finished job", result)
+	if err := store.AddJobLog(ctx, job.ID, "info", "worker finished job", result); err != nil {
+		log.Warn("job finish log write failed", "job_id", job.ID, "type", job.Type, "error", err)
+	}
 	log.Info("job completed", "job_id", job.ID, "type", job.Type)
 }

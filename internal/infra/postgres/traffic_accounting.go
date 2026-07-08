@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -489,7 +488,9 @@ func scanTrafficAccountingSample(row interface{ Scan(dest ...any) error }) (doma
 	); err != nil {
 		return domain.TrafficAccountingSample{}, err
 	}
-	_ = json.Unmarshal(metadataRaw, &item.Metadata)
+	if err := decodeJSONField(metadataRaw, &item.Metadata, "traffic_accounting_samples.metadata_json"); err != nil {
+		return domain.TrafficAccountingSample{}, err
+	}
 	if item.Metadata == nil {
 		item.Metadata = map[string]any{}
 	}

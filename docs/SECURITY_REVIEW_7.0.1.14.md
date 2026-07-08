@@ -12,7 +12,8 @@
 
 ## Changes Reviewed
 
-- Go release baseline raised to `1.26.4`; CI and release gate now run
+- Go release baseline raised to patch-level enforcement; the maintained
+  repository baseline is now `1.26.5`, and CI/release gate run
   `govulncheck@v1.5.0`.
 - `scripts/control-plane-install.sh` now compares full Go semver including patch
   version, instead of accepting any matching major/minor toolchain.

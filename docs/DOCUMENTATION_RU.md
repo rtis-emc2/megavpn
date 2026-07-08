@@ -1,6 +1,6 @@
 # Индекс документации
 
-**Релиз:** `7.1.0.30`
+**Релиз:** `7.1.1.0`
 
 Этот документ - русская входная точка в документацию RTIS MegaVPN. Он фиксирует,
 где находится источник правды по каждому направлению: эксплуатация,
@@ -16,19 +16,20 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | 2 | [Руководство пользователя](USER_GUIDE_RU.md) | Полный операторский guide |
 | 3 | [Operations runbook](OPERATIONS_RUNBOOK.md) | Эксплуатация, backup, restore, upgrade, rollback |
 | 4 | [Release gates](RELEASE_GATES.md) | Release evidence и критерии приемки |
-| 5 | [Self-testing](SELF_TESTING.md) | Локальные и live diagnostic gates |
-| 6 | [Threat model](THREAT_MODEL.md) | Security model и остаточные риски |
-| 7 | [RBAC matrix](RBAC_MATRIX.md) | Роли, permissions и privileged job rules |
-| 8 | [Managed backhaul](BACKHAUL.md) | Модель связи ingress -> egress |
-| 9 | [Карта нод](NODE_MAP_RU.md) | GeoIP-размещение нод и overlay managed backhaul |
-| 10 | [Каталог firewall-политик](FIREWALL_RU.md) | Managed firewall policies, address groups, rules и node apply state |
-| 11 | [Учет трафика](TRAFFIC_ACCOUNTING_RU.md) | Aggregate counters, privacy boundary и retention |
-| 12 | [VLESS access groups](VLESS_GROUPS_RU.md) | Reusable VLESS client routing groups |
-| 13 | [VLESS-подписки](VLESS_SUBSCRIPTIONS_RU.md) | Per-client VLESS subscription tokens и workflow доставки |
-| 14 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
-| 15 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
-| 16 | [Security review](SECURITY_REVIEW_7.1.0.30.md) | Security и release review artifact |
-| 17 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
+| 5 | [Release notes](releases/7.1.1.0.md) | Текущий release baseline и заметные изменения |
+| 6 | [Self-testing](SELF_TESTING.md) | Локальные и live diagnostic gates |
+| 7 | [Threat model](THREAT_MODEL.md) | Security model и остаточные риски |
+| 8 | [RBAC matrix](RBAC_MATRIX.md) | Роли, permissions и privileged job rules |
+| 9 | [Managed backhaul](BACKHAUL.md) | Модель связи ingress -> egress |
+| 10 | [Карта нод](NODE_MAP_RU.md) | GeoIP-размещение нод и overlay managed backhaul |
+| 11 | [Каталог firewall-политик](FIREWALL_RU.md) | Managed firewall policies, address groups, rules и node apply state |
+| 12 | [Учет трафика](TRAFFIC_ACCOUNTING_RU.md) | Aggregate counters, privacy boundary и retention |
+| 13 | [VLESS access groups](VLESS_GROUPS_RU.md) | Reusable VLESS client routing groups |
+| 14 | [VLESS-подписки](VLESS_SUBSCRIPTIONS_RU.md) | Per-client VLESS subscription tokens и workflow доставки |
+| 15 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
+| 16 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
+| 17 | [Security review](SECURITY_REVIEW_7.1.1.0.md) | Security и release review artifact |
+| 18 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
 
 ## Владение документацией
 
@@ -37,7 +38,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | Product overview | `README.md`, `README_RU.md` | README должен оставаться краткой входной точкой. |
 | Operator usage | `docs/USER_GUIDE_EN.md`, `docs/USER_GUIDE_RU.md` | Английская и русская версии должны быть синхронизированы. |
 | Operations | `docs/OPERATIONS_RUNBOOK.md` | Production procedures и controlled maintenance. |
-| Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md` | Release evidence, self-test и smoke gates. |
+| Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md`, `docs/releases/7.1.1.0.md` | Release notes, release evidence, self-test и smoke gates. |
 | Security | `docs/THREAT_MODEL.md`, `docs/RBAC_MATRIX.md` | Threat model, roles, permissions и privileged jobs. |
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection и troubleshooting. |
 | Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP-размещение нод, локальная статичная карта, node owner metadata и backhaul overlay. |
@@ -71,7 +72,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 - Если в Control Plane есть managed workflow, документация не должна предлагать
   ручное изменение node как основной путь.
 - Каждый поддерживаемый документационный файл должен содержать release banner:
-  `7.1.0.30`.
+  `7.1.1.0`.
 
 ## Текущие gaps документации
 

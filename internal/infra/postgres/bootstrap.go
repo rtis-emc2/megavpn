@@ -223,7 +223,10 @@ func (s *Store) CreateNodeBootstrapJob(ctx context.Context, nodeID, bootstrapMod
 		Payload:   payload,
 		CreatedAt: now,
 	}
-	b, _ := json.Marshal(payload)
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return domain.Job{}, domain.NodeBootstrapRun{}, fmt.Errorf("marshal bootstrap job payload: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `insert into jobs(id,type,scope_type,scope_id,node_id,instance_id,status,priority,payload_json,created_at) values($1,$2,$3,$4,$5,null,$6,$7,$8,$9)`,
 		job.ID, job.Type, job.ScopeType, job.ScopeID, job.NodeID, job.Status, job.Priority, b, job.CreatedAt); err != nil {
 		return domain.Job{}, domain.NodeBootstrapRun{}, err
@@ -273,7 +276,7 @@ func (s *Store) ensureFirewallAllowsSSHBootstrap(ctx context.Context, nodeID str
 		return fmt.Errorf("node firewall is enforced but has no policy reference; use Firewall -> Node apply -> Disable before SSH bootstrap or reinstall")
 	}
 	for _, port := range ports {
-		allowed, err := s.firewallPolicyAllowsInputTCPPort(ctx, policyID, port)
+		allowed, err := s.firewallPolicyAllowsStrictSSHBootstrapPort(ctx, policyID, port)
 		if err != nil {
 			return fmt.Errorf("check node firewall SSH allow rules before bootstrap: %w", err)
 		}
@@ -360,6 +363,60 @@ where policy_id=$1
 	return false, rows.Err()
 }
 
+func (s *Store) firewallPolicyAllowsStrictSSHBootstrapPort(ctx context.Context, policyID string, port int) (bool, error) {
+	rows, err := s.db.Query(ctx, `select r.protocol,coalesce(r.dst_ports,''),coalesce(r.src_cidr,''),coalesce(r.src_list_id::text,''),coalesce(l.key,''),r.state_match
+from firewall_rules r
+left join firewall_address_lists l on l.id=r.src_list_id
+where r.policy_id=$1
+  and r.status='active'
+  and r.enabled=true
+  and r.chain='input'
+  and r.action='accept'
+  and r.protocol in ('tcp','any')`, policyID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var protocol, dstPorts, srcCIDR, srcListID, srcListKey string
+		var stateMatch []string
+		if err := rows.Scan(&protocol, &dstPorts, &srcCIDR, &srcListID, &srcListKey, &stateMatch); err != nil {
+			return false, err
+		}
+		if !firewallRuleAllowsNewState(stateMatch) {
+			continue
+		}
+		if protocol == "tcp" && !firewallPortListContains(dstPorts, port) {
+			continue
+		}
+		if protocol == "any" && strings.TrimSpace(dstPorts) != "" {
+			continue
+		}
+		if firewallRuleHasTrustedControlSource(ctx, s, srcCIDR, srcListID, srcListKey) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func firewallRuleHasTrustedControlSource(ctx context.Context, s *Store, srcCIDR, srcListID, srcListKey string) bool {
+	if strings.TrimSpace(srcCIDR) != "" {
+		if _, err := netip.ParsePrefix(strings.TrimSpace(srcCIDR)); err == nil {
+			return true
+		}
+		return false
+	}
+	if strings.TrimSpace(srcListID) == "" {
+		return false
+	}
+	srcListKey = strings.ToLower(strings.TrimSpace(srcListKey))
+	if srcListKey != "trusted_control_plane" && srcListKey != "trusted_operators" {
+		return false
+	}
+	hasEntries, err := s.firewallAddressListHasRenderableEntries(ctx, srcListID)
+	return err == nil && hasEntries
+}
+
 func firewallRuleAllowsNewState(values []string) bool {
 	if len(values) == 0 {
 		return true
@@ -408,16 +465,20 @@ func firewallPortListContains(ports string, target int) bool {
 }
 
 func (s *Store) firewallAddressListHasRenderableEntries(ctx context.Context, listID string) (bool, error) {
+	listID = strings.TrimSpace(listID)
+	if listID == "" {
+		return false, nil
+	}
 	var ok bool
 	err := s.db.QueryRow(ctx, `select exists(
 	select 1
 	from firewall_address_entries e
 	join firewall_address_lists l on l.id=e.list_id
-	where e.list_id::text=$1
+	where e.list_id=$1::uuid
 	  and e.status='active'
 	  and l.status='active'
-	  and lower(coalesce(e.value_type,'auto')) <> 'dns'
-)`, strings.TrimSpace(listID)).Scan(&ok)
+	  and e.value_type in ('cidr','address','range')
+)`, listID).Scan(&ok)
 	return ok, err
 }
 
@@ -445,8 +506,12 @@ func (s *Store) ListNodeBootstrapRuns(ctx context.Context, nodeID string, limit 
 		if err := rows.Scan(&x.ID, &x.NodeID, &x.JobID, &x.Status, &x.BootstrapMode, &reqRaw, &resRaw, &x.StartedAt, &x.FinishedAt, &x.CreatedBy, &x.CreatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(reqRaw, &x.RequestPayload)
-		_ = json.Unmarshal(resRaw, &x.ResultPayload)
+		if err := decodeJSONField(reqRaw, &x.RequestPayload, "node_bootstrap_runs.request_payload_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(resRaw, &x.ResultPayload, "node_bootstrap_runs.result_payload_json"); err != nil {
+			return nil, err
+		}
 		if x.RequestPayload == nil {
 			x.RequestPayload = map[string]any{}
 		}

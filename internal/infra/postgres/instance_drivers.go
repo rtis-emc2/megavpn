@@ -76,7 +76,9 @@ func (s *Store) RollbackInstanceRevision(ctx context.Context, instanceID, revisi
 		return domain.InstanceRevision{}, fmt.Errorf("selected revision is not rollback-ready; status=%s", strings.TrimSpace(status))
 	}
 	var spec map[string]any
-	_ = json.Unmarshal(specRaw, &spec)
+	if err := decodeJSONField(specRaw, &spec, "instance_revisions.spec_json"); err != nil {
+		return domain.InstanceRevision{}, err
+	}
 	if spec == nil {
 		spec = map[string]any{}
 	}
@@ -281,9 +283,15 @@ func (s *Store) ListProvisioningAccessesByInstance(ctx context.Context, instance
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(policyRaw, &rec.Access.Policy)
-		_ = json.Unmarshal(metadataRaw, &rec.Access.Metadata)
-		_ = json.Unmarshal(specRaw, &rec.Instance.Spec)
+		if err := decodeJSONField(policyRaw, &rec.Access.Policy, "service_accesses.policy_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(metadataRaw, &rec.Access.Metadata, "service_accesses.metadata_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(specRaw, &rec.Instance.Spec, "instance_revisions.spec_json"); err != nil {
+			return nil, err
+		}
 		if rec.Access.Policy == nil {
 			rec.Access.Policy = map[string]any{}
 		}
@@ -1953,14 +1961,18 @@ func (s *Store) resolveSecretText(ctx context.Context, refRaw, inlineRaw any) (s
 }
 
 type xrayVLESSGroup struct {
-	Key         string
-	Label       string
-	EgressMode  string
-	OutboundTag string
-	TargetID    string
-	Outbound    map[string]any
-	AdBlock     bool
-	Rules       []map[string]any
+	Key          string
+	Label        string
+	Description  string
+	AccessMode   string
+	EgressMode   string
+	EgressNodeID string
+	OutboundTag  string
+	TargetID     string
+	Status       string
+	Outbound     map[string]any
+	AdBlock      bool
+	Rules        []map[string]any
 }
 
 func xrayManagedClientSpecs(raw any) []map[string]any {
@@ -2051,14 +2063,18 @@ func xrayVLESSGroups(spec map[string]any) []xrayVLESSGroup {
 			rules = append(rules, extraRules...)
 		}
 		group := xrayVLESSGroup{
-			Key:         key,
-			Label:       firstString(groupRaw["label"], groupRaw["title"], key),
-			EgressMode:  strings.ToLower(firstString(groupRaw["egress_mode"], groupRaw["access_mode"], groupRaw["mode"])),
-			OutboundTag: outboundTag,
-			TargetID:    firstString(groupRaw["target_instance_id"], groupRaw["targetInstanceID"]),
-			Outbound:    outbound,
-			AdBlock:     xrayVLESSGroupAdBlock(groupRaw),
-			Rules:       rules,
+			Key:          key,
+			Label:        firstString(groupRaw["label"], groupRaw["title"], key),
+			Description:  firstString(groupRaw["description"], groupRaw["notes"]),
+			AccessMode:   strings.ToLower(firstString(groupRaw["access_mode"], groupRaw["accessMode"])),
+			EgressMode:   strings.ToLower(firstString(groupRaw["egress_mode"], groupRaw["access_mode"], groupRaw["mode"])),
+			EgressNodeID: firstString(groupRaw["egress_node_id"], groupRaw["egressNodeID"], groupRaw["node_id"]),
+			OutboundTag:  outboundTag,
+			TargetID:     firstString(groupRaw["target_instance_id"], groupRaw["targetInstanceID"]),
+			Status:       strings.ToLower(firstString(groupRaw["status"], "active")),
+			Outbound:     outbound,
+			AdBlock:      xrayVLESSGroupAdBlock(groupRaw),
+			Rules:        rules,
 		}
 		groups = append(groups, group)
 		seen[key] = struct{}{}

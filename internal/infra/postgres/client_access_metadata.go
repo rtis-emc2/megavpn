@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -191,8 +190,12 @@ func (s *Store) existingClientXrayProvisioningGroup(ctx context.Context, clientI
 	}
 	metadata := map[string]any{}
 	policy := map[string]any{}
-	_ = json.Unmarshal(metadataRaw, &metadata)
-	_ = json.Unmarshal(policyRaw, &policy)
+	if err := decodeJSONField(metadataRaw, &metadata, "service_accesses.metadata_json"); err != nil {
+		return "", err
+	}
+	if err := decodeJSONField(policyRaw, &policy, "service_accesses.policy_json"); err != nil {
+		return "", err
+	}
 	return firstString(
 		xrayVLESSGroupFromMetadata(metadata),
 		xrayVLESSGroupFromMetadata(policy),
@@ -542,7 +545,9 @@ func (s *Store) listXrayVLESSGroupSyncInstances(ctx context.Context) ([]domain.I
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(specRaw, &instance.Spec)
+		if err := decodeJSONField(specRaw, &instance.Spec, "instance_revisions.spec_json"); err != nil {
+			return nil, err
+		}
 		if instance.Spec == nil {
 			instance.Spec = map[string]any{}
 		}

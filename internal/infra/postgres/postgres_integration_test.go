@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -372,8 +373,16 @@ func TestPostgresIntegrationXrayProvisioningReusesClientUUIDAcrossInstances(t *t
 		t.Fatalf("second ensured xray uuid = %q, want %q", got, firstUUID)
 	}
 
-	if _, err := store.RotateServiceAccess(ctx, client.ID, firstAccess.ID, "xray-core"); err != nil {
+	rotateJob, err := store.RotateServiceAccess(ctx, client.ID, firstAccess.ID, "xray-core")
+	if err != nil {
 		t.Fatalf("rotate first xray uuid: %v", err)
+	}
+	queuedInstanceIDs := map[string]bool{}
+	for _, raw := range stringSliceFromAny(rotateJob.Payload["instance_ids"]) {
+		queuedInstanceIDs[raw] = true
+	}
+	if !queuedInstanceIDs[first.ID] || !queuedInstanceIDs[second.ID] {
+		t.Fatalf("rotation job instance_ids = %#v, want both xray instances %s and %s", rotateJob.Payload["instance_ids"], first.ID, second.ID)
 	}
 	rotatedMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, firstAccess.ID)
 	if err != nil {
@@ -388,6 +397,16 @@ func TestPostgresIntegrationXrayProvisioningReusesClientUUIDAcrossInstances(t *t
 	}
 	if xrayServiceAccessUUIDRotationRequested(rotatedMetadata) {
 		t.Fatalf("rotation marker was not cleared: %#v", rotatedMetadata)
+	}
+	secondAfterRotate := xrayServiceAccessByInstance(t, ctx, store, client.ID, second.ID)
+	if got := firstString(secondAfterRotate.Metadata["xray_uuid"]); got != rotatedUUID {
+		t.Fatalf("second xray uuid after rotation = %q, want propagated uuid %q", got, rotatedUUID)
+	}
+	if got := firstString(secondAfterRotate.Metadata["vless_group"], secondAfterRotate.Metadata["xray_group"], secondAfterRotate.Metadata["outbound_group"]); got != "default" {
+		t.Fatalf("second xray group after rotation = %q, want preserved default", got)
+	}
+	if xrayServiceAccessUUIDRotationRequested(secondAfterRotate.Metadata) {
+		t.Fatalf("second rotation marker was not cleared: %#v", secondAfterRotate.Metadata)
 	}
 }
 
@@ -480,6 +499,232 @@ func TestPostgresIntegrationXrayClientIdentitySurvivesServiceAccessDeletion(t *t
 	if got := firstString(replacementMetadata["xray_uuid"]); got != firstUUID {
 		t.Fatalf("replacement ensured xray uuid = %q, want retained uuid %q", got, firstUUID)
 	}
+}
+
+func TestPostgresIntegrationInstanceVLESSGroupMembershipBulk(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-vless-members-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.30",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	instance, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-vless-members-" + suffix,
+		Slug:         "it-vless-members-" + suffix,
+		EndpointHost: "members.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("members.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create xray instance: %v", err)
+	}
+	first, err := store.CreateClient(ctx, domain.Client{Username: "it-vless-member-a-" + suffix, Email: "member-a-" + suffix + "@example.invalid"})
+	if err != nil {
+		t.Fatalf("create first client: %v", err)
+	}
+	second, err := store.CreateClient(ctx, domain.Client{Username: "it-vless-member-b-" + suffix, Email: "member-b-" + suffix + "@example.invalid"})
+	if err != nil {
+		t.Fatalf("create second client: %v", err)
+	}
+
+	added, err := store.AddInstanceVLESSGroupMembers(ctx, instance.ID, "out_usa_sf", domain.VLESSGroupMembershipRequest{
+		ClientIDs:  []string{first.ID, second.ID},
+		Mode:       "add_or_move",
+		QueueApply: true,
+	})
+	if err != nil {
+		t.Fatalf("bulk add: %v", err)
+	}
+	if added.Created != 2 || added.Updated != 0 || added.Skipped != 0 || len(added.Failed) != 0 {
+		t.Fatalf("bulk add result = %#v, want 2 created", added)
+	}
+	if added.ApplyJobID == "" {
+		t.Fatalf("bulk add did not queue a bounded instance apply job: %#v", added)
+	}
+	overview, err := store.ListInstanceVLESSGroupMembers(ctx, instance.ID)
+	if err != nil {
+		t.Fatalf("list overview: %v", err)
+	}
+	if got := vlessGroupMemberCount(overview, "out_usa_sf"); got != 2 {
+		t.Fatalf("out_usa_sf member count = %d, want 2", got)
+	}
+	firstAccess := xrayServiceAccessByInstance(t, ctx, store, first.ID, instance.ID)
+	firstMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, firstAccess.ID)
+	if err != nil {
+		t.Fatalf("ensure first uuid: %v", err)
+	}
+	firstUUID := firstString(firstMetadata["xray_uuid"])
+	if firstUUID == "" {
+		t.Fatal("first uuid is empty")
+	}
+
+	repeated, err := store.AddInstanceVLESSGroupMembers(ctx, instance.ID, "out_usa_sf", domain.VLESSGroupMembershipRequest{
+		ClientIDs: []string{first.ID, second.ID},
+		Mode:      "add_or_move",
+	})
+	if err != nil {
+		t.Fatalf("repeat add: %v", err)
+	}
+	if repeated.Created != 0 || repeated.Updated != 0 || repeated.Skipped != 2 {
+		t.Fatalf("repeat add result = %#v, want 2 skipped", repeated)
+	}
+	if repeated.ApplyJobID != "" {
+		t.Fatalf("repeat idempotent add queued apply job %s", repeated.ApplyJobID)
+	}
+
+	unresolved, err := store.AddInstanceVLESSGroupMembers(ctx, instance.ID, "out_usa_sf", domain.VLESSGroupMembershipRequest{
+		ClientRefs: []string{"missing-" + suffix + "@example.invalid"},
+		Mode:       "add_or_move",
+	})
+	if err != nil {
+		t.Fatalf("unresolved refs should return structured failures, not transport error: %v", err)
+	}
+	if len(unresolved.Failed) != 1 || unresolved.Created != 0 || unresolved.Updated != 0 || unresolved.ApplyJobID != "" {
+		t.Fatalf("unresolved refs result = %#v, want one failed ref and no apply", unresolved)
+	}
+
+	moved, err := store.MoveInstanceVLESSGroupMember(ctx, instance.ID, first.ID, "default")
+	if err != nil {
+		t.Fatalf("move member: %v", err)
+	}
+	if moved.Updated != 1 {
+		t.Fatalf("move result = %#v, want one updated", moved)
+	}
+	movedAccess := xrayServiceAccessByInstance(t, ctx, store, first.ID, instance.ID)
+	movedMetadata, err := store.EnsureXrayServiceAccessUUID(ctx, movedAccess.ID)
+	if err != nil {
+		t.Fatalf("ensure moved uuid: %v", err)
+	}
+	if got := firstString(movedMetadata["xray_uuid"]); got != firstUUID {
+		t.Fatalf("moved uuid = %q, want preserved %q", got, firstUUID)
+	}
+	if got := firstString(movedMetadata["vless_group"], movedMetadata["xray_group"], movedMetadata["outbound_group"]); got != "default" {
+		t.Fatalf("moved group = %q, want default", got)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where client_account_id=$1 and instance_id=$2`, 1, first.ID, instance.ID)
+}
+
+func TestPostgresIntegrationInstanceVLESSGroupMembershipRejectsUnknownGroup(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-vless-unknown-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.31",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	instance, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-vless-unknown-" + suffix,
+		Slug:         "it-vless-unknown-" + suffix,
+		EndpointHost: "unknown.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("unknown.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create xray instance: %v", err)
+	}
+	client, err := store.CreateClient(ctx, domain.Client{Username: "it-vless-unknown-client-" + suffix})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	_, err = store.AddInstanceVLESSGroupMembers(ctx, instance.ID, "route", domain.VLESSGroupMembershipRequest{ClientIDs: []string{client.ID}})
+	if err == nil {
+		t.Fatal("unknown group add succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "available groups:") || !strings.Contains(err.Error(), "out_usa_sf") {
+		t.Fatalf("unknown group error = %q, want available group keys", err.Error())
+	}
+}
+
+func TestPostgresIntegrationInstanceVLESSGroupMembershipBoundedJobsForLargeBatch(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-vless-bulk-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.2.32",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	instance, err := store.CreateInstanceValidatedDraft(ctx, domain.Instance{
+		NodeID:       node.ID,
+		ServiceCode:  "xray-core",
+		Name:         "it-vless-bulk-" + suffix,
+		Slug:         "it-vless-bulk-" + suffix,
+		EndpointHost: "bulk.example.test",
+		EndpointPort: 7080,
+		Spec:         xraySharedClientIdentityTestSpec("bulk.example.test"),
+	})
+	if err != nil {
+		t.Fatalf("create xray instance: %v", err)
+	}
+	clientIDs := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		client, err := store.CreateClient(ctx, domain.Client{Username: fmt.Sprintf("it-vless-bulk-%s-%04d", suffix, i)})
+		if err != nil {
+			t.Fatalf("create client %d: %v", i, err)
+		}
+		clientIDs = append(clientIDs, client.ID)
+	}
+
+	var before int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&before); err != nil {
+		t.Fatalf("count jobs before: %v", err)
+	}
+	result, err := store.AddInstanceVLESSGroupMembers(ctx, instance.ID, "out_usa_sf", domain.VLESSGroupMembershipRequest{
+		ClientIDs:  clientIDs,
+		Mode:       "add_or_move",
+		QueueApply: true,
+	})
+	if err != nil {
+		t.Fatalf("bulk add 1000: %v", err)
+	}
+	if result.Created != 1000 || result.Updated != 0 || len(result.Failed) != 0 {
+		t.Fatalf("bulk 1000 result = %#v, want 1000 created", result)
+	}
+	var after int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&after); err != nil {
+		t.Fatalf("count jobs after: %v", err)
+	}
+	if got := after - before; got > 2 {
+		t.Fatalf("bulk 1000 queued %d jobs, want bounded <= 2", got)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where instance_id=$1`, 1000, instance.ID)
 }
 
 func TestPostgresIntegrationDefaultFirewallBaseline(t *testing.T) {
@@ -622,6 +867,13 @@ func TestPostgresIntegrationFirewallApplyCreatesRevisionJobAndNodeState(t *testi
 		t.Fatal("node_base firewall policy was not seeded")
 	}
 
+	previewJob, err := store.CreateFirewallPreviewJob(ctx, node.ID, nodeBase.ID, true)
+	if err != nil {
+		t.Fatalf("create firewall preview job by policy UUID: %v", err)
+	}
+	if err := store.CompleteJob(ctx, previewJob.ID, "succeeded", map[string]any{"rendered_hash": "sha256:test-firewall-preview"}); err != nil {
+		t.Fatalf("complete firewall preview job: %v", err)
+	}
 	job, err := store.CreateFirewallApplyJob(ctx, node.ID, nodeBase.ID, true)
 	if err != nil {
 		t.Fatalf("create firewall apply job by policy UUID: %v", err)
@@ -684,6 +936,126 @@ func TestPostgresIntegrationFirewallApplyCreatesRevisionJobAndNodeState(t *testi
 	if revisionID != "" || appliedRevisionID != "" || desiredRevisionID != "" || status != "disabled" || stringify(observed["status"]) != "disabled" {
 		t.Fatalf("disabled firewall node state = policy:%q revision:%q desired:%q status:%q observed:%#v, want disabled without policy/revision refs",
 			revisionID, appliedRevisionID, desiredRevisionID, status, observed)
+	}
+}
+
+func TestPostgresIntegrationStrictFirewallApplyRequiresMatchingPreview(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-fw-preview-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.8.20",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	inventory, err := store.FirewallInventory(ctx)
+	if err != nil {
+		t.Fatalf("firewall inventory: %v", err)
+	}
+	var nodeBase domain.FirewallPolicy
+	for _, policy := range inventory.Policies {
+		if policy.Key == "node_base" {
+			nodeBase = policy
+			break
+		}
+	}
+	if nodeBase.ID == "" {
+		t.Fatal("node_base firewall policy was not seeded")
+	}
+
+	_, err = store.CreateFirewallApplyJob(ctx, node.ID, nodeBase.ID, true)
+	if err == nil {
+		t.Fatal("strict apply without preview succeeded, want blocked apply")
+	}
+	if !strings.Contains(err.Error(), "requires a successful Preview") {
+		t.Fatalf("strict apply without preview error = %q, want preview gate message", err.Error())
+	}
+}
+
+func TestPostgresIntegrationStrictFirewallRejectsDNSOnlyAddressGroup(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-fw-dns-list-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.8.30",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	inventory, err := store.FirewallInventory(ctx)
+	if err != nil {
+		t.Fatalf("firewall inventory: %v", err)
+	}
+	var nodeBase domain.FirewallPolicy
+	for _, policy := range inventory.Policies {
+		if policy.Key == "node_base" {
+			nodeBase = policy
+			break
+		}
+	}
+	if nodeBase.ID == "" {
+		t.Fatal("node_base firewall policy was not seeded")
+	}
+	list, err := store.CreateFirewallAddressList(ctx, domain.FirewallAddressList{
+		Key:    "it_dns_only_" + suffix,
+		Label:  "Integration DNS-only list " + suffix,
+		Scope:  "global",
+		Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create DNS-only address list: %v", err)
+	}
+	if _, err := store.CreateFirewallAddressEntry(ctx, list.ID, domain.FirewallAddressEntry{
+		Value:     "ssh.example.invalid",
+		ValueType: "dns",
+		Label:     "DNS catalog context only",
+		Status:    "active",
+	}); err != nil {
+		t.Fatalf("create DNS-only address entry: %v", err)
+	}
+	srcListID := list.ID
+	_, err = store.CreateFirewallRule(ctx, nodeBase.ID, domain.FirewallRule{
+		Priority:   175,
+		Chain:      "input",
+		Action:     "accept",
+		Direction:  "in",
+		Protocol:   "tcp",
+		SrcListID:  &srcListID,
+		DstPorts:   "22",
+		StateMatch: []string{"new", "established"},
+		Comment:    "DNS-only list must not satisfy strict nftables input allow.",
+		Enabled:    true,
+		Status:     "active",
+	})
+	if err != nil {
+		t.Fatalf("create DNS-only source rule: %v", err)
+	}
+
+	_, err = store.CreateFirewallPreviewJob(ctx, node.ID, nodeBase.ID, true)
+	if err == nil {
+		t.Fatal("strict preview with DNS-only source list succeeded, want validation error")
+	}
+	if !strings.Contains(err.Error(), "DNS-only") || !strings.Contains(err.Error(), list.Key) {
+		t.Fatalf("strict DNS-only preview error = %q, want DNS-only address group message", err.Error())
 	}
 }
 
@@ -760,6 +1132,7 @@ values($1,$2,$3,'applied','{"default_policy_enforcement":"enforced"}'::jsonb,now
 		Action:     "accept",
 		Direction:  "in",
 		Protocol:   "tcp",
+		SrcCIDR:    "10.50.0.10/32",
 		DstPorts:   "22",
 		StateMatch: []string{"new", "established"},
 		Comment:    "Allow SSH bootstrap from controlled source.",
@@ -1816,6 +2189,58 @@ func TestPostgresIntegrationRecoverStaleJobLeases(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationAgentJobCompletionRejectsForgedLeaseOwner(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-forged-job-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "10.50.1.20",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	job, err := store.CreateJob(ctx, domain.Job{
+		Type:      "node.route_policy.apply",
+		ScopeType: "node",
+		ScopeID:   &node.ID,
+		NodeID:    &node.ID,
+		Priority:  20,
+		Payload:   map[string]any{"node_id": node.ID},
+	})
+	if err != nil {
+		t.Fatalf("create route policy job: %v", err)
+	}
+	claimed, ok, err := store.AgentNextJob(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("claim route policy job: %v", err)
+	}
+	if !ok || claimed.ID != job.ID || claimed.LockedBy == nil {
+		t.Fatalf("claimed job = %#v, want locked running job %s", claimed, job.ID)
+	}
+	if err := store.CompleteAgentJob(ctx, claimed.ID, "agent:forged-node", "succeeded", map[string]any{"message": "forged result"}); err == nil {
+		t.Fatal("forged agent completion with mismatched lease owner must be rejected")
+	}
+	afterForge, err := store.GetJob(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("get job after forged completion: %v", err)
+	}
+	if afterForge.Status != "running" || afterForge.FinishedAt != nil {
+		t.Fatalf("job after forged completion = status:%s finished:%v, want still running", afterForge.Status, afterForge.FinishedAt)
+	}
+	if err := store.CompleteAgentJob(ctx, claimed.ID, "agent:"+node.ID, "succeeded", map[string]any{"message": "valid result"}); err != nil {
+		t.Fatalf("complete with real owner: %v", err)
+	}
+}
+
 func TestPostgresIntegrationAgentVersionProjection(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 
@@ -2030,6 +2455,46 @@ func TestPostgresIntegrationDeleteClientServiceAccessRemovesRows(t *testing.T) {
 	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, fixture.secret.ID)
 	if _, err := os.Stat(fixture.artifact.StoragePath); !os.IsNotExist(err) {
 		t.Fatalf("artifact file after service access delete error = %v, want not exist", err)
+	}
+}
+
+func TestPostgresIntegrationShareLinkRejectsRevokedTokenReuse(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	store.SetArtifactRoot(t.TempDir())
+
+	fixture := createClientServiceAccessCleanupFixture(t, ctx, store, "share-revoke")
+	link, artifact, err := store.ResolveShareLinkArtifact(ctx, fixture.share.Token)
+	if err != nil {
+		t.Fatalf("resolve active share link: %v", err)
+	}
+	if link.ID != fixture.share.ID || artifact.ID != fixture.artifact.ID {
+		t.Fatalf("resolved link/artifact = %s/%s, want %s/%s", link.ID, artifact.ID, fixture.share.ID, fixture.artifact.ID)
+	}
+	if _, err := store.RevokeShareLink(ctx, fixture.client.ID, fixture.share.ID); err != nil {
+		t.Fatalf("revoke share link: %v", err)
+	}
+	if _, _, err := store.ResolveShareLinkArtifact(ctx, fixture.share.Token); err == nil {
+		t.Fatal("revoked share token must not be reusable")
+	}
+}
+
+func TestPostgresIntegrationShareLinkRejectsExpiredToken(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	store.SetArtifactRoot(t.TempDir())
+
+	fixture := createClientServiceAccessCleanupFixture(t, ctx, store, "share-expired")
+	if _, err := store.db.Exec(ctx, `update share_links set expires_at=$2 where id=$1`, fixture.share.ID, time.Now().UTC().Add(-time.Minute)); err != nil {
+		t.Fatalf("expire share link: %v", err)
+	}
+	if _, _, err := store.ResolveShareLinkArtifact(ctx, fixture.share.Token); err == nil {
+		t.Fatal("expired share token must be rejected")
+	}
+	var status string
+	if err := store.db.QueryRow(ctx, `select status from share_links where id=$1`, fixture.share.ID).Scan(&status); err != nil {
+		t.Fatalf("load expired share link status: %v", err)
+	}
+	if status != "expired" {
+		t.Fatalf("share link status after expired resolve = %q, want expired", status)
 	}
 }
 
@@ -2390,6 +2855,33 @@ func xraySharedClientIdentityTestSpec(host string) map[string]any {
 			},
 		},
 		"config_mode": "0640",
+	}
+}
+
+func vlessGroupMemberCount(overview domain.VLESSGroupMembersOverview, key string) int {
+	key = normalizeXrayVLESSGroupKey(key)
+	for _, group := range overview.Groups {
+		if group.Key == key {
+			return group.MemberCount
+		}
+	}
+	return 0
+}
+
+func stringSliceFromAny(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if value := strings.TrimSpace(fmt.Sprint(item)); value != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }
 

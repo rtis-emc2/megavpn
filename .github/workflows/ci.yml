@@ -4,18 +4,30 @@ on:
   push:
     branches:
       - main
+      - audit/cleanup-hardening
   pull_request:
+  workflow_dispatch:
+    inputs:
+      allow_release_skips:
+        description: Allow release-gate skips for workstation-style diagnostics
+        type: boolean
+        required: false
+        default: false
+  schedule:
+    - cron: "17 3 * * 1"
 
 jobs:
   go:
-    name: Go build and test
+    name: Go build, vet and test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # actions/checkout v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        # actions/setup-go v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
           cache: true
@@ -24,8 +36,7 @@ jobs:
         run: go mod download
 
       - name: Check formatting
-        run: |
-          test -z "$(gofmt -l ./cmd ./internal)"
+        run: test -z "$(gofmt -l ./cmd ./internal)"
 
       - name: Vet
         run: go vet ./...
@@ -37,13 +48,131 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
 
       - name: Build binaries
-        run: ./scripts/build.sh
+        run: ./scripts/ci/build.sh
+
+      - name: Make build parity
+        run: make build
+
+  race:
+    name: Go race tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # actions/checkout v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Setup Go
+        # actions/setup-go v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Race tests
+        run: go test -race ./...
+
+  scripts:
+    name: Shell and Web UI syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # actions/checkout v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Setup Node.js
+        # actions/setup-node v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
 
       - name: Check shell syntax
         run: |
-          bash -n deploy-local.sh
-          bash -n scripts/api-smoke.sh
-          bash -n scripts/build.sh
-          bash -n scripts/install-runtime.sh
-          bash -n scripts/install-web.sh
-          bash -n scripts/run-local.sh
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            bash -n "$file"
+          done < <(
+            {
+              find scripts deploy -type f -name '*.sh' -print0
+              [[ ! -f deploy-local.sh ]] || printf '%s\0' deploy-local.sh
+            } | sort -z
+          )
+
+      - name: Check Web UI JavaScript syntax
+        run: |
+          set -euo pipefail
+          find web/assets -maxdepth 1 -type f -name '*.js' -print0 | sort -z | xargs -0 -n1 node --check
+
+      - name: Check GitHub Actions pinning
+        run: scripts/ci/actions-pinning-check.sh
+
+      - name: Documentation consistency
+        run: scripts/ci/docs-consistency.sh
+
+  diagnostics:
+    name: Self-test diagnostics
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # actions/checkout v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Setup Go
+        # actions/setup-go v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Node.js
+        # actions/setup-node v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Self-test
+        env:
+          MEGAVPN_SELF_TEST_RUN_RACE: "0"
+        run: scripts/ci/self-test.sh
+
+      - name: Upload self-test report
+        if: always()
+        # actions/upload-artifact v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: self-test-report
+          path: tmp/self-test/
+          if-no-files-found: warn
+
+  release-gate:
+    name: Release gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - name: Checkout
+        # actions/checkout v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Setup Go
+        # actions/setup-go v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Node.js
+        # actions/setup-node v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Release gate
+        env:
+          MEGAVPN_RELEASE_ALLOW_SKIPS: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_release_skips && '1' || github.event_name == 'workflow_dispatch' && '0' || vars.MEGAVPN_RELEASE_ALLOW_SKIPS }}
+          MEGAVPN_RELEASE_DATABASE_DSN: ${{ secrets.MEGAVPN_RELEASE_DATABASE_DSN }}
+          MEGAVPN_RELEASE_RESTORE_DATABASE_DSN: ${{ secrets.MEGAVPN_RELEASE_RESTORE_DATABASE_DSN }}
+          MEGAVPN_RELEASE_BASE_URL: ${{ secrets.MEGAVPN_RELEASE_BASE_URL }}
+          MEGAVPN_RELEASE_NODE_ID: ${{ secrets.MEGAVPN_RELEASE_NODE_ID }}
+          MEGAVPN_RELEASE_ENDPOINT_DOMAIN: ${{ secrets.MEGAVPN_RELEASE_ENDPOINT_DOMAIN }}
+          MEGAVPN_RELEASE_CERTIFICATE_ID: ${{ secrets.MEGAVPN_RELEASE_CERTIFICATE_ID }}
+          MEGAVPN_RELEASE_RUN_SERVICE_MATRIX: ${{ vars.MEGAVPN_RELEASE_RUN_SERVICE_MATRIX }}
+        run: scripts/ci/release-gate.sh

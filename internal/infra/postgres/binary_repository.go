@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -375,7 +374,9 @@ func scanBinaryArtifact(row binaryArtifactScanner) (domain.BinaryArtifact, error
 	); err != nil {
 		return domain.BinaryArtifact{}, err
 	}
-	_ = json.Unmarshal(metadataRaw, &item.Metadata)
+	if err := decodeJSONField(metadataRaw, &item.Metadata, "binary_artifacts.metadata_json"); err != nil {
+		return domain.BinaryArtifact{}, err
+	}
 	if item.Metadata == nil {
 		item.Metadata = map[string]any{}
 	}

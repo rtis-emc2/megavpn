@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -764,8 +763,12 @@ func (s *Store) ClearNodeStalePendingRotation(ctx context.Context, nodeID string
 		if err := rows.Scan(&job.ID, &job.Type, &job.ScopeType, &job.ScopeID, &job.NodeID, &job.InstanceID, &job.Status, &job.Priority, &payloadRaw, &resultRaw, &job.LockedBy, &job.LockedUntil, &job.CreatedAt, &job.StartedAt, &job.FinishedAt, &lastSeenAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(payloadRaw, &job.Payload)
-		_ = json.Unmarshal(resultRaw, &job.Result)
+		if err := decodeJSONField(payloadRaw, &job.Payload, "jobs.payload_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(resultRaw, &job.Result, "jobs.result_json"); err != nil {
+			return nil, err
+		}
 		if job.Payload == nil {
 			job.Payload = map[string]any{}
 		}
@@ -850,8 +853,12 @@ func (s *Store) loadNodeStaleClaim(ctx context.Context, nodeID string) (*struct 
 		}
 		return nil, err
 	}
-	_ = json.Unmarshal(payloadRaw, &x.job.Payload)
-	_ = json.Unmarshal(resultRaw, &x.job.Result)
+	if err := decodeJSONField(payloadRaw, &x.job.Payload, "jobs.payload_json"); err != nil {
+		return nil, err
+	}
+	if err := decodeJSONField(resultRaw, &x.job.Result, "jobs.result_json"); err != nil {
+		return nil, err
+	}
 	if x.job.Payload == nil {
 		x.job.Payload = map[string]any{}
 	}

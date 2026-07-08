@@ -78,6 +78,36 @@
       return (state.nodes || []).find((node) => node.id === instance?.node_id) || null;
     }
 
+    function isXrayVLESSInstance(instance) {
+      return normalizeInstanceServiceCode(instance?.service_code) === 'xray-core';
+    }
+
+    function ensureVLESSMemberDraft(instanceID, overview = null) {
+      if (!state.instanceVLESSMemberDraft || state.instanceVLESSMemberDraft.instanceID !== instanceID) {
+        const firstGroup = Array.isArray(overview?.groups) ? overview.groups[0] : null;
+        state.instanceVLESSMemberDraft = {
+          instanceID,
+          groupKey: firstGroup?.key || '',
+          search: '',
+          assignment: 'unassigned',
+          refs: '',
+          selected: {},
+          resultHTML: '',
+        };
+        state.instanceVLESSAvailable = null;
+      }
+      if (!state.instanceVLESSMemberDraft.groupKey && Array.isArray(overview?.groups) && overview.groups[0]?.key) {
+        state.instanceVLESSMemberDraft.groupKey = overview.groups[0].key;
+      }
+      return state.instanceVLESSMemberDraft;
+    }
+
+    function vlessMemberAvailableState(instanceID) {
+      const current = state.instanceVLESSAvailable;
+      if (!current || current.instanceID !== instanceID) return null;
+      return current;
+    }
+
     function serviceDefinition(serviceCode) {
       const code = normalizeInstanceServiceCode(serviceCode);
       return (state.servicesCatalog || []).find((item) => item.code === code || (code === 'xray-core' && item.code === 'xray')) || null;
@@ -736,6 +766,251 @@
       });
     }
 
+    function renderVLESSGroupMembersSection(instance, overview) {
+      if (!isXrayVLESSInstance(instance)) return '';
+      if (!overview) {
+        return `
+          <section class="section-card">
+            <div class="section-head">
+              <div>
+                <div class="mini-label">VLESS MEMBERSHIP</div>
+                <h2>VLESS group members</h2>
+                <p>Membership data is not available yet. Refresh the page after the instance catalog sync finishes.</p>
+              </div>
+            </div>
+          </section>`;
+      }
+      const draft = ensureVLESSMemberDraft(instance.id, overview);
+      const groups = Array.isArray(overview.groups) ? overview.groups : [];
+      const available = vlessMemberAvailableState(instance.id);
+      const selectedCount = Object.values(draft.selected || {}).filter(Boolean).length;
+      const pastedCount = splitRefs(draft.refs).length;
+      const groupOptions = groups.map((group) => `
+        <option value="${escapeHTML(group.key)}"${group.key === draft.groupKey ? ' selected' : ''}>
+          ${escapeHTML(group.label || group.key)} · ${escapeHTML(group.key)} · ${escapeHTML(String(group.member_count || 0))} members
+        </option>`).join('');
+      const groupCards = groups.map((group) => `
+        <div class="card compact-card ${group.key === draft.groupKey ? 'is-selected' : ''}">
+          <div class="inline-actions" style="justify-content:space-between;align-items:flex-start">
+            <div>
+              <strong>${escapeHTML(group.label || group.key)}</strong>
+              <div class="metric-caption">${escapeHTML(group.key)} · ${escapeHTML(group.egress_mode || 'default')} · ${escapeHTML(group.outbound_tag || 'direct')}</div>
+            </div>
+            ${statusTag(group.status || 'active')}
+          </div>
+          <div class="metric-row" style="margin-top:10px">
+            <span class="tag">${escapeHTML(String(group.member_count || 0))} members</span>
+            <span class="tag warn">${escapeHTML(String(group.pending_count || 0))} pending</span>
+            <span class="tag ok">${escapeHTML(String(group.active_count || 0))} active</span>
+          </div>
+        </div>`).join('');
+      const clientRows = Array.isArray(available?.items) ? available.items : [];
+      const clientsHTML = clientRows.length ? `
+        <div class="table-wrap vless-member-client-table">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:48px">Use</th>
+                <th>Client</th>
+                <th>Email</th>
+                <th>Current group</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${clientRows.map((client) => {
+                const checked = draft.selected?.[client.client_id] ? ' checked' : '';
+                return `
+                  <tr>
+                    <td><input class="vless-member-client-check" type="checkbox" data-client-id="${escapeHTML(client.client_id)}"${checked} /></td>
+                    <td><strong>${escapeHTML(client.username || client.display_name || client.client_id)}</strong><div class="muted mono">${escapeHTML(client.client_id)}</div></td>
+                    <td>${escapeHTML(client.email || 'n/a')}</td>
+                    <td>${client.group_key ? `<span class="tag">${escapeHTML(client.group_key)}</span>` : '<span class="tag">unassigned</span>'}</td>
+                    <td>${statusTag(client.access_status || client.client_status || 'available')}</td>
+                  </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>` : `
+        <div class="empty compact-empty">
+          <strong>No clients loaded</strong>
+          <p>Use search and Load clients, or paste usernames, emails or client IDs below.</p>
+        </div>`;
+      return `
+        <section class="section-card">
+          <div class="section-head">
+            <div>
+              <div class="mini-label">VLESS MEMBERSHIP</div>
+              <h2>VLESS group members</h2>
+              <p>Assign many clients to one VLESS routing group on this concrete Xray instance. UUID identity is preserved when a client is moved.</p>
+            </div>
+            <span class="tag">${escapeHTML(String(groups.length))} groups</span>
+          </div>
+          <div class="section-body">
+            <div class="grid cols-2">${groupCards || '<div class="empty compact-empty">No active VLESS groups available.</div>'}</div>
+            <div class="card" style="margin-top:16px">
+              <div class="form-grid">
+                <div class="field">
+                  <label>Target group</label>
+                  <select id="vlessMemberGroupSelect">${groupOptions}</select>
+                </div>
+                <div class="field">
+                  <label>Client search</label>
+                  <input id="vlessMemberSearchInput" value="${escapeHTML(draft.search || '')}" placeholder="username, email, client ID" />
+                </div>
+                <div class="field">
+                  <label>Assignment filter</label>
+                  <select id="vlessMemberAssignmentSelect">
+                    <option value="unassigned"${draft.assignment === 'unassigned' ? ' selected' : ''}>Unassigned to this instance</option>
+                    <option value="assigned"${draft.assignment === 'assigned' ? ' selected' : ''}>Already assigned</option>
+                    <option value="all"${draft.assignment === 'all' ? ' selected' : ''}>All clients</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Load</label>
+                  <button class="secondary-btn" id="loadVLESSMemberClientsBtn" type="button">Load clients</button>
+                </div>
+                <div class="field full">
+                  <label>Paste clients</label>
+                  <textarea id="vlessMemberRefsInput" rows="3" placeholder="usernames, emails or client IDs separated by comma or new line">${escapeHTML(draft.refs || '')}</textarea>
+                </div>
+              </div>
+              <div class="notice subtle-notice" style="margin-top:12px">
+                Selected: ${escapeHTML(String(selectedCount))} checked + ${escapeHTML(String(pastedCount))} pasted. Submit creates missing service access, moves existing access when needed and queues one instance apply.
+              </div>
+              <div style="margin-top:12px">${clientsHTML}</div>
+              <div class="inline-actions" style="margin-top:14px">
+                <button class="primary-btn" id="submitVLESSMemberBulkBtn" type="button"${groups.length ? '' : ' disabled'}>Add to group</button>
+                <button class="secondary-btn" id="clearVLESSMemberSelectionBtn" type="button">Clear selection</button>
+              </div>
+              <div id="vlessMemberResult" class="form-result">${draft.resultHTML || ''}</div>
+            </div>
+          </div>
+        </section>`;
+    }
+
+    function splitRefs(raw) {
+      return String(raw || '').split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean);
+    }
+
+    function bindVLESSGroupMembersSection(instance, overview) {
+      if (!isXrayVLESSInstance(instance) || !overview) return;
+      const draft = ensureVLESSMemberDraft(instance.id, overview);
+      const syncDraft = () => {
+        draft.groupKey = document.getElementById('vlessMemberGroupSelect')?.value || draft.groupKey || '';
+        draft.search = document.getElementById('vlessMemberSearchInput')?.value || '';
+        draft.assignment = document.getElementById('vlessMemberAssignmentSelect')?.value || 'unassigned';
+        draft.refs = document.getElementById('vlessMemberRefsInput')?.value || '';
+      };
+      document.getElementById('vlessMemberGroupSelect')?.addEventListener('change', () => {
+        syncDraft();
+        draft.selected = {};
+        draft.resultHTML = '';
+        state.instanceVLESSAvailable = null;
+        renderInstanceManagePage();
+      });
+      document.getElementById('vlessMemberSearchInput')?.addEventListener('input', syncDraft);
+      document.getElementById('vlessMemberAssignmentSelect')?.addEventListener('change', () => {
+        syncDraft();
+        draft.selected = {};
+        state.instanceVLESSAvailable = null;
+        renderInstanceManagePage();
+      });
+      document.getElementById('vlessMemberRefsInput')?.addEventListener('input', () => {
+        syncDraft();
+        const result = document.getElementById('vlessMemberResult');
+        if (result) result.innerHTML = draft.resultHTML || '';
+      });
+      document.querySelectorAll('.vless-member-client-check').forEach((checkbox) => {
+        checkbox.addEventListener('change', () => {
+          const clientID = checkbox.dataset.clientId || '';
+          if (!clientID) return;
+          if (checkbox.checked) draft.selected[clientID] = true;
+          else delete draft.selected[clientID];
+        });
+      });
+      document.getElementById('clearVLESSMemberSelectionBtn')?.addEventListener('click', () => {
+        draft.selected = {};
+        draft.refs = '';
+        draft.resultHTML = '';
+        renderInstanceManagePage();
+      });
+      document.getElementById('loadVLESSMemberClientsBtn')?.addEventListener('click', async () => {
+        syncDraft();
+        const target = document.getElementById('vlessMemberResult');
+        if (target) target.innerHTML = '<span class="tag warn">loading clients</span>';
+        const qs = new URLSearchParams({
+          search: draft.search || '',
+          assignment: draft.assignment || 'unassigned',
+          limit: '100',
+          offset: '0',
+        });
+        try {
+          state.instanceVLESSAvailable = await requestJSON(`/api/v1/instances/${encodeURIComponent(instance.id)}/vless-groups/available-clients?${qs.toString()}`);
+          draft.resultHTML = '';
+          renderInstanceManagePage();
+        } catch (err) {
+          draft.resultHTML = `<span class="tag danger">${escapeHTML(err.message || 'Failed to load clients')}</span>`;
+          renderInstanceManagePage();
+        }
+      });
+      document.getElementById('submitVLESSMemberBulkBtn')?.addEventListener('click', async () => {
+        syncDraft();
+        const selectedIDs = Object.keys(draft.selected || {}).filter((clientID) => draft.selected[clientID]);
+        const refs = splitRefs(draft.refs);
+        const target = document.getElementById('vlessMemberResult');
+        if (!selectedIDs.length && !refs.length) {
+          if (target) target.innerHTML = '<span class="tag danger">Select or paste at least one client.</span>';
+          return;
+        }
+        if (!draft.groupKey) {
+          if (target) target.innerHTML = '<span class="tag danger">Select a target VLESS group.</span>';
+          return;
+        }
+        if (target) target.innerHTML = '<span class="tag warn">updating membership</span>';
+        try {
+          const result = await sendJSON(`/api/v1/instances/${encodeURIComponent(instance.id)}/vless-groups/${encodeURIComponent(draft.groupKey)}/members`, 'POST', {
+            client_ids: selectedIDs,
+            client_refs: refs,
+            mode: 'add_or_move',
+            queue_apply: true,
+            build_artifacts: false,
+          });
+          draft.selected = {};
+          draft.refs = '';
+          state.instanceVLESSAvailable = null;
+          draft.resultHTML = renderVLESSMemberResult(result);
+          await loadInstanceManagePageData(instance.id, 'VLESS group membership updated.', { force: true });
+        } catch (err) {
+          if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message || 'Membership update failed')}</span>`;
+        }
+      });
+    }
+
+    function renderVLESSMemberResult(result) {
+      const failed = Array.isArray(result?.failed) ? result.failed : [];
+      const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
+      return `
+        <div class="card">
+          <div class="inline-actions" style="justify-content:space-between;align-items:flex-start">
+            <div>
+              <div class="mini-label">VLESS membership result</div>
+              <strong>${escapeHTML(result?.group_key || 'group')}</strong>
+            </div>
+            ${statusTag(failed.length ? 'degraded' : 'ok')}
+          </div>
+          <div class="grid cols-4" style="margin-top:12px">
+            <div class="response-fact"><span>Created</span><strong>${escapeHTML(String(result?.created || 0))}</strong></div>
+            <div class="response-fact"><span>Moved</span><strong>${escapeHTML(String(result?.updated || 0))}</strong></div>
+            <div class="response-fact"><span>Skipped</span><strong>${escapeHTML(String(result?.skipped || 0))}</strong></div>
+            <div class="response-fact"><span>Failed</span><strong>${escapeHTML(String(failed.length))}</strong></div>
+          </div>
+          ${result?.apply_job_id ? `<p class="metric-caption">Apply job: ${escapeHTML(result.apply_job_id)}</p>` : ''}
+          ${warnings.length ? `<div class="notice subtle-notice">${warnings.map((item) => escapeHTML(item)).join('<br>')}</div>` : ''}
+          ${failed.length ? `<div class="code-block">${escapeHTML(JSON.stringify(failed.slice(0, 20), null, 2))}</div>` : ''}
+        </div>`;
+    }
+
     function renderInstanceManagePageContent(data) {
       const { instance, runtimeState, observations, latestJob, latestJobLogs, draft, flash } = data;
       const node = nodeForInstance(instance);
@@ -783,6 +1058,7 @@
           <div class="instance-manage-layout">
             <main class="instance-manage-main">
               ${flash ? `<div class="notice subtle-notice">${escapeHTML(flash)}</div>` : ''}
+              ${renderVLESSGroupMembersSection(instance, data.vlessMembers)}
               <section class="section-card">
                 <div class="section-head">
                   <div>
@@ -879,6 +1155,7 @@
 
     function bindInstanceManagePage(data) {
       const { instance, runtimeState, observations, latestJob, draft } = data;
+      bindVLESSGroupMembersSection(instance, data.vlessMembers);
       syncInstanceServiceFields('editInstanceForm', instance.service_code, draft);
       const form = document.getElementById('editInstanceForm');
       form?.addEventListener('submit', (event) => saveManagedInstanceSpec(event, instance, false));
@@ -983,6 +1260,9 @@
           fetchJSON(`/api/v1/jobs/${encodeURIComponent(latestJobID)}`, null),
           fetchJSON(`/api/v1/jobs/${encodeURIComponent(latestJobID)}/logs?limit=30`, []),
         ]) : [null, []];
+        const vlessMembers = isXrayVLESSInstance(instance)
+          ? await fetchJSON(`/api/v1/instances/${encodeURIComponent(instanceID)}/vless-groups/members`, null)
+          : null;
         const draft = buildInstanceSpecDraft(instance.service_code, instance);
         if (state.instanceManageID !== instanceID) return;
         state.instanceManageData = {
@@ -992,6 +1272,7 @@
           observations: Array.isArray(observations) ? observations : [],
           latestJob,
           latestJobLogs: Array.isArray(latestJobLogs) ? latestJobLogs : [],
+          vlessMembers,
           draft,
           flash,
           loading: false,

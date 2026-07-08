@@ -143,7 +143,10 @@ func (c client) applyBackhaul(ctx context.Context, j job, st agentState) (string
 			if stopCode != 0 {
 				result["pre_start_stop_warning"] = "existing backhaul unit stop failed: " + firstLine(stopOut)
 			}
-			_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", unit)
+			resetCode, resetOut := runInstallCommand(ctx, "systemctl", "reset-failed", unit)
+			if resetCode != 0 && !isMissingSystemdUnitOutput(resetOut) {
+				result["pre_start_reset_failed_warning"] = "existing backhaul unit reset-failed failed: " + firstLine(resetOut)
+			}
 		}
 		ifaceCleanup, err := cleanupBackhaulInterface(ctx, iface)
 		if err != nil {
@@ -309,7 +312,10 @@ func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (stri
 				warnings = append(warnings, "systemd disable warning for "+unit+": "+firstLine(disableOut))
 			}
 		}
-		_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", unit)
+		resetCode, resetOut := runInstallCommand(ctx, "systemctl", "reset-failed", unit)
+		if resetCode != 0 && !isMissingSystemdUnitOutput(resetOut) {
+			warnings = append(warnings, "systemd reset-failed warning for "+unit+": "+firstLine(resetOut))
+		}
 		stoppedUnits = append(stoppedUnits, unit)
 	}
 	ifaceCleanup, err := cleanupBackhaulInterface(ctx, stringify(j.Payload["interface_name"]))
@@ -349,7 +355,24 @@ func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (stri
 			skippedItems = append(skippedItems, dir+": not found - skip")
 		}
 	}
-	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+	reloadResult, err := runSystemdDaemonReload(ctx)
+	if err != nil {
+		return "failed", map[string]any{
+			"error":             err.Error(),
+			"node_id":           nodeID,
+			"link_id":           linkID,
+			"transport_id":      transportID,
+			"role":              role,
+			"driver":            driver,
+			"delete_batch_id":   stringify(j.Payload["delete_batch_id"]),
+			"stopped_units":     stoppedUnits,
+			"removed_paths":     removedPaths,
+			"skipped_items":     skippedItems,
+			"warnings":          warnings,
+			"interface_cleanup": ifaceCleanup,
+			"systemd_reload":    reloadResult,
+		}
+	}
 	return "succeeded", map[string]any{
 		"message":           "backhaul transport cleaned from node",
 		"node_id":           nodeID,
@@ -363,6 +386,7 @@ func (c client) cleanupBackhaul(ctx context.Context, j job, st agentState) (stri
 		"skipped_items":     skippedItems,
 		"warnings":          warnings,
 		"interface_cleanup": ifaceCleanup,
+		"systemd_reload":    reloadResult,
 	}
 }
 
@@ -656,7 +680,11 @@ func cleanupPreviousBackhaulRuntime(ctx context.Context, previous map[string]any
 				result["previous_unit_reason"] = "stop failed"
 				return result, fmt.Errorf("previous backhaul unit stop failed for %s: %s", previousUnit, firstLine(stopOut))
 			}
-			_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", previousUnit)
+			resetCode, resetOut := runInstallCommand(ctx, "systemctl", "reset-failed", previousUnit)
+			result["previous_unit_reset_failed_output"] = truncate(resetOut, 2000)
+			if resetCode != 0 && !isMissingSystemdUnitOutput(resetOut) {
+				result["previous_unit_reset_failed_warning"] = "reset-failed failed"
+			}
 			result["previous_unit_status"] = "stopped"
 		}
 		disableCode, disableOut := runInstallCommand(ctx, "systemctl", "disable", previousUnit)

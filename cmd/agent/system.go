@@ -8,7 +8,9 @@ import (
 	"time"
 )
 
-func runInstallCommand(parent context.Context, name string, args ...string) (int, string) {
+var runInstallCommand = runInstallCommandDefault
+
+func runInstallCommandDefault(parent context.Context, name string, args ...string) (int, string) {
 	ctx, cancel := context.WithTimeout(parent, 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -20,6 +22,26 @@ func runInstallCommand(parent context.Context, name string, args ...string) (int
 		return ee.ExitCode(), string(b)
 	}
 	return -1, err.Error() + "\n" + string(b)
+}
+
+func runSystemdDaemonReload(parent context.Context) (map[string]any, error) {
+	code, out := runInstallCommand(parent, "systemctl", "daemon-reload")
+	result := map[string]any{
+		"command":   []string{"systemctl", "daemon-reload"},
+		"exit_code": code,
+		"output":    truncate(strings.TrimSpace(out), 2000),
+	}
+	if code != 0 {
+		return result, commandExitError("systemctl daemon-reload failed", out)
+	}
+	return result, nil
+}
+
+func commandExitError(prefix, output string) error {
+	if detail := firstLine(output); detail != "" {
+		return fmt.Errorf("%s: %s", prefix, detail)
+	}
+	return fmt.Errorf("%s", prefix)
 }
 
 func runOutput(name string, args ...string) string {

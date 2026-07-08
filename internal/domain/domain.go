@@ -249,6 +249,91 @@ type VLESSGroupCatalogSyncFailure struct {
 	Error      string `json:"error"`
 }
 
+type VLESSGroupMemberSummary struct {
+	Key              string `json:"key"`
+	Label            string `json:"label"`
+	Description      string `json:"description,omitempty"`
+	AccessMode       string `json:"access_mode,omitempty"`
+	EgressMode       string `json:"egress_mode,omitempty"`
+	EgressNodeID     string `json:"egress_node_id,omitempty"`
+	TargetInstanceID string `json:"target_instance_id,omitempty"`
+	OutboundTag      string `json:"outbound_tag,omitempty"`
+	AdBlock          bool   `json:"ad_block"`
+	Status           string `json:"status,omitempty"`
+	MemberCount      int    `json:"member_count"`
+	PendingCount     int    `json:"pending_count"`
+	ActiveCount      int    `json:"active_count"`
+	DisabledCount    int    `json:"disabled_count"`
+}
+
+type VLESSGroupMembersOverview struct {
+	InstanceID    string                    `json:"instance_id"`
+	InstanceName  string                    `json:"instance_name"`
+	InstanceSlug  string                    `json:"instance_slug"`
+	ServiceCode   string                    `json:"service_code"`
+	AvailableKeys []string                  `json:"available_keys"`
+	Groups        []VLESSGroupMemberSummary `json:"groups"`
+}
+
+type VLESSGroupMemberClient struct {
+	ClientID        string     `json:"client_id"`
+	Username        string     `json:"username"`
+	DisplayName     string     `json:"display_name"`
+	Email           string     `json:"email"`
+	ClientStatus    string     `json:"client_status"`
+	ServiceAccessID string     `json:"service_access_id,omitempty"`
+	AccessStatus    string     `json:"access_status,omitempty"`
+	GroupKey        string     `json:"group_key,omitempty"`
+	XrayUUID        string     `json:"xray_uuid,omitempty"`
+	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
+}
+
+type VLESSGroupMembersPage struct {
+	InstanceID string                   `json:"instance_id"`
+	GroupKey   string                   `json:"group_key,omitempty"`
+	Items      []VLESSGroupMemberClient `json:"items"`
+	Total      int                      `json:"total"`
+	Limit      int                      `json:"limit"`
+	Offset     int                      `json:"offset"`
+}
+
+type VLESSGroupAvailableClientsPage struct {
+	InstanceID string                   `json:"instance_id"`
+	Assignment string                   `json:"assignment"`
+	Items      []VLESSGroupMemberClient `json:"items"`
+	Total      int                      `json:"total"`
+	Limit      int                      `json:"limit"`
+	Offset     int                      `json:"offset"`
+}
+
+type VLESSGroupMembershipRequest struct {
+	ClientIDs      []string `json:"client_ids"`
+	ClientRefs     []string `json:"client_refs"`
+	Mode           string   `json:"mode"`
+	QueueApply     bool     `json:"queue_apply"`
+	BuildArtifacts bool     `json:"build_artifacts"`
+}
+
+type VLESSGroupMembershipFailure struct {
+	ClientID string `json:"client_id,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+	Error    string `json:"error"`
+}
+
+type VLESSGroupMembershipResult struct {
+	InstanceID string                        `json:"instance_id"`
+	GroupKey   string                        `json:"group_key,omitempty"`
+	Created    int                           `json:"created"`
+	Updated    int                           `json:"updated"`
+	Removed    int                           `json:"removed,omitempty"`
+	Skipped    int                           `json:"skipped"`
+	Failed     []VLESSGroupMembershipFailure `json:"failed,omitempty"`
+	ApplyJobID string                        `json:"apply_job_id,omitempty"`
+	BulkJobID  string                        `json:"bulk_job_id,omitempty"`
+	Warnings   []string                      `json:"warnings,omitempty"`
+	Clients    []VLESSGroupMemberClient      `json:"clients,omitempty"`
+}
+
 type Instance struct {
 	ID                    string         `json:"id"`
 	NodeID                string         `json:"node_id"`

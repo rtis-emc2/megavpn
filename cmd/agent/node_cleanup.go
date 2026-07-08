@@ -117,7 +117,10 @@ func emergencyCleanupManagedLeftovers(ctx context.Context, cleanupScope string) 
 		} else if code == 0 {
 			stoppedUnits = append(stoppedUnits, unit)
 		}
-		_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", unit)
+		resetCode, resetOut := runInstallCommand(ctx, "systemctl", "reset-failed", unit)
+		if resetCode != 0 && !isMissingSystemdUnitOutput(resetOut) {
+			warnings = append(warnings, "systemd reset-failed warning for "+unit+": "+firstLine(resetOut))
+		}
 		if path := emergencyManagedUnitFilePathForScope(unit, cleanupScope); path != "" {
 			removed, err := removeManagedPath(path, false)
 			if err != nil {
@@ -214,14 +217,18 @@ func emergencyCleanupManagedLeftovers(ctx context.Context, cleanupScope string) 
 		}
 	}
 
-	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+	reloadResult, err := runSystemdDaemonReload(ctx)
+	if err != nil {
+		warnings = append(warnings, err.Error())
+	}
 	return map[string]any{
-		"cleanup_scope": cleanupScope,
-		"stopped_units": stoppedUnits,
-		"removed_paths": removedPaths,
-		"skipped_items": skippedItems,
-		"warnings":      warnings,
-		"nginx_runtime": nginxRuntime,
+		"cleanup_scope":  cleanupScope,
+		"stopped_units":  stoppedUnits,
+		"removed_paths":  removedPaths,
+		"skipped_items":  skippedItems,
+		"warnings":       warnings,
+		"nginx_runtime":  nginxRuntime,
+		"systemd_reload": reloadResult,
 	}
 }
 
@@ -257,10 +264,14 @@ func finalizeSharedNginxRuntime(ctx context.Context) map[string]any {
 	result["action"] = "stop"
 	result["stop_exit_code"] = code
 	result["stop_output"] = truncate(strings.TrimSpace(out), 2000)
-	_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", "nginx")
+	resetCode, resetOut := runInstallCommand(ctx, "systemctl", "reset-failed", "nginx")
+	result["reset_failed_exit_code"] = resetCode
+	result["reset_failed_output"] = truncate(strings.TrimSpace(resetOut), 2000)
 	result["active_state"] = currentUnitState("nginx")
 	if code != 0 && !isMissingSystemdUnitOutput(out) {
 		result["error"] = "nginx stop failed after all managed configs were removed"
+	} else if resetCode != 0 && !isMissingSystemdUnitOutput(resetOut) {
+		result["reset_failed_warning"] = "nginx reset-failed failed after managed cleanup"
 	}
 	return result
 }

@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -68,8 +67,12 @@ func (s *Store) ListPlatformCertificates(ctx context.Context) ([]domain.Platform
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(sansRaw, &item.SANs)
-		_ = json.Unmarshal(metaRaw, &item.Meta)
+		if err := decodeJSONField(sansRaw, &item.SANs, "platform_certificates.sans_json"); err != nil {
+			return nil, err
+		}
+		if err := decodeJSONField(metaRaw, &item.Meta, "platform_certificates.meta_json"); err != nil {
+			return nil, err
+		}
 		if item.SANs == nil {
 			item.SANs = []string{}
 		}
@@ -252,8 +255,12 @@ func (s *Store) GetPlatformCertificate(ctx context.Context, certificateID string
 	if err != nil {
 		return domain.PlatformCertificate{}, err
 	}
-	_ = json.Unmarshal(sansRaw, &item.SANs)
-	_ = json.Unmarshal(metaRaw, &item.Meta)
+	if err := decodeJSONField(sansRaw, &item.SANs, "platform_certificates.sans_json"); err != nil {
+		return domain.PlatformCertificate{}, err
+	}
+	if err := decodeJSONField(metaRaw, &item.Meta, "platform_certificates.meta_json"); err != nil {
+		return domain.PlatformCertificate{}, err
+	}
 	if item.SANs == nil {
 		item.SANs = []string{}
 	}

@@ -311,6 +311,46 @@ func TestBuildNginxServerConfigGRPCProxy(t *testing.T) {
 	}
 }
 
+func TestBuildNginxServerConfigGRPCCamouflageClearsClientIdentityHeaders(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-grpc",
+		Slug:         "edge-nginx-grpc",
+		EndpointHost: "edge.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"service_profile":        "grpc_edge",
+		"mode":                   "grpc_proxy",
+		"tls_enabled":            true,
+		"tls_cert_path":          "/etc/ssl/certs/test.crt",
+		"tls_key_path":           "/etc/ssl/private/test.key",
+		"location_path":          "/vless-grpc",
+		"upstream_url":           "grpc://127.0.0.1:7443",
+		"fallback_upstream_url":  "https://example.com",
+		"fallback_host_header":   "example.com",
+		"fallback_sni":           "example.com",
+		"fallback_loop_guard":    true,
+		"fallback_proxy_headers": true,
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	for _, check := range []string{
+		"grpc_set_header X-Real-IP \"\";",
+		"grpc_set_header X-Forwarded-For \"\";",
+		"grpc_set_header Forwarded \"\";",
+		"proxy_set_header X-Real-IP \"\";",
+		"proxy_set_header X-Forwarded-For \"\";",
+		"proxy_set_header Forwarded \"\";",
+	} {
+		if !strings.Contains(cfg, check) {
+			t.Fatalf("expected camouflage gRPC config to contain %q, got:\n%s", check, cfg)
+		}
+	}
+	if strings.Contains(cfg, "X-Forwarded-For $remote_addr;") {
+		t.Fatalf("camouflage gRPC config must not forward client IP by default:\n%s", cfg)
+	}
+}
+
 func TestBuildNginxServerConfigReverseProxyWithWebsiteFallback(t *testing.T) {
 	cfg, err := buildNginxServerConfig(domain.Instance{
 		Name:         "edge-nginx-ws",
@@ -392,6 +432,51 @@ func TestBuildNginxServerConfigReverseProxyCanForwardClientIPWhenExplicitlyEnabl
 	}
 	if !strings.Contains(cfg, "proxy_set_header X-Forwarded-For $remote_addr;") {
 		t.Fatalf("explicit forward_client_ip=true must preserve client IP forwarding:\n%s", cfg)
+	}
+}
+
+func TestBuildNginxServerConfigFallbackCanDisableClientIPLeakageIndependently(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"service_profile":            "ws_camouflage_edge",
+		"mode":                       "reverse_proxy",
+		"tls_enabled":                true,
+		"tls_cert_path":              "/etc/ssl/certs/enter.crt",
+		"tls_key_path":               "/etc/ssl/private/enter.key",
+		"location_path":              "/assets/rtis-sync",
+		"upstream_url":               "http://127.0.0.1:7080",
+		"fallback_upstream_url":      "https://example.com",
+		"fallback_host_header":       "example.com",
+		"fallback_sni":               "example.com",
+		"websocket_upgrade":          true,
+		"forward_client_ip":          true,
+		"fallback_forward_client_ip": false,
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	if strings.Count(cfg, "proxy_set_header X-Forwarded-For $remote_addr;") != 1 {
+		t.Fatalf("primary path should be the only place that forwards client IP:\n%s", cfg)
+	}
+	fallbackIndex := strings.Index(cfg, "    location / {")
+	if fallbackIndex < 0 {
+		t.Fatalf("fallback location not found:\n%s", cfg)
+	}
+	fallbackBlock := cfg[fallbackIndex:]
+	for _, check := range []string{
+		"proxy_set_header X-Real-IP \"\";",
+		"proxy_set_header X-Forwarded-For \"\";",
+		"proxy_set_header X-Forwarded-Host \"\";",
+		"proxy_set_header X-Forwarded-Port \"\";",
+		"proxy_set_header Forwarded \"\";",
+	} {
+		if !strings.Contains(fallbackBlock, check) {
+			t.Fatalf("fallback block must clear %q to avoid header leakage:\n%s", check, cfg)
+		}
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	appjobs "github.com/rtis-emc2/megavpn/internal/app/jobs"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/jobschema"
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
@@ -104,6 +105,12 @@ type Store interface {
 	ListVLESSGroupTemplateCatalog(context.Context) ([]domain.VLESSGroupTemplate, error)
 	UpsertVLESSGroupTemplate(context.Context, domain.VLESSGroupTemplate) (domain.VLESSGroupTemplate, error)
 	SetVLESSGroupTemplateStatus(context.Context, string, string) (domain.VLESSGroupTemplate, error)
+	ListInstanceVLESSGroupMembers(context.Context, string) (domain.VLESSGroupMembersOverview, error)
+	ListInstanceVLESSGroupMemberClients(context.Context, string, string, string, string, int, int) (domain.VLESSGroupMembersPage, error)
+	ListInstanceVLESSGroupAvailableClients(context.Context, string, string, string, int, int) (domain.VLESSGroupAvailableClientsPage, error)
+	AddInstanceVLESSGroupMembers(context.Context, string, string, domain.VLESSGroupMembershipRequest) (domain.VLESSGroupMembershipResult, error)
+	MoveInstanceVLESSGroupMember(context.Context, string, string, string) (domain.VLESSGroupMembershipResult, error)
+	RemoveInstanceVLESSGroupMember(context.Context, string, string) (domain.VLESSGroupMembershipResult, error)
 	ListBinaryArtifacts(context.Context, bool) ([]domain.BinaryArtifact, error)
 	CreateBinaryArtifact(context.Context, domain.BinaryArtifact) (domain.BinaryArtifact, error)
 	ResolveBinaryDownloadTicket(context.Context, string, string, string, string) (domain.BinaryDownloadTicket, domain.BinaryArtifact, error)
@@ -228,6 +235,7 @@ var trafficAccountingFilterUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0
 type Server struct {
 	log                    *slog.Logger
 	store                  Store
+	jobs                   *appjobs.Service
 	version                string
 	listenAddr             string
 	publicBaseURL          string
@@ -279,6 +287,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	s := &Server{
 		log:                    log,
 		store:                  store,
+		jobs:                   appjobs.New(store),
 		version:                opts.Version,
 		listenAddr:             strings.TrimSpace(opts.ListenAddr),
 		publicBaseURL:          strings.TrimRight(strings.TrimSpace(opts.PublicBaseURL), "/"),
@@ -305,6 +314,9 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	mux := nethttp.NewServeMux()
 	protected := func(pattern, permission string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
 		mux.Handle(pattern, s.withPermission(permission, nethttp.HandlerFunc(h)))
+	}
+	protectedAll := func(pattern string, permissions []string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
+		mux.Handle(pattern, s.withPermissions(permissions, nethttp.HandlerFunc(h)))
 	}
 	authenticated := func(pattern string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
 		mux.Handle(pattern, s.withPermission("", nethttp.HandlerFunc(h)))
@@ -448,6 +460,12 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/instances", "instance.write", s.createInstance)
 	protected("POST /api/v1/service-packs/{key}/instances", "instance.write", s.createServicePackInstances)
 	protected("GET /api/v1/instances/{id}", "instance.read", s.getInstance)
+	protectedAll("GET /api/v1/instances/{id}/vless-groups/members", []string{"instance.read", "client.read"}, s.listInstanceVLESSGroupMembers)
+	protectedAll("GET /api/v1/instances/{id}/vless-groups/{group_key}/members", []string{"instance.read", "client.read"}, s.listInstanceVLESSGroupMemberClients)
+	protectedAll("GET /api/v1/instances/{id}/vless-groups/available-clients", []string{"instance.read", "client.read"}, s.listInstanceVLESSGroupAvailableClients)
+	protectedAll("POST /api/v1/instances/{id}/vless-groups/{group_key}/members", []string{"instance.write", "client.provision"}, s.addInstanceVLESSGroupMembers)
+	protectedAll("PATCH /api/v1/instances/{id}/vless-groups/members/{client_id}", []string{"instance.write", "client.provision"}, s.moveInstanceVLESSGroupMember)
+	protectedAll("DELETE /api/v1/instances/{id}/vless-groups/members/{client_id}", []string{"instance.write", "client.provision"}, s.removeInstanceVLESSGroupMember)
 	protected("GET /api/v1/instances/{id}/runtime-state", "instance.read", s.getInstanceRuntimeState)
 	protected("GET /api/v1/instances/{id}/runtime-observations", "instance.read", s.listInstanceRuntimeObservations)
 	protected("GET /api/v1/instances/{id}/revisions", "instance.read", s.listInstanceRevisions)
@@ -934,7 +952,10 @@ func trafficAccountingCSVHeader() []string {
 }
 
 func trafficAccountingCSVRow(sample domain.TrafficAccountingSample) []string {
-	metadata, _ := json.Marshal(sample.Metadata)
+	metadata, err := json.Marshal(sample.Metadata)
+	if err != nil {
+		metadata = []byte(`{"error":"metadata_marshal_failed"}`)
+	}
 	return []string{
 		sample.ID,
 		sample.NodeID,
@@ -1895,43 +1916,36 @@ func (s *Server) listShareLinks(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 func (s *Server) listJobs(w nethttp.ResponseWriter, r *nethttp.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	x, err := s.store.ListJobs(r.Context(), limit)
+	x, err := s.jobs.List(r.Context(), limit)
 	if err != nil {
 		writeErr(w, 500, "list jobs failed")
 		return
-	}
-	if x == nil {
-		x = []domain.Job{}
 	}
 	writeJSON(w, 200, redactedJobs(x))
 }
 func (s *Server) createJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var j domain.Job
-	if !decode(r, &j) || j.Type == "" {
+	if !decode(r, &j) {
 		writeErr(w, 400, "invalid job payload: type is required")
 		return
 	}
-	if jobTypeMustUseTypedEndpoint(j.Type) {
-		writeErr(w, 400, "privileged job type must be created through its typed API")
-		return
-	}
-	if !jobTypeAllowedInGenericAPI(j.Type) {
-		writeErr(w, 400, "job type is not available through generic job API")
-		return
-	}
-	if permission := requiredPermissionForJobType(j.Type); permission != "" {
+	x, err := s.jobs.Create(r.Context(), j, func(permission string) bool {
 		authCtx, ok := authFromRequest(r)
-		if !ok || !authContextHasPermission(authCtx, permission) {
-			writeErr(w, 403, "job type requires "+permission)
+		return ok && authContextHasPermission(authCtx, permission)
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, appjobs.ErrTypeRequired),
+			errors.Is(err, appjobs.ErrTypedEndpointRequired),
+			errors.Is(err, appjobs.ErrGenericAPIUnavailable):
+			writeErr(w, 400, err.Error())
 			return
 		}
-	}
-	if j.ScopeType == "" {
-		j.ScopeType = "system"
-	}
-	j.Status = "queued"
-	x, err := s.store.CreateJob(r.Context(), j)
-	if err != nil {
+		var permissionErr appjobs.PermissionError
+		if errors.As(err, &permissionErr) {
+			writeErr(w, 403, permissionErr.Error())
+			return
+		}
 		if jobschema.IsValidationError(err) {
 			writeErr(w, 400, err.Error())
 			return
@@ -1943,7 +1957,7 @@ func (s *Server) createJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (s *Server) getJob(w nethttp.ResponseWriter, r *nethttp.Request) {
-	x, err := s.store.GetJob(r.Context(), idParam(r))
+	x, err := s.jobs.Get(r.Context(), idParam(r))
 	if err != nil {
 		writeErr(w, 404, "job not found")
 		return
@@ -1953,7 +1967,7 @@ func (s *Server) getJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (s *Server) jobLogs(w nethttp.ResponseWriter, r *nethttp.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	x, err := s.store.ListJobLogs(r.Context(), idParam(r), limit)
+	x, err := s.jobs.Logs(r.Context(), idParam(r), limit)
 	if err != nil {
 		writeErr(w, 500, "list job logs failed")
 		return
@@ -1962,7 +1976,7 @@ func (s *Server) jobLogs(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (s *Server) cancelJob(w nethttp.ResponseWriter, r *nethttp.Request) {
-	x, err := s.store.CancelJob(r.Context(), idParam(r))
+	x, err := s.jobs.Cancel(r.Context(), idParam(r))
 	if err != nil {
 		writeErr(w, 409, err.Error())
 		return
@@ -2234,70 +2248,6 @@ func (s *Server) agentJobResult(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	_ = s.store.AddJobLog(r.Context(), idv, "info", "agent submitted result", req.Result)
 	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"status": "accepted"})
-}
-
-func jobTypeMustUseTypedEndpoint(jobType string) bool {
-	switch strings.TrimSpace(jobType) {
-	case "platform.control_plane_tls.apply",
-		"node.bootstrap",
-		"node.agent.rotate_token",
-		"node.emergency_cleanup",
-		"node.reboot",
-		"node.backhaul.apply",
-		"node.backhaul.probe",
-		"node.backhaul.cleanup",
-		"node.route_policy.apply",
-		"node.route_policy.cleanup",
-		"node.firewall.preview",
-		"node.firewall.apply",
-		"node.firewall.observe",
-		"node.firewall.disable",
-		"node.capability.install",
-		"node.capability.verify",
-		"instance.apply",
-		"instance.restart",
-		"instance.start",
-		"instance.stop",
-		"instance.enable",
-		"instance.disable",
-		"instance.diagnose",
-		"instance.delete":
-		return true
-	default:
-		return false
-	}
-}
-
-func jobTypeAllowedInGenericAPI(jobType string) bool {
-	switch strings.TrimSpace(jobType) {
-	case "artifact.build", "client.provision", "client.revoke":
-		return true
-	default:
-		return false
-	}
-}
-
-func requiredPermissionForJobType(jobType string) string {
-	switch strings.TrimSpace(jobType) {
-	case "platform.control_plane_tls.apply":
-		return "settings.manage"
-	case "node.bootstrap", "node.agent.rotate_token", "node.emergency_cleanup", "node.reboot":
-		return "node.bootstrap"
-	case "node.capability.install", "node.capability.verify", "node.inventory", "node.inventory.sync", "node.services.discover", "node.channel.probe", "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup", "node.route_policy.apply", "node.route_policy.cleanup":
-		return "node.write"
-	case "node.firewall.preview", "node.firewall.apply", "node.firewall.observe", "node.firewall.disable":
-		return "firewall.apply"
-	case "instance.apply", "instance.restart", "instance.start", "instance.stop", "instance.enable", "instance.disable", "instance.delete":
-		return "instance.apply"
-	case "instance.diagnose":
-		return "instance.read"
-	case "client.provision", "client.revoke":
-		return "client.provision"
-	case "artifact.build":
-		return "artifact.export"
-	default:
-		return ""
-	}
 }
 
 func tokenHint(token string) string {

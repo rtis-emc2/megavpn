@@ -25,7 +25,9 @@ func (s *Store) ResolveShareLinkArtifact(ctx context.Context, token string) (dom
 		return domain.ShareLink{}, domain.Artifact{}, errors.New("share link is not active")
 	}
 	if link.ExpiresAt.Before(now) {
-		_, _ = s.db.Exec(ctx, `update share_links set status='expired' where id=$1 and status='active'`, link.ID)
+		if _, err := s.db.Exec(ctx, `update share_links set status='expired' where id=$1 and status='active'`, link.ID); err != nil {
+			return domain.ShareLink{}, domain.Artifact{}, err
+		}
 		return domain.ShareLink{}, domain.Artifact{}, errors.New("share link has expired")
 	}
 	if link.TargetType != "artifact" {
@@ -37,7 +39,9 @@ func (s *Store) ResolveShareLinkArtifact(ctx context.Context, token string) (dom
 	if err != nil {
 		return domain.ShareLink{}, domain.Artifact{}, err
 	}
-	_, _ = s.db.Exec(ctx, `update share_links set download_count=download_count+1 where id=$1`, link.ID)
+	if _, err := s.db.Exec(ctx, `update share_links set download_count=download_count+1 where id=$1`, link.ID); err != nil {
+		return domain.ShareLink{}, domain.Artifact{}, err
+	}
 	link.DownloadCount++
 	return link, artifact, nil
 }

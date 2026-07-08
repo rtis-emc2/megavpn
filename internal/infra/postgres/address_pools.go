@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -208,7 +207,9 @@ func (s *Store) UpdateAddressPoolSpace(ctx context.Context, poolID string, patch
 	if err != nil {
 		return domain.AddressPoolSpace{}, err
 	}
-	_, _ = s.db.Exec(ctx, `update address_pool_allocations set route_export=$2,updated_at=now() where pool_space_id=$1 and status in ('reserved','active')`, out.ID, out.RoutingEnabled)
+	if _, err := s.db.Exec(ctx, `update address_pool_allocations set route_export=$2,updated_at=now() where pool_space_id=$1 and status in ('reserved','active')`, out.ID, out.RoutingEnabled); err != nil {
+		return domain.AddressPoolSpace{}, err
+	}
 	_, _ = s.CreateAudit(ctx, "system", "address_pool.update", "address_pool", &out.ID, "address pool space updated")
 	return out, nil
 }
@@ -255,7 +256,9 @@ func (s *Store) SetAddressPoolRouting(ctx context.Context, poolID string, enable
 	if err != nil {
 		return domain.AddressPoolSpace{}, err
 	}
-	_, _ = s.db.Exec(ctx, `update address_pool_allocations set route_export=$2,updated_at=now() where pool_space_id=$1 and status in ('reserved','active')`, updated.ID, enabled)
+	if _, err := s.db.Exec(ctx, `update address_pool_allocations set route_export=$2,updated_at=now() where pool_space_id=$1 and status in ('reserved','active')`, updated.ID, enabled); err != nil {
+		return domain.AddressPoolSpace{}, err
+	}
 	_, _ = s.CreateAudit(ctx, "system", "address_pool.routing", "address_pool", &updated.ID, "address pool routing flag updated")
 	return updated, nil
 }
@@ -439,7 +442,9 @@ func (s *Store) ensureInstanceAddressPoolAllocation(ctx context.Context, instanc
 	allocation.PoolSpaceLabel = space.Label
 	allocation.NodeID = stringPtrIfNotEmpty(nodeID)
 	allocation.InstanceID = stringPtrIfNotEmpty(instanceID)
-	_ = json.Unmarshal(rawMeta, &allocation.Metadata)
+	if err := decodeJSONField(rawMeta, &allocation.Metadata, "address_pool_allocations.metadata_json"); err != nil {
+		return domain.AddressPoolAllocation{}, false, err
+	}
 	if allocation.Metadata == nil {
 		allocation.Metadata = map[string]any{}
 	}
@@ -521,7 +526,9 @@ func (s *Store) backfillAddressPoolAllocationsFromInstances(ctx context.Context)
 			return err
 		}
 		spec := map[string]any{}
-		_ = json.Unmarshal(rawSpec, &spec)
+		if err := decodeJSONField(rawSpec, &spec, "instance_revisions.spec_json"); err != nil {
+			return err
+		}
 		cidr, purpose := observedPoolCIDRFromInstanceSpec(serviceCode, spec)
 		if cidr == "" || purpose == "" {
 			continue
@@ -636,7 +643,9 @@ func scanAddressPoolAllocation(row addressPoolScanner) (domain.AddressPoolAlloca
 	}
 	allocation.NodeID = stringPtrIfNotEmpty(nodeID)
 	allocation.InstanceID = stringPtrIfNotEmpty(instanceID)
-	_ = json.Unmarshal(rawMeta, &allocation.Metadata)
+	if err := decodeJSONField(rawMeta, &allocation.Metadata, "address_pool_allocations.metadata_json"); err != nil {
+		return domain.AddressPoolAllocation{}, err
+	}
 	if allocation.Metadata == nil {
 		allocation.Metadata = map[string]any{}
 	}

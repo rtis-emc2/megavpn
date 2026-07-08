@@ -146,3 +146,13 @@ func TestKnownHostFingerprintMatches(t *testing.T) {
 		t.Fatal("unexpected fingerprint match")
 	}
 }
+
+func TestKnownHostFingerprintRejectsChangedHostKey(t *testing.T) {
+	t.Parallel()
+
+	knownHostAfterRotation := "256 SHA256:rotatedHostKeyFingerprint1234567890ABCDEFGH= bootstrap.example.com (ED25519)\n"
+	pinnedFingerprint := "SHA256:originalHostKeyFingerprint1234567890ABCDEFG="
+	if knownHostFingerprintMatches(knownHostAfterRotation, pinnedFingerprint) {
+		t.Fatal("changed SSH host key must not match the pinned fingerprint")
+	}
+}

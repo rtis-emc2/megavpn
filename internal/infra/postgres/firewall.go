@@ -2,7 +2,8 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
@@ -29,9 +31,12 @@ func (s *Store) EnsureDefaultFirewallPolicies(ctx context.Context) error {
 values
 	($1,'trusted_control_plane','Trusted control plane','Control-plane hosts allowed to manage node agent and SSH access.','control_plane','active',now(),now()),
 	($2,'trusted_operators','Trusted operators','Operator source networks for privileged access.','global','active',now(),now()),
-	($3,'vpn_client_sources','VPN client source ranges','Default source ranges used by managed VPN clients and private overlay networks.','global','active',now(),now())
+	($3,'vpn_client_sources','VPN client source ranges','Default source ranges used by managed VPN clients and private overlay networks.','global','active',now(),now()),
+	($4,'backhaul_sources','Backhaul source ranges','Managed ingress-to-egress tunnel and backhaul source networks.','global','active',now(),now()),
+	($5,'public_service_sources','Public service sources','Internet or restricted source ranges allowed to reach public service listeners.','global','active',now(),now()),
+	($6,'blocked_destinations','Blocked destinations','Reusable destination ranges for deny or quarantine rules.','global','active',now(),now())
 on conflict(key) do update set label=excluded.label, description=excluded.description, scope=excluded.scope, status=firewall_address_lists.status, updated_at=now()`,
-		id.New(), id.New(), id.New()); err != nil {
+		id.New(), id.New(), id.New(), id.New(), id.New(), id.New()); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `with target as (
@@ -509,7 +514,9 @@ type firewallJobPayload struct {
 	revisionID  string
 	revisionNo  int
 	rulePayload []any
+	rules       []domain.FirewallRule
 	payload     map[string]any
+	payloadHash string
 }
 
 func (s *Store) buildFirewallJobPayload(ctx context.Context, nodeID, policyID string, enforceDefaultPolicy bool) (firewallJobPayload, error) {
@@ -556,12 +563,18 @@ func (s *Store) buildFirewallJobPayload(ctx context.Context, nodeID, policyID st
 		"rules":                  rulePayload,
 		"address_lists":          addressListPayload,
 	}
+	payloadHash := firewallStablePayloadHash(payload)
+	payload["firewall_payload_version"] = 1
+	payload["firewall_payload_hash"] = payloadHash
+	payload["safety_mode"] = firewallSafetyMode(enforceDefaultPolicy)
 	return firewallJobPayload{
 		policy:      policy,
 		revisionID:  revisionID,
 		revisionNo:  revisionNo,
 		rulePayload: rulePayload,
+		rules:       rules,
 		payload:     payload,
+		payloadHash: payloadHash,
 	}, nil
 }
 
@@ -569,6 +582,9 @@ func (s *Store) CreateFirewallPreviewJob(ctx context.Context, nodeID, policyID s
 	nodeID = strings.TrimSpace(nodeID)
 	built, err := s.buildFirewallJobPayload(ctx, nodeID, policyID, enforceDefaultPolicy)
 	if err != nil {
+		return domain.Job{}, err
+	}
+	if err := s.validateFirewallStrictJobSafety(ctx, nodeID, built); err != nil {
 		return domain.Job{}, err
 	}
 	job, err := s.CreateJob(ctx, domain.Job{Type: "node.firewall.preview", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Payload: built.payload})
@@ -584,6 +600,14 @@ func (s *Store) CreateFirewallApplyJob(ctx context.Context, nodeID, policyID str
 	built, err := s.buildFirewallJobPayload(ctx, nodeID, policyID, enforceDefaultPolicy)
 	if err != nil {
 		return domain.Job{}, err
+	}
+	if err := s.validateFirewallStrictJobSafety(ctx, nodeID, built); err != nil {
+		return domain.Job{}, err
+	}
+	if enforceDefaultPolicy {
+		if err := s.requireMatchingFirewallPreview(ctx, nodeID, built); err != nil {
+			return domain.Job{}, err
+		}
 	}
 	job, payloadJSON, err := normalizeJobForInsert(domain.Job{Type: "node.firewall.apply", ScopeType: "node", ScopeID: &nodeID, NodeID: &nodeID, Payload: built.payload})
 	if err != nil {
@@ -615,6 +639,118 @@ on conflict(node_id) do update set policy_id=excluded.policy_id, desired_revisio
 	_, _ = s.CreateAudit(ctx, "system", "job.create", "job", &job.ID, "job queued")
 	_, _ = s.CreateAudit(ctx, "system", "firewall.apply", "node", &nodeID, "firewall apply queued")
 	return job, nil
+}
+
+func firewallSafetyMode(enforceDefaultPolicy bool) string {
+	if enforceDefaultPolicy {
+		return "strict"
+	}
+	return "observe"
+}
+
+func firewallStablePayloadHash(payload map[string]any) string {
+	canonical := map[string]any{
+		"policy_id":              strings.TrimSpace(stringify(payload["policy_id"])),
+		"policy_key":             strings.TrimSpace(stringify(payload["policy_key"])),
+		"default_input_policy":   strings.TrimSpace(stringify(payload["default_input_policy"])),
+		"default_forward_policy": strings.TrimSpace(stringify(payload["default_forward_policy"])),
+		"default_output_policy":  strings.TrimSpace(stringify(payload["default_output_policy"])),
+		"enforce_default_policy": firewallBool(payload["enforce_default_policy"]),
+		"rules":                  payload["rules"],
+		"address_lists":          payload["address_lists"],
+	}
+	sum := sha256.Sum256(mustJSON(canonical))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Store) validateFirewallStrictJobSafety(ctx context.Context, nodeID string, built firewallJobPayload) error {
+	if !firewallBool(built.payload["enforce_default_policy"]) {
+		return nil
+	}
+	if err := s.validateFirewallStrictAddressLists(ctx, built.rules); err != nil {
+		return err
+	}
+	if built.policy.DefaultInputPolicy != "accept" {
+		methods, err := s.ListNodeAccessMethods(ctx, nodeID)
+		if err != nil {
+			return fmt.Errorf("check node SSH access methods before strict firewall apply: %w", err)
+		}
+		for _, port := range sshBootstrapPorts(methods) {
+			allowed, err := s.firewallPolicyAllowsStrictSSHBootstrapPort(ctx, built.policy.ID, port)
+			if err != nil {
+				return fmt.Errorf("check strict firewall SSH safety rules: %w", err)
+			}
+			if !allowed {
+				return fmt.Errorf("strict input %s requires an active source-scoped input accept rule for SSH bootstrap port %d from trusted_control_plane, trusted_operators, or an explicit control-plane CIDR before apply", built.policy.DefaultInputPolicy, port)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Store) validateFirewallStrictAddressLists(ctx context.Context, rules []domain.FirewallRule) error {
+	for _, rule := range rules {
+		if !rule.Enabled || rule.Status != "active" || rule.Action != "accept" {
+			continue
+		}
+		for _, ref := range []struct {
+			id    *string
+			key   string
+			label string
+		}{
+			{id: rule.SrcListID, key: rule.SrcListKey, label: "source"},
+			{id: rule.DstListID, key: rule.DstListKey, label: "destination"},
+		} {
+			listID := derefString(ref.id)
+			if listID == "" {
+				continue
+			}
+			ok, err := s.firewallAddressListHasRenderableEntries(ctx, listID)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				name := firewallFirst(ref.key, listID)
+				return fmt.Errorf("strict firewall rule %s references %s address group %q without active IP/CIDR/range entries; DNS-only or empty groups are not rendered into nftables", rule.ID, ref.label, name)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Store) requireMatchingFirewallPreview(ctx context.Context, nodeID string, built firewallJobPayload) error {
+	var previewID string
+	var renderedHash string
+	err := s.db.QueryRow(ctx, `select id::text, coalesce(result_json->>'rendered_hash','')
+from jobs
+where type='node.firewall.preview'
+  and status='succeeded'
+  and scope_type='node'
+  and scope_id=$1::uuid
+  and coalesce(payload_json->>'policy_id','')=$2
+  and coalesce(payload_json->>'firewall_payload_hash','')=$3
+  and coalesce(payload_json->>'safety_mode','')=$4
+  and coalesce(result_json->>'rendered_hash','') <> ''
+order by coalesce(finished_at,created_at) desc, created_at desc
+limit 1`, nodeID, built.policy.ID, built.payloadHash, firewallSafetyMode(true)).Scan(&previewID, &renderedHash)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("strict firewall apply requires a successful Preview for the same policy, rules, address groups and strict mode before Apply")
+	}
+	return err
+}
+
+func firewallBool(raw any) bool {
+	switch value := raw.(type) {
+	case bool:
+		return value
+	case string:
+		return strings.EqualFold(strings.TrimSpace(value), "true") || strings.TrimSpace(value) == "1"
+	default:
+		return false
+	}
 }
 
 func (s *Store) CreateFirewallDisableJob(ctx context.Context, nodeID string) (domain.Job, error) {
@@ -691,6 +827,14 @@ func (s *Store) applyFirewallApplyJobResult(ctx context.Context, job domain.Job,
 values($1,$2,$3,$4,$4,$5,$6,$7,now())
 on conflict(node_id) do update set policy_id=excluded.policy_id, revision_id=case when $5='applied' then excluded.revision_id else firewall_node_state.revision_id end, desired_revision_id=excluded.desired_revision_id, status=excluded.status, observed_json=excluded.observed_json, last_job_id=excluded.last_job_id, updated_at=now()`,
 		id.New(), nodeID, nullIfEmpty(policyID), nullIfEmpty(revisionID), state, mustJSON(result), job.ID)
+	if err != nil {
+		return err
+	}
+	if revisionID != "" {
+		if renderedHash := strings.TrimSpace(stringify(result["rendered_hash"])); renderedHash != "" {
+			_, err = s.db.Exec(ctx, `update firewall_revisions set rendered_hash=$2 where id=$1`, revisionID, renderedHash)
+		}
+	}
 	return err
 }
 
@@ -960,7 +1104,9 @@ func scanFirewallRule(row firewallScanner) (domain.FirewallRule, error) {
 		item.DstListID = &dstListID
 	}
 	if len(rawMeta) > 0 {
-		_ = json.Unmarshal(rawMeta, &item.Metadata)
+		if err := decodeJSONField(rawMeta, &item.Metadata, "firewall_rules.metadata_json"); err != nil {
+			return domain.FirewallRule{}, err
+		}
 	}
 	if item.Metadata == nil {
 		item.Metadata = map[string]any{}
@@ -991,7 +1137,9 @@ func scanFirewallNodeState(row firewallScanner) (domain.FirewallNodeState, error
 	if lastJobID != "" {
 		item.LastJobID = &lastJobID
 	}
-	_ = json.Unmarshal(rawObserved, &item.Observed)
+	if err := decodeJSONField(rawObserved, &item.Observed, "firewall_node_states.observed_json"); err != nil {
+		return domain.FirewallNodeState{}, err
+	}
 	if item.Observed == nil {
 		item.Observed = map[string]any{}
 	}

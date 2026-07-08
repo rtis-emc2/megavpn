@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -28,7 +27,9 @@ func (s *Store) GetControlPlaneTLSSettings(ctx context.Context) (domain.ControlP
 		}
 		return x, err
 	}
-	_ = json.Unmarshal(sansRaw, &x.SelfSignedDNSNames)
+	if err := decodeJSONField(sansRaw, &x.SelfSignedDNSNames, "platform_control_plane_tls_settings.self_signed_san_json"); err != nil {
+		return x, err
+	}
 	if x.SelfSignedDNSNames == nil {
 		x.SelfSignedDNSNames = []string{}
 	}

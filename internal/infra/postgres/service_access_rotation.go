@@ -2,10 +2,11 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
+	"github.com/rtis-emc2/megavpn/internal/platform/id"
 	servicedriver "github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
@@ -22,7 +23,9 @@ func (s *Store) RotateServiceAccess(ctx context.Context, clientID, accessID, dri
 	var metadataRaw, policyRaw []byte
 	var instanceID string
 	var serviceCode string
+	var instanceStatus string
 	err := s.db.QueryRow(ctx, `select sa.id,sa.client_account_id,sa.instance_id,sa.status,sa.provision_mode,sa.policy_json,sa.metadata_json,sa.created_at,sa.updated_at,sd.code
+			,i.status
 		from service_accesses sa
 		join instances i on i.id=sa.instance_id
 		join service_definitions sd on sd.id=i.service_definition_id
@@ -39,13 +42,24 @@ func (s *Store) RotateServiceAccess(ctx context.Context, clientID, accessID, dri
 		&access.CreatedAt,
 		&access.UpdatedAt,
 		&serviceCode,
+		&instanceStatus,
 	)
 	if err != nil {
 		return domain.Job{}, err
 	}
 	instanceID = access.InstanceID
-	_ = json.Unmarshal(policyRaw, &access.Policy)
-	_ = json.Unmarshal(metadataRaw, &access.Metadata)
+	if strings.EqualFold(strings.TrimSpace(access.Status), "revoked") {
+		return domain.Job{}, fmt.Errorf("service access %s is revoked", accessID)
+	}
+	if strings.EqualFold(strings.TrimSpace(instanceStatus), "deleted") {
+		return domain.Job{}, fmt.Errorf("service instance %s is deleted", instanceID)
+	}
+	if err := decodeJSONField(policyRaw, &access.Policy, "service_accesses.policy_json"); err != nil {
+		return domain.Job{}, err
+	}
+	if err := decodeJSONField(metadataRaw, &access.Metadata, "service_accesses.metadata_json"); err != nil {
+		return domain.Job{}, err
+	}
 	if access.Metadata == nil {
 		access.Metadata = map[string]any{}
 	}
@@ -62,9 +76,20 @@ func (s *Store) RotateServiceAccess(ctx context.Context, clientID, accessID, dri
 		if normalizeInstanceRuntimeCode(serviceCode) != "xray-core" {
 			return domain.Job{}, fmt.Errorf("service access driver mismatch: %s", serviceCode)
 		}
-		access.Metadata["rotate_credentials"] = true
-		delete(access.Metadata, "xray_uuid")
-		delete(access.Metadata, "uuid")
+		profileKey := xrayClientIdentityProfileKey(access.Metadata)
+		instanceIDs, err := s.rotateXrayClientIdentityForServiceAccesses(ctx, clientID, profileKey, id.New())
+		if err != nil {
+			return domain.Job{}, err
+		}
+		if len(instanceIDs) == 0 {
+			instanceIDs = []string{instanceID}
+		}
+		jobRecord, err := s.ProvisionClient(ctx, clientID, instanceIDs)
+		if err != nil {
+			return domain.Job{}, err
+		}
+		_, _ = s.CreateAudit(ctx, "system", "service_access.rotate", "service_access", &accessID, "xray client identity rotated and propagation queued")
+		return jobRecord, nil
 	case "wireguard":
 		if normalizeInstanceRuntimeCode(serviceCode) != "wireguard" {
 			return domain.Job{}, fmt.Errorf("service access driver mismatch: %s", serviceCode)
@@ -124,4 +149,79 @@ func (s *Store) RotateServiceAccess(ctx context.Context, clientID, accessID, dri
 	}
 	_, _ = s.CreateAudit(ctx, "system", "service_access.rotate", "service_access", &accessID, "service access rotation queued")
 	return jobRecord, nil
+}
+
+func (s *Store) rotateXrayClientIdentityForServiceAccesses(ctx context.Context, clientID, profileKey, newUUID string) ([]string, error) {
+	clientID = strings.TrimSpace(clientID)
+	profileKey = normalizeClientServiceIdentityKey(profileKey)
+	newUUID = strings.TrimSpace(newUUID)
+	if clientID == "" || profileKey == "" || newUUID == "" {
+		return nil, fmt.Errorf("client id, profile key and xray uuid are required")
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := ensureXrayClientIdentityUUIDTx(ctx, tx, clientID, profileKey, newUUID, true); err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.Query(ctx, `select
+			sa.id::text,
+			sa.instance_id::text,
+			sa.metadata_json
+		from service_accesses sa
+		join instances i on i.id=sa.instance_id
+		join service_definitions sd on sd.id=i.service_definition_id
+		where sa.client_account_id=$1
+		  and sa.status <> 'revoked'
+		  and i.status <> 'deleted'
+		  and sd.code in ('xray-core','xray','xray_core')
+		for update`, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	instanceSeen := map[string]struct{}{}
+	instanceIDs := make([]string, 0)
+	for rows.Next() {
+		var accessID, instanceID string
+		var metadataRaw []byte
+		if err := rows.Scan(&accessID, &instanceID, &metadataRaw); err != nil {
+			return nil, err
+		}
+		metadata := map[string]any{}
+		if err := decodeJSONField(metadataRaw, &metadata, "service_accesses.metadata_json"); err != nil {
+			return nil, err
+		}
+		if metadata == nil {
+			metadata = map[string]any{}
+		}
+		if xrayClientIdentityProfileKey(metadata) != profileKey {
+			continue
+		}
+		metadata["xray_uuid"] = newUUID
+		metadata["xray_identity_key"] = profileKey
+		delete(metadata, "uuid")
+		delete(metadata, "rotate_credentials")
+		delete(metadata, "force_new_xray_uuid")
+		if _, err := tx.Exec(ctx, `update service_accesses set status='pending',metadata_json=$2,updated_at=now() where id=$1`, accessID, mustJSON(metadata)); err != nil {
+			return nil, err
+		}
+		if _, ok := instanceSeen[instanceID]; !ok {
+			instanceSeen[instanceID] = struct{}{}
+			instanceIDs = append(instanceIDs, instanceID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return instanceIDs, nil
 }

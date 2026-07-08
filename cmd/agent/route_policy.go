@@ -73,12 +73,19 @@ func (c client) applyRoutePolicy(ctx context.Context, j job, st agentState) (str
 		if err := writeManagedFile(managedFileSpec{Path: routePolicyTimerPath, Content: renderRoutePolicyTimer(), Mode: "0644"}); err != nil {
 			return "failed", map[string]any{"error": err.Error(), "stage": "write_route_policy_timer", "path": routePolicyTimerPath}
 		}
-		_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
+		reloadResult, err := runSystemdDaemonReload(ctx)
+		if err != nil {
+			kernelResult["systemd_reload"] = reloadResult
+			kernelResult["error"] = err.Error()
+			kernelResult["telemetry"] = collectRoutePolicyKernelTelemetry(ctx, telemetryTables...)
+			return "failed", map[string]any{"error": err.Error(), "kernel": kernelResult}
+		}
 		timerCode, timerOut := runInstallCommand(ctx, "systemctl", "enable", "--now", routePolicyTimerName)
 		code, out := runInstallCommand(ctx, "systemctl", "restart", routePolicyUnitName)
 		kernelResult["unit"] = routePolicyUnitName
 		kernelResult["timer"] = routePolicyTimerName
 		kernelResult["script_path"] = routePolicyScriptPath
+		kernelResult["systemd_reload"] = reloadResult
 		kernelResult["output"] = truncate(out, 2000)
 		kernelResult["timer_output"] = truncate(timerOut, 2000)
 		kernelResult["enforced"] = code == 0 && timerCode == 0
@@ -226,8 +233,18 @@ func (c client) cleanupRoutePolicy(ctx context.Context, j job, st agentState) (s
 			skipped = append(skipped, path+": not found")
 		}
 	}
-	_, _ = runInstallCommand(ctx, "systemctl", "daemon-reload")
-	_, _ = runInstallCommand(ctx, "systemctl", "reset-failed", routePolicyUnitName, routePolicyTimerName)
+	reloadResult, err := runSystemdDaemonReload(ctx)
+	result["systemd_reload"] = reloadResult
+	if err != nil {
+		result["error"] = err.Error()
+		result["telemetry_after"] = collectRoutePolicyKernelTelemetry(ctx, telemetryTables...)
+		return "failed", result
+	}
+	resetCode, resetOut := runInstallCommand(ctx, "systemctl", "reset-failed", routePolicyUnitName, routePolicyTimerName)
+	result["reset_failed_output"] = truncate(strings.TrimSpace(resetOut), 2000)
+	if resetCode != 0 && !isMissingSystemdUnitOutput(resetOut) {
+		warnings = append(warnings, "systemd reset-failed warning: "+firstLine(resetOut))
+	}
 	result["removed_paths"] = removed
 	result["skipped_paths"] = skipped
 	if len(warnings) > 0 {
