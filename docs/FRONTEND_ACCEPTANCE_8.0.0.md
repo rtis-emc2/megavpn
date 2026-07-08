@@ -2,24 +2,35 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Evidence HEAD/current commit:
-`f1d8769b63cdfe705afb29a71b8927d4c4abe147`
+Latest evidence commit:
+`HEAD` on `release/8.0.0-frontend-console` after this evidence correction;
+this supersedes `d0c6af9db88018c5cae14be4542b453a310b658f`.
 
 Evidence CI:
 GitHub Actions run `28967364873` passed for
 `f1d8769b63cdfe705afb29a71b8927d4c4abe147`.
 
+VLESS implementation commit:
+`f33070aee76e9fb11100a5ea954fded09c0d4a10`
+
 FE8-RC1 hygiene implementation commit:
 `9044647110cd5cbaeb4d5a866b96f56008fcb338`
 
-FE8-P0-02 Firewall task implementation commit:
+Firewall implementation commit:
 `5bfae8dfd629592dfa44aec9a3cea8b1db4b2c47`
 
-Evidence date UTC: `2026-07-08T18:43:23Z`
+Firewall evidence alignment commit:
+`d0c6af9db88018c5cae14be4542b453a310b658f`
+
+Current evidence date UTC: `2026-07-08T19:21:12Z`
 
 Status: RC1 frontend branch is reviewable and CI-verifiable. Final 8.0.0
 cutover is still blocked by non-Firewall/non-VLESS write workflow migration and
 backend version synchronization.
+
+VLESS is connected in the new UI without `/legacy/`. Firewall is connected in
+the new UI without `/legacy/`. Remaining workflows are still not migrated.
+Final 8.0.0 cutover remains NO-GO.
 
 ## 1. Summary
 
