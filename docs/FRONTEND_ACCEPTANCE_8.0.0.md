@@ -3,7 +3,7 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`2c080a555b5d0460fe3b8c876907a67823185917`
+`24a0d129a0ca89caf3ec0e5f9c18616c0af9d95f`
 
 FE8-P0-04B service pack instance creation feature commit:
 `2c080a555b5d0460fe3b8c876907a67823185917`
@@ -39,11 +39,10 @@ Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
 Current evidence CI:
-Local FE8-P0-04B evidence is pending push/CI for
-`2c080a555b5d0460fe3b8c876907a67823185917`. Previous accepted baseline CI run
-`28974936662` passed for `711b06dec5076fabcd7488fd11d010b65e6c8276`.
+Current evidence CI run `28977048826` passed for
+`24a0d129a0ca89caf3ec0e5f9c18616c0af9d95f`.
 
-Current evidence date UTC: `2026-07-08T21:16:46Z`
+Current evidence date UTC: `2026-07-08T21:36:07Z`
 
 Status: FE8-P0-04B is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
