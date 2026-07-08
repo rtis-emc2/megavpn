@@ -964,9 +964,27 @@
         ]);
         return;
       }
-      openModal(`Members: ${group.display_name || group.group_key}`, 'Assign clients to this access group', `
-        <section id="clientAccessGroupMembersPanel" class="access-group-members-panel" data-group-id="${escapeHTML(group.id)}" data-offset="0" data-preview-ready="false">
-          <div class="form-grid">
+      const groupLabel = group.display_name || group.group_key;
+      openModal(`Assign clients: ${groupLabel}`, 'Load clients, preview membership changes, then apply them to the access group.', `
+        <section id="clientAccessGroupMembersPanel" class="access-group-members-panel" data-group-id="${escapeHTML(group.id)}" data-offset="0" data-total="0" data-preview-ready="false">
+          <div class="access-group-workflow-strip" aria-label="Client assignment workflow">
+            <div class="access-group-step-card">
+              <span>1</span>
+              <strong>Find clients</strong>
+              <small>Search, filter, or paste usernames, emails and IDs.</small>
+            </div>
+            <div class="access-group-step-card">
+              <span>2</span>
+              <strong>Select scope</strong>
+              <small>Choose visible rows, all filtered clients, or pasted refs.</small>
+            </div>
+            <div class="access-group-step-card">
+              <span>3</span>
+              <strong>Preview and apply</strong>
+              <small>Review create, move, skip and apply jobs before changing access.</small>
+            </div>
+          </div>
+          <div class="access-group-members-toolbar">
             <div class="field">
               <label>Client search</label>
               <input id="accessGroupClientSearch" placeholder="username, email, client ID" autocomplete="off" />
@@ -998,27 +1016,42 @@
                 <option value="250">250 clients</option>
               </select>
             </div>
-            <div class="field full">
+            <div class="field access-group-load-field">
+              <label>Load</label>
+              <button class="secondary-btn" type="button" id="loadAccessGroupClientsBtn">Load clients</button>
+            </div>
+          </div>
+          <div class="access-group-paste-panel">
+            <div class="field">
               <label>Paste clients</label>
               <textarea id="accessGroupPasteClients" rows="4" placeholder="usernames, emails or client IDs separated by comma or new line"></textarea>
             </div>
-          </div>
-          <div class="access-group-bulk-bar access-group-selection-bar">
-            <label class="checkbox-field"><input type="checkbox" id="accessGroupSelectVisible" /> Select visible</label>
-            <label class="checkbox-field"><input type="checkbox" id="accessGroupSelectAllFiltered" /> Select all filtered clients</label>
-            <select id="accessGroupBulkMode" aria-label="Bulk mode">
-              <option value="add_only">Add only, do not move existing members</option>
-              <option value="add_or_move">Add or move existing members</option>
-            </select>
-            <button class="secondary-btn" type="button" id="loadAccessGroupClientsBtn">Load clients</button>
+            <div class="access-group-selection-card">
+              <div>
+                <strong>Selection</strong>
+                <p id="accessGroupSelectionHint">Select rows, select all filtered clients, or paste client refs to enable preview.</p>
+              </div>
+              <div class="access-group-selection-actions">
+                <label class="selection-toggle"><input type="checkbox" id="accessGroupSelectVisible" /> Select visible rows</label>
+                <label class="selection-toggle"><input type="checkbox" id="accessGroupSelectAllFiltered" /> Select all filtered clients</label>
+                <select id="accessGroupBulkMode" aria-label="Bulk mode">
+                  <option value="add_only">Add only, do not move existing members</option>
+                  <option value="add_or_move">Add or move existing members</option>
+                </select>
+                <button class="secondary-btn" type="button" id="clearAccessGroupSelectionBtn">Clear selection</button>
+              </div>
+            </div>
           </div>
           <div id="accessGroupMembersLoaded" class="table-wrap"></div>
           <div id="accessGroupMembersPreview" class="form-result"></div>
           <div class="access-group-members-footer">
-            <div id="accessGroupSelectionSummary" class="access-group-selection-summary">0 selected</div>
+            <div>
+              <div id="accessGroupSelectionSummary" class="access-group-selection-summary">No clients selected</div>
+              <div id="accessGroupFooterHint" class="access-group-footer-hint">Preview is required before access changes are applied.</div>
+            </div>
             <div class="inline-actions">
-              <button class="secondary-btn" type="button" id="previewAccessGroupBulkBtn" disabled>Preview</button>
-              <button class="primary-btn" type="button" id="applyAccessGroupBulkBtn" disabled>Apply changes</button>
+              <button class="secondary-btn" type="button" id="previewAccessGroupBulkBtn" disabled>Preview changes</button>
+              <button class="primary-btn" type="button" id="applyAccessGroupBulkBtn" disabled>Apply preview</button>
               <button class="secondary-btn" type="button" id="closeAccessGroupMembersBtn">Close</button>
             </div>
           </div>
@@ -1073,6 +1106,7 @@
         updateAccessGroupBulkControls();
       });
       document.getElementById('accessGroupBulkMode')?.addEventListener('change', markAccessGroupPreviewStale);
+      document.getElementById('clearAccessGroupSelectionBtn')?.addEventListener('click', clearAccessGroupSelection);
       document.getElementById('previewAccessGroupBulkBtn')?.addEventListener('click', () => previewAccessGroupBulk(group));
       document.getElementById('applyAccessGroupBulkBtn')?.addEventListener('click', () => applyAccessGroupBulk(group));
       updateAccessGroupBulkControls();
@@ -1123,14 +1157,32 @@
       const selectedCount = accessGroupSelectedClientIDs(panel).size;
       const pastedCount = accessGroupPastedRefs().length;
       const allFiltered = Boolean(document.getElementById('accessGroupSelectAllFiltered')?.checked);
+      const total = Number(panel?.dataset.total || 0);
       const preview = document.getElementById('previewAccessGroupBulkBtn');
       const apply = document.getElementById('applyAccessGroupBulkBtn');
       const summary = document.getElementById('accessGroupSelectionSummary');
-      if (preview) preview.disabled = !accessGroupHasSelectableInput();
+      const hint = document.getElementById('accessGroupSelectionHint');
+      const footerHint = document.getElementById('accessGroupFooterHint');
+      const hasInput = accessGroupHasSelectableInput();
+      if (preview) preview.disabled = !hasInput;
       if (apply) apply.disabled = panel?.dataset.previewReady !== 'true';
       if (summary) {
-        const scope = allFiltered ? 'all filtered' : `${selectedCount} selected`;
-        summary.textContent = `${scope} · ${pastedCount} pasted refs`;
+        const selectedLabel = allFiltered
+          ? `All filtered clients${total > 0 ? ` (${total})` : ''}`
+          : `${selectedCount} selected`;
+        const pastedLabel = pastedCount > 0 ? ` · ${pastedCount} pasted` : '';
+        summary.textContent = hasInput ? `${selectedLabel}${pastedLabel}` : 'No clients selected';
+      }
+      const message = !hasInput
+        ? 'Select rows, select all filtered clients, or paste client refs to enable preview.'
+        : panel?.dataset.previewReady === 'true'
+          ? 'Preview is ready. Applying will materialize membership and queue bounded instance apply jobs.'
+          : 'Selection changed. Run preview before applying access changes.';
+      if (hint) hint.textContent = message;
+      if (footerHint) {
+        footerHint.textContent = panel?.dataset.previewReady === 'true'
+          ? 'Review the preview result, then apply the prepared change.'
+          : 'Preview is required before access changes are applied.';
       }
     }
 
@@ -1159,6 +1211,19 @@
       updateAccessGroupBulkControls();
     }
 
+    function clearAccessGroupSelection() {
+      const panel = document.getElementById('clientAccessGroupMembersPanel');
+      accessGroupSelectedClientIDs(panel).clear();
+      const visible = document.getElementById('accessGroupSelectVisible');
+      const allFiltered = document.getElementById('accessGroupSelectAllFiltered');
+      const paste = document.getElementById('accessGroupPasteClients');
+      if (visible) visible.checked = false;
+      if (allFiltered) allFiltered.checked = false;
+      if (paste) paste.value = '';
+      markAccessGroupPreviewStale();
+      syncAccessGroupClientCheckboxes(panel);
+    }
+
     async function loadAccessGroupClients(group, offset = 0) {
       const panel = document.getElementById('clientAccessGroupMembersPanel');
       const target = document.getElementById('accessGroupMembersLoaded');
@@ -1176,6 +1241,7 @@
       params.set('offset', String(offset));
       try {
         const data = await requestJSON(`/api/v1/client-access-groups/available-clients?${params.toString()}`);
+        panel.dataset.total = String(Number(data?.total || 0));
         panel._loadedClientIDs = (Array.isArray(data?.items) ? data.items : []).map((item) => String(item.client_id || '')).filter(Boolean);
         target.innerHTML = renderAccessGroupAvailableClients(group, data);
         target.querySelectorAll('[data-page-offset]').forEach((button) => {
@@ -1193,6 +1259,7 @@
         syncAccessGroupClientCheckboxes(panel);
       } catch (err) {
         target.innerHTML = `<div class="empty compact-empty">${escapeHTML(err.message)}</div>`;
+        panel.dataset.total = '0';
         panel._loadedClientIDs = [];
         syncAccessGroupClientCheckboxes(panel);
       }
@@ -1209,11 +1276,11 @@
       const allFiltered = Boolean(document.getElementById('accessGroupSelectAllFiltered')?.checked);
       const rows = items.map((client) => `
         <tr>
-          <td><label class="checkbox-field"><input type="checkbox" name="access_group_client_ids" value="${escapeHTML(client.client_id)}"${selected.has(client.client_id) ? ' checked' : ''}${allFiltered ? ' disabled' : ''} /> ${escapeHTML(client.username || client.client_id)}</label></td>
+          <td><label class="checkbox-field access-group-client-name"><input type="checkbox" name="access_group_client_ids" value="${escapeHTML(client.client_id)}"${selected.has(client.client_id) ? ' checked' : ''}${allFiltered ? ' disabled' : ''} /> <span>${escapeHTML(client.username || client.client_id)}</span></label></td>
           <td>${escapeHTML(client.email || '')}</td>
           <td>${statusTag(client.client_status || 'unknown')}</td>
           <td>${escapeHTML(client.group_name || client.group_key || 'unassigned')}</td>
-        </tr>`).join('') || '<tr><td colspan="4"><div class="empty compact-empty">No clients for this filter.</div></td></tr>';
+        </tr>`).join('') || '<tr><td colspan="4"><div class="empty compact-empty access-group-empty-state">No clients for this filter.</div></td></tr>';
       const start = total === 0 ? 0 : offset + 1;
       const end = Math.min(offset + items.length, total);
       return `
@@ -1231,6 +1298,11 @@
     async function previewAccessGroupBulk(group) {
       const target = document.getElementById('accessGroupMembersPreview');
       const apply = document.getElementById('applyAccessGroupBulkBtn');
+      if (!accessGroupHasSelectableInput()) {
+        if (target) target.innerHTML = '<div class="callout warn"><strong>No clients selected</strong><span>Select rows, select all filtered clients, or paste client refs first.</span></div>';
+        updateAccessGroupBulkControls();
+        return;
+      }
       if (target) target.innerHTML = '<span class="tag warn">previewing</span>';
       if (apply) apply.disabled = true;
       try {
@@ -1258,26 +1330,37 @@
       try {
         const payload = accessGroupMembersPayload(group);
         const data = await sendJSON(`/api/v1/client-access-groups/${encodeURIComponent(group.id)}/members:bulk-apply`, 'POST', payload);
-        if (target) target.innerHTML = renderAccessGroupBulkPreview(data);
+        if (target) target.innerHTML = renderAccessGroupBulkPreview(data, true);
+        const changed = Number(data?.created_memberships || 0) + Number(data?.moved_memberships || 0);
+        if (changed > 0) {
+          const assignment = document.getElementById('accessGroupAssignmentFilter');
+          if (assignment) assignment.value = 'assigned_to_group';
+        }
+        clearAccessGroupSelection();
         await refresh();
         markAccessGroupPreviewStale();
-        loadAccessGroupClients(group, Number(panel?.dataset.offset || 0));
+        loadAccessGroupClients(group, 0);
       } catch (err) {
         if (target) target.innerHTML = `<span class="tag danger">${escapeHTML(err.message)}</span>`;
       }
     }
 
-    function renderAccessGroupBulkPreview(data) {
+    function renderAccessGroupBulkPreview(data, applied = false) {
       const failed = Array.isArray(data?.failed) ? data.failed : [];
       const conflicts = Array.isArray(data?.conflicts) ? data.conflicts : [];
+      const created = Number(data?.created_memberships || 0);
+      const moved = Number(data?.moved_memberships || 0);
+      const skipped = Number(data?.skipped_existing || 0);
+      const jobs = Number(data?.apply_job_count || 0);
       return `
+        ${applied ? `<div class="callout ok"><strong>Access group updated</strong><span>${escapeHTML(String(created + moved))} client membership changes applied. ${escapeHTML(String(jobs))} bounded instance apply job(s) queued.</span></div>` : ''}
         <div class="response-grid">
-          <div><span>Will create</span><strong>${escapeHTML(String(data?.created_memberships || 0))}</strong></div>
-          <div><span>Will move</span><strong>${escapeHTML(String(data?.moved_memberships || 0))}</strong></div>
-          <div><span>Will skip</span><strong>${escapeHTML(String(data?.skipped_existing || 0))}</strong></div>
-          <div><span>Will fail</span><strong>${escapeHTML(String(failed.length))}</strong></div>
+          <div><span>${applied ? 'Created' : 'Will create'}</span><strong>${escapeHTML(String(created))}</strong></div>
+          <div><span>${applied ? 'Moved' : 'Will move'}</span><strong>${escapeHTML(String(moved))}</strong></div>
+          <div><span>${applied ? 'Skipped' : 'Will skip'}</span><strong>${escapeHTML(String(skipped))}</strong></div>
+          <div><span>${applied ? 'Failed' : 'Will fail'}</span><strong>${escapeHTML(String(failed.length))}</strong></div>
           <div><span>Instances</span><strong>${escapeHTML(String(data?.affected_instances || 0))}</strong></div>
-          <div><span>Apply jobs</span><strong>${escapeHTML(String(data?.apply_job_count || 0))}</strong></div>
+          <div><span>Apply jobs</span><strong>${escapeHTML(String(jobs))}</strong></div>
         </div>
         ${conflicts.length ? `<div class="callout warn">${escapeHTML(String(conflicts.length))} existing memberships would be moved when bulk move is selected.</div>` : ''}
         ${failed.length ? `<pre class="technical-details">${escapeHTML(JSON.stringify(failed.slice(0, 20), null, 2))}</pre>` : ''}`;

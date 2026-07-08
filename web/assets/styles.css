@@ -2181,29 +2181,192 @@ tr:hover td { background: #f8fafc; }
 .access-group-client-picker code {
   font-size: 12px;
 }
+.callout {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  color: var(--text);
+}
+.callout strong {
+  font-size: 13px;
+}
+.callout span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.callout.ok {
+  border-color: rgba(4, 120, 87, 0.22);
+  background: #ecfdf5;
+  color: #065f46;
+}
+.callout.ok span {
+  color: #047857;
+}
+.callout.warn {
+  border-color: rgba(180, 83, 9, 0.24);
+  background: #fffbeb;
+  color: #92400e;
+}
+.callout.warn span {
+  color: #92400e;
+}
 .client-access-groups-modal {
   padding-bottom: 0;
 }
 .access-group-members-panel {
   display: grid;
-  gap: 14px;
+  gap: 16px;
   min-height: min(720px, calc(100vh - 180px));
 }
-.access-group-selection-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 12px;
+.access-group-workflow-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.access-group-step-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: start;
+  min-height: 88px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #f8fafc;
 }
-.access-group-selection-bar select {
-  width: min(420px, 100%);
+.access-group-step-card span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+}
+.access-group-step-card strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.25;
+}
+.access-group-step-card small {
+  grid-column: 2;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.access-group-members-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(220px, 1fr) minmax(160px, 0.7fr) minmax(140px, 0.55fr) minmax(150px, 0.55fr);
+  gap: 12px;
+  align-items: end;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+.access-group-load-field .secondary-btn {
+  width: 100%;
+}
+.access-group-paste-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 12px;
+  align-items: stretch;
+}
+.access-group-paste-panel > .field,
+.access-group-selection-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+.access-group-paste-panel textarea {
+  min-height: 126px;
+  resize: vertical;
+}
+.access-group-selection-card {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.access-group-selection-card strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-size: 14px;
+}
+.access-group-selection-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.access-group-selection-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.access-group-selection-actions select,
+.access-group-selection-actions button {
+  grid-column: span 2;
+  width: 100%;
+}
+.selection-toggle {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px 11px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+.selection-toggle input {
+  flex: 0 0 auto;
+}
+.access-group-client-name {
+  align-items: flex-start;
+}
+.access-group-client-name span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 800;
 }
 .access-group-client-picker {
   min-width: 980px;
+  table-layout: fixed;
+}
+.access-group-client-picker th:nth-child(1),
+.access-group-client-picker td:nth-child(1) {
+  width: 34%;
+}
+.access-group-client-picker th:nth-child(2),
+.access-group-client-picker td:nth-child(2) {
+  width: 26%;
+}
+.access-group-client-picker th:nth-child(3),
+.access-group-client-picker td:nth-child(3) {
+  width: 16%;
+}
+.access-group-client-picker th:nth-child(4),
+.access-group-client-picker td:nth-child(4) {
+  width: 24%;
+}
+.access-group-empty-state {
+  margin: 10px 0;
 }
 .access-group-members-footer {
   position: sticky;
@@ -2213,15 +2376,60 @@ tr:hover td { background: #f8fafc; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 0 0;
+  padding: 14px;
   border-top: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(255,255,255,0.88), #ffffff 36%);
+  border-radius: 12px 12px 0 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), #ffffff 42%);
+  box-shadow: 0 -12px 28px rgba(15, 23, 42, 0.06);
 }
 .access-group-selection-summary {
   min-width: 220px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 900;
+}
+.access-group-footer-hint {
+  margin-top: 3px;
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.4;
+}
+@media (max-width: 1180px) {
+  .access-group-workflow-strip,
+  .access-group-paste-panel {
+    grid-template-columns: 1fr;
+  }
+  .access-group-members-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .access-group-load-field {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 720px) {
+  .access-group-workflow-strip,
+  .access-group-members-toolbar,
+  .access-group-paste-panel,
+  .access-group-selection-actions {
+    grid-template-columns: 1fr;
+  }
+  .access-group-selection-actions select,
+  .access-group-selection-actions button {
+    grid-column: auto;
+  }
+  .access-group-members-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .access-group-members-footer .inline-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+  .access-group-members-footer .primary-btn,
+  .access-group-members-footer .secondary-btn {
+    width: 100%;
+  }
 }
 .client-provision-form {
   display: grid;
