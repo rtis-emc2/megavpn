@@ -95,6 +95,17 @@ describe('ClientGroupsPage', () => {
       if (method === 'POST' && url.pathname === '/api/v1/client-access-groups') {
         return json({ ...group, id: 'group-2', group_key: body.group_key, display_name: body.display_name }, 201);
       }
+      if (method === 'PATCH' && url.pathname === '/api/v1/client-access-groups/group-1') {
+        return json({
+          ...group,
+          display_name: body.display_name,
+          description: body.description,
+          status: body.status,
+          policy_json: body.policy_json,
+          scope_mode: body.scope_mode,
+          auto_apply_new_instances: body.auto_apply_new_instances,
+        });
+      }
       if (method === 'GET' && url.pathname === '/api/v1/client-access-groups/available-clients') {
         return json({
           service_code: 'vless',
@@ -246,6 +257,23 @@ describe('ClientGroupsPage', () => {
           apply_job_ids: ['job-1', 'job-2'],
         }, 202);
       }
+      if (method === 'DELETE' && url.pathname === '/api/v1/client-access-groups/group-1/members/client-existing') {
+        return json({
+          group_id: 'group-1',
+          group_key: 'core',
+          service_code: 'vless',
+          dry_run: false,
+          created_memberships: 0,
+          moved_memberships: 0,
+          skipped_existing: 0,
+          affected_instances: 2,
+          materialized_created: 0,
+          materialized_updated: 0,
+          materialized_disabled: 2,
+          apply_job_count: 2,
+          apply_job_ids: ['job-remove-1', 'job-remove-2'],
+        }, 202);
+      }
       return json({ error: `unexpected ${method} ${url.pathname}` }, 404);
     }));
   });
@@ -273,6 +301,29 @@ describe('ClientGroupsPage', () => {
       scope_mode: 'all_active_instances',
     });
     expect(createCall?.body).toHaveProperty('policy_json.access_mode', 'instance_default');
+    expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
+  });
+
+  it('updates VLESS group policy and status through the client access group API', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findAllByText('Core access');
+    await user.click(screen.getAllByRole('button', { name: 'Policy' })[0]);
+    await user.selectOptions(screen.getByLabelText('Status'), 'disabled');
+    await user.selectOptions(screen.getByLabelText('Route mode'), 'block');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'PATCH' && call.path === '/api/v1/client-access-groups/group-1')).toBe(true));
+    const updateCall = calls.find((call) => call.method === 'PATCH' && call.path === '/api/v1/client-access-groups/group-1');
+    expect(updateCall?.body).toMatchObject({
+      service_code: 'vless',
+      group_key: 'core',
+      display_name: 'Core access',
+      status: 'disabled',
+      scope_mode: 'all_active_instances',
+    });
+    expect(updateCall?.body).toHaveProperty('policy_json.access_mode', 'block');
     expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
   });
 
@@ -311,6 +362,42 @@ describe('ClientGroupsPage', () => {
       queue_apply: true,
       dry_run: false,
     });
+    expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
+  });
+
+  it('invalidates VLESS membership preview and disables apply when selection inputs change', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findAllByText('Core access');
+    await user.click(screen.getAllByRole('button', { name: 'Members' })[0]);
+    await screen.findAllByText('Alpha User');
+
+    await user.click(screen.getByRole('button', { name: 'Select visible' }));
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+
+    await screen.findByText('Preview result');
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled();
+    await user.selectOptions(screen.getByLabelText('Assignment mode'), 'add_or_move');
+
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    expect(screen.getByText('Preview is stale')).toBeInTheDocument();
+    expect(calls.some((call) => call.path === '/api/v1/client-access-groups/group-1/members:bulk-apply')).toBe(false);
+    expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
+  });
+
+  it('removes VLESS group members through the backend member delete endpoint', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findAllByText('Core access');
+    await user.click(screen.getAllByRole('button', { name: 'Members' })[0]);
+    await screen.findAllByText('Existing User');
+
+    await user.click(screen.getAllByRole('button', { name: 'Remove member' })[0]);
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/client-access-groups/group-1/members/client-existing')).toBe(true));
     expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
   });
 

@@ -20,7 +20,6 @@ No Docker, CDN runtime libraries, Bootstrap, jQuery, SSR, or browser-stored auth
 frontend/
   package.json
   package-lock.json
-  pnpm-lock.yaml
   vite.config.ts
   src/
     app/
@@ -191,6 +190,10 @@ npm run test
 npm run i18n:check
 npm run build
 ```
+
+`npm` is the package manager standard for this workspace. Keep
+`frontend/package-lock.json` as the only frontend lockfile; CI, self-test and
+release gates use `npm ci` and `npm run ...`.
 
 Repository-level gates also validate Go, shell scripts, generated web assets and legacy bootstrap.
 

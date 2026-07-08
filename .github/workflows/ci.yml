@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - audit/cleanup-hardening
+      - release/8.0.0-frontend-console
+      - release/**
   pull_request:
   workflow_dispatch:
     inputs:
