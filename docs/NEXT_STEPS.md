@@ -35,18 +35,18 @@ Canonical repository: `github.com/rtis-emc2/megavpn`.
    Control Plane TLS apply, SSH access method creation, enrollment-token
    rotation, bootstrap queueing, update buttons and heartbeat transition.
 6. Validate clean deployment on a fresh server with
-   `scripts/control-plane-install.sh`, generated environment, master key,
+   `scripts/ops/control-plane-install.sh`, generated environment, master key,
    admin credentials, Nginx edge and systemd units.
 7. Validate service-pack and runtime paths on a test server: IPsec/L2TP, Xray
    Reality, Xray+Nginx gRPC, Xray WebSocket camouflage, OpenVPN TCP/UDP,
    WireGuard, HTTP Proxy, MTProto and Shadowsocks. For camouflage matrix runs,
-   run `scripts/service-pack-smoke.sh --matrix ... --plan` first to preview
+   run `scripts/smoke/service-pack-smoke.sh --matrix ... --plan` first to preview
    selected packs, endpoint hosts, certificate/fallback requirements and port
    overlaps without creating instances. Set `MEGAVPN_FALLBACK_UPSTREAM_URL` to
    the real fallback website; otherwise those packs are intentionally skipped.
    Store staged batch evidence in `MEGAVPN_SMOKE_EVIDENCE_DIR` and validate
-   `_matrix-summary.json` with `scripts/service-pack-evidence-report.js`
-   before accepting the batch. Prefer `scripts/service-pack-staged-smoke.sh`
+   `_matrix-summary.json` with `scripts/ci/service-pack-evidence-report.js`
+   before accepting the batch. Prefer `scripts/smoke/service-pack-staged-smoke.sh`
    for operator runs because it groups protocols into conflict-aware batches
    and validates evidence after every batch. Preserve its top-level
    `_staged-summary.json` together with per-batch evidence so final acceptance

@@ -46,7 +46,7 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
 
       - name: Build binaries
-        run: ./scripts/build.sh
+        run: ./scripts/ci/build.sh
 
       - name: Make build parity
         run: make build
@@ -97,7 +97,7 @@ jobs:
           find web/assets -maxdepth 1 -type f -name '*.js' -print0 | sort -z | xargs -0 -n1 node --check
 
       - name: Documentation consistency
-        run: scripts/docs-consistency.sh
+        run: scripts/ci/docs-consistency.sh
 
   diagnostics:
     name: Self-test diagnostics
@@ -120,7 +120,7 @@ jobs:
       - name: Self-test
         env:
           MEGAVPN_SELF_TEST_RUN_RACE: "0"
-        run: scripts/self-test.sh
+        run: scripts/ci/self-test.sh
 
       - name: Upload self-test report
         if: always()
@@ -159,4 +159,4 @@ jobs:
           MEGAVPN_RELEASE_ENDPOINT_DOMAIN: ${{ secrets.MEGAVPN_RELEASE_ENDPOINT_DOMAIN }}
           MEGAVPN_RELEASE_CERTIFICATE_ID: ${{ secrets.MEGAVPN_RELEASE_CERTIFICATE_ID }}
           MEGAVPN_RELEASE_RUN_SERVICE_MATRIX: ${{ vars.MEGAVPN_RELEASE_RUN_SERVICE_MATRIX }}
-        run: scripts/release-gate.sh
+        run: scripts/ci/release-gate.sh

@@ -16,19 +16,20 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | 2 | [User guide](USER_GUIDE_EN.md) | End-to-end operator guide |
 | 3 | [Operations runbook](OPERATIONS_RUNBOOK.md) | Production operations, backup, restore, upgrade and rollback |
 | 4 | [Release gates](RELEASE_GATES.md) | Release acceptance evidence |
-| 5 | [Self-testing](SELF_TESTING.md) | Local and live diagnostic gates |
-| 6 | [Threat model](THREAT_MODEL.md) | Security model and residual risks |
-| 7 | [RBAC matrix](RBAC_MATRIX.md) | Roles, permissions and privileged job rules |
-| 8 | [Managed backhaul](BACKHAUL.md) | Ingress-to-egress transport model |
-| 9 | [Node map](NODE_MAP.md) | GeoIP node placement and backhaul topology overlay |
-| 10 | [Firewall policy catalog](FIREWALL.md) | Managed firewall policies, address groups, rules and node apply state |
-| 11 | [Traffic accounting](TRAFFIC_ACCOUNTING.md) | Aggregate traffic counters, privacy boundary and retention |
-| 12 | [VLESS access groups](VLESS_GROUPS.md) | Reusable VLESS client routing groups |
-| 13 | [VLESS subscriptions](VLESS_SUBSCRIPTIONS.md) | Per-client VLESS subscription tokens and delivery workflow |
-| 14 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
-| 15 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
-| 16 | [Security review](SECURITY_REVIEW_7.1.0.30.md) | Security and release review artifact |
-| 17 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
+| 5 | [Current release notes](releases/7.1.0.30.md) | Current release baseline and notable changes |
+| 6 | [Self-testing](SELF_TESTING.md) | Local and live diagnostic gates |
+| 7 | [Threat model](THREAT_MODEL.md) | Security model and residual risks |
+| 8 | [RBAC matrix](RBAC_MATRIX.md) | Roles, permissions and privileged job rules |
+| 9 | [Managed backhaul](BACKHAUL.md) | Ingress-to-egress transport model |
+| 10 | [Node map](NODE_MAP.md) | GeoIP node placement and backhaul topology overlay |
+| 11 | [Firewall policy catalog](FIREWALL.md) | Managed firewall policies, address groups, rules and node apply state |
+| 12 | [Traffic accounting](TRAFFIC_ACCOUNTING.md) | Aggregate traffic counters, privacy boundary and retention |
+| 13 | [VLESS access groups](VLESS_GROUPS.md) | Reusable VLESS client routing groups |
+| 14 | [VLESS subscriptions](VLESS_SUBSCRIPTIONS.md) | Per-client VLESS subscription tokens and delivery workflow |
+| 15 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
+| 16 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
+| 17 | [Security review](SECURITY_REVIEW_7.1.0.30.md) | Security and release review artifact |
+| 18 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
 
 ## Documentation Ownership
 
@@ -37,7 +38,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | Product overview | `README.md`, `README_RU.md` | Keep concise. Do not move long operational procedures into README. |
 | Operator usage | `docs/USER_GUIDE_EN.md`, `docs/USER_GUIDE_RU.md` | English and Russian guides must stay aligned. |
 | Operations | `docs/OPERATIONS_RUNBOOK.md` | Production procedures and controlled maintenance. |
-| Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md` | Release evidence, self-test and smoke gates. |
+| Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md`, `docs/releases/7.1.0.30.md` | Release notes, release evidence, self-test and smoke gates. |
 | Security | `docs/THREAT_MODEL.md`, `docs/RBAC_MATRIX.md` | Threat model, roles, permissions and privileged jobs. |
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection and troubleshooting. |
 | Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP node placement, local static map, node owner metadata and backhaul overlay. |

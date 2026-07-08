@@ -52,7 +52,7 @@ is suitable only for lab or trusted local-only PostgreSQL.
 
 ## 3. Install The Control Plane
 
-The recommended path is `scripts/control-plane-install.sh`. The installer
+The recommended path is `scripts/ops/control-plane-install.sh`. The installer
 performs the full bootstrap:
 
 - validates parameters;
@@ -71,7 +71,7 @@ performs the full bootstrap:
 Interactive run:
 
 ```bash
-sudo ./scripts/control-plane-install.sh
+sudo ./scripts/ops/control-plane-install.sh
 ```
 
 Example non-interactive run:
@@ -83,7 +83,7 @@ sudo MEGAVPN_CP_ASSUME_YES=1 \
   MEGAVPN_CP_DATABASE_DSN='postgres://megavpn:password@127.0.0.1:5432/megavpn?sslmode=disable' \
   MEGAVPN_CP_ADMIN_USERNAME=superadmin \
   MEGAVPN_CP_ADMIN_EMAIL=admin@control.example.com \
-  ./scripts/control-plane-install.sh
+  ./scripts/ops/control-plane-install.sh
 ```
 
 Validate the same inputs without changing the host:
@@ -95,7 +95,7 @@ sudo MEGAVPN_CP_VALIDATE_ONLY=1 \
   MEGAVPN_CP_PUBLIC_BASE_URL=https://control.example.com \
   MEGAVPN_CP_DATABASE_DSN='postgres://megavpn:password@127.0.0.1:5432/megavpn?sslmode=disable' \
   MEGAVPN_CP_ADMIN_PASSWORD='replace-this-before-real-install' \
-  ./scripts/control-plane-install.sh
+  ./scripts/ops/control-plane-install.sh
 ```
 
 Key install variables:
@@ -166,15 +166,15 @@ sudo editor /etc/megavpn/megavpn.env
 3. Create the master key:
 
 ```bash
-sudo MEGAVPN_MASTER_KEY_PATH=/etc/megavpn/master.key scripts/generate-master-key.sh
+sudo MEGAVPN_MASTER_KEY_PATH=/etc/megavpn/master.key scripts/ops/generate-master-key.sh
 ```
 
-4. Build binaries and Web UI. `scripts/build.sh` must run from
+4. Build binaries and Web UI. `scripts/ci/build.sh` must run from
    `/opt/megavpn`, so the binaries are created in `/opt/megavpn/bin`:
 
 ```bash
-./scripts/build.sh
-sudo ./scripts/install-web.sh /opt/megavpn/web
+./scripts/ci/build.sh
+sudo ./scripts/ops/install-web.sh /opt/megavpn/web
 ```
 
 5. Install systemd units:
@@ -495,19 +495,19 @@ server name empty to reuse the primary `server_name`, or set a wildcard such as
 `*.example.com` when one edge should redirect a DNS wildcard.
 For repeatable smoke tests, pass the same fallback explicitly:
 `MEGAVPN_FALLBACK_UPSTREAM_URL=https://target.example.com
-scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
+scripts/smoke/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
 [certificate-id]`. Matrix smoke skips camouflage packs when this value is not
 set, because using the ingress host itself as fallback can create a proxy loop.
 To test protocols in batches and avoid unnecessary port conflicts on one node,
 limit the matrix with `--packs` or `MEGAVPN_SMOKE_PACKS`:
-`scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
+`scripts/smoke/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
 [certificate-id] --packs openvpn_tcp_11994,openvpn_udp_1194,wireguard_roadwarrior`.
 Use `--exclude` or `MEGAVPN_SMOKE_EXCLUDE_PACKS` to temporarily skip a pack.
 Before a real run, use `--plan` or `MEGAVPN_SMOKE_PLAN_ONLY=1`: the smoke
 script prints selected packs, endpoint hosts, required certificate/fallback
 inputs and possible listen-port overlaps without creating instances.
 For staged validation of the main protocol groups, use the batch runner:
-`scripts/service-pack-staged-smoke.sh --plan <node-id> <endpoint-domain> [certificate-id]`,
+`scripts/smoke/service-pack-staged-smoke.sh --plan <node-id> <endpoint-domain> [certificate-id]`,
 then rerun without `--plan`. Available batches are `remote_access_l3`
 for OpenVPN/WireGuard, `proxy_access` for HTTP Proxy/MTProto/Shadowsocks,
 `xray_reality`, `xray_nginx_http`, `xray_nginx_grpc` and `legacy_l2tp`
@@ -532,7 +532,7 @@ artifacts. Matrix runs also write `_matrix-summary.json` with totals and
 OK/FAILED/SKIPPED rows; override the path with
 `MEGAVPN_SMOKE_MATRIX_SUMMARY_FILE` when needed. After a matrix run, render and
 validate the saved files offline:
-`scripts/service-pack-evidence-report.js tmp/service-pack-evidence/_matrix-summary.json`.
+`scripts/ci/service-pack-evidence-report.js tmp/service-pack-evidence/_matrix-summary.json`.
 For acceptance of a staged batch, add
 `--require-pack openvpn_tcp_11994,openvpn_udp_1194,wireguard_roadwarrior`; the
 script exits non-zero when a pack did not produce OK evidence, runtime is not
@@ -889,7 +889,7 @@ Lost-node instance force delete:
 
 Before production rollout:
 
-1. `scripts/release-gate.sh` with no unexplained skips.
+1. `scripts/ci/release-gate.sh` with no unexplained skips.
 2. Disposable PostgreSQL migration test.
 3. Backup/restore drill.
 4. `nginx -t` on the edge host.

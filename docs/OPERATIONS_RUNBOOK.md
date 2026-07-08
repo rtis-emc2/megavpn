@@ -22,7 +22,7 @@ Use:
 
 ## Pre-Deploy Checklist
 
-1. Run `scripts/release-gate.sh`.
+1. Run `scripts/ci/release-gate.sh`.
 2. Run migrations against a disposable DB using `MEGAVPN_RELEASE_DATABASE_DSN`.
 3. Verify `nginx -t` on the target edge host.
 4. Verify `systemd-analyze verify deploy/systemd/*.service` on a systemd host.
@@ -42,7 +42,7 @@ Required controls:
 1. Freeze deploys and merges.
 2. Create an offline mirror backup of the remote repository.
 3. Confirm the working tree contains only reviewed release content.
-4. Run `scripts/release-gate.sh` and the clean-install checklist.
+4. Run `scripts/ci/release-gate.sh` and the clean-install checklist.
 5. Create a clean import commit from the reviewed tree.
 6. Move the release tag to the clean import commit.
 7. Force-update the protected branch only with `--force-with-lease`.
@@ -79,7 +79,7 @@ sudo MEGAVPN_DATABASE_DSN='postgres://...' \
   MEGAVPN_BACKUP_DIR=/var/backups/megavpn \
   MEGAVPN_ARTIFACT_ROOT=/var/lib/megavpn/artifacts \
   MEGAVPN_MASTER_KEY_PATH=/etc/megavpn/master.key \
-  scripts/backup.sh
+  scripts/ops/backup.sh
 ```
 
 The master key is not included by default. Store its SHA-256 and sealed copy separately. Losing the key makes encrypted secrets, certificates and bootstrap material unrecoverable.
@@ -92,7 +92,7 @@ Never drill restore into production. Use a separate disposable database:
 MEGAVPN_RESTORE_CONFIRM=1 \
 MEGAVPN_DATABASE_DSN='postgres://restore-target...' \
 MEGAVPN_ARTIFACT_ROOT=/tmp/megavpn-artifacts-restore \
-scripts/restore.sh /var/backups/megavpn/megavpn-backup-YYYYmmdd-HHMMSS.tar.gz
+scripts/ops/restore.sh /var/backups/megavpn/megavpn-backup-YYYYmmdd-HHMMSS.tar.gz
 ```
 
 Pass criteria:
@@ -112,7 +112,7 @@ Procedure:
 
 1. Freeze bootstrap, certificate import and provisioning writes.
 2. Take DB and artifact backup.
-3. Generate new key file with `scripts/generate-master-key.sh`.
+3. Generate new key file with `scripts/ops/generate-master-key.sh`.
 4. Re-encrypt `secret_refs` in a controlled migration/tooling window.
 5. Update `MEGAVPN_MASTER_KEY_VERSION`.
 6. Restart API/worker.

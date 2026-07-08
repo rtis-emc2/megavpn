@@ -11,19 +11,19 @@ For `7.1.0.30`, these gates are used as release promotion evidence. A release ca
 Required command:
 
 ```bash
-scripts/release-gate.sh
+scripts/ci/release-gate.sh
 ```
 
-The release gate is fail-closed: any skipped gate makes the command fail because skipped checks are not production release evidence. For local diagnostics on a workstation that does not have PostgreSQL, systemd, nginx or a disposable test node, use `scripts/self-test.sh` or explicitly allow skips:
+The release gate is fail-closed: any skipped gate makes the command fail because skipped checks are not production release evidence. For local diagnostics on a workstation that does not have PostgreSQL, systemd, nginx or a disposable test node, use `scripts/ci/self-test.sh` or explicitly allow skips:
 
 ```bash
-MEGAVPN_RELEASE_ALLOW_SKIPS=1 scripts/release-gate.sh
+MEGAVPN_RELEASE_ALLOW_SKIPS=1 scripts/ci/release-gate.sh
 ```
 
 Diagnostic command with full PASS/FAIL/SKIP report:
 
 ```bash
-scripts/self-test.sh
+scripts/ci/self-test.sh
 ```
 
 The baseline gate must pass:
@@ -35,14 +35,14 @@ The baseline gate must pass:
 - `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` passes.
 - Operational binaries print the same release through `--version`.
 - Shell scripts under `scripts/` pass `bash -n`.
-- `scripts/docs-consistency.sh` passes: maintained docs, roadmap files,
+- `scripts/ci/docs-consistency.sh` passes: maintained docs, roadmap files,
   production env templates, current security review links and Web UI asset
   cache keys match the code release.
 - The Control Plane installer accepts non-interactive clean-install inputs in validate-only mode.
 - Smoke scripts that call `/api/v1` support `MEGAVPN_AUTH_TOKEN`.
 - Static Web UI JavaScript passes `node --check` and
-  `scripts/frontend-bootstrap-smoke.js` reaches `__MegaVPNBootReady`.
-- `scripts/service-pack-smoke-regression.js` passes against its local mock API,
+  `scripts/ci/frontend-bootstrap-smoke.js` reaches `__MegaVPNBootReady`.
+- `scripts/ci/service-pack-smoke-regression.js` passes against its local mock API,
   covering matrix planning, pack filter validation, post-provision apply waits,
   staged batch planning, per-access artifact checks and cleanup behavior.
 - Static production scan finds no `/bin/sh -c`, `StrictHostKeyChecking=accept-new`, curl-to-shell, curl-to-gpg or apt-key trust bootstrap pattern outside tests.
@@ -66,7 +66,7 @@ Required release evidence:
 Use a disposable PostgreSQL database:
 
 ```bash
-MEGAVPN_RELEASE_DATABASE_DSN='postgres://...' scripts/release-gate.sh
+MEGAVPN_RELEASE_DATABASE_DSN='postgres://...' scripts/ci/release-gate.sh
 ```
 
 This runs migrations and PostgreSQL integration tests, including job lifecycle and stale lease recovery.
@@ -76,7 +76,7 @@ For API/worker/agent E2E, run against a disposable control plane and test node:
 ```bash
 MEGAVPN_RELEASE_BASE_URL=https://control.example.com:58765 \
 MEGAVPN_AUTH_TOKEN=... \
-scripts/release-gate.sh
+scripts/ci/release-gate.sh
 ```
 
 Minimum runtime evidence:
@@ -92,11 +92,11 @@ Minimum runtime evidence:
 Required checks:
 
 - A fresh Ubuntu host can install the Control Plane from documented scripts or manual steps without relying on previous local state.
-- `scripts/control-plane-install.sh` validates non-interactive clean-install inputs through `MEGAVPN_CP_VALIDATE_ONLY=1`.
+- `scripts/ops/control-plane-install.sh` validates non-interactive clean-install inputs through `MEGAVPN_CP_VALIDATE_ONLY=1`.
 - `systemd-analyze verify deploy/systemd/*.service` passes on a Linux host with systemd.
 - `nginx -t` passes on the target host after managed control-plane TLS apply.
-- `scripts/backup.sh` produces an archive from the disposable DB.
-- `scripts/restore.sh` restores the archive into a separate disposable DB.
+- `scripts/ops/backup.sh` produces an archive from the disposable DB.
+- `scripts/ops/restore.sh` restores the archive into a separate disposable DB.
 - Rollback plan is documented for the exact release version.
 - Rewritten-history deployment, when used, has an explicit maintenance window and a documented server-side checkout recovery procedure.
 
@@ -105,7 +105,7 @@ Run backup/restore drill:
 ```bash
 MEGAVPN_RELEASE_DATABASE_DSN='postgres://source...' \
 MEGAVPN_RELEASE_RESTORE_DATABASE_DSN='postgres://target...' \
-scripts/release-gate.sh
+scripts/ci/release-gate.sh
 ```
 
 ## 5. VPN / Service Gate
@@ -118,17 +118,17 @@ MEGAVPN_RELEASE_BASE_URL=https://control.example.com:58765 \
 MEGAVPN_AUTH_TOKEN=... \
 MEGAVPN_RELEASE_NODE_ID=... \
 MEGAVPN_RELEASE_ENDPOINT_DOMAIN=smoke.example.com \
-scripts/release-gate.sh
+scripts/ci/release-gate.sh
 ```
 
 For staged protocol validation on a shared disposable node, restrict the matrix
 with `MEGAVPN_SMOKE_PACKS` or `MEGAVPN_SMOKE_EXCLUDE_PACKS`. Full production
 promotion still requires evidence for every pack in the minimum matrix, but
 batched runs reduce port conflicts while diagnosing individual runtimes. Run
-`scripts/service-pack-smoke.sh --matrix ... --plan` first when changing the
+`scripts/smoke/service-pack-smoke.sh --matrix ... --plan` first when changing the
 batch: the dry run must show the intended packs, required fallback/certificate
 inputs and any listen-port overlap before instances are created. For
-operator-friendly staged runs, use `scripts/service-pack-staged-smoke.sh`:
+operator-friendly staged runs, use `scripts/smoke/service-pack-staged-smoke.sh`:
 `remote_access_l3`, `proxy_access`, `xray_reality`, `xray_nginx_http`,
 `xray_nginx_grpc` and `legacy_l2tp` are separate batch names with per-batch
 evidence directories, automatic evidence-report validation and a top-level
@@ -152,7 +152,7 @@ their per-pack evidence files. After every matrix run, render and validate the
 saved evidence before accepting it:
 
 ```bash
-scripts/service-pack-evidence-report.js \
+scripts/ci/service-pack-evidence-report.js \
   --require-pack openvpn_tcp_11994,openvpn_udp_1194,wireguard_roadwarrior \
   tmp/service-pack-evidence/_matrix-summary.json
 ```
@@ -161,7 +161,7 @@ For final promotion, include every pack from the minimum matrix in
 `--require-pack`; the report is fail-closed for failed rows, missing per-pack
 evidence, non-ready runtime state, inactive service accesses and missing or
 wrong-type client artifacts. When the matrix is run through
-`scripts/release-gate.sh`, the same validation runs automatically if
+`scripts/ci/release-gate.sh`, the same validation runs automatically if
 `MEGAVPN_SMOKE_EVIDENCE_DIR` or
 `MEGAVPN_SMOKE_MATRIX_SUMMARY_FILE` is set. Use
 `MEGAVPN_RELEASE_SERVICE_MATRIX_REQUIRED_PACKS` for the required pack list and
@@ -182,7 +182,7 @@ Minimum matrix:
 
 The matrix must verify created instance runtime projection after apply:
 `runtime_status=active`, `health_status=healthy` and `drift_status=in_sync`.
-For final release evidence, `scripts/release-gate.sh` passes
+For final release evidence, `scripts/ci/release-gate.sh` passes
 `MEGAVPN_SMOKE_REQUIRE_AGENT_REPORT=1` by default so the matrix proves
 agent-reported systemd/listening-port state, not only job-derived runtime
 state. On clean nodes the matrix must also wait for any `runtime_install_jobs`

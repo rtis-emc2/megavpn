@@ -56,142 +56,11 @@ infrastructure:
 
 ## Current Release Status
 
-`7.1.0.30` makes service-pack rollout idempotent for already-created
-components: a repeated submit for the same node, endpoint host, service and
-listen port reuses the existing instance instead of creating a suffixed
-duplicate such as `xray-ws 2`. The API reports reused rows in
-`existing_instances` and returns `already_exists` when the whole requested pack
-is already present. `7.1.0.28` remains the Jobs UI diagnostics hotfix for
-agent-handled `instance.apply` wait states, and `7.1.0.27` remains the VLESS
-provisioning SQL hotfix. The `7.1.0.26` baseline remains the durable VLESS
-identity model: VLESS identity is stored at the client level, replacement
-ingress nodes inherit the already issued client UUID during provisioning, and
-the migration backfills the identity registry from existing Xray/VLESS service
-accesses. The previous stabilization baseline also keeps strict SSH host-key
-bootstrap scanning, dirty-form auto-refresh suppression, deleted-instance
-runtime report filtering and orphan runtime state pruning. The current focus
-is:
+Current release: `7.1.0.30`.
 
-- clean install and upgrade path on a new Ubuntu host;
-- PostgreSQL migrations on disposable databases;
-- signed agent channel with replay-window checks;
-- typed privileged job APIs and job-type permission matrix;
-- node bootstrap, update and emergency cleanup workflows;
-- service-pack/manual instance creation, apply and runtime convergence;
-- centralized VLESS access groups for client routing policy;
-- clearer managed backhaul UX: one active ingress-to-egress transport, optional
-  standby transports only by explicit operator choice and controlled standby
-  promotion;
-- traffic-camouflage Nginx/Xray ingress with explicit fallback website and
-  managed rollback on failed validation/apply;
-- managed firewall catalog with explicit protocol presets and controlled
-  default-policy enforcement for nftables apply;
-- default node firewall baseline with strict input/forward deny, HTTP/HTTPS
-  edge allow rules, ICMP/ICMPv6 diagnostics, VPN client forwarding ranges and a
-  dedicated `inet megavpn_firewall` table;
-- operator-facing firewall model diagram that shows address groups, rules,
-  policies, apply jobs and node apply status as one catalog-to-apply workflow;
-- firewall schema repair for upgraded installations and simplified address-group
-  workflows without internal identity fields;
-- firewall workspace layout hardening: full-width tab panels, clearer Address
-  groups versus entries separation, corrected tab counters and row-scoped node
-  preview/apply actions;
-- firewall lifecycle hardening: typed `node.firewall.disable`, idempotent agent
-  removal of the managed `inet megavpn_firewall` table and explicit disabled
-  node state after successful completion;
-- bootstrap/update safety: SSH bootstrap and `Update all agents` refuse to
-  queue when an applied enforced node firewall does not contain an active input
-  accept rule for the configured SSH port;
-- traffic-accounting foundation with signed agent ingest API, PostgreSQL
-  aggregate storage, 180-day retention cleanup, `traffic.read` RBAC, a
-  dedicated operator UI page, managed Xray/WireGuard/OpenVPN byte-counter
-  collectors and no-store CSV export for aggregate audit rows;
-- bounded batched traffic-accounting retention cleanup and PostgreSQL query
-  indexes for overview/export filters by bucket, client, node and protocol;
-- traffic-accounting operator visibility: the summary now prioritizes total
-  traffic, received/sent bytes, retained samples, clients, nodes, collectors and
-  retention instead of backend prune internals;
-- Traffic Accounting uses top-level tabs for Overview, Clients, Collectors,
-  Samples and Export so operators can switch views without scanning one long
-  page;
-- traffic-accounting filters for date range, protocol, client, node and row
-  limit are now applied by the backend to overview summary, recent rows and
-  no-store CSV export with one retained-dataset query model;
-- traffic-accounting collector status now shows node/source/protocol freshness,
-  active/degraded/inactive streams, last report time, last bucket and aggregate
-  client/sample coverage for the selected retained dataset;
-- expected collector coverage now compares active traffic-accounting-enabled
-  Xray, WireGuard and OpenVPN runtime revisions with observed sample streams and
-  marks missing or partial retained sample streams in the Traffic Accounting UI;
-- semantic service-pack deduplication in API/UI plus database repair for
-  historical duplicate default pack rows;
-- VLESS client provisioning now syncs active access-group catalog entries into
-  the selected Xray instance before validating the chosen group, and materializes
-  selected-egress groups into concrete Xray outbound/source-route metadata;
-- VLESS client identity is now stable across Xray/VLESS ingress instances and
-  node replacement: provisioning a client onto a new ingress reuses the
-  client-level UUID even after the old instance/service access was removed, and
-  queues apply so the new server accepts the already issued client credential;
-- Xray UUID rotation now preserves the client's selected VLESS access group
-  instead of falling back to a stale implicit `route` value; stale implicit
-  group metadata falls back to an active catalog group while explicit invalid
-  operator choices still fail closed;
-- client provisioning action rows use compact, scoped buttons instead of
-  inherited full-width modal bars;
-- resilient Nginx capability install for camouflage ingress with nginx.org to
-  Ubuntu repository fallback on repository/package-stage failures;
-- safer Ubuntu Nginx fallback that preserves existing packages until a distro
-  candidate is confirmed and reports precise apt failure commands;
-- selective service-pack creation: operators can create only chosen components,
-  override per-component listen ports and choose OpenVPN CA material without
-  installing every service in a template;
-- service-pack creation now has an explicit completed state: the submitted
-  form is preserved and locked after success, while the operator gets direct
-  actions to open created instances or start a separate new rollout;
-- route-policy enforcement hardening: ingress client traffic and local
-  Xray/VLESS system egress are marked through managed nftables chains and
-  routed by `fwmark` into managed backhaul tables;
-- read-only route-policy preview for nodes: operators can inspect projected
-  client routes, VLESS/Xray system egress routes, blocked/observe-only reasons
-  and managed nft/ip-rule primitives before queueing `node.route_policy.apply`;
-- route-policy apply telemetry in agent job results: systemd unit/timer state,
-  `ip rule show` and managed nftables route-policy chains are captured after
-  apply for VLESS/backhaul troubleshooting;
-- route-policy and netpolicy nft comments are rendered as nft string literals,
-  and route-policy fails closed instead of marking traffic when no managed
-  backhaul candidate is ready;
-- Xray/VLESS remote-egress convergence: when an active backhaul transport is
-  promoted, enabled or becomes active after apply, the Control Plane refreshes
-  affected Xray instance revisions first so `freedom.sendThrough` matches the
-  selected live backhaul interface before route-policy is queued;
-- idempotent backhaul promote/enable now acts as a managed repair trigger for
-  existing Xray instances with stale remote-egress metadata;
-- explicit route-policy cleanup: operators can queue a typed node job that
-  stops route-policy runtime, removes managed `fwmark` rules/chains and cleans
-  stale destinations remembered in the previous node snapshot;
-- generated TLS-enabled Nginx edge configs include an HTTP listener that
-  redirects plain HTTP traffic to HTTPS before camouflage/fallback routing;
-- Nginx instance and emergency cleanup now reload shared Nginx when managed
-  configs remain and stop it when all MegaVPN-managed edge configs are gone;
-- Nginx capability recovery is now agent-side: reduced systemd PATHs still find
-  `/usr/sbin/nginx`, and Nginx instance apply can recover a missing binary via
-  the managed nginx.org-to-Ubuntu fallback installer;
-- client VLESS camouflage UX that separates public client endpoints from local
-  Xray backend endpoints and makes pending provisioning state actionable;
-- hard client deletion with PostgreSQL cleanup coverage for service access,
-  routes, generated artifacts, share links, subscriptions, delivery records and
-  service-access scoped secrets;
-- instance deletion now cascades client service-access cleanup after managed
-  node cleanup succeeds, and operators can remove a single stale service access
-  from the Client Access modal;
-- operator-grade Firewall UI with posture cards, rule filters, grouped
-  protocol presets and explicit apply modes;
-- operator console typography and layout hardening with one UI font stack,
-  safe text wrapping and mobile tab grids;
-- OpenVPN full-tunnel defaults with managed forwarding and NAT policy;
-- OpenVPN, WireGuard, Xray/VLESS, Shadowsocks, Nginx and Backhaul smoke matrix;
-- client provisioning and route-policy validation;
-- operator-visible diagnostics for jobs, runtime capabilities and service logs.
+The release notes and stabilization baseline are maintained in
+[docs/releases/7.1.0.30.md](docs/releases/7.1.0.30.md). Release readiness gates
+are documented in [docs/RELEASE_GATES.md](docs/RELEASE_GATES.md).
 
 ## Component Model
 
@@ -221,19 +90,23 @@ is:
 ```bash
 go test ./...
 go test -race ./...
-go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate
-scripts/self-test.sh
+go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin
+scripts/ci/self-test.sh
 ```
 
 Release evidence is stricter than local diagnostics:
 
 ```bash
-scripts/release-gate.sh
+scripts/ci/release-gate.sh
 ```
 
-`scripts/release-gate.sh` is fail-closed. It fails when production evidence is
+`scripts/ci/release-gate.sh` is fail-closed. It fails when production evidence is
 missing, for example disposable PostgreSQL, backup/restore drill, systemd,
 nginx, deployed API or service smoke matrix.
+
+Historical `scripts/*.sh` entrypoints remain as compatibility wrappers. New
+automation should prefer `scripts/ci`, `scripts/smoke`, `scripts/ops` and
+`scripts/lib`.
 
 ## Minimal Operator Flow
 

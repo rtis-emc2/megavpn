@@ -51,7 +51,7 @@ sudo apt-get install -y git curl rsync openssl ca-certificates nginx postgresql-
 
 ## 3. Установка Control Plane
 
-Рекомендуемый путь - `scripts/control-plane-install.sh`. Скрипт выполняет
+Рекомендуемый путь - `scripts/ops/control-plane-install.sh`. Скрипт выполняет
 полный bootstrap:
 
 - проверяет параметры;
@@ -70,7 +70,7 @@ sudo apt-get install -y git curl rsync openssl ca-certificates nginx postgresql-
 Интерактивный запуск:
 
 ```bash
-sudo ./scripts/control-plane-install.sh
+sudo ./scripts/ops/control-plane-install.sh
 ```
 
 Пример non-interactive запуска:
@@ -82,7 +82,7 @@ sudo MEGAVPN_CP_ASSUME_YES=1 \
   MEGAVPN_CP_DATABASE_DSN='postgres://megavpn:password@127.0.0.1:5432/megavpn?sslmode=disable' \
   MEGAVPN_CP_ADMIN_USERNAME=superadmin \
   MEGAVPN_CP_ADMIN_EMAIL=admin@control.example.com \
-  ./scripts/control-plane-install.sh
+  ./scripts/ops/control-plane-install.sh
 ```
 
 Проверить те же параметры без изменений на host:
@@ -94,7 +94,7 @@ sudo MEGAVPN_CP_VALIDATE_ONLY=1 \
   MEGAVPN_CP_PUBLIC_BASE_URL=https://control.example.com \
   MEGAVPN_CP_DATABASE_DSN='postgres://megavpn:password@127.0.0.1:5432/megavpn?sslmode=disable' \
   MEGAVPN_CP_ADMIN_PASSWORD='replace-this-before-real-install' \
-  ./scripts/control-plane-install.sh
+  ./scripts/ops/control-plane-install.sh
 ```
 
 Основные install variables:
@@ -165,15 +165,15 @@ sudo editor /etc/megavpn/megavpn.env
 3. Создайте master key:
 
 ```bash
-sudo MEGAVPN_MASTER_KEY_PATH=/etc/megavpn/master.key scripts/generate-master-key.sh
+sudo MEGAVPN_MASTER_KEY_PATH=/etc/megavpn/master.key scripts/ops/generate-master-key.sh
 ```
 
-4. Соберите binaries и Web UI. `scripts/build.sh` должен выполняться из
+4. Соберите binaries и Web UI. `scripts/ci/build.sh` должен выполняться из
    `/opt/megavpn`, чтобы binaries оказались в `/opt/megavpn/bin`:
 
 ```bash
-./scripts/build.sh
-sudo ./scripts/install-web.sh /opt/megavpn/web
+./scripts/ci/build.sh
+sudo ./scripts/ops/install-web.sh /opt/megavpn/web
 ```
 
 5. Установите systemd units:
@@ -496,13 +496,13 @@ backend на `127.0.0.1`. Nginx проксирует только скрытый
 например `*.example.com`, если один edge должен редиректить wildcard DNS.
 Для repeatable smoke передавайте тот же fallback явно:
 `MEGAVPN_FALLBACK_UPSTREAM_URL=https://target.example.com
-scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
+scripts/smoke/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
 [certificate-id]`. Matrix smoke пропускает camouflage packs, если значение не
 задано: использовать сам ingress host как fallback нельзя, это может создать
 proxy loop.
 Чтобы тестировать протоколы партиями и не создавать лишние port conflicts на
 одной node, ограничивайте matrix через `--packs` или `MEGAVPN_SMOKE_PACKS`:
-`scripts/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
+`scripts/smoke/service-pack-smoke.sh --matrix <node-id> <endpoint-domain>
 [certificate-id] --packs openvpn_tcp_11994,openvpn_udp_1194,wireguard_roadwarrior`.
 Для временного исключения pack используйте `--exclude` или
 `MEGAVPN_SMOKE_EXCLUDE_PACKS`. Перед реальным запуском используйте `--plan`
@@ -510,7 +510,7 @@ proxy loop.
 endpoint hosts, обязательные certificate/fallback условия и возможные
 пересечения listen ports, но не создаст instances.
 Для staged проверки всех основных протоколов используйте batch runner:
-`scripts/service-pack-staged-smoke.sh --plan <node-id> <endpoint-domain> [certificate-id]`,
+`scripts/smoke/service-pack-staged-smoke.sh --plan <node-id> <endpoint-domain> [certificate-id]`,
 затем реальный запуск без `--plan`. Доступные партии: `remote_access_l3`
 OpenVPN/WireGuard, `proxy_access` HTTP Proxy/MTProto/Shadowsocks,
 `xray_reality`, `xray_nginx_http`, `xray_nginx_grpc` и `legacy_l2tp`
@@ -536,7 +536,7 @@ Matrix-run дополнительно пишет `_matrix-summary.json` с total
 OK/FAILED/SKIPPED; путь можно переопределить через
 `MEGAVPN_SMOKE_MATRIX_SUMMARY_FILE`. После matrix-run сформируйте offline
 отчет по сохраненным файлам:
-`scripts/service-pack-evidence-report.js tmp/service-pack-evidence/_matrix-summary.json`.
+`scripts/ci/service-pack-evidence-report.js tmp/service-pack-evidence/_matrix-summary.json`.
 Для приемки конкретной партии добавьте
 `--require-pack openvpn_tcp_11994,openvpn_udp_1194,wireguard_roadwarrior`;
 скрипт завершится с ошибкой, если pack не дал OK evidence, runtime не ready
@@ -899,7 +899,7 @@ Lost-node instance force delete:
 
 Перед production rollout:
 
-1. `scripts/release-gate.sh` без unexplained skips.
+1. `scripts/ci/release-gate.sh` без unexplained skips.
 2. Disposable PostgreSQL migration test.
 3. Backup/restore drill.
 4. `nginx -t` на edge host.

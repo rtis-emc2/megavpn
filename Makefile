@@ -27,10 +27,10 @@ clean:
 	rm -rf $(BIN_DIR)
 
 release-gate:
-	scripts/release-gate.sh
+	scripts/ci/release-gate.sh
 
 self-test:
-	scripts/self-test.sh
+	scripts/ci/self-test.sh
 
 run-api:
 	go run ./cmd/api
