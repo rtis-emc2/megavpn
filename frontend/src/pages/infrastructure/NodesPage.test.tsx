@@ -114,6 +114,46 @@ const discoveries = [
   },
 ];
 
+const accessMethods = [
+  {
+    id: 'access-1',
+    node_id: 'node-1',
+    method: 'ssh',
+    is_enabled: true,
+    ssh_host: 'edge-one.example.test',
+    ssh_port: 22,
+    ssh_user: 'ubuntu',
+    ssh_host_key_sha256: 'SHA256:oldfingerprint',
+    auth_type: 'ssh_key',
+    secret_ref_id: 'secret-1',
+    created_at: '2026-07-08T10:00:00Z',
+    updated_at: '2026-07-08T10:00:00Z',
+  },
+];
+
+const enrollmentTokens = [
+  {
+    id: 'token-1',
+    node_id: 'node-1',
+    token_hint: 'enroll...hint',
+    status: 'active',
+    expires_at: '2026-07-10T08:00:00Z',
+    created_at: '2026-07-09T08:00:00Z',
+  },
+];
+
+const bootstrapRuns = [
+  {
+    id: 'bootstrap-run-1',
+    node_id: 'node-1',
+    job_id: 'job-bootstrap-old',
+    status: 'queued',
+    bootstrap_mode: 'ssh_bootstrap',
+    request_payload: { bootstrap_mode: 'ssh_bootstrap' },
+    created_at: '2026-07-09T08:00:00Z',
+  },
+];
+
 function json(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -191,6 +231,9 @@ describe('NodesPage', () => {
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/services/discovery-summary') {
         return json({ node_id: 'node-1', total: 1, discovered: 1, imported: 0, ignored: 0, importable_count: 1, by_service: { 'xray-core': 1 } });
       }
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/enrollment-tokens') return json(enrollmentTokens);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/access-methods') return json(accessMethods);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/bootstrap-runs') return json(bootstrapRuns);
       if (method === 'GET' && url.pathname.startsWith('/api/v1/jobs/')) return json(job(url.pathname.split('/')[4]));
       if (method === 'GET' && url.pathname.endsWith('/logs')) return json([{ level: 'info', message: 'queued' }]);
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/maintenance/enable') {
@@ -215,11 +258,36 @@ describe('NodesPage', () => {
         return json({ id: 'instance-imported', node_id: 'node-1', service_code: 'xray-core', name: 'xray-live', status: 'active' }, 201);
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/services/import-all') return json([{ id: 'instance-imported', node_id: 'node-1', service_code: 'xray-core', name: 'xray-live', status: 'active' }], 201);
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/enrollment-token') {
+        return json({ id: 'token-new', node_id: 'node-1', token: 'enroll-secret-token', token_hint: 'enroll...token', status: 'active', expires_at: '2026-07-10T08:05:00Z', created_at: '2026-07-09T08:05:00Z' }, 201);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/enrollment-token/rotate') {
+        return json({ id: 'token-rotated', node_id: 'node-1', token: 'enroll-rotated-token', token_hint: 'rotate...token', status: 'active', expires_at: '2026-07-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' });
+      }
+      if (method === 'DELETE' && url.pathname === '/api/v1/nodes/node-1/enrollment-tokens/token-1') {
+        return json({ ...enrollmentTokens[0], status: 'revoked' });
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/ssh/host-key-scan') {
+        return json({ host: 'edge-one.example.test', port: 22, fingerprints: [{ fingerprint: 'SHA256:newfingerprint', algorithm: 'ssh-ed25519', bits: 256, known_host_line: 'edge-one.example.test ssh-ed25519 AAAA' }] });
+      }
+      if (method === 'PUT' && url.pathname === '/api/v1/nodes/node-1/access-methods') {
+        return json((body?.items as unknown[]) || accessMethods);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/bootstrap') {
+        return json({ job: job('job-bootstrap', 'node.bootstrap'), bootstrap_run: { id: 'bootstrap-run-new', node_id: 'node-1', job_id: 'job-bootstrap', status: 'queued', bootstrap_mode: body?.bootstrap_mode || 'ssh_bootstrap', created_at: '2026-07-09T08:07:00Z' } }, 202);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/agent-token/rotate') return json(job('job-agent-rotate', 'node.agent.rotate_token'), 202);
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/ssh/sessions') {
+        return json({ session_id: 'ssh-session-ticket', node_id: 'node-1', expires_at: '2026-07-09T08:06:30Z', endpoint: { server_side_proxy_only: true } }, 201);
+      }
+      if (method === 'DELETE' && url.pathname === '/api/v1/nodes/node-1') return json({ ...node, status: 'retired' });
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/force-retire') return json({ status: 'retired', node: { ...node, status: 'retired' } });
       return json({ error: `unhandled ${method} ${url.pathname}` }, 404);
     }));
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -295,6 +363,79 @@ describe('NodesPage', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Import' })[0]);
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/services/discovered/discovery-1/import')).toBe(true));
+  });
+
+  it('runs node bootstrap, security and lifecycle workflows safely', async () => {
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    await openNode();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Security' }));
+    expect((await screen.findAllByText('enroll...hint')).length).toBeGreaterThan(0);
+    await userEvent.clear(screen.getByLabelText('Token TTL hours'));
+    await userEvent.type(screen.getByLabelText('Token TTL hours'), '48');
+    await userEvent.click(screen.getByRole('button', { name: 'Create token' }));
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token?ttl_hours=48')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token?ttl_hours=48')).toBe(true));
+    expect(screen.queryByText('enroll-secret-token')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reveal' }));
+    expect(await screen.findByText('enroll-secret-token')).toBeInTheDocument();
+    let closeButtons = screen.getAllByRole('button', { name: 'Close' });
+    await userEvent.click(closeButtons[closeButtons.length - 1]);
+    expect(screen.queryByText('enroll-secret-token')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Revoke' })[0]);
+    expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/nodes/node-1/enrollment-tokens/token-1')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/nodes/node-1/enrollment-tokens/token-1')).toBe(true));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Scan host key' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/ssh/host-key-scan')).toBe(true));
+    expect(await screen.findByText('Scanned host key differs from the currently pinned fingerprint. Verify this out-of-band before pinning.')).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Pin fingerprint' })[0]);
+    expect(calls.some((call) => call.method === 'PUT' && call.path === '/api/v1/nodes/node-1/access-methods')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'PUT' && call.path === '/api/v1/nodes/node-1/access-methods')).toBe(true));
+    const pinCall = calls.find((call) => call.method === 'PUT' && call.path === '/api/v1/nodes/node-1/access-methods');
+    expect(pinCall?.body?.items).toMatchObject([{ id: 'access-1', ssh_host_key_sha256: 'SHA256:newfingerprint' }]);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Rotate agent token' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/agent-token/rotate')).toBe(true));
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Bootstrap' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Queue bootstrap' }));
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toBe(true));
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Terminal / Access' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Launch SSH session' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/ssh/sessions')).toBe(true));
+    expect(screen.queryByText(/ssh-session-ticket/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reveal' }));
+    expect(await screen.findByText(/ssh-session-ticket/)).toBeInTheDocument();
+    closeButtons = screen.getAllByRole('button', { name: 'Close' });
+    await userEvent.click(closeButtons[closeButtons.length - 1]);
+    expect(screen.queryByText(/ssh-session-ticket/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Retire node' }));
+    expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/nodes/node-1')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/nodes/node-1')).toBe(true));
+
+    await userEvent.type(screen.getByLabelText('Typed confirmation'), 'Edge One');
+    await userEvent.type(screen.getByLabelText('Reason'), 'lost node');
+    await userEvent.click(screen.getByRole('button', { name: 'Force retire node' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/force-retire')).toBe(true));
+    expect(calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/force-retire')?.body).toMatchObject({ confirmation: 'Edge One', reason: 'lost node' });
+
+    expect(storageSet.mock.calls.some(([key, value]) => String(key).toLowerCase().includes('token') || String(value).includes('enroll-secret-token') || String(value).includes('ssh-session-ticket'))).toBe(false);
+    expect(window.localStorage.getItem('enrollment_token')).toBeNull();
+    expect(window.sessionStorage.getItem('enrollment_token')).toBeNull();
   });
 
   it('shows backend 403, 422 and 409 errors safely', async () => {

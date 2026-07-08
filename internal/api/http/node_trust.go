@@ -1,9 +1,12 @@
 package http
 
 import (
+	"errors"
 	nethttp "net/http"
 	"strconv"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) rotateNodeAgentToken(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -20,6 +23,19 @@ func (s *Server) rotateNodeEnrollmentToken(w nethttp.ResponseWriter, r *nethttp.
 	ttl := time.Duration(ttlHours) * time.Hour
 	token, err := s.store.RotateNodeEnrollmentToken(r.Context(), idParam(r), ttl)
 	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, token)
+}
+
+func (s *Server) revokeNodeEnrollmentToken(w nethttp.ResponseWriter, r *nethttp.Request) {
+	token, err := s.store.RevokeNodeEnrollmentToken(r.Context(), idParam(r), r.PathValue("token_id"))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, 404, "enrollment token not found")
+			return
+		}
 		writeErr(w, 409, err.Error())
 		return
 	}

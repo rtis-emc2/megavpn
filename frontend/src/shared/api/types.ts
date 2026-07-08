@@ -239,7 +239,112 @@ export type NodeCapabilityVerifyResult = Job;
 
 export type NodeServiceDiscoveryImportResult = ServiceInstance | ServiceInstance[];
 
-export type NodeMutationResult = NodeDetail | Job | NodeJobEnvelope | NodeRuntimeReconcileResult | ServiceInstance | ServiceInstance[];
+export type NodeAccessMethod = APIRecord & {
+  id: string;
+  node_id?: string;
+  method?: string;
+  is_enabled?: boolean;
+  ssh_host?: string;
+  ssh_port?: number;
+  ssh_user?: string;
+  ssh_host_key_sha256?: string;
+  auth_type?: string;
+  secret_ref_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type NodeAccessMethodsResult = NodeAccessMethod[];
+
+export type EnrollmentToken = APIRecord & {
+  id: string;
+  node_id?: string;
+  token?: string;
+  enrollment_token?: string;
+  token_hint?: string;
+  status?: string;
+  expires_at?: string;
+  used_at?: string | null;
+  created_at?: string;
+};
+
+export type EnrollmentTokenCreateInput = {
+  ttl_hours?: number;
+};
+
+export type EnrollmentTokenCreateResult = EnrollmentToken;
+
+export type EnrollmentTokenRevokeResult = EnrollmentToken;
+
+export type BootstrapRequest = {
+  bootstrap_mode?: 'ssh_bootstrap' | 'manual_bundle';
+  reinstall_agent?: boolean;
+  force_reenroll?: boolean;
+};
+
+export type NodeBootstrapRun = APIRecord & {
+  id: string;
+  node_id?: string;
+  job_id?: string | null;
+  status?: string;
+  bootstrap_mode?: string;
+  request_payload?: APIRecord;
+  result_payload?: APIRecord;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_by?: string | null;
+  created_at?: string;
+};
+
+export type BootstrapResult = APIRecord & {
+  job?: Job;
+  bootstrap_run?: NodeBootstrapRun;
+};
+
+export type HostKeyScanEntry = APIRecord & {
+  fingerprint?: string;
+  algorithm?: string;
+  bits?: number;
+  known_host_line?: string;
+};
+
+export type HostKeyScanResult = APIRecord & {
+  host?: string;
+  port?: number;
+  fingerprints?: HostKeyScanEntry[];
+};
+
+export type HostKeyDecisionResult = NodeAccessMethod[];
+
+export type AgentTokenRotateResult = Job;
+
+export type SshSessionLaunchResult = APIRecord & {
+  session_id?: string;
+  terminal_url?: string;
+  ws_url?: string;
+  expires_at?: string;
+  node_id?: string;
+  endpoint?: APIRecord;
+};
+
+export type NodeRetireResult = NodeDetail | {
+  status?: string;
+  node?: NodeDetail;
+};
+
+export type NodeMutationResult =
+  | NodeDetail
+  | Job
+  | NodeJobEnvelope
+  | NodeRuntimeReconcileResult
+  | ServiceInstance
+  | ServiceInstance[]
+  | EnrollmentToken
+  | BootstrapResult
+  | HostKeyScanResult
+  | HostKeyDecisionResult
+  | SshSessionLaunchResult
+  | NodeRetireResult;
 
 export type ServiceInstance = APIRecord & {
   id: string;

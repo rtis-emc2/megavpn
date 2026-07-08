@@ -41,6 +41,13 @@ import type {
   ClientSubscriptionRevokeResult,
   ClientSubscriptionRotateResult,
   Dashboard,
+  AgentTokenRotateResult,
+  BootstrapRequest,
+  BootstrapResult,
+  EnrollmentToken,
+  EnrollmentTokenCreateInput,
+  EnrollmentTokenCreateResult,
+  EnrollmentTokenRevokeResult,
   FirewallAddressGroup,
   FirewallAddressGroupEntry,
   FirewallApplyRequest,
@@ -68,6 +75,8 @@ import type {
   InstanceRollbackRequest,
   InstanceRollbackResult,
   Job,
+  HostKeyDecisionResult,
+  HostKeyScanResult,
   NodeCapability,
   NodeCapabilityDrift,
   NodeCapabilityInstallEvent,
@@ -81,6 +90,9 @@ import type {
   NodeDiagnostics,
   NodeDiagnosticsAction,
   NodeEntity,
+  NodeAccessMethod,
+  NodeAccessMethodsResult,
+  NodeBootstrapRun,
   NodeInventorySnapshot,
   NodeInventorySyncResult,
   NodeJobEnvelope,
@@ -89,6 +101,7 @@ import type {
   NodeServiceDiscoveryImportResult,
   NodeServiceDiscoverySummary,
   NodeServiceInstaller,
+  NodeRetireResult,
   ReadyStatus,
   RuntimeArtifact,
   RuntimeArtifactDeleteResult,
@@ -107,6 +120,7 @@ import type {
   ServiceTypeCapability,
   RuntimeTargetNode,
   ShareLink,
+  SshSessionLaunchResult,
   TrafficSummary,
   AvailableClientsForGroupPage,
   AvailableClientsForGroupQuery,
@@ -311,6 +325,82 @@ export function importNodeServiceDiscovery(nodeId: string, input: { discovery_id
 
 export function importAllNodeServiceDiscoveries(nodeId: string): Promise<ServiceInstance[]> {
   return sendJSON<ServiceInstance[]>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/services/import-all`, 'POST', {});
+}
+
+export function listEnrollmentTokens(nodeId: string): Promise<EnrollmentToken[]> {
+  return apiRequest<EnrollmentToken[]>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/enrollment-tokens`);
+}
+
+export function createEnrollmentToken(nodeId: string, input: EnrollmentTokenCreateInput = {}): Promise<EnrollmentTokenCreateResult> {
+  return sendJSON<EnrollmentTokenCreateResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/enrollment-token${queryString({ ttl_hours: input.ttl_hours })}`, 'POST', {});
+}
+
+export function rotateEnrollmentToken(nodeId: string, input: EnrollmentTokenCreateInput = {}): Promise<EnrollmentTokenCreateResult> {
+  return sendJSON<EnrollmentTokenCreateResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/enrollment-token/rotate${queryString({ ttl_hours: input.ttl_hours })}`, 'POST', {});
+}
+
+export function revokeEnrollmentToken(nodeId: string, tokenId: string): Promise<EnrollmentTokenRevokeResult> {
+  return apiRequest<EnrollmentTokenRevokeResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/enrollment-tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' });
+}
+
+export function listNodeAccessMethods(nodeId: string): Promise<NodeAccessMethodsResult> {
+  return apiRequest<NodeAccessMethodsResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/access-methods`);
+}
+
+export function replaceNodeAccessMethods(nodeId: string, items: NodeAccessMethod[]): Promise<NodeAccessMethodsResult> {
+  return sendJSON<NodeAccessMethodsResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/access-methods`, 'PUT', { items });
+}
+
+export function scanNodeHostKey(nodeId: string, input: { ssh_host?: string; ssh_port?: number } = {}): Promise<HostKeyScanResult> {
+  return sendJSON<HostKeyScanResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/ssh/host-key-scan`, 'POST', input);
+}
+
+export async function acceptNodeHostKey(nodeId: string, input: { method_id: string; fingerprint: string }): Promise<HostKeyDecisionResult> {
+  const methods = await listNodeAccessMethods(nodeId);
+  const updated = methods.map((method) => method.id === input.method_id ? { ...method, ssh_host_key_sha256: input.fingerprint } : method);
+  if (!updated.some((method) => method.id === input.method_id)) {
+    throw new Error('SSH access method not found for host-key pinning.');
+  }
+  return replaceNodeAccessMethods(nodeId, updated);
+}
+
+export function rejectNodeHostKey(_nodeId: string, _input: { method_id?: string; fingerprint?: string } = {}): Promise<never> {
+  return Promise.reject(new Error('Backend has no persistent host-key reject endpoint; discard the scan result instead.'));
+}
+
+export function bootstrapNode(nodeId: string, input: BootstrapRequest): Promise<BootstrapResult> {
+  return sendJSON<BootstrapResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/bootstrap`, 'POST', input);
+}
+
+export function reinstallOrUpdateNodeAgent(nodeId: string, input: BootstrapRequest = {}): Promise<BootstrapResult> {
+  return bootstrapNode(nodeId, { ...input, reinstall_agent: true });
+}
+
+export function listNodeBootstrapRuns(nodeId: string, limit = 25): Promise<NodeBootstrapRun[]> {
+  return apiRequest<NodeBootstrapRun[]>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/bootstrap-runs${queryString({ limit })}`);
+}
+
+export function rotateNodeAgentToken(nodeId: string): Promise<AgentTokenRotateResult> {
+  return sendJSON<AgentTokenRotateResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/agent-token/rotate`, 'POST', {});
+}
+
+export function launchNodeSshSession(nodeId: string): Promise<SshSessionLaunchResult> {
+  return sendJSON<Omit<SshSessionLaunchResult, 'terminal_url'>>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/ssh/sessions`, 'POST', {})
+    .then((result) => {
+      const session = String(result.session_id || '').trim();
+      const terminalURL = session
+        ? apiURL(`/api/v1/nodes/${encodeURIComponent(nodeId)}/ssh/terminal${queryString({ session })}`)
+        : '';
+      return { ...result, terminal_url: terminalURL };
+    });
+}
+
+export function retireNode(nodeId: string): Promise<NodeRetireResult> {
+  return apiRequest<NodeRetireResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}`, { method: 'DELETE' });
+}
+
+export function forceRetireNode(nodeId: string, input: { confirmation: string; reason?: string }): Promise<NodeRetireResult> {
+  return sendJSON<NodeRetireResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/force-retire`, 'POST', input);
 }
 
 export function listServicePacks(params: { includeInactive?: boolean } = {}): Promise<ServicePack[]> {

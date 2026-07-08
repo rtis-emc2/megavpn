@@ -1,11 +1,15 @@
-import { Activity, Boxes, CheckCircle2, DownloadCloud, PackageCheck, Play, RefreshCw, Search, ServerCog, ShieldCheck, Wrench } from 'lucide-react';
+import { Activity, Boxes, CheckCircle2, DownloadCloud, Fingerprint, KeyRound, PackageCheck, Play, RefreshCw, RotateCcw, Search, ServerCog, ShieldAlert, ShieldCheck, TerminalSquare, Trash2, Wrench } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { APIError } from '../../shared/api/client';
 import type {
   APIRecord,
+  BootstrapRequest,
+  EnrollmentToken,
+  HostKeyScanResult,
   Job,
+  NodeAccessMethod,
   NodeCapability,
   NodeCapabilityInstallInput,
   NodeDetail,
@@ -16,30 +20,44 @@ import type {
   NodeServiceInstaller,
 } from '../../shared/api/types';
 import {
+  useAcceptNodeHostKey,
+  useBootstrapNode,
+  useCreateEnrollmentToken,
   useDiscoverNodeServices,
+  useForceRetireNode,
   useImportAllNodeServiceDiscoveries,
   useImportNodeServiceDiscovery,
   useInstallNodeCapability,
+  useLaunchNodeSshSession,
+  useNodeAccessMethods,
+  useNodeBootstrapRuns,
   useNodeCapabilities,
   useNodeCapabilityDrift,
   useNodeCapabilityInstallEvents,
   useNodeDetail,
   useNodeDiagnostics,
+  useNodeEnrollmentTokens,
   useNodeInventory,
   useNodeServiceDiscoveries,
   useNodeServiceDiscoverySummary,
   useNodeServiceInstallers,
   useNodes,
+  useReinstallOrUpdateNodeAgent,
+  useRetireNode,
+  useRevokeEnrollmentToken,
+  useRotateEnrollmentToken,
+  useRotateNodeAgentToken,
   useRunNodeDiagnosticsAction,
+  useScanNodeHostKey,
   useSetNodeMaintenance,
   useSyncNodeInventory,
   useVerifyNodeCapability,
 } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, OneTimeSecretPanel, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
-type NodeTab = 'overview' | 'runtime' | 'inventory' | 'capabilities' | 'diagnostics' | 'discovery' | 'jobs';
+type NodeTab = 'overview' | 'runtime' | 'inventory' | 'capabilities' | 'diagnostics' | 'discovery' | 'bootstrap' | 'security' | 'terminal' | 'lifecycle' | 'jobs';
 
 type ConfirmAction =
   | { type: 'maintenance-enable'; node: NodeDetail }
@@ -50,7 +68,23 @@ type ConfirmAction =
   | { type: 'diagnostics'; node: NodeDetail; action: NodeDiagnosticsAction }
   | { type: 'service-discover'; node: NodeDetail }
   | { type: 'service-import'; node: NodeDetail; discovery: NodeServiceDiscovery }
-  | { type: 'service-import-all'; node: NodeDetail };
+  | { type: 'service-import-all'; node: NodeDetail }
+  | { type: 'enrollment-create'; node: NodeDetail; ttlHours: number }
+  | { type: 'enrollment-rotate'; node: NodeDetail; ttlHours: number }
+  | { type: 'enrollment-revoke'; node: NodeDetail; token: EnrollmentToken }
+  | { type: 'bootstrap'; node: NodeDetail; input: BootstrapRequest }
+  | { type: 'agent-reinstall'; node: NodeDetail; input: BootstrapRequest }
+  | { type: 'host-key-pin'; node: NodeDetail; method: NodeAccessMethod; fingerprint: string }
+  | { type: 'agent-token-rotate'; node: NodeDetail }
+  | { type: 'ssh-session-launch'; node: NodeDetail }
+  | { type: 'node-retire'; node: NodeDetail }
+  | { type: 'node-force-retire'; node: NodeDetail; confirmation: string; reason: string };
+
+type OneTimePanelState = {
+  label: string;
+  value: string;
+  expiresAt?: string;
+};
 
 function formatAPIError(error: unknown): string {
   if (!(error instanceof APIError)) {
@@ -204,6 +238,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
   const [notice, setNotice] = useState('');
   const [jobIds, setJobIds] = useState<string[]>([]);
+  const [oneTimePanel, setOneTimePanel] = useState<OneTimePanelState | null>(null);
   const detail = useNodeDetail(nodeId, { retry: false });
   const diagnostics = useNodeDiagnostics(nodeId, { retry: false });
   const inventory = useNodeInventory(nodeId, { retry: false });
@@ -213,6 +248,9 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const installers = useNodeServiceInstallers({ retry: false });
   const discoveries = useNodeServiceDiscoveries(nodeId, { retry: false });
   const discoverySummary = useNodeServiceDiscoverySummary(nodeId, { retry: false });
+  const enrollmentTokens = useNodeEnrollmentTokens(nodeId, { retry: false });
+  const accessMethods = useNodeAccessMethods(nodeId, { retry: false });
+  const bootstrapRuns = useNodeBootstrapRuns(nodeId, { retry: false });
   const maintenance = useSetNodeMaintenance();
   const syncInventory = useSyncNodeInventory();
   const installCapability = useInstallNodeCapability();
@@ -221,8 +259,37 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const discoverServices = useDiscoverNodeServices();
   const importDiscovery = useImportNodeServiceDiscovery();
   const importAllDiscoveries = useImportAllNodeServiceDiscoveries();
+  const createEnrollment = useCreateEnrollmentToken();
+  const rotateEnrollment = useRotateEnrollmentToken();
+  const revokeEnrollment = useRevokeEnrollmentToken();
+  const bootstrap = useBootstrapNode();
+  const reinstallAgent = useReinstallOrUpdateNodeAgent();
+  const scanHostKey = useScanNodeHostKey();
+  const acceptHostKey = useAcceptNodeHostKey();
+  const rotateAgentToken = useRotateNodeAgentToken();
+  const launchSSH = useLaunchNodeSshSession();
+  const retire = useRetireNode();
+  const forceRetire = useForceRetireNode();
   const current = detail.data || node;
-  const busy = maintenance.isPending || syncInventory.isPending || installCapability.isPending || verifyCapability.isPending || runDiagnostics.isPending || discoverServices.isPending || importDiscovery.isPending || importAllDiscoveries.isPending;
+  const busy = maintenance.isPending
+    || syncInventory.isPending
+    || installCapability.isPending
+    || verifyCapability.isPending
+    || runDiagnostics.isPending
+    || discoverServices.isPending
+    || importDiscovery.isPending
+    || importAllDiscoveries.isPending
+    || createEnrollment.isPending
+    || rotateEnrollment.isPending
+    || revokeEnrollment.isPending
+    || bootstrap.isPending
+    || reinstallAgent.isPending
+    || scanHostKey.isPending
+    || acceptHostKey.isPending
+    || rotateAgentToken.isPending
+    || launchSSH.isPending
+    || retire.isPending
+    || forceRetire.isPending;
 
   const recordJobs = (result: unknown) => {
     const ids = recordJobsFrom(result).map((job) => job.id).filter(Boolean);
@@ -272,6 +339,66 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
         result = await importAllDiscoveries.mutateAsync({ nodeId: confirm.node.id });
         setNotice(t('nodes.importAccepted'));
         setActiveTab('discovery');
+      } else if (confirm.type === 'enrollment-create') {
+        const tokenResult = await createEnrollment.mutateAsync({ nodeId: confirm.node.id, input: { ttl_hours: confirm.ttlHours } });
+        result = tokenResult;
+        setOneTimePanel({
+          label: t('nodes.enrollmentOneTimeToken'),
+          value: String(tokenResult.token || tokenResult.enrollment_token || ''),
+          expiresAt: tokenResult.expires_at,
+        });
+        setNotice(t('nodes.tokenCreated'));
+        setActiveTab('security');
+      } else if (confirm.type === 'enrollment-rotate') {
+        const tokenResult = await rotateEnrollment.mutateAsync({ nodeId: confirm.node.id, input: { ttl_hours: confirm.ttlHours } });
+        result = tokenResult;
+        setOneTimePanel({
+          label: t('nodes.enrollmentOneTimeToken'),
+          value: String(tokenResult.token || tokenResult.enrollment_token || ''),
+          expiresAt: tokenResult.expires_at,
+        });
+        setNotice(t('nodes.tokenRotated'));
+        setActiveTab('security');
+      } else if (confirm.type === 'enrollment-revoke') {
+        result = await revokeEnrollment.mutateAsync({ nodeId: confirm.node.id, tokenId: confirm.token.id });
+        setNotice(t('nodes.tokenRevoked'));
+        setActiveTab('security');
+      } else if (confirm.type === 'bootstrap') {
+        result = await bootstrap.mutateAsync({ nodeId: confirm.node.id, input: confirm.input });
+        setNotice(t('nodes.bootstrapQueued'));
+        setActiveTab('jobs');
+      } else if (confirm.type === 'agent-reinstall') {
+        result = await reinstallAgent.mutateAsync({ nodeId: confirm.node.id, input: confirm.input });
+        setNotice(t('nodes.bootstrapQueued'));
+        setActiveTab('jobs');
+      } else if (confirm.type === 'host-key-pin') {
+        result = await acceptHostKey.mutateAsync({ nodeId: confirm.node.id, methodId: confirm.method.id, fingerprint: confirm.fingerprint });
+        setNotice(t('nodes.hostKeyPinned'));
+        setActiveTab('security');
+      } else if (confirm.type === 'agent-token-rotate') {
+        result = await rotateAgentToken.mutateAsync({ nodeId: confirm.node.id });
+        setNotice(t('nodes.actionAccepted'));
+        setActiveTab('jobs');
+      } else if (confirm.type === 'ssh-session-launch') {
+        const sessionResult = await launchSSH.mutateAsync({ nodeId: confirm.node.id });
+        result = sessionResult;
+        if (sessionResult.terminal_url) {
+          setOneTimePanel({
+            label: t('nodes.sshSessionOneTimeURL'),
+            value: sessionResult.terminal_url,
+            expiresAt: sessionResult.expires_at,
+          });
+        }
+        setNotice(t('nodes.sshSessionCreated'));
+        setActiveTab('terminal');
+      } else if (confirm.type === 'node-retire') {
+        result = await retire.mutateAsync({ nodeId: confirm.node.id });
+        setNotice(t('nodes.nodeRetired'));
+        setActiveTab('lifecycle');
+      } else if (confirm.type === 'node-force-retire') {
+        result = await forceRetire.mutateAsync({ nodeId: confirm.node.id, confirmation: confirm.confirmation, reason: confirm.reason });
+        setNotice(t('nodes.nodeRetired'));
+        setActiveTab('lifecycle');
       }
       recordJobs(result);
       setConfirm(null);
@@ -289,7 +416,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
         {current ? (
           <div className="page-stack">
             <div className="tabs" role="tablist" aria-label={t('nodes.detailTabs')}>
-              {(['overview', 'runtime', 'inventory', 'capabilities', 'diagnostics', 'discovery', 'jobs'] as NodeTab[]).map((tab) => (
+              {(['overview', 'runtime', 'inventory', 'capabilities', 'diagnostics', 'discovery', 'bootstrap', 'security', 'terminal', 'lifecycle', 'jobs'] as NodeTab[]).map((tab) => (
                 <button
                   key={tab}
                   className={`tab-link ${activeTab === tab ? 'active' : ''}`.trim()}
@@ -303,6 +430,14 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
               ))}
             </div>
             {notice ? <div role={notice.includes(':') ? 'alert' : 'status'}>{notice}</div> : null}
+            {oneTimePanel ? (
+              <OneTimeSecretPanel
+                label={oneTimePanel.label}
+                value={oneTimePanel.value}
+                expiresAt={oneTimePanel.expiresAt}
+                onClose={() => setOneTimePanel(null)}
+              />
+            ) : null}
             {activeTab === 'overview' ? <OverviewTab node={current} busy={busy} onConfirm={setConfirm} /> : null}
             {activeTab === 'runtime' ? <RuntimeTab node={current} diagnostics={diagnostics} /> : null}
             {activeTab === 'inventory' ? <InventoryTab node={current} inventory={inventory} busy={busy} onConfirm={setConfirm} /> : null}
@@ -320,6 +455,20 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
             ) : null}
             {activeTab === 'diagnostics' ? <DiagnosticsTab node={current} diagnostics={diagnostics} busy={busy} onConfirm={setConfirm} /> : null}
             {activeTab === 'discovery' ? <DiscoveryTab node={current} discoveries={discoveries} summary={discoverySummary} busy={busy} onConfirm={setConfirm} /> : null}
+            {activeTab === 'bootstrap' ? <BootstrapTab node={current} accessMethods={accessMethods} runs={bootstrapRuns} busy={busy} onConfirm={setConfirm} /> : null}
+            {activeTab === 'security' ? (
+              <SecurityTab
+                node={current}
+                diagnostics={diagnostics.data}
+                tokens={enrollmentTokens}
+                accessMethods={accessMethods}
+                scanHostKey={scanHostKey}
+                busy={busy}
+                onConfirm={setConfirm}
+              />
+            ) : null}
+            {activeTab === 'terminal' ? <TerminalTab node={current} accessMethods={accessMethods} busy={busy} onConfirm={setConfirm} /> : null}
+            {activeTab === 'lifecycle' ? <LifecycleTab node={current} busy={busy} onConfirm={setConfirm} /> : null}
             {activeTab === 'jobs' ? <NodeJobsTab jobIds={effectiveJobIds} diagnostics={diagnostics.data} /> : null}
             <NodeConfirmDialog action={confirm} busy={busy} onConfirm={() => void runConfirmed()} onClose={() => setConfirm(null)} />
           </div>
@@ -620,6 +769,302 @@ function DiscoveryTab({ node, discoveries, summary, busy, onConfirm }: {
   );
 }
 
+function sshMethods(methods: NodeAccessMethod[] | undefined): NodeAccessMethod[] {
+  return (methods || []).filter((method) => method.method === 'ssh');
+}
+
+function defaultSSHMethod(methods: NodeAccessMethod[] | undefined): NodeAccessMethod | undefined {
+  return sshMethods(methods).find((method) => method.is_enabled) || sshMethods(methods)[0];
+}
+
+function BootstrapTab({ node, accessMethods, runs, busy, onConfirm }: {
+  node: NodeDetail;
+  accessMethods: ReturnType<typeof useNodeAccessMethods>;
+  runs: ReturnType<typeof useNodeBootstrapRuns>;
+  busy: boolean;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const [mode, setMode] = useState<BootstrapRequest['bootstrap_mode']>('ssh_bootstrap');
+  const [forceReenroll, setForceReenroll] = useState(false);
+  const hasEnabledSSH = Boolean(defaultSSHMethod(accessMethods.data)?.is_enabled);
+  const input: BootstrapRequest = { bootstrap_mode: mode, force_reenroll: forceReenroll };
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <FormGrid>
+              <FormField label={t('nodes.bootstrapMode')}>
+                <Select value={mode} onChange={(event) => setMode(event.target.value as BootstrapRequest['bootstrap_mode'])}>
+                  <option value="ssh_bootstrap">{t('nodes.sshBootstrap')}</option>
+                  <option value="manual_bundle">{t('nodes.manualBundle')}</option>
+                </Select>
+              </FormField>
+              <FormField label={t('nodes.forceReenroll')}>
+                <Checkbox checked={forceReenroll} onChange={(event) => setForceReenroll(event.target.checked)} label={t('nodes.forceReenrollLabel')} />
+              </FormField>
+            </FormGrid>
+            <p className="muted">{t('nodes.bootstrapImpact')}</p>
+            {mode === 'ssh_bootstrap' && !hasEnabledSSH ? <div role="alert" className="error-state-inline">{t('nodes.sshAccessMissing')}</div> : null}
+            <Toolbar>
+              <Button variant="primary" icon={<Play size={16} />} disabled={busy || (mode === 'ssh_bootstrap' && !hasEnabledSSH)} onClick={() => onConfirm({ type: 'bootstrap', node, input })}>
+                {t('nodes.queueBootstrap')}
+              </Button>
+              <Button icon={<RotateCcw size={16} />} disabled={busy || !hasEnabledSSH} onClick={() => onConfirm({ type: 'agent-reinstall', node, input: { ...input, bootstrap_mode: 'ssh_bootstrap', reinstall_agent: true } })}>
+                {t('nodes.reinstallAgent')}
+              </Button>
+              <Button icon={<RefreshCw size={16} />} onClick={() => { void accessMethods.refetch(); void runs.refetch(); }}>{t('common.refresh')}</Button>
+            </Toolbar>
+          </div>
+        </CardBody>
+      </Card>
+      {accessMethods.isError ? <div role="alert" className="error-state-inline">{t('nodes.accessMethodsUnavailable')}: {formatAPIError(accessMethods.error)}</div> : null}
+      <AccessMethodsTable methods={accessMethods.data || []} />
+      {runs.isError ? <div role="alert" className="error-state-inline">{t('nodes.bootstrapRunsUnavailable')}: {formatAPIError(runs.error)}</div> : null}
+      <DataTable
+        rows={runs.data || []}
+        title={t('nodes.bootstrapRuns')}
+        columns={[
+          { key: 'id', header: t('common.id'), render: (row) => <code>{shortID(row.id)}</code> },
+          { key: 'job', header: t('nodes.job'), render: (row) => <code>{shortID(row.job_id || undefined)}</code> },
+          { key: 'mode', header: t('nodes.bootstrapMode'), render: (row) => text(row.bootstrap_mode) },
+          { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+          { key: 'created', header: t('common.created'), render: (row) => fmt.date(row.created_at) },
+        ]}
+      />
+    </div>
+  );
+}
+
+function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, busy, onConfirm }: {
+  node: NodeDetail;
+  diagnostics?: NodeDiagnostics;
+  tokens: ReturnType<typeof useNodeEnrollmentTokens>;
+  accessMethods: ReturnType<typeof useNodeAccessMethods>;
+  scanHostKey: ReturnType<typeof useScanNodeHostKey>;
+  busy: boolean;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const [ttlHours, setTTLHours] = useState(24);
+  const [methodId, setMethodId] = useState('');
+  const [scanResult, setScanResult] = useState<HostKeyScanResult | null>(null);
+  const methods = sshMethods(accessMethods.data);
+  const selectedMethod = methods.find((method) => method.id === methodId) || defaultSSHMethod(accessMethods.data);
+  const ttl = Number.isFinite(ttlHours) && ttlHours > 0 ? ttlHours : 24;
+  const runScan = async () => {
+    if (!selectedMethod) return;
+    const result = await scanHostKey.mutateAsync({
+      nodeId: node.id,
+      input: {
+        ssh_host: selectedMethod.ssh_host || node.address,
+        ssh_port: selectedMethod.ssh_port || 22,
+      },
+    });
+    setScanResult(result);
+  };
+  const firstFingerprint = scanResult?.fingerprints?.[0]?.fingerprint || '';
+  const currentPin = selectedMethod?.ssh_host_key_sha256 || '';
+  const changedPin = Boolean(firstFingerprint && currentPin && firstFingerprint !== currentPin);
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <h3 className="card-title">{t('nodes.enrollmentTokens')}</h3>
+            <FormGrid>
+              <FormField label={t('nodes.tokenTTL')}>
+                <TextField type="number" min={1} max={720} value={ttlHours} onChange={(event) => setTTLHours(Number(event.target.value))} />
+              </FormField>
+            </FormGrid>
+            <Toolbar>
+              <Button variant="primary" icon={<KeyRound size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'enrollment-create', node, ttlHours: ttl })}>{t('nodes.createEnrollmentToken')}</Button>
+              <Button icon={<RotateCcw size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'enrollment-rotate', node, ttlHours: ttl })}>{t('nodes.rotateEnrollmentToken')}</Button>
+              <Button icon={<RefreshCw size={16} />} onClick={() => void tokens.refetch()}>{t('common.refresh')}</Button>
+            </Toolbar>
+            {tokens.isError ? <div role="alert" className="error-state-inline">{t('nodes.enrollmentTokensUnavailable')}: {formatAPIError(tokens.error)}</div> : null}
+          </div>
+        </CardBody>
+      </Card>
+      <DataTable
+        rows={tokens.data || []}
+        columns={[
+          { key: 'hint', header: t('nodes.tokenHint'), render: (row) => <code>{text(row.token_hint)}</code> },
+          { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+          { key: 'expires', header: t('nodes.expires'), render: (row) => fmt.date(row.expires_at) },
+          { key: 'used', header: t('nodes.used'), render: (row) => fmt.date(row.used_at || undefined) },
+          { key: 'created', header: t('common.created'), render: (row) => fmt.date(row.created_at) },
+          { key: 'actions', header: t('common.actions'), render: (row) => (
+            <Button icon={<Trash2 size={16} />} variant="danger" disabled={busy || row.status === 'revoked'} onClick={() => onConfirm({ type: 'enrollment-revoke', node, token: row })}>
+              {t('nodes.revokeToken')}
+            </Button>
+          ) },
+        ]}
+      />
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <h3 className="card-title">{t('nodes.hostKeyTrust')}</h3>
+            <FormGrid>
+              <FormField label={t('nodes.sshAccessMethod')}>
+                <Select value={selectedMethod?.id || ''} onChange={(event) => setMethodId(event.target.value)}>
+                  {methods.map((method) => (
+                    <option key={method.id} value={method.id}>
+                      {[method.ssh_user, method.ssh_host || node.address, method.ssh_port || 22].filter(Boolean).join('@')}
+                    </option>
+                  ))}
+                </Select>
+              </FormField>
+            </FormGrid>
+            {!selectedMethod ? <div role="alert" className="error-state-inline">{t('nodes.sshAccessMissing')}</div> : null}
+            <Toolbar>
+              <Button variant="primary" icon={<Fingerprint size={16} />} disabled={busy || !selectedMethod} onClick={() => void runScan()}>{t('nodes.scanHostKey')}</Button>
+              <Button icon={<RefreshCw size={16} />} onClick={() => void accessMethods.refetch()}>{t('common.refresh')}</Button>
+            </Toolbar>
+            {accessMethods.isError ? <div role="alert" className="error-state-inline">{t('nodes.accessMethodsUnavailable')}: {formatAPIError(accessMethods.error)}</div> : null}
+            {scanHostKey.isError ? <div role="alert" className="error-state-inline">{formatAPIError(scanHostKey.error)}</div> : null}
+            {changedPin ? <div role="alert" className="error-state-inline">{t('nodes.hostKeyChangedWarning')}</div> : null}
+            {scanResult ? (
+              <div className="page-stack">
+                <div className="definition-grid">
+                  <span>{t('nodes.scanHost')}</span><strong>{scanResult.host || selectedMethod?.ssh_host || node.address}</strong>
+                  <span>{t('nodes.scanPort')}</span><strong>{scanResult.port || selectedMethod?.ssh_port || 22}</strong>
+                  <span>{t('nodes.currentPin')}</span><strong>{currentPin || 'n/a'}</strong>
+                </div>
+                <DataTable
+                  rows={scanResult.fingerprints || []}
+                  columns={[
+                    { key: 'fingerprint', header: t('nodes.fingerprint'), render: (row) => <code>{text(row.fingerprint)}</code> },
+                    { key: 'algorithm', header: t('nodes.algorithm'), render: (row) => text(row.algorithm) },
+                    { key: 'bits', header: t('nodes.bits'), render: (row) => String(row.bits ?? 'n/a') },
+                    { key: 'actions', header: t('common.actions'), render: (row) => (
+                      <Toolbar>
+                        <Button icon={<ShieldCheck size={16} />} disabled={busy || !selectedMethod || !row.fingerprint} onClick={() => selectedMethod && row.fingerprint && onConfirm({ type: 'host-key-pin', node, method: selectedMethod, fingerprint: row.fingerprint })}>
+                          {t('nodes.pinFingerprint')}
+                        </Button>
+                        <Button onClick={() => setScanResult(null)}>{t('nodes.rejectScan')}</Button>
+                      </Toolbar>
+                    ) },
+                  ]}
+                />
+              </div>
+            ) : null}
+          </div>
+        </CardBody>
+      </Card>
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <h3 className="card-title">{t('nodes.agentTrust')}</h3>
+            <div className="definition-grid">
+              <span>{t('nodes.tokenHint')}</span><strong>{diagnostics?.agent?.token_hint || 'n/a'}</strong>
+              <span>{t('nodes.tokenRotationStatus')}</span><strong>{diagnostics?.agent?.token_rotation_status || 'n/a'}</strong>
+              <span>{t('nodes.lastAuthFailure')}</span><strong>{fmt.date(diagnostics?.agent?.last_auth_failure_at)}</strong>
+            </div>
+            <Toolbar>
+              <Button variant="danger" icon={<ShieldAlert size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'agent-token-rotate', node })}>{t('nodes.rotateAgentToken')}</Button>
+            </Toolbar>
+          </div>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function AccessMethodsTable({ methods }: { methods: NodeAccessMethod[] }) {
+  const { t } = useTranslation();
+  return (
+    <DataTable
+      rows={methods}
+      title={t('nodes.accessMethods')}
+      columns={[
+        { key: 'method', header: t('nodes.method'), render: (row) => <code>{text(row.method)}</code> },
+        { key: 'enabled', header: t('nodes.enabled'), render: (row) => row.is_enabled ? t('common.yes') : t('common.no') },
+        { key: 'host', header: t('nodes.sshHost'), render: (row) => text(row.ssh_host) },
+        { key: 'port', header: t('nodes.sshPort'), render: (row) => String(row.ssh_port || 'n/a') },
+        { key: 'user', header: t('nodes.sshUser'), render: (row) => text(row.ssh_user) },
+        { key: 'auth', header: t('nodes.authType'), render: (row) => text(row.auth_type) },
+        { key: 'pin', header: t('nodes.currentPin'), render: (row) => <code>{text(row.ssh_host_key_sha256)}</code> },
+        { key: 'secret', header: t('nodes.secretAvailable'), render: (row) => row.secret_ref_id ? t('common.yes') : t('common.no') },
+      ]}
+    />
+  );
+}
+
+function TerminalTab({ node, accessMethods, busy, onConfirm }: {
+  node: NodeDetail;
+  accessMethods: ReturnType<typeof useNodeAccessMethods>;
+  busy: boolean;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  const { t } = useTranslation();
+  const method = defaultSSHMethod(accessMethods.data);
+  const canLaunch = Boolean(method?.is_enabled && method.secret_ref_id && method.ssh_host_key_sha256);
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <p className="muted">{t('nodes.terminalSecurityNote')}</p>
+            {!canLaunch ? <div role="alert" className="error-state-inline">{t('nodes.terminalUnavailable')}</div> : null}
+            <Toolbar>
+              <Button variant="primary" icon={<TerminalSquare size={16} />} disabled={busy || !canLaunch} onClick={() => onConfirm({ type: 'ssh-session-launch', node })}>{t('nodes.launchSshSession')}</Button>
+              <Button icon={<RefreshCw size={16} />} onClick={() => void accessMethods.refetch()}>{t('common.refresh')}</Button>
+            </Toolbar>
+          </div>
+        </CardBody>
+      </Card>
+      {accessMethods.isError ? <div role="alert" className="error-state-inline">{t('nodes.accessMethodsUnavailable')}: {formatAPIError(accessMethods.error)}</div> : null}
+      <AccessMethodsTable methods={accessMethods.data || []} />
+    </div>
+  );
+}
+
+function LifecycleTab({ node, busy, onConfirm }: { node: NodeDetail; busy: boolean; onConfirm: (action: ConfirmAction) => void }) {
+  const { t } = useTranslation();
+  const [confirmation, setConfirmation] = useState('');
+  const [reason, setReason] = useState('');
+  const expected = nodeLabel(node);
+  const forceReady = confirmation.trim() === expected;
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <h3 className="card-title">{t('nodes.retireNode')}</h3>
+            <p className="muted">{t('nodes.retireImpact')}</p>
+            <Toolbar>
+              <Button variant="danger" icon={<Trash2 size={16} />} disabled={busy || node.status === 'retired'} onClick={() => onConfirm({ type: 'node-retire', node })}>{t('nodes.retireNode')}</Button>
+            </Toolbar>
+          </div>
+        </CardBody>
+      </Card>
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <h3 className="card-title">{t('nodes.forceRetireNode')}</h3>
+            <p className="muted">{t('nodes.forceRetireImpact', { node: expected })}</p>
+            <FormGrid>
+              <FormField label={t('nodes.forceRetireConfirmation')}>
+                <TextField value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder={expected} />
+              </FormField>
+              <FormField label={t('nodes.forceRetireReason')}>
+                <TextField value={reason} onChange={(event) => setReason(event.target.value)} />
+              </FormField>
+            </FormGrid>
+            <Toolbar>
+              <Button variant="danger" icon={<ShieldAlert size={16} />} disabled={busy || !forceReady || node.status === 'retired'} onClick={() => onConfirm({ type: 'node-force-retire', node, confirmation, reason })}>{t('nodes.forceRetireNode')}</Button>
+            </Toolbar>
+          </div>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
 function NodeJobsTab({ jobIds, diagnostics }: { jobIds: string[]; diagnostics?: NodeDiagnostics }) {
   const { t } = useTranslation();
   const agent = diagnostics?.agent;
@@ -650,6 +1095,13 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
       : action.type === 'service-import'
         ? action.discovery.service_code || action.discovery.name || action.discovery.id
         : undefined;
+  const dangerous = [
+    'maintenance-enable',
+    'enrollment-revoke',
+    'agent-token-rotate',
+    'node-retire',
+    'node-force-retire',
+  ].includes(action.type);
   return (
     <ConfirmDialog title={t('nodes.confirmTitle', { operation })} open={Boolean(action)} onClose={onClose}>
       <div className="page-stack">
@@ -661,9 +1113,13 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
         })}</p>
         {action.type === 'diagnostics' && action.action === 'reconcile-runtime' ? <p>{t('nodes.reconcileRuntimeImpact')}</p> : null}
         {action.type === 'capability-install' ? <pre className="code-block">{safeJSON(action.input)}</pre> : null}
+        {(action.type === 'bootstrap' || action.type === 'agent-reinstall') ? <pre className="code-block">{safeJSON(action.input)}</pre> : null}
+        {action.type === 'enrollment-revoke' ? <pre className="code-block">{safeJSON({ token_id: action.token.id, token_hint: action.token.token_hint, status: action.token.status })}</pre> : null}
+        {action.type === 'host-key-pin' ? <pre className="code-block">{safeJSON({ method_id: action.method.id, ssh_host: action.method.ssh_host, ssh_port: action.method.ssh_port, fingerprint: action.fingerprint })}</pre> : null}
+        {action.type === 'node-force-retire' ? <pre className="code-block">{safeJSON({ confirmation: action.confirmation, reason: action.reason || 'operator force retire' })}</pre> : null}
         {action.type === 'service-import' ? <pre className="code-block">{safeJSON({ id: action.discovery.id, service_code: action.discovery.service_code, name: action.discovery.name, endpoint: [action.discovery.endpoint_host, action.discovery.endpoint_port].filter(Boolean).join(':') })}</pre> : null}
         <Toolbar>
-          <Button variant={action.type === 'maintenance-enable' ? 'danger' : 'primary'} disabled={busy} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
+          <Button variant={dangerous ? 'danger' : 'primary'} disabled={busy} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
           <Button onClick={onClose}>{t('common.cancel')}</Button>
         </Toolbar>
       </div>

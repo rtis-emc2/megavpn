@@ -3,10 +3,13 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`c4a7884d75dea52bb2ecd4e199f23b01e6b08ab8`
+`5be5a33e16c7eef0578e122f919f9932ef5cbcf0`
+
+FE8-P0-05B Nodes bootstrap/security/control feature commit:
+`pending final feat: connect node bootstrap security workflows commit; final SHA is recorded in the task handoff after commit creation`
 
 FE8-P0-05A Nodes observability/diagnostics/inventory feature commit:
-`pending final feat: connect node diagnostics inventory workflow commit; final SHA is recorded in the task handoff after commit creation`
+`5be5a33e16c7eef0578e122f919f9932ef5cbcf0`
 
 FE8-P0-04B service pack instance creation feature commit:
 `2c080a555b5d0460fe3b8c876907a67823185917`
@@ -42,14 +45,13 @@ Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
 Current evidence CI:
-Current FE8-P0-05A evidence is local until the final feature commit is pushed.
-Previous accepted service-pack evidence CI run `28977048826` passed for
-`24a0d129a0ca89caf3ec0e5f9c18616c0af9d95f`; the branch head before FE8-P0-05A
-was `c4a7884d75dea52bb2ecd4e199f23b01e6b08ab8`.
+Current FE8-P0-05B evidence is local until the final feature commit is pushed.
+Previous accepted FE8-P0-05A evidence CI run `28979061764` passed for
+`5be5a33e16c7eef0578e122f919f9932ef5cbcf0`.
 
-Current evidence date UTC: `2026-07-08T21:55:16Z`
+Current evidence date UTC: `2026-07-08T22:21:57Z`
 
-Status: FE8-P0-05A is locally verified and reviewable. Final 8.0.0 cutover
+Status: FE8-P0-05B is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
 validation, integrated disposable-data smoke and backend version synchronization
 are complete.
@@ -62,12 +64,15 @@ UI without `/legacy/`. Service pack instance creation, manual instance creation,
 instance spec replace and runtime artifact list/import are connected in the new
 UI without `/legacy/`. Nodes observability, diagnostics, inventory,
 capabilities, service discovery and maintenance workflows for existing nodes are
-connected in the new UI without `/legacy/`. Remaining workflows listed below are
-still not migrated.
+connected in the new UI without `/legacy/`. Nodes bootstrap/security/control
+workflows are connected in the new UI without `/legacy/` for configured nodes:
+enrollment token create/rotate/revoke, bootstrap/reinstall job queueing,
+host-key scan/pin, SSH session ticket launch, agent token rotation and
+retire/force-retire. Remaining workflows listed below are still not migrated.
 
 ## 1. Summary
 
-This evidence records the current 8.0.0 frontend branch after FE8-P0-05A:
+This evidence records the current 8.0.0 frontend branch after FE8-P0-05B:
 
 - CI push coverage includes `release/8.0.0-frontend-console` and `release/**`;
   pull request coverage remains enabled.
@@ -99,8 +104,15 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-05A:
   agent/runtime state, maintenance mode, inventory view/sync, capability
   install/verify, diagnostics retry/run, service discovery list/import and async
   job tracking.
+- `Nodes -> Security/Bootstrap/Terminal/Lifecycle` is connected without
+  `/legacy/` for enrollment token create/rotate/revoke, bootstrap/reinstall job
+  queueing, host-key scan/pin for existing SSH methods, SSH session ticket
+  launch, agent token rotation and retire/force-retire.
 - Share/subscription one-time URLs are shown only in transient local UI state
   after backend create/rotate responses and are cleared on close.
+- Enrollment token plaintext and SSH terminal ticket URLs are shown only in
+  transient local UI state after backend create/rotate/session responses and are
+  cleared on close.
 - `/legacy/` remains the rollback UI and still covers non-migrated workflows.
 
 ## 2. Commands Run
@@ -115,9 +127,9 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-05A:
 | `cd frontend && npm ci` | SKIP | This workstation session exposes bundled Node `v24.14.0`, but no native `npm` or `corepack` binary in `PATH`; existing `frontend/node_modules` was used for script-equivalent verification. GitHub CI remains configured for plain `npm ci`. |
 | `cd frontend && npm run typecheck` | PASS | Equivalent command run through bundled Node and local TypeScript: `tsc --noEmit` plus `tsc -p tsconfig.node.json --noEmit`. |
 | `cd frontend && npm run lint` | PASS | Equivalent command run through bundled Node and local ESLint. |
-| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 7 files, 61 tests passed. |
-| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 589 keys. |
-| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-DgppFDCJ.js`, `web/assets/index-CMdslovF.css`. |
+| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 7 files, 62 tests passed. |
+| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 666 keys. |
+| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-CbDfBc6_.js`, `web/assets/index-CMdslovF.css`. |
 | `scripts/ci/frontend-serving-smoke.sh` | PASS | Root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
 | `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
 | `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
@@ -128,6 +140,32 @@ Local note: this workstation did not expose a native `npm` or `corepack` binary
 in `PATH`; frontend checks were run through the bundled Node runtime and local
 `frontend/node_modules` binaries. The repository standard and GitHub CI path
 remain plain `npm ci` and `npm run ...`.
+
+## FE8-P0-05B Nodes Security/Control Test Evidence
+
+`frontend/src/pages/infrastructure/NodesPage.test.tsx` verifies Nodes
+bootstrap/security/control workflows against mocked backend API responses:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Enrollment token list loads metadata only | Security tab renders `GET /api/v1/nodes/{id}/enrollment-tokens` hints/status without plaintext token. |
+| Enrollment token create requires confirmation | `runs node bootstrap, security and lifecycle workflows safely` asserts `POST /api/v1/nodes/{id}/enrollment-token?ttl_hours=48` is not called before `Confirm`. |
+| Enrollment token one-time value is transient | Same test verifies returned plaintext is masked, appears only after `Reveal`, and disappears after `Close`. |
+| Enrollment token revoke requires confirmation | Same test asserts confirmed `DELETE /api/v1/nodes/{id}/enrollment-tokens/{token_id}`. |
+| Host-key scan calls backend | Same test asserts `POST /api/v1/nodes/{id}/ssh/host-key-scan`. |
+| Changed host-key warning visible | Same test renders the changed fingerprint warning when scanned fingerprint differs from the current pin. |
+| Host-key pin requires confirmation | Same test asserts `PUT /api/v1/nodes/{id}/access-methods` is not called before `Confirm` and updates only `ssh_host_key_sha256`. |
+| Agent token rotate requires confirmation | Same test asserts confirmed `POST /api/v1/nodes/{id}/agent-token/rotate` and job tracking. |
+| Bootstrap requires confirmation | Same test asserts confirmed `POST /api/v1/nodes/{id}/bootstrap` and returned job tracking. |
+| SSH session launch calls backend | Same test asserts confirmed `POST /api/v1/nodes/{id}/ssh/sessions`; returned terminal ticket URL is transient and cleared on close. |
+| Retire/force-retire require confirmation | Same test asserts confirmed `DELETE /api/v1/nodes/{id}` and `POST /api/v1/nodes/{id}/force-retire` with exact typed confirmation and reason. |
+| No token browser storage | Same test spies on `Storage.setItem` and verifies enrollment token / SSH ticket material is not persisted to localStorage or sessionStorage. |
+| Backend revoke route is real | `TestPostgresIntegrationRevokeNodeEnrollmentTokenKeepsSecretHidden` verifies token status changes to revoked and revoke/list responses do not include plaintext token. |
+| No `/legacy` workflow | Nodes tests assert implemented workflows never request `/legacy`. |
+| No raw page API calls | Nodes tests keep raw `/api/v1`, raw `fetch`, `dangerouslySetInnerHTML` and `/legacy` out of the page component. |
+
+Node bootstrap/security/control workflows work in the new UI without `/legacy/`
+for configured nodes.
 
 ## FE8-P0-05A Nodes Test Evidence
 
@@ -442,7 +480,10 @@ Fully connected in the new console:
 - `Services -> Runtime Artifacts` list, safe metadata view and URL import;
 - `Nodes` existing-node observability: list/detail, agent/runtime state,
   maintenance mode, inventory view/sync, capability install/verify, diagnostics
-  retry/run, service discovery list/import and async job tracking.
+  retry/run, service discovery list/import and async job tracking;
+- `Nodes` bootstrap/security/control for configured nodes: enrollment token
+  create/rotate/revoke, bootstrap/reinstall job queueing, host-key scan/pin,
+  SSH session ticket launch, agent token rotation and retire/force-retire.
 
 Still disabled, read-only or legacy-only:
 
@@ -450,9 +491,9 @@ Still disabled, read-only or legacy-only:
 - migration conflict UI for access groups;
 - client routes, access rotation and config cleanup;
 - client delivery history;
-- nodes bootstrap, host-key scan, SSH terminal/session launch, enrollment tokens,
-  agent token rotation, reboot, emergency cleanup, retire/force-retire and route
-  policy preview/apply/cleanup;
+- nodes create/register/edit, new SSH access method creation with secret
+  material, manual bootstrap bundle reveal, agent identity revoke, reboot,
+  emergency cleanup, stale rotation cleanup and route policy preview/apply/cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance draft-save
@@ -495,7 +536,7 @@ Still disabled, read-only or legacy-only:
 - No browser screenshot/responsive Playwright evidence was produced in this
   pass.
 - Integrated live API smoke was not run against a disposable DB/API in this
-  session; FE8-P0-05A evidence is frontend/API-contract test coverage against
+  session; FE8-P0-05B evidence is frontend/API-contract test coverage against
   mocked backend responses plus the local command set recorded above.
 
 ## 14. Go / No-Go
@@ -506,8 +547,9 @@ Recommendation:
 - GO for using new UI `Clients -> Groups -> VLESS`, Clients core/artifacts,
   Clients delivery, Firewall preview/apply/disable, existing Instances runtime
   control, service pack instance creation, manual instance creation, runtime
-  artifact list/import and existing Nodes observability/diagnostics/inventory
-  workflows in controlled staging after operator review.
+  artifact list/import, existing Nodes observability/diagnostics/inventory and
+  Nodes bootstrap/security/control workflows in controlled staging after
+  operator review.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
@@ -515,9 +557,9 @@ Remaining blockers for final cutover:
 1. run integrated smoke/e2e against disposable DB/API data for VLESS, Clients
    core/artifacts/delivery, Firewall and Instances/Service Packs runtime
    operator flows;
-2. migrate Nodes bootstrap, host-key scan, SSH terminal/session launch,
-   enrollment/token rotation, retire/reboot/emergency cleanup and route policy
-   workflows;
+2. migrate remaining Nodes create/register/edit, route policy and destructive
+   remediation workflows not included in FE8-P0-05B, including agent identity
+   revoke, reboot, emergency cleanup and stale rotation cleanup;
 3. add backend/browser support for runtime artifact delete if it is required for
    final operator parity;
 4. migrate Clients routes, access rotation and config cleanup;

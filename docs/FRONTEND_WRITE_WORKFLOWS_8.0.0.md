@@ -126,13 +126,15 @@ to `/legacy/`.
 | Nodes list/detail | fully connected | Existing node list/detail uses `GET /api/v1/nodes` and `GET /api/v1/nodes/{id}` with search/status/role filters and a detail drawer. |
 | Create/register | disabled intentionally | Backend exists; form not migrated. |
 | Edit metadata | legacy-only | Backend exists. |
-| Retire | legacy-only | Backend exists; destructive confirmation required. |
-| Force retire | legacy-only | Backend exists; stronger confirmation required. |
+| Retire | fully connected | `DELETE /api/v1/nodes/{id}` with confirmation and backend dependency validation. |
+| Force retire | fully connected | `POST /api/v1/nodes/{id}/force-retire` with typed node-name confirmation, reason and backend cleanup validation. |
 | Maintenance mode | fully connected | `POST /api/v1/nodes/{id}/maintenance/enable` and `/disable`; confirmation required, backend error states are rendered safely. |
-| Bootstrap | legacy-only | Backend exists; host-key/secret-safe workflow required. |
-| SSH terminal/session launch | legacy-only | Backend exists; terminal security review required. |
-| Host-key scan | legacy-only | Backend exists; host-key pinning required. |
-| Token rotate/enrollment tokens | legacy-only | Backend exists; one-time token display required. |
+| Bootstrap/reinstall | fully connected for configured nodes | `POST /api/v1/nodes/{id}/bootstrap`; SSH bootstrap/manual bundle job queueing and reinstall require confirmation and show jobs. Manual bundle secret reveal remains disabled/not exposed. |
+| SSH terminal/session launch | fully connected for configured SSH methods | `POST /api/v1/nodes/{id}/ssh/sessions`; UI shows the backend-issued short-lived terminal URL only in transient state. No frontend SSH implementation and no browser credential storage. |
+| Host-key scan/pin | fully connected for existing SSH methods | `POST /ssh/host-key-scan` and `PUT /access-methods`; changed fingerprint warning is visible and pin requires confirmation. Creating a new SSH access method with secret material remains disabled/not exposed. |
+| Enrollment tokens | fully connected | `GET /enrollment-tokens`, `POST /enrollment-token`, `POST /enrollment-token/rotate`, `DELETE /enrollment-tokens/{token_id}`. Plaintext tokens are shown only once from create/rotate responses and cleared on close. |
+| Agent token rotation | fully connected | `POST /agent-token/rotate`; confirmation required, returned job is tracked, no new token plaintext is exposed to the browser. |
+| Agent identity revoke / reboot / emergency cleanup / stale rotation cleanup | legacy-only | Backend exists, but FE8-P0-05B does not expose these destructive remediation paths. |
 | Agent/runtime state | fully connected | Node diagnostics payload shows heartbeat, communication state and agent job/inventory/discovery/runtime timestamps without rendering secrets or HTML. |
 | Diagnostics retry/run | fully connected | `GET /diagnostics`, `POST /diagnostics/retry-inventory`, `/retry-discovery`, `/channel-probe`, `/requeue-stuck-job` and `/reconcile-runtime`; confirmation and job tracking required. Runtime reconcile may queue backend-defined dependent runtime jobs. |
 | Inventory view/sync | fully connected | `GET /inventory` and `POST /inventory/sync`; sync requires confirmation and shows returned job. Inventory payload is rendered as text. |

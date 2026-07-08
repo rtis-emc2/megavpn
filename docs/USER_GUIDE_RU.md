@@ -299,14 +299,16 @@ Production defaults:
 
 ## 8. Добавление node
 
-Новая React UI в FE8-P0-05A управляет уже существующими nodes без `/legacy/`
-для observability, runtime/agent state, maintenance mode, inventory sync,
-runtime capability install/verify, diagnostics retry/run, service discovery
-scan/import и job tracking. Bootstrap, host-key scan, SSH terminal, enrollment
-tokens и agent token rotation остаются FE8-P0-05B / legacy-only.
+Новая React UI управляет уже существующими nodes без `/legacy/` для
+observability, runtime/agent state, maintenance mode, inventory sync, runtime
+capability install/verify, diagnostics retry/run, service discovery scan/import,
+bootstrap/reinstall job queueing, enrollment tokens, host-key scan/pin, SSH
+session ticket launch, agent token rotation, retire/force-retire и job
+tracking.
 
-Для первичного добавления и bootstrap новой node в текущем RC используйте
-legacy flow:
+Ограничение FE8-P0-05B: создание новой node, edit metadata и создание нового
+SSH access method с secret material пока не выведены в новую UI. Для этих
+secret-bearing setup шагов в текущем RC используйте legacy/approved flow:
 
 1. Откройте `/legacy/` или текущий approved bootstrap workflow.
 2. Нажмите `Add node`.
@@ -325,8 +327,17 @@ legacy flow:
    корректно. UI заполнит `ssh_host_key_sha256` найденным fingerprint.
 6. Сверьте fingerprint внешним доверенным способом: через cloud/provider
    console или provisioning record, затем сохраните SSH access.
-7. Запустите bootstrap или enrollment flow.
-8. Дождитесь heartbeat: node должна перейти в `online`.
+7. После сохранения access method вернитесь в новую UI: `Nodes -> node`.
+8. На вкладке `Security` выполните `Scan host key`, проверьте fingerprint
+   внешним доверенным способом и нажмите `Pin fingerprint`.
+9. На вкладке `Security` создайте или rotate enrollment token. Plaintext
+   показывается только один раз; скопируйте его сразу и закройте panel.
+10. На вкладке `Bootstrap` запустите bootstrap или reinstall agent. UI покажет
+    backend job tracking.
+11. На вкладке `Terminal / Access` можно запросить short-lived backend SSH
+    terminal session URL для настроенного SSH method. Browser не хранит SSH
+    credentials и не реализует SSH самостоятельно.
+12. Дождитесь heartbeat: node должна перейти в `online`.
 
 `ssh_host_key_sha256` защищает bootstrap от MITM. Fingerprint должен
 соответствовать реальному host key node. Не обходите это поле непроверенным
@@ -339,6 +350,11 @@ services по backend-defined reconciliation path. `Reboot node` пока ост
 legacy-only и должен использоваться только в controlled maintenance window:
 команду выполняет enrolled agent, UI требует ввести имя node, а результат
 остается в audit/job history.
+
+Retire и force-retire доступны в `Nodes -> node -> Lifecycle`. Normal retire
+полагается на backend validation и блокируется при active dependent state.
+Force-retire требует ввести имя node точно и указать reason; используйте только
+для lost-node cleanup после операционной проверки.
 
 ## 9. Runtime capabilities
 

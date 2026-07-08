@@ -3080,6 +3080,21 @@ func (s *Store) ListNodeEnrollmentTokens(ctx context.Context, nodeID string) ([]
 	return out, rows.Err()
 }
 
+func (s *Store) RevokeNodeEnrollmentToken(ctx context.Context, nodeID, tokenID string) (domain.NodeEnrollmentToken, error) {
+	var x domain.NodeEnrollmentToken
+	err := s.db.QueryRow(ctx, `
+update node_enrollment_tokens
+set status='revoked'
+where node_id=$1 and id=$2 and status <> 'revoked'
+returning id,node_id,token_hint,status,expires_at,used_at,created_at`, nodeID, tokenID).
+		Scan(&x.ID, &x.NodeID, &x.TokenHint, &x.Status, &x.ExpiresAt, &x.UsedAt, &x.CreatedAt)
+	if err != nil {
+		return x, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "node.enrollment_token.revoke", "node", &nodeID, "node enrollment token revoked")
+	return x, nil
+}
+
 func (s *Store) RegisterAgentWithEnrollment(ctx context.Context, nodeID, token, name, address string) (domain.Node, string, error) {
 	return s.RegisterAgentWithEnrollmentVersion(ctx, nodeID, token, name, address, "", "")
 }

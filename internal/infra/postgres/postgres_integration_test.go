@@ -3225,6 +3225,53 @@ func TestPostgresIntegrationAgentVersionProjection(t *testing.T) {
 	}
 }
 
+func TestPostgresIntegrationRevokeNodeEnrollmentTokenKeepsSecretHidden(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-token-revoke-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "draft",
+		Address:       "10.50.2.11",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "unknown",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	token, err := store.CreateNodeEnrollmentToken(ctx, node.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("create enrollment token: %v", err)
+	}
+	if token.Token == "" || token.TokenHint == "" {
+		t.Fatalf("new enrollment token should return one-time plaintext and hint: %#v", token)
+	}
+
+	revoked, err := store.RevokeNodeEnrollmentToken(ctx, node.ID, token.ID)
+	if err != nil {
+		t.Fatalf("revoke enrollment token: %v", err)
+	}
+	if revoked.Status != "revoked" {
+		t.Fatalf("revoked status = %q, want revoked", revoked.Status)
+	}
+	if revoked.Token != "" {
+		t.Fatalf("revoked token response must not include plaintext token")
+	}
+
+	tokens, err := store.ListNodeEnrollmentTokens(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("list enrollment tokens: %v", err)
+	}
+	if len(tokens) != 1 || tokens[0].Status != "revoked" || tokens[0].Token != "" {
+		t.Fatalf("listed token metadata = %#v, want one revoked metadata-only token", tokens)
+	}
+}
+
 func TestPostgresIntegrationDeleteClientRemovesProvisioningRows(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 	store.SetArtifactRoot(t.TempDir())

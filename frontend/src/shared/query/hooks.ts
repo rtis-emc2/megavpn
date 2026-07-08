@@ -4,6 +4,8 @@ import {
   applyClientAccessGroupSync,
   applyInstance,
   applySingleClientAccessGroupAssignment,
+  acceptNodeHostKey,
+  bootstrapNode,
   buildClientArtifact,
   createClient,
   applyNodeFirewall,
@@ -12,6 +14,7 @@ import {
   createClientAccessGroup,
   createInstanceFromServicePack,
   createInstanceManual,
+  createEnrollmentToken,
   createServicePack,
   createFirewallAddressGroup,
   createFirewallAddressGroupEntry,
@@ -30,6 +33,7 @@ import {
   disableNodeFirewall,
   endpoints,
   forceDeleteInstance,
+  forceRetireNode,
   getAvailableClientsForGroup,
   getClient,
   getClientAccessGroupMembers,
@@ -55,6 +59,9 @@ import {
   listClientShareLinks,
   listClientSubscriptions,
   listClientAccessGroups,
+  listEnrollmentTokens,
+  listNodeAccessMethods,
+  listNodeBootstrapRuns,
   listNodeCapabilities,
   listNodeCapabilityInstallEvents,
   listNodeDiagnostics,
@@ -64,6 +71,7 @@ import {
   listServiceInstallers,
   listServicePacks,
   listServiceTypeCapabilities,
+  launchNodeSshSession,
   importAllNodeServiceDiscoveries,
   importNodeServiceDiscoveryById,
   installNodeCapability,
@@ -72,18 +80,24 @@ import {
   previewClientAccessGroupSync,
   previewNodeFirewall,
   reapplyInstance,
+  reinstallOrUpdateNodeAgent,
   replaceInstanceSpec,
   removeClientAccessGroupMember,
   removeClientAccessGroupMembership,
+  retireNode,
+  revokeEnrollmentToken,
   revokeClientShareLink,
   revokeClientSubscription,
   revokeClient,
   rollbackInstance,
+  rotateEnrollmentToken,
+  rotateNodeAgentToken,
   runInstanceDiagnostics,
   runInstanceLifecycleAction,
   retryNodeDiagnostics,
   runNodeDiagnostics,
   runNodeDiagnosticsAction,
+  scanNodeHostKey,
   importRuntimeArtifact,
   rotateClientShareLink,
   rotateClientSubscription,
@@ -147,6 +161,10 @@ import type {
   ClientSubscriptionRevokeResult,
   ClientSubscriptionRotateResult,
   Dashboard,
+  BootstrapRequest,
+  BootstrapResult,
+  EnrollmentToken,
+  EnrollmentTokenCreateInput,
   FirewallAddressGroup,
   FirewallApplyRequest,
   FirewallApplyResult,
@@ -173,7 +191,11 @@ import type {
   InstanceSpecDraft,
   InstanceSpecValidationResult,
   Job,
+  HostKeyDecisionResult,
+  HostKeyScanResult,
   NodeAgentState,
+  NodeAccessMethod,
+  NodeBootstrapRun,
   NodeCapability,
   NodeCapabilityDrift,
   NodeCapabilityInstallEvent,
@@ -190,6 +212,7 @@ import type {
   NodeServiceDiscovery,
   NodeServiceDiscoverySummary,
   NodeServiceInstaller,
+  NodeRetireResult,
   ReadyStatus,
   RuntimeArtifact,
   RuntimeArtifactDeleteResult,
@@ -208,6 +231,7 @@ import type {
   ServiceTypeCapability,
   RuntimeTargetNode,
   ShareLink,
+  SshSessionLaunchResult,
   TrafficSummary,
   AvailableClientsForGroupPage,
   AvailableClientsForGroupQuery,
@@ -251,6 +275,23 @@ function invalidateNodeQueries(queryClient: ReturnType<typeof useQueryClient>, n
     void queryClient.invalidateQueries({ queryKey: ['node-capability-install-events', nodeId] });
     void queryClient.invalidateQueries({ queryKey: ['node-service-discoveries', nodeId] });
     void queryClient.invalidateQueries({ queryKey: ['node-service-discovery-summary', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-access-methods', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-bootstrap-runs', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-enrollment-tokens', nodeId] });
+  }
+}
+
+function invalidateJobsFromResult(queryClient: ReturnType<typeof useQueryClient>, result: unknown) {
+  if (!result || typeof result !== 'object') return;
+  const candidate = result as { id?: unknown; type?: unknown; status?: unknown; job?: unknown; jobs?: unknown };
+  if (typeof candidate.id === 'string' && typeof candidate.type === 'string' && typeof candidate.status === 'string') {
+    void queryClient.invalidateQueries({ queryKey: ['job', candidate.id] });
+  }
+  if (candidate.job) {
+    invalidateJobsFromResult(queryClient, candidate.job);
+  }
+  if (Array.isArray(candidate.jobs)) {
+    candidate.jobs.forEach((job) => invalidateJobsFromResult(queryClient, job));
   }
 }
 
@@ -356,6 +397,136 @@ export function useNodeServiceDiscoverySummary(nodeId: string | undefined, optio
     staleTime: stale.normal,
     retry: false,
     ...options,
+  });
+}
+
+export function useNodeEnrollmentTokens(nodeId: string | undefined, options?: QueryOptions<EnrollmentToken[]>) {
+  return useQuery({
+    queryKey: ['node-enrollment-tokens', nodeId],
+    queryFn: () => listEnrollmentTokens(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    retry: false,
+    ...options,
+  });
+}
+
+export function useNodeAccessMethods(nodeId: string | undefined, options?: QueryOptions<NodeAccessMethod[]>) {
+  return useQuery({
+    queryKey: ['node-access-methods', nodeId],
+    queryFn: () => listNodeAccessMethods(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    retry: false,
+    ...options,
+  });
+}
+
+export function useNodeBootstrapRuns(nodeId: string | undefined, options?: QueryOptions<NodeBootstrapRun[]>) {
+  return useQuery({
+    queryKey: ['node-bootstrap-runs', nodeId],
+    queryFn: () => listNodeBootstrapRuns(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    retry: false,
+    ...options,
+  });
+}
+
+export function useCreateEnrollmentToken() {
+  const queryClient = useQueryClient();
+  return useMutation<EnrollmentToken, Error, { nodeId: string; input?: EnrollmentTokenCreateInput }>({
+    mutationFn: ({ nodeId, input }) => createEnrollmentToken(nodeId, input || {}),
+    onSuccess: (_token, input) => invalidateNodeQueries(queryClient, input.nodeId),
+  });
+}
+
+export function useRotateEnrollmentToken() {
+  const queryClient = useQueryClient();
+  return useMutation<EnrollmentToken, Error, { nodeId: string; input?: EnrollmentTokenCreateInput }>({
+    mutationFn: ({ nodeId, input }) => rotateEnrollmentToken(nodeId, input || {}),
+    onSuccess: (_token, input) => invalidateNodeQueries(queryClient, input.nodeId),
+  });
+}
+
+export function useRevokeEnrollmentToken() {
+  const queryClient = useQueryClient();
+  return useMutation<EnrollmentToken, Error, { nodeId: string; tokenId: string }>({
+    mutationFn: ({ nodeId, tokenId }) => revokeEnrollmentToken(nodeId, tokenId),
+    onSuccess: (_token, input) => invalidateNodeQueries(queryClient, input.nodeId),
+  });
+}
+
+export function useBootstrapNode() {
+  const queryClient = useQueryClient();
+  return useMutation<BootstrapResult, Error, { nodeId: string; input: BootstrapRequest }>({
+    mutationFn: ({ nodeId, input }) => bootstrapNode(nodeId, input),
+    onSuccess: (result, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      invalidateJobsFromResult(queryClient, result);
+    },
+  });
+}
+
+export function useReinstallOrUpdateNodeAgent() {
+  const queryClient = useQueryClient();
+  return useMutation<BootstrapResult, Error, { nodeId: string; input?: BootstrapRequest }>({
+    mutationFn: ({ nodeId, input }) => reinstallOrUpdateNodeAgent(nodeId, input || {}),
+    onSuccess: (result, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      invalidateJobsFromResult(queryClient, result);
+    },
+  });
+}
+
+export function useScanNodeHostKey() {
+  const queryClient = useQueryClient();
+  return useMutation<HostKeyScanResult, Error, { nodeId: string; input?: { ssh_host?: string; ssh_port?: number } }>({
+    mutationFn: ({ nodeId, input }) => scanNodeHostKey(nodeId, input || {}),
+    onSuccess: (_result, input) => invalidateNodeQueries(queryClient, input.nodeId),
+  });
+}
+
+export function useAcceptNodeHostKey() {
+  const queryClient = useQueryClient();
+  return useMutation<HostKeyDecisionResult, Error, { nodeId: string; methodId: string; fingerprint: string }>({
+    mutationFn: ({ nodeId, methodId, fingerprint }) => acceptNodeHostKey(nodeId, { method_id: methodId, fingerprint }),
+    onSuccess: (_result, input) => invalidateNodeQueries(queryClient, input.nodeId),
+  });
+}
+
+export function useRotateNodeAgentToken() {
+  const queryClient = useQueryClient();
+  return useMutation<Job, Error, { nodeId: string }>({
+    mutationFn: ({ nodeId }) => rotateNodeAgentToken(nodeId),
+    onSuccess: (job, input) => {
+      invalidateNodeQueries(queryClient, input.nodeId);
+      void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+    },
+  });
+}
+
+export function useLaunchNodeSshSession() {
+  const queryClient = useQueryClient();
+  return useMutation<SshSessionLaunchResult, Error, { nodeId: string }>({
+    mutationFn: ({ nodeId }) => launchNodeSshSession(nodeId),
+    onSuccess: (_session, input) => invalidateNodeQueries(queryClient, input.nodeId),
+  });
+}
+
+export function useRetireNode() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeRetireResult, Error, { nodeId: string }>({
+    mutationFn: ({ nodeId }) => retireNode(nodeId),
+    onSuccess: (_result, input) => invalidateNodeQueries(queryClient, input.nodeId),
+  });
+}
+
+export function useForceRetireNode() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeRetireResult, Error, { nodeId: string; confirmation: string; reason?: string }>({
+    mutationFn: ({ nodeId, confirmation, reason }) => forceRetireNode(nodeId, { confirmation, reason }),
+    onSuccess: (_result, input) => invalidateNodeQueries(queryClient, input.nodeId),
   });
 }
 
