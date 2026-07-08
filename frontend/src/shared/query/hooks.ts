@@ -3,6 +3,7 @@ import {
   applyClientAccessGroupMembers,
   applyClientAccessGroupSync,
   applyInstance,
+  applyTlsSettings,
   applySingleClientAccessGroupAssignment,
   acceptNodeHostKey,
   bootstrapNode,
@@ -14,6 +15,7 @@ import {
   createClientShareLink,
   createClientSubscription,
   createClientAccessGroup,
+  createInvite,
   createManagedCertificateAuthority,
   createPkiRoot,
   createSelfSignedCertificate,
@@ -56,6 +58,9 @@ import {
   getServicePack,
   getClientAccessOverview,
   getCertificate,
+  getMailSettings,
+  getPlatformSettings,
+  getUser,
   getFirewallSafetySettings,
   getNodeFirewallState,
   getNode,
@@ -71,6 +76,8 @@ import {
   listClientSubscriptions,
   listClientAccessGroups,
   listEnrollmentTokens,
+  listUsers,
+  listInvites,
   listNodeAccessMethods,
   listNodeBootstrapRuns,
   listNodeCapabilities,
@@ -79,6 +86,7 @@ import {
   listNodeServiceDiscoveries,
   listRuntimeArtifacts,
   listRuntimeTargets,
+  listSessions,
   listServiceInstallers,
   listServicePacks,
   listServiceTypeCapabilities,
@@ -101,6 +109,8 @@ import {
   revokeClientSubscription,
   revokeClientAccess,
   revokeClient,
+  revokeInvite,
+  revokeSession,
   rollbackInstance,
   rotateEnrollmentToken,
   rotateNodeAgentToken,
@@ -136,6 +146,9 @@ import {
   updateFirewallPolicy,
   updateFirewallRule,
   updateFirewallSafetySettings,
+  updateMailSettings,
+  updatePlatformSettings,
+  testMailSettings,
   type FirewallAddressGroupEntryInput,
   type FirewallAddressGroupInput,
   type FirewallPolicyInput,
@@ -226,6 +239,14 @@ import type {
   InstanceSpecDraft,
   InstanceSpecValidationResult,
   Job,
+  Invite,
+  InviteCreateInput,
+  InviteCreateResult,
+  InviteRevokeResult,
+  MailSettings,
+  MailSettingsInput,
+  MailTestInput,
+  MailTestResult,
   HostKeyDecisionResult,
   HostKeyScanResult,
   NodeAgentState,
@@ -250,6 +271,8 @@ import type {
   NodeRetireResult,
   PkiRoot,
   PkiRootCreateInput,
+  PlatformSettings,
+  PlatformSettingsInput,
   ReadyStatus,
   RuntimeArtifact,
   RuntimeArtifactDeleteResult,
@@ -268,8 +291,12 @@ import type {
   ServiceTypeCapability,
   RuntimeTargetNode,
   ShareLink,
+  Session,
+  SessionRevokeResult,
   SshSessionLaunchResult,
+  SettingsUpdateResult,
   TrafficSummary,
+  UserAccount,
   AvailableClientsForGroupPage,
   AvailableClientsForGroupQuery,
   VersionInfo,
@@ -285,6 +312,10 @@ const stale = {
 
 export function useReady(options?: QueryOptions<ReadyStatus>) {
   return useQuery({ queryKey: ['ready'], queryFn: endpoints.ready, staleTime: stale.fast, refetchInterval: 10_000, ...options });
+}
+
+export function useRuntimePreflight(options?: QueryOptions<Record<string, unknown>>) {
+  return useQuery({ queryKey: ['runtime-preflight'], queryFn: endpoints.runtimePreflight, staleTime: stale.normal, ...options });
 }
 
 export function useVersion(options?: QueryOptions<VersionInfo>) {
@@ -1469,6 +1500,118 @@ export function useCancelJob() {
     onSuccess: (job) => {
       void queryClient.invalidateQueries({ queryKey: ['jobs'] });
       void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+    },
+  });
+}
+
+export function usePlatformSettings(options?: QueryOptions<PlatformSettings>) {
+  return useQuery({ queryKey: ['platform-settings'], queryFn: getPlatformSettings, staleTime: stale.normal, ...options });
+}
+
+export function useUpdatePlatformSettings() {
+  const queryClient = useQueryClient();
+  return useMutation<SettingsUpdateResult, Error, PlatformSettingsInput>({
+    mutationFn: updatePlatformSettings,
+    onSuccess: (settings) => {
+      queryClient.setQueryData(['platform-settings'], settings);
+      queryClient.setQueryData(['control-plane-tls'], settings);
+      void queryClient.invalidateQueries({ queryKey: ['platform-settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['control-plane-tls'] });
+      void queryClient.invalidateQueries({ queryKey: ['runtime-preflight'] });
+    },
+  });
+}
+
+export function useApplyTlsSettings() {
+  const queryClient = useQueryClient();
+  return useMutation<Job, Error, void>({
+    mutationFn: () => applyTlsSettings(),
+    onSuccess: (job) => {
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      if (job.id) void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+      void queryClient.invalidateQueries({ queryKey: ['platform-settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['control-plane-tls'] });
+      void queryClient.invalidateQueries({ queryKey: ['runtime-preflight'] });
+    },
+  });
+}
+
+export function useMailSettings(options?: QueryOptions<MailSettings>) {
+  return useQuery({ queryKey: ['mail-settings'], queryFn: getMailSettings, staleTime: stale.normal, ...options });
+}
+
+export function useUpdateMailSettings() {
+  const queryClient = useQueryClient();
+  return useMutation<MailSettings, Error, MailSettingsInput>({
+    mutationFn: updateMailSettings,
+    onSuccess: (settings) => {
+      queryClient.setQueryData(['mail-settings'], settings);
+      void queryClient.invalidateQueries({ queryKey: ['mail-settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['platform-invites'] });
+    },
+  });
+}
+
+export function useTestMailSettings() {
+  const queryClient = useQueryClient();
+  return useMutation<MailTestResult, Error, MailTestInput>({
+    mutationFn: testMailSettings,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['mail-settings'] });
+    },
+  });
+}
+
+export function usePlatformUsers(options?: QueryOptions<UserAccount[]>) {
+  return useQuery({ queryKey: ['platform-users'], queryFn: listUsers, staleTime: stale.normal, ...options });
+}
+
+export function usePlatformUserDetail(userId: string | undefined, options?: QueryOptions<UserAccount>) {
+  return useQuery({
+    queryKey: ['platform-user', userId],
+    queryFn: () => getUser(userId || ''),
+    enabled: Boolean(userId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function usePlatformInvites(options?: QueryOptions<Invite[]>) {
+  return useQuery({ queryKey: ['platform-invites'], queryFn: listInvites, staleTime: stale.normal, ...options });
+}
+
+export function useCreateInvite() {
+  const queryClient = useQueryClient();
+  return useMutation<InviteCreateResult, Error, InviteCreateInput>({
+    mutationFn: createInvite,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['platform-users'] });
+      void queryClient.invalidateQueries({ queryKey: ['platform-invites'] });
+    },
+  });
+}
+
+export function useRevokeInvite() {
+  const queryClient = useQueryClient();
+  return useMutation<InviteRevokeResult, Error, string>({
+    mutationFn: revokeInvite,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['platform-invites'] });
+    },
+  });
+}
+
+export function usePlatformSessions(options?: QueryOptions<Session[]>) {
+  return useQuery({ queryKey: ['platform-sessions'], queryFn: listSessions, staleTime: stale.normal, ...options });
+}
+
+export function useRevokeSession() {
+  const queryClient = useQueryClient();
+  return useMutation<SessionRevokeResult, Error, string>({
+    mutationFn: revokeSession,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['platform-sessions'] });
+      void queryClient.invalidateQueries({ queryKey: ['auth', 'session'] });
     },
   });
 }

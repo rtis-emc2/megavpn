@@ -3,10 +3,13 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`pending final FE8-P0-07A feature commit; previous pushed/evidence commit is 0934f97b9da38154b87dada4e1387d54ca7df765`
+`pending final FE8-P0-07B feature commit; previous pushed/evidence commit is b92c78679b60d46bc51f49f94db589ee6e1b0b09`
+
+FE8-P0-07B Platform settings/mail/access feature commit:
+`pending final feat: connect platform settings access workflows commit; final SHA is recorded in the task handoff after commit creation`
 
 FE8-P0-07A Certificates/PKI feature commit:
-`pending final feat: connect certificates pki workflows commit; final SHA is recorded in the task handoff after commit creation`
+`b92c78679b60d46bc51f49f94db589ee6e1b0b09`
 
 FE8-P0-06A client routes/access rotation/config cleanup feature commit:
 `0934f97b9da38154b87dada4e1387d54ca7df765`
@@ -51,14 +54,14 @@ Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
 Current evidence CI:
-Current FE8-P0-07A evidence is the local verification set recorded below;
+Current FE8-P0-07B evidence is the local verification set recorded below;
 GitHub CI run is recorded in the task handoff after push.
-Previous accepted FE8-P0-06A evidence CI run `28982369259` passed for
-`0934f97b9da38154b87dada4e1387d54ca7df765`.
+Previous accepted FE8-P0-07A evidence CI run `28983219205` passed for
+`b92c78679b60d46bc51f49f94db589ee6e1b0b09`.
 
-Current evidence date UTC: `2026-07-08T23:31:41Z`
+Current evidence date UTC: `2026-07-08T23:54:59Z`
 
-Status: FE8-P0-07A is locally verified and reviewable. Final 8.0.0 cutover
+Status: FE8-P0-07B is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
 validation, integrated disposable-data smoke and backend version synchronization
 are complete.
@@ -82,12 +85,16 @@ per-access revoke remain disabled with backend-missing reasons.
 Certificates/PKI workflows are connected in the new UI without `/legacy/` for
 certificate list/detail, import preview/apply, self-signed create, managed CA
 create, issue-from-CA, set default, revoke/delete and managed service PKI root
-create where the backend supports the exact operation. Remaining workflows
-listed below are still not migrated.
+create where the backend supports the exact operation. Platform Settings, Mail
+/ Delivery settings and Platform Access users/invites/sessions workflows are
+connected in the new UI without `/legacy/` where the backend supports the exact
+operation. Platform invite revoke remains disabled because the backend has no
+browser invite revoke endpoint. Remaining workflows listed below are still not
+migrated.
 
 ## 1. Summary
 
-This evidence records the current 8.0.0 frontend branch after FE8-P0-07A:
+This evidence records the current 8.0.0 frontend branch after FE8-P0-07B:
 
 - CI push coverage includes `release/8.0.0-frontend-console` and `release/**`;
   pull request coverage remains enabled.
@@ -130,6 +137,11 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-07A:
 - `Platform -> Certificates` is connected without `/legacy/` for certificate
   list/detail, import preview/apply, self-signed create, managed CA create,
   issue-from-CA, set default, revoke/delete and managed service PKI root create.
+- `Platform -> Settings`, `Platform -> Mail / Delivery` and `Platform ->
+  Access / RBAC` are connected without `/legacy/` for runtime preflight,
+  control-plane TLS read/save/apply, mail settings read/save/test, users
+  list/detail, invite list/create and sessions list/revoke. Invite revoke stays
+  disabled because the backend has no browser revoke endpoint.
 - Share/subscription one-time URLs are shown only in transient local UI state
   after backend create/rotate responses and are cleared on close.
 - Enrollment token plaintext and SSH terminal ticket URLs are shown only in
@@ -148,10 +160,10 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-07A:
 | `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` | PASS | All operational binaries build. |
 | `cd frontend && npm ci` | SKIP | This workstation session exposes bundled Node `v24.14.0`, but no native `npm` or `corepack` binary in `PATH`; existing `frontend/node_modules` was used for script-equivalent verification. GitHub CI remains configured for plain `npm ci`. |
 | `cd frontend && npm run typecheck` | PASS | Equivalent command run through bundled Node and local TypeScript: `tsc --noEmit` plus `tsc -p tsconfig.node.json --noEmit`. |
-| `cd frontend && npm run lint` | PASS | Equivalent command run through bundled Node and local ESLint. |
-| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 8 files, 70 tests passed. |
-| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 758 keys. |
-| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-QTN13ZZw.js`, `web/assets/index-CMdslovF.css`. |
+| `cd frontend && npm run lint` | PASS | Equivalent command run through bundled Node and local ESLint: no warnings or errors. |
+| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 9 files, 77 tests passed. |
+| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 809 keys. |
+| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-DHIAWuss.js`, `web/assets/index-CMdslovF.css`. |
 | `scripts/ci/frontend-serving-smoke.sh` | PASS | Root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
 | `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
 | `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
@@ -189,6 +201,33 @@ Client routes/access rotation/config cleanup workflows work in the new UI
 without `/legacy/` where the backend supports the exact sub-action. Route
 update and per-access revoke remain disabled because the backend has no
 corresponding endpoints.
+
+## FE8-P0-07B Platform Settings/Mail/Access Test Evidence
+
+`frontend/src/pages/platform/PlatformSettingsAccess.test.tsx` verifies Platform
+Settings, Mail/Delivery settings and Access/RBAC workflows against mocked
+backend API responses:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Settings load/save | `loads and saves control-plane TLS settings and applies them only after confirmation` asserts `GET/PUT /api/v1/settings/control-plane-tls`. |
+| TLS apply requires confirmation and tracks job | Same test asserts `POST /api/v1/settings/control-plane-tls/apply` is not called before confirmation and renders returned `job-tls-1`. |
+| 422 maps field errors | `maps backend field errors for settings save failures` renders backend `fields.public_base_url` near the form field. |
+| Mail settings save is real | `saves mail settings with masked write-only secrets and runs real mail test` asserts `PUT /api/v1/settings/mail`. |
+| Secret fields are masked and not logged/stored | Same test verifies password input type, no secret ref rendering, no secret display after save and no secret in console or browser storage spies. |
+| Mail test calls backend | Same test asserts `POST /api/v1/settings/mail/test` with the operator-entered recipient. |
+| Users list/detail loads | `loads platform users, creates invites without rendering invite secrets and keeps invite revoke disabled` opens a user detail drawer from `GET /api/v1/admin/users`. |
+| Invite create is real | Same test asserts `POST /api/v1/admin/users/invite` with parsed roles and verifies returned invite URL/token is not rendered. |
+| Invite revoke is disabled with reason | Same test verifies `Revoke invite` is disabled because no backend revoke endpoint exists. |
+| Session revoke requires confirmation | `requires confirmation before revoking sessions` asserts `POST /api/v1/admin/sessions/{id}/revoke` is not called before `Apply`. |
+| 403/409/422 handled | `surfaces 403, 409 and 422 errors for access mutations` renders permission, conflict and validation errors from backend responses. |
+| No `/legacy` workflow | `does not call /legacy for implemented settings, mail and access workflows` asserts implemented workflows call only new `/api/v1` endpoints. |
+| i18n keys exist | `npm run i18n:check` covers new `settings.*` key parity. |
+
+Platform settings/mail/users/sessions workflows work in the new UI without
+`/legacy/` where the backend supports the exact operation. Invite revoke and
+direct user lifecycle mutations remain disabled or legacy/future scope for the
+reasons above.
 
 ## FE8-P0-07A Certificates/PKI Test Evidence
 
@@ -560,6 +599,13 @@ Fully connected in the new console:
   SSH session ticket launch, agent token rotation and retire/force-retire.
 - `Clients -> Routes/Maintenance` route list/create/delete, service access
   list/rotation/delete and generated config cleanup.
+- `Platform -> Certificates` certificate list/detail, import preview/apply,
+  self-signed create, managed CA create, issue-from-CA, set default,
+  revoke/delete and managed service PKI root create;
+- `Platform -> Settings`, `Platform -> Mail / Delivery` and `Platform ->
+  Access / RBAC` runtime preflight, control-plane TLS read/save/apply, mail
+  settings read/save/test, users list/detail, invite list/create and sessions
+  list/revoke.
 
 Still disabled, read-only or legacy-only:
 
@@ -574,8 +620,9 @@ Still disabled, read-only or legacy-only:
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance draft-save
   endpoints;
-- platform settings save, mail test and TLS apply;
-- platform access users/invites/sessions mutations;
+- Platform invite revoke because the backend has no browser revoke endpoint;
+- direct Platform user lifecycle mutations: status change, reset-password,
+  resend-invite and delete user;
 - backhaul mutations;
 - backup/restore browser UI.
 
@@ -584,8 +631,8 @@ Still disabled, read-only or legacy-only:
 - Backend binary/version metadata remains `7.1.1.0`; synchronizing it to
   `8.0.0` is a separate release task.
 - Full normal operator work still requires `/legacy/` for many workflows outside
-  the migrated Clients, Firewall, Instances/Services, Nodes and
-  Certificates/PKI surfaces.
+  the migrated Clients, Firewall, Instances/Services, Nodes, Certificates/PKI
+  and Platform settings/mail/access surfaces.
 - Generic client edit stays disabled because the backend has no generic
   `PATCH/PUT /clients/{id}` endpoint.
 - Client disable stays disabled because the backend exposes activate/suspend
@@ -602,6 +649,11 @@ Still disabled, read-only or legacy-only:
 - Client email delivery is connected, but the backend endpoint is synchronous,
   sends the client's available artifacts/configs and does not accept an
   artifact-specific email payload yet.
+- Platform invite revoke stays disabled because the backend has no browser
+  invite revoke endpoint in this release.
+- Direct Platform user lifecycle operations stay legacy/future scope because
+  FE8-P0-07B only migrated user list/detail, invite list/create and sessions
+  list/revoke.
 - Instances apply/reapply has no separate backend preview/validate endpoint in
   this release; the new UI uses explicit confirmation and then calls the real
   backend apply endpoint.
@@ -632,8 +684,9 @@ Recommendation:
   existing Instances runtime control, service pack instance creation, manual
   instance creation, runtime artifact list/import, existing Nodes
   observability/diagnostics/inventory and Nodes bootstrap/security/control
-  workflows, and Certificates/PKI workflows in controlled staging after
-  operator review.
+  workflows, Certificates/PKI workflows and Platform settings/mail/access
+  workflows where backend endpoints exist in controlled staging after operator
+  review.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
@@ -646,7 +699,8 @@ Remaining blockers for final cutover:
    revoke, reboot, emergency cleanup and stale rotation cleanup;
 3. add backend/browser support for runtime artifact delete if it is required for
    final operator parity;
-4. migrate Platform settings, mail and access users/invites/sessions write workflows;
+4. decide whether direct Platform user lifecycle mutations and invite revoke
+   require backend/browser parity for final cutover;
 5. add E2E/browser responsive evidence for critical operator flows;
 6. synchronize backend/frontend version and release-chain artifacts to `8.0.0`;
 7. run full release gate in the release environment.

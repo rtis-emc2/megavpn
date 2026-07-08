@@ -92,9 +92,19 @@ import type {
   InstanceRollbackRequest,
   InstanceRollbackResult,
   Job,
+  Invite,
+  InviteCreateInput,
+  InviteCreateResult,
+  InviteRevokeResult,
+  MailSettings,
+  MailSettingsInput,
+  MailTestInput,
+  MailTestResult,
   OneTimeSecretDisplay,
   PkiRoot,
   PkiRootCreateInput,
+  PlatformSettings,
+  PlatformSettingsInput,
   HostKeyDecisionResult,
   HostKeyScanResult,
   NodeCapability,
@@ -140,8 +150,12 @@ import type {
   ServiceTypeCapability,
   RuntimeTargetNode,
   ShareLink,
+  Session,
+  SessionRevokeResult,
   SshSessionLaunchResult,
+  SettingsUpdateResult,
   TrafficSummary,
+  UserAccount,
   AvailableClientsForGroupPage,
   AvailableClientsForGroupQuery,
   VersionInfo,
@@ -996,6 +1010,61 @@ export function importPkiRoot(input: PkiRootCreateInput): Promise<PkiRoot> {
   return createPkiRoot(input);
 }
 
+export function getPlatformSettings(): Promise<PlatformSettings> {
+  return apiRequest<PlatformSettings>('/api/v1/settings/control-plane-tls');
+}
+
+export function updatePlatformSettings(input: PlatformSettingsInput): Promise<SettingsUpdateResult> {
+  return sendJSON<SettingsUpdateResult>('/api/v1/settings/control-plane-tls', 'PUT', input);
+}
+
+export function applyTlsSettings(): Promise<Job> {
+  return sendJSON<Job>('/api/v1/settings/control-plane-tls/apply', 'POST', {});
+}
+
+export function getMailSettings(): Promise<MailSettings> {
+  return apiRequest<MailSettings>('/api/v1/settings/mail');
+}
+
+export function updateMailSettings(input: MailSettingsInput): Promise<MailSettings> {
+  return sendJSON<MailSettings>('/api/v1/settings/mail', 'PUT', input);
+}
+
+export function testMailSettings(input: MailTestInput): Promise<MailTestResult> {
+  return sendJSON<MailTestResult>('/api/v1/settings/mail/test', 'POST', input);
+}
+
+export function listUsers(): Promise<UserAccount[]> {
+  return apiRequest<UserAccount[]>('/api/v1/admin/users?limit=200');
+}
+
+export async function getUser(userId: string): Promise<UserAccount> {
+  const users = await listUsers();
+  const user = users.find((item) => item.id === userId);
+  if (!user) throw new Error(`platform user ${userId} was not found in admin user list`);
+  return user;
+}
+
+export function listInvites(): Promise<Invite[]> {
+  return apiRequest<Invite[]>('/api/v1/admin/user-invites?limit=200');
+}
+
+export function createInvite(input: InviteCreateInput): Promise<InviteCreateResult> {
+  return sendJSON<InviteCreateResult>('/api/v1/admin/users/invite', 'POST', input);
+}
+
+export function revokeInvite(_inviteId: string): Promise<InviteRevokeResult> {
+  return Promise.reject(new Error('Backend has no platform invite revoke endpoint in this release.'));
+}
+
+export function listSessions(): Promise<Session[]> {
+  return apiRequest<Session[]>('/api/v1/admin/sessions?limit=200');
+}
+
+export function revokeSession(sessionId: string): Promise<SessionRevokeResult> {
+  return sendJSON<SessionRevokeResult>(`/api/v1/admin/sessions/${encodeURIComponent(sessionId)}/revoke`, 'POST', {});
+}
+
 export const endpoints = {
   ready: () => apiRequest<ReadyStatus>('/api/v1/ready'),
   version: () => apiRequest<VersionInfo>('/api/v1/version'),
@@ -1036,10 +1105,19 @@ export const endpoints = {
   binaryArtifacts: () => listRuntimeArtifacts(),
   audit: () => apiRequest<Record<string, unknown>[]>('/api/v1/audit?limit=200'),
   runtimePreflight: () => apiRequest<Record<string, unknown>>('/api/v1/runtime/preflight'),
-  controlPlaneTLS: () => apiRequest<Record<string, unknown>>('/api/v1/settings/control-plane-tls'),
-  mailSettings: () => apiRequest<Record<string, unknown>>('/api/v1/settings/mail'),
-  users: () => apiRequest<Record<string, unknown>[]>('/api/v1/admin/users'),
-  sessions: () => apiRequest<Record<string, unknown>[]>('/api/v1/admin/sessions'),
+  controlPlaneTLS: () => getPlatformSettings(),
+  updatePlatformSettings,
+  applyTlsSettings,
+  mailSettings: () => getMailSettings(),
+  updateMailSettings,
+  testMailSettings,
+  users: () => listUsers(),
+  user: getUser,
+  invites: () => listInvites(),
+  createInvite,
+  revokeInvite,
+  sessions: () => listSessions(),
+  revokeSession,
 };
 
 export function trafficAccountingExportURL(limit = 10_000): string {

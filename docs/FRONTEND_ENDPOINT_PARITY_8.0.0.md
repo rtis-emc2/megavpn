@@ -35,8 +35,8 @@ Unsafe methods must preserve `X-MegaVPN-CSRF: 1` and `credentials: include`.
 | Frontend file | Purpose | Current limitation |
 | --- | --- | --- |
 | `frontend/src/shared/api/client.ts` | Fetch wrapper, API base, CSRF, cookie credentials, typed API error. | Field-level validation mapping is currently implemented in focused forms, not as a global helper. |
-| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, delivery, routes/access maintenance/config cleanup, VLESS groups, Firewall, Services/Instances provisioning, Nodes observability/diagnostics/inventory/capability/discovery and Certificates/PKI mutations are wired; other domains remain incomplete. |
-| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, delivery, routes/access maintenance/config cleanup, VLESS groups, Firewall, Services/Instances provisioning, Nodes observability/diagnostics/inventory/capability/discovery and Certificates/PKI invalidation is wired; other domains remain incomplete. |
+| `frontend/src/shared/api/endpoints.ts` | Current endpoint wrappers. | Clients core, delivery, routes/access maintenance/config cleanup, VLESS groups, Firewall, Services/Instances provisioning, Nodes observability/diagnostics/inventory/capability/discovery, Certificates/PKI and Platform settings/mail/access workflows are wired where backend endpoints exist; remaining domains stay explicitly incomplete. |
+| `frontend/src/shared/query/hooks.ts` | TanStack Query hooks. | Clients core, delivery, routes/access maintenance/config cleanup, VLESS groups, Firewall, Services/Instances provisioning, Nodes observability/diagnostics/inventory/capability/discovery, Certificates/PKI and Platform settings/mail/access invalidation are wired where backend endpoints exist; remaining domains stay explicitly incomplete. |
 
 Raw `/api/v1` strings are allowed only under `frontend/src/shared/api` and
 tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
@@ -60,11 +60,12 @@ tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
 
 | Backend endpoint family | Legacy usage | New wrapper / hook | UI page | Status | Invalidation / security notes |
 | --- | --- | --- | --- | --- | --- |
-| `GET/POST /api/v1/admin/users`, `POST /api/v1/admin/users/invite`, `GET /api/v1/admin/user-invites` | users/invites | `endpoints.users`; invites missing | Platform / Access | read-only | Mutations legacy-only until forms, confirmation and errors are wired. |
-| `POST /api/v1/admin/users/{id}/status`, `/reset-password`, `/resend-invite`, `DELETE /api/v1/admin/users/{id}` | user lifecycle | missing | Platform / Access | legacy-only | Invalidate users, invites, audit when wired. |
-| `GET /api/v1/admin/sessions`, `POST /api/v1/admin/sessions/{id}/revoke` | active sessions | `endpoints.sessions`; revoke missing | Platform / Access | read-only | Revoke must confirm target session. |
-| `GET/PUT /api/v1/settings/mail`, `POST /api/v1/settings/mail/test` | mail settings | `endpoints.mailSettings`; mutations missing | Platform / Mail | read-only | Do not log SMTP secrets. |
-| `GET/PUT /api/v1/settings/control-plane-tls`, `POST /api/v1/settings/control-plane-tls/apply` | TLS settings | `endpoints.controlPlaneTLS`; mutations missing | Platform / Settings | read-only | Apply returns job; needs job tracking. |
+| `GET /api/v1/admin/users`, `POST /api/v1/admin/users/invite`, `GET /api/v1/admin/user-invites` | users/invites | `listUsers`, `getUser` derived from list, `listInvites`, `createInvite`; matching hooks | Platform / Access | connected | User list/detail and invite create are real backend calls. Invite create does not render or persist returned invite URLs/tokens. |
+| `POST /api/v1/admin/users/{id}/status`, `/reset-password`, `/resend-invite`, `DELETE /api/v1/admin/users/{id}` | user lifecycle | missing | Platform / Access | legacy-only | Direct user status/reset/resend/delete is outside FE8-P0-07B and remains legacy/future scope. |
+| Invite revoke endpoint | invite lifecycle | disabled wrapper only | Platform / Access | backend-missing | No browser backend endpoint exists for invite revoke in this release, so the UI disables the exact action with reason instead of faking success. |
+| `GET /api/v1/admin/sessions`, `POST /api/v1/admin/sessions/{id}/revoke` | active sessions | `listSessions`, `revokeSession`; matching hooks | Platform / Access | connected | Revoke requires confirmation and invalidates session/admin queries. No session token is rendered or stored. |
+| `GET/PUT /api/v1/settings/mail`, `POST /api/v1/settings/mail/test` | mail settings | `getMailSettings`, `updateMailSettings`, `testMailSettings`; matching hooks | Platform / Mail | connected | SMTP password is write-only/masked, preserved through secret ref when unchanged, never logged/stored/rendered. Mail test calls the real backend. |
+| `GET/PUT /api/v1/settings/control-plane-tls`, `POST /api/v1/settings/control-plane-tls/apply` | TLS settings | `getPlatformSettings`, `updatePlatformSettings`, `applyTlsSettings`; matching hooks | Platform / Settings | connected | Save maps field errors. Apply requires confirmation, returns a job and is tracked in the UI. |
 | `GET /api/v1/runtime/preflight` | runtime checks | `endpoints.runtimePreflight` | Diagnostics/Settings | connected read | No mutation. |
 | `GET /api/v1/platform/certificates`, `POST /preview`, `/import`, `/self-signed`, `/authorities`, `/issue-from-ca`, `POST /{id}/default`, `POST /{id}/revoke`, `DELETE /{id}` | certificate management | `listCertificates`, `getCertificate` derived from list, `previewCertificateImport`, `importCertificate`, `createSelfSignedCertificate`, `createManagedCertificateAuthority`, `issueCertificate`, `setDefaultCertificate`, `revokeCertificate`, `deleteCertificate`; matching hooks | Platform / Certificates | connected | Import requires backend preview before apply; stale preview disables apply. Private key PEM is only form state, cleared on close/success, never logged/stored/rendered. Default/revoke/delete require confirmation. |
 | `GET/POST /api/v1/platform/pki-roots` | service PKI roots | `listPkiRoots`, `createPkiRoot`, `importPkiRoot` alias; `usePkiRoots`, `useCreatePkiRoot` | Platform / Certificates | connected | Managed root creation calls backend; CA private key material is generated/stored backend-side and not returned to the browser. |
@@ -191,8 +192,8 @@ SPA fallback must not shadow any `/agent/*` path.
 | Mutation family | Query keys to invalidate when wired |
 | --- | --- |
 | Auth login/logout/change password | `auth/session`, permission-filtered navigation state |
-| Users/invites/sessions | `admin-users`, `admin-sessions`, invite list, audit |
-| Settings/mail/TLS | `settings-mail`, `control-plane-tls`, `runtime-preflight`, jobs |
+| Users/invites/sessions | `platform-users`, `platform-invites`, `platform-sessions`, `auth/session`, audit |
+| Settings/mail/TLS | `platform-settings`, `mail-settings`, `runtime-preflight`, jobs |
 | Certificates/PKI | `certificates`, `pki-roots`, instances where certificate refs are shown |
 | Service packs/VLESS templates | `service-packs`, services catalog, client access services/groups |
 | Client access groups | `client-access-groups`, members, scope, sync-state, clients, jobs |

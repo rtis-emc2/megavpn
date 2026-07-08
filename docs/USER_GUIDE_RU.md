@@ -266,9 +266,8 @@ curl -fsS http://127.0.0.1:8080/healthz
 2. Либо `Create self-signed`, `Create managed CA` и `Issue certificate`, если
    нужен managed certificate lifecycle в новой UI.
 3. `Set default` для leaf-сертификата после подтверждения.
-4. `Settings -> Control Plane TLS` и `Apply edge` остаются отдельным
-   Platform Settings workflow и пока выполняются через approved/legacy flow до
-   FE8-P0-07B.
+4. `Platform -> Settings -> Control Plane TLS` для выбора default certificate,
+   сохранения TLS profile и `Apply TLS` с подтверждением/job tracking.
 5. Проверка `nginx -t` и публичного HTTPS URL.
 
 ## 6. Первичная настройка системы
@@ -282,6 +281,33 @@ curl -fsS http://127.0.0.1:8080/healthz
 - Control Plane TLS profile.
 - Runtime binary repository для сервисов, которые нельзя ставить из OS repo.
 - Address pools для OpenVPN/WireGuard/client networks.
+
+### 6.1 Platform Settings, Mail и Access/RBAC
+
+Новая React UI без `/legacy/` поддерживает:
+
+1. `Platform -> Settings`:
+   - `Runtime preflight` читает backend readiness checks;
+   - `Control Plane TLS` читает/сохраняет TLS profile;
+   - `Apply TLS` требует подтверждение и показывает backend job.
+2. `Platform -> Mail / Delivery`:
+   - читает/сохраняет SMTP/mail settings;
+   - `SMTP password` является masked/write-only полем;
+   - если пароль не вводится заново, UI сохраняет существующий backend secret
+     reference и не отображает его;
+   - `Mail test` вызывает реальный backend endpoint.
+3. `Platform -> Access / RBAC`:
+   - показывает users list/detail из backend;
+   - показывает invite list и создает invite через backend delivery flow;
+   - invite URL/token из backend response не отображается и не сохраняется;
+   - показывает sessions list и отзывает session только после confirmation.
+
+Ограничения текущего релиза:
+
+- invite revoke отключен, потому что backend не имеет browser endpoint для
+  revoke invite;
+- direct user lifecycle operations, включая status change, reset-password,
+  resend-invite и delete user, остаются legacy/future scope.
 
 Production defaults:
 
@@ -420,8 +446,7 @@ submit; показывает только metadata, status, expiry и usage.
 
 Ограничение текущего релиза: backend не имеет отдельного certificate detail
 endpoint, поэтому detail drawer использует актуальный list response. Control
-Plane TLS apply/settings остаются отдельной Platform Settings задачей
-FE8-P0-07B.
+Plane TLS read/save/apply выполняется в `Platform -> Settings` новой React UI.
 
 ## 11. Address pools
 

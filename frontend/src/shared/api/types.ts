@@ -1196,6 +1196,149 @@ export type Job = APIRecord & {
 
 export type JobRef = Pick<Job, 'id' | 'type' | 'status'> & APIRecord;
 
+export type ControlPlaneTLSSettings = APIRecord & {
+  enabled?: boolean;
+  mode?: string;
+  public_base_url?: string;
+  server_name?: string;
+  listen_port?: number;
+  upstream_url?: string;
+  certificate_id?: string | null;
+  self_signed_common_name?: string;
+  self_signed_dns_names?: string[];
+  last_applied_at?: string | null;
+  last_error?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type PlatformSettings = ControlPlaneTLSSettings;
+
+export type PlatformSettingsInput = {
+  enabled?: boolean;
+  mode?: string;
+  public_base_url?: string;
+  server_name?: string;
+  listen_port?: number;
+  upstream_url?: string;
+  certificate_id?: string;
+  self_signed_common_name?: string;
+  self_signed_dns_names?: string[];
+};
+
+export type SettingsUpdateResult = PlatformSettings;
+
+export type MailSettings = APIRecord & {
+  enabled?: boolean;
+  provider?: string;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_username?: string;
+  smtp_password_secret_ref_id?: string | null;
+  smtp_password_configured?: boolean;
+  smtp_auth_mode?: string;
+  smtp_tls_mode?: string;
+  from_email?: string;
+  from_name?: string;
+  reply_to_email?: string;
+  invite_url_base?: string;
+  last_test_at?: string | null;
+  last_error?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type MailSettingsInput = {
+  enabled?: boolean;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_username?: string;
+  smtp_password_secret_ref_id?: string | null;
+  smtp_password?: string;
+  smtp_auth_mode?: string;
+  smtp_tls_mode?: string;
+  from_email?: string;
+  from_name?: string;
+  reply_to_email?: string;
+  invite_url_base?: string;
+};
+
+export type MailTestInput = {
+  email: string;
+};
+
+export type MailTestResult = APIRecord & {
+  status?: string;
+  message?: string;
+  error?: string;
+  test?: APIRecord;
+};
+
+export type UserAccount = APIRecord & {
+  id: string;
+  username?: string;
+  email?: string;
+  display_name?: string;
+  status?: string;
+  auth_source?: string;
+  roles?: string[];
+  last_login_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type Invite = APIRecord & {
+  id: string;
+  user_id?: string;
+  username?: string;
+  email?: string;
+  display_name?: string;
+  token_hint?: string;
+  status?: string;
+  expires_at?: string;
+  sent_at?: string | null;
+  accepted_at?: string | null;
+  delivery_error?: string;
+  created_by?: string | null;
+  created_at?: string;
+};
+
+export type InviteCreateInput = {
+  username: string;
+  email: string;
+  display_name?: string;
+  role_codes?: string[];
+  ttl_hours?: number;
+};
+
+export type InviteCreateResult = APIRecord & {
+  status?: string;
+  user?: UserAccount;
+  invite?: Invite;
+};
+
+export type InviteRevokeResult = APIRecord & {
+  status?: string;
+  invite_id?: string;
+};
+
+export type Session = APIRecord & {
+  id: string;
+  user_id?: string;
+  username?: string;
+  email?: string;
+  display_name?: string;
+  ip?: string;
+  user_agent?: string;
+  expires_at?: string;
+  revoked_at?: string | null;
+  created_at?: string;
+};
+
+export type SessionRevokeResult = APIRecord & {
+  status?: string;
+};
+
 export type Artifact = APIRecord & {
   id: string;
   client_account_id?: string;

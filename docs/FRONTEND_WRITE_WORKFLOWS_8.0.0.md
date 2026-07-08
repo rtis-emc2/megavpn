@@ -152,12 +152,16 @@ to `/legacy/`.
 
 | Workflow | Status | Notes |
 | --- | --- | --- |
-| Settings read | read-only | Runtime/TLS/mail read paths exist. |
-| Settings save | legacy-only | Backend exists; form not migrated. |
-| Mail test | legacy-only | Backend exists; no SMTP secret logging. |
-| TLS apply | legacy-only | Backend exists; async job tracking required. |
-| Users/invites/sessions read | read-only | Users/sessions read path exists; invites list missing. |
-| Users/invites/sessions mutations | legacy-only | Backend exists; confirmation and permission states required. |
+| Runtime preflight | fully connected | `GET /api/v1/runtime/preflight`; checks render as text in Platform Settings. |
+| Control-plane TLS read/save | fully connected | `GET/PUT /api/v1/settings/control-plane-tls`; field-level backend validation is surfaced near matching fields. |
+| Control-plane TLS apply | fully connected | `POST /api/v1/settings/control-plane-tls/apply`; confirmation required and returned job is tracked. |
+| Mail settings read/save | fully connected | `GET/PUT /api/v1/settings/mail`; SMTP password is masked/write-only and existing secret ref is preserved when unchanged. |
+| Mail test | fully connected | `POST /api/v1/settings/mail/test`; no fake delivery success and no SMTP secret logging/storage. |
+| Users list/detail | fully connected | `GET /api/v1/admin/users`; detail drawer is derived from the real admin user list because there is no separate browser detail route. |
+| Invite list/create | fully connected | `GET /api/v1/admin/user-invites` and `POST /api/v1/admin/users/invite`; returned invite URL/token is not rendered, logged or persisted. |
+| Invite revoke | backend-missing | No browser backend endpoint exists for invite revoke; UI disables the action with an explicit backend-missing reason. |
+| Sessions list/revoke | fully connected | `GET /api/v1/admin/sessions` and `POST /api/v1/admin/sessions/{id}/revoke`; revoke requires confirmation. |
+| Direct user lifecycle mutations | legacy-only | User status, reset-password, resend-invite and delete endpoints exist, but FE8-P0-07B does not expose these higher-risk operations. |
 | Certificate list/detail | fully connected | `GET /api/v1/platform/certificates`; detail is derived from the real list response because backend has no separate detail route. Expiry/status/usage are shown without rendering secret refs or PEM material. |
 | Certificate import | fully connected | `POST /api/v1/platform/certificates/preview` then `POST /api/v1/platform/certificates/import`; stale preview disables apply. Certificate/private-key PEM is cleared on close/success and is not logged, stored or rendered after submit. |
 | Certificate self-signed / managed CA / issue-from-CA | fully connected | `POST /self-signed`, `/authorities`, `/issue-from-ca`; backend generates key material and stores it server-side. No private key is shown to the browser. |
