@@ -3,10 +3,10 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`PENDING_FE8_P0_04B_FEATURE_COMMIT`
+`2c080a555b5d0460fe3b8c876907a67823185917`
 
 FE8-P0-04B service pack instance creation feature commit:
-`PENDING_FE8_P0_04B_FEATURE_COMMIT`
+`2c080a555b5d0460fe3b8c876907a67823185917`
 
 FE8-P0-04A instance runtime control feature commit:
 `e07b2b766949d3aa867717972b4834fa51aa84d2`
@@ -40,7 +40,7 @@ Firewall evidence alignment commit:
 
 Current evidence CI:
 Local FE8-P0-04B evidence is pending push/CI for
-`PENDING_FE8_P0_04B_FEATURE_COMMIT`. Previous accepted baseline CI run
+`2c080a555b5d0460fe3b8c876907a67823185917`. Previous accepted baseline CI run
 `28974936662` passed for `711b06dec5076fabcd7488fd11d010b65e6c8276`.
 
 Current evidence date UTC: `2026-07-08T21:16:46Z`
