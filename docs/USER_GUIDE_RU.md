@@ -241,13 +241,16 @@ curl -fsS http://127.0.0.1:8080/healthz
 4. `/api/v1/ready` показывает `ready` только при корректном production preflight.
 5. `Jobs`, `Nodes`, `Services`, `Instances`, `Clients`, `Backhaul`,
    `Certificates` открываются без ошибок.
-6. `Instances` показывает вкладки workspace: список instances, create from
-   pack, manual instance и service-pack catalog.
-7. `Instances -> Create from pack` показывает каталог service packs. Default
+6. `Instances` показывает список existing instances, detail drawer, runtime
+   state, revisions/rollback, diagnostics, read-only access group
+   materialization и Jobs/Activity.
+7. Create from pack, manual instance create, spec editor и service-pack catalog
+   в новой UI остаются за FE8-P0-04B; для этих операций используйте `/legacy/`.
+8. `Instances -> Create from pack` в legacy UI показывает каталог service packs. Default
    templates создаются полным набором ordered migrations; если список пустой,
    проверьте, что все migrations применены к той же базе, которую использует
    API.
-8. `Clients -> Groups` показывает client access groups. Сейчас active
+9. `Clients -> Groups` показывает client access groups. Сейчас active
    materialization поддержана для VLESS; остальные client access services
    видны как catalog/planned entries до включения runtime-проекции.
 
@@ -440,11 +443,43 @@ Node Map - это визуальный topology view.
 
 ## 13. Создание service instances
 
+Новая React UI в FE8-P0-04A управляет existing instances: list/detail,
+runtime state, apply/reapply, lifecycle actions, rollback, diagnostics,
+delete/force-delete и job tracking. Create from service pack, manual create,
+spec editor, service pack CRUD и runtime artifact import остаются legacy-only
+до FE8-P0-04B.
+
+### 13.0 Runtime control existing instances
+
+1. Откройте `Instances`.
+2. Используйте search, service/status/node filters, чтобы найти нужный
+   instance.
+3. Откройте detail drawer через `Open`.
+4. На `Overview` проверьте metadata, service code, node, endpoint, status,
+   revision и runtime health summary.
+5. На `Runtime` используйте `Apply`, `Reapply`, `Restart`, `Start`, `Stop`,
+   `Enable` или `Disable`. Каждое runtime-действие требует confirmation и
+   вызывает реальный backend endpoint. Backend не предоставляет отдельный
+   apply preview endpoint, поэтому применяются direct confirmed actions.
+6. На `Revisions / Rollback` выберите explicit revision и нажмите `Rollback`.
+   Backend rollback создает новую revision; если она apply-ready, новая UI
+   сразу ставит реальный `instance.apply` job, чтобы rollback получил runtime
+   effect.
+7. На `Diagnostics` запускайте `Run diagnostics` и смотрите runtime
+   observations. Output/result/error fields отображаются как text/JSON, не как
+   HTML.
+8. На `Access groups` смотрите materialized VLESS access groups только
+   read-only. Добавление, перенос и удаление clients выполняются в
+   `Clients -> Groups`.
+9. На `Jobs / Activity` отслеживайте последний returned job через polling.
+10. `Delete instance` и `Force-delete` требуют confirmation. Force-delete
+    требует точную confirmation строку, потому что это destructive cleanup.
+
 Есть два способа.
 
 ### 13.1 Create from pack
 
-Используйте для типовых production-baselines.
+Используйте legacy UI для типовых production-baselines до FE8-P0-04B.
 
 1. Откройте `Instances`.
 2. Нажмите `Create from pack`.

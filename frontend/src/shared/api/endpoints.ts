@@ -1,6 +1,7 @@
 import { apiRequest, apiURL, isUnauthorized, sendJSON } from './client';
 import type {
   AddressPools,
+  APIRecord,
   Artifact,
   AuthPayload,
   BackhaulLink,
@@ -52,10 +53,23 @@ import type {
   FirewallPreviewRequest,
   FirewallPreviewResult,
   FirewallRule,
+  InstanceAccessGroupMaterialization,
+  InstanceApplyRequest,
+  InstanceApplyResult,
+  InstanceDeleteResult,
+  InstanceForceDeleteInput,
+  InstanceLifecycleAction,
+  InstanceLifecycleResult,
+  InstanceRollbackRequest,
+  InstanceRollbackResult,
   Job,
   NodeEntity,
   ReadyStatus,
   ServiceInstance,
+  ServiceInstanceDetail,
+  ServiceInstanceRevision,
+  ServiceInstanceRuntimeObservation,
+  ServiceInstanceRuntimeState,
   ShareLink,
   TrafficSummary,
   AvailableClientsForGroupPage,
@@ -128,6 +142,62 @@ export function deleteClient(clientId: string): Promise<ClientDeleteResult> {
 
 export function revokeClient(clientId: string): Promise<Job> {
   return sendJSON<Job>(`/api/v1/clients/${encodeURIComponent(clientId)}/revoke`, 'POST', {});
+}
+
+export function listInstances(_params: { search?: string; status?: string; serviceCode?: string; nodeId?: string } = {}): Promise<ServiceInstance[]> {
+  return apiRequest<ServiceInstance[]>('/api/v1/instances');
+}
+
+export function getInstance(instanceId: string): Promise<ServiceInstanceDetail> {
+  return apiRequest<ServiceInstanceDetail>(`/api/v1/instances/${encodeURIComponent(instanceId)}`);
+}
+
+export function listInstanceRuntimeStates(): Promise<ServiceInstanceRuntimeState[]> {
+  return apiRequest<ServiceInstanceRuntimeState[]>('/api/v1/instances/runtime-states');
+}
+
+export function getInstanceRuntimeState(instanceId: string): Promise<ServiceInstanceRuntimeState> {
+  return apiRequest<ServiceInstanceRuntimeState>(`/api/v1/instances/${encodeURIComponent(instanceId)}/runtime-state`);
+}
+
+export function getInstanceRuntimeObservations(instanceId: string, limit = 25): Promise<ServiceInstanceRuntimeObservation[]> {
+  return apiRequest<ServiceInstanceRuntimeObservation[]>(`/api/v1/instances/${encodeURIComponent(instanceId)}/runtime-observations${queryString({ limit })}`);
+}
+
+export function getInstanceRevisions(instanceId: string, limit = 20): Promise<ServiceInstanceRevision[]> {
+  return apiRequest<ServiceInstanceRevision[]>(`/api/v1/instances/${encodeURIComponent(instanceId)}/revisions${queryString({ limit })}`);
+}
+
+export function getInstanceAccessGroups(instanceId: string): Promise<InstanceAccessGroupMaterialization> {
+  return apiRequest<InstanceAccessGroupMaterialization>(`/api/v1/instances/${encodeURIComponent(instanceId)}/vless-groups/members`);
+}
+
+export function applyInstance(instanceId: string, _input: InstanceApplyRequest = {}): Promise<InstanceApplyResult> {
+  return sendJSON<InstanceApplyResult>(`/api/v1/instances/${encodeURIComponent(instanceId)}/apply`, 'POST', {});
+}
+
+export function reapplyInstance(instanceId: string, input: InstanceApplyRequest = {}): Promise<InstanceApplyResult> {
+  return applyInstance(instanceId, input);
+}
+
+export function rollbackInstance(instanceId: string, input: InstanceRollbackRequest): Promise<InstanceRollbackResult> {
+  return sendJSON<InstanceRollbackResult>(`/api/v1/instances/${encodeURIComponent(instanceId)}/rollback`, 'POST', input);
+}
+
+export function runInstanceDiagnostics(instanceId: string, _input: APIRecord = {}): Promise<Job> {
+  return sendJSON<Job>(`/api/v1/instances/${encodeURIComponent(instanceId)}/diagnose`, 'POST', {});
+}
+
+export function runInstanceLifecycleAction(instanceId: string, action: InstanceLifecycleAction, _input: APIRecord = {}): Promise<InstanceLifecycleResult> {
+  return sendJSON<InstanceLifecycleResult>(`/api/v1/instances/${encodeURIComponent(instanceId)}/${encodeURIComponent(action)}`, 'POST', {});
+}
+
+export function deleteInstance(instanceId: string): Promise<InstanceDeleteResult> {
+  return apiRequest<InstanceDeleteResult>(`/api/v1/instances/${encodeURIComponent(instanceId)}`, { method: 'DELETE' });
+}
+
+export function forceDeleteInstance(instanceId: string, input: InstanceForceDeleteInput): Promise<InstanceDeleteResult> {
+  return sendJSON<InstanceDeleteResult>(`/api/v1/instances/${encodeURIComponent(instanceId)}/force-delete`, 'POST', input);
 }
 
 export function listClientAccessServices(): Promise<ClientAccessService[]> {
@@ -447,8 +517,8 @@ export const endpoints = {
   version: () => apiRequest<VersionInfo>('/api/v1/version'),
   dashboard: () => apiRequest<Dashboard>('/api/v1/dashboard'),
   nodes: () => apiRequest<NodeEntity[]>('/api/v1/nodes'),
-  instances: () => apiRequest<ServiceInstance[]>('/api/v1/instances'),
-  instanceRuntimeStates: () => apiRequest<Record<string, unknown>[]>('/api/v1/instances/runtime-states'),
+  instances: () => listInstances(),
+  instanceRuntimeStates: () => listInstanceRuntimeStates(),
   clients: () => listClients(),
   client: getClient,
   clientAccessServices: listClientAccessServices,

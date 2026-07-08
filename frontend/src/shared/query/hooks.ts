@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@ta
 import {
   applyClientAccessGroupMembers,
   applyClientAccessGroupSync,
+  applyInstance,
   applySingleClientAccessGroupAssignment,
   buildClientArtifact,
   createClient,
@@ -19,13 +20,20 @@ import {
   deleteFirewallRule,
   deleteClient,
   deleteClientArtifact,
+  deleteInstance,
   disableNodeFirewall,
   endpoints,
+  forceDeleteInstance,
   getAvailableClientsForGroup,
   getClient,
   getClientAccessGroupMembers,
   getClientAccessGroupScope,
   getClientAccessGroupSyncState,
+  getInstance,
+  getInstanceAccessGroups,
+  getInstanceRevisions,
+  getInstanceRuntimeObservations,
+  getInstanceRuntimeState,
   getClientAccessOverview,
   getFirewallSafetySettings,
   getNodeFirewallState,
@@ -38,11 +46,15 @@ import {
   previewClientAccessGroupMembers,
   previewClientAccessGroupSync,
   previewNodeFirewall,
+  reapplyInstance,
   removeClientAccessGroupMember,
   removeClientAccessGroupMembership,
   revokeClientShareLink,
   revokeClientSubscription,
   revokeClient,
+  rollbackInstance,
+  runInstanceDiagnostics,
+  runInstanceLifecycleAction,
   rotateClientShareLink,
   rotateClientSubscription,
   sendClientArtifactEmail,
@@ -108,10 +120,23 @@ import type {
   FirewallPreviewRequest,
   FirewallPreviewResult,
   FirewallRule,
+  InstanceAccessGroupMaterialization,
+  InstanceApplyRequest,
+  InstanceApplyResult,
+  InstanceDeleteResult,
+  InstanceForceDeleteInput,
+  InstanceLifecycleAction,
+  InstanceLifecycleResult,
+  InstanceRollbackRequest,
+  InstanceRollbackResult,
   Job,
   NodeEntity,
   ReadyStatus,
   ServiceInstance,
+  ServiceInstanceDetail,
+  ServiceInstanceRevision,
+  ServiceInstanceRuntimeObservation,
+  ServiceInstanceRuntimeState,
   ShareLink,
   TrafficSummary,
   AvailableClientsForGroupPage,
@@ -145,6 +170,134 @@ export function useNodes(options?: QueryOptions<NodeEntity[]>) {
 
 export function useInstances(options?: QueryOptions<ServiceInstance[]>) {
   return useQuery({ queryKey: ['instances'], queryFn: endpoints.instances, staleTime: stale.normal, ...options });
+}
+
+function invalidateInstanceQueries(queryClient: ReturnType<typeof useQueryClient>, instanceId?: string) {
+  void queryClient.invalidateQueries({ queryKey: ['instances'] });
+  void queryClient.invalidateQueries({ queryKey: ['instance-runtime-states'] });
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  void queryClient.invalidateQueries({ queryKey: ['service-packs'] });
+  if (instanceId) {
+    void queryClient.invalidateQueries({ queryKey: ['instance', instanceId] });
+    void queryClient.invalidateQueries({ queryKey: ['instance-runtime-state', instanceId] });
+    void queryClient.invalidateQueries({ queryKey: ['instance-runtime-observations', instanceId] });
+    void queryClient.invalidateQueries({ queryKey: ['instance-revisions', instanceId] });
+    void queryClient.invalidateQueries({ queryKey: ['instance-access-groups', instanceId] });
+  }
+}
+
+export function useInstanceDetail(instanceId: string | undefined, options?: QueryOptions<ServiceInstanceDetail>) {
+  return useQuery({
+    queryKey: ['instance', instanceId],
+    queryFn: () => getInstance(instanceId || ''),
+    enabled: Boolean(instanceId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useInstanceRuntimeStates(options?: QueryOptions<ServiceInstanceRuntimeState[]>) {
+  return useQuery({ queryKey: ['instance-runtime-states'], queryFn: endpoints.instanceRuntimeStates, staleTime: stale.fast, refetchInterval: 15_000, ...options });
+}
+
+export function useInstanceRuntimeState(instanceId: string | undefined, options?: QueryOptions<ServiceInstanceRuntimeState>) {
+  return useQuery({
+    queryKey: ['instance-runtime-state', instanceId],
+    queryFn: () => getInstanceRuntimeState(instanceId || ''),
+    enabled: Boolean(instanceId),
+    staleTime: stale.fast,
+    refetchInterval: 15_000,
+    retry: false,
+    ...options,
+  });
+}
+
+export function useInstanceRevisions(instanceId: string | undefined, options?: QueryOptions<ServiceInstanceRevision[]>) {
+  return useQuery({
+    queryKey: ['instance-revisions', instanceId],
+    queryFn: () => getInstanceRevisions(instanceId || ''),
+    enabled: Boolean(instanceId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+export function useInstanceDiagnostics(instanceId: string | undefined, options?: QueryOptions<ServiceInstanceRuntimeObservation[]>) {
+  return useQuery({
+    queryKey: ['instance-runtime-observations', instanceId],
+    queryFn: () => getInstanceRuntimeObservations(instanceId || ''),
+    enabled: Boolean(instanceId),
+    staleTime: stale.fast,
+    refetchInterval: 15_000,
+    ...options,
+  });
+}
+
+export function useInstanceAccessGroups(instanceId: string | undefined, options?: QueryOptions<InstanceAccessGroupMaterialization>) {
+  return useQuery({
+    queryKey: ['instance-access-groups', instanceId],
+    queryFn: () => getInstanceAccessGroups(instanceId || ''),
+    enabled: Boolean(instanceId),
+    staleTime: stale.normal,
+    retry: false,
+    ...options,
+  });
+}
+
+export function useApplyInstance() {
+  const queryClient = useQueryClient();
+  return useMutation<InstanceApplyResult, Error, { instanceId: string; input?: InstanceApplyRequest }>({
+    mutationFn: ({ instanceId, input }) => applyInstance(instanceId, input),
+    onSuccess: (_result, input) => invalidateInstanceQueries(queryClient, input.instanceId),
+  });
+}
+
+export function useReapplyInstance() {
+  const queryClient = useQueryClient();
+  return useMutation<InstanceApplyResult, Error, { instanceId: string; input?: InstanceApplyRequest }>({
+    mutationFn: ({ instanceId, input }) => reapplyInstance(instanceId, input),
+    onSuccess: (_result, input) => invalidateInstanceQueries(queryClient, input.instanceId),
+  });
+}
+
+export function useRollbackInstance() {
+  const queryClient = useQueryClient();
+  return useMutation<InstanceRollbackResult, Error, { instanceId: string; input: InstanceRollbackRequest }>({
+    mutationFn: ({ instanceId, input }) => rollbackInstance(instanceId, input),
+    onSuccess: (_result, input) => invalidateInstanceQueries(queryClient, input.instanceId),
+  });
+}
+
+export function useRunInstanceDiagnostics() {
+  const queryClient = useQueryClient();
+  return useMutation<Job, Error, { instanceId: string }>({
+    mutationFn: ({ instanceId }) => runInstanceDiagnostics(instanceId),
+    onSuccess: (_result, input) => invalidateInstanceQueries(queryClient, input.instanceId),
+  });
+}
+
+export function useInstanceLifecycleAction() {
+  const queryClient = useQueryClient();
+  return useMutation<InstanceLifecycleResult, Error, { instanceId: string; action: InstanceLifecycleAction }>({
+    mutationFn: ({ instanceId, action }) => runInstanceLifecycleAction(instanceId, action),
+    onSuccess: (_result, input) => invalidateInstanceQueries(queryClient, input.instanceId),
+  });
+}
+
+export function useDeleteInstance() {
+  const queryClient = useQueryClient();
+  return useMutation<InstanceDeleteResult, Error, { instanceId: string }>({
+    mutationFn: ({ instanceId }) => deleteInstance(instanceId),
+    onSuccess: (_result, input) => invalidateInstanceQueries(queryClient, input.instanceId),
+  });
+}
+
+export function useForceDeleteInstance() {
+  const queryClient = useQueryClient();
+  return useMutation<InstanceDeleteResult, Error, { instanceId: string; input: InstanceForceDeleteInput }>({
+    mutationFn: ({ instanceId, input }) => forceDeleteInstance(instanceId, input),
+    onSuccess: (_result, input) => invalidateInstanceQueries(queryClient, input.instanceId),
+  });
 }
 
 export function useClients(options?: QueryOptions<ClientAccount[]>) {

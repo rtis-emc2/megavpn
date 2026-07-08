@@ -114,12 +114,15 @@ tests. `scripts/ci/frontend-static-guards.sh` enforces this rule.
 
 | Backend endpoint family | Legacy usage | New wrapper / hook | UI page | Status | Invalidation / security notes |
 | --- | --- | --- | --- | --- | --- |
-| `GET/POST /api/v1/instances`, `POST /api/v1/service-packs/{key}/instances` | instance list/create | `endpoints.instances`; `useInstances`; create missing | Instances | read-only / legacy-only |
-| `GET /api/v1/instances/runtime-states`, `GET /instances/{id}/runtime-state`, `/runtime-observations` | runtime state | `endpoints.instanceRuntimeStates`; detail missing | Instances | partial |
-| `GET /api/v1/instances/{id}`, `GET /instances/{id}/revisions` | detail/revisions | revisions missing | Instances/Revisions | partial |
-| `PUT /api/v1/instances/{id}/spec`, `POST /rollback`, `DELETE /{id}`, `POST /force-delete` | spec/rollback/delete | missing | Instances/Revisions | legacy-only | Confirm destructive actions; invalidate instances/jobs/revisions. |
-| `POST /api/v1/instances/{id}/apply`, `/restart`, `/start`, `/stop`, `/enable`, `/disable`, `/diagnose` | lifecycle/jobs | missing | Instances | legacy-only | Async job tracking required. |
-| `GET/POST/PATCH/DELETE /api/v1/instances/{id}/vless-groups/...` | legacy instance VLESS membership | missing | Instances read-only link | legacy-only/deprecated | New primary flow is Clients -> Groups. |
+| `GET /api/v1/instances` | instance list | `listInstances`; `useInstances` | Instances | connected | List merges runtime summary from `GET /api/v1/instances/runtime-states`; create routes remain FE8-P0-04B. |
+| `POST /api/v1/instances`, `POST /api/v1/service-packs/{key}/instances` | instance create | missing | Instances | legacy-only / FE8-P0-04B | Create from service pack and manual create are explicitly disabled in new UI. |
+| `GET /api/v1/instances/runtime-states`, `GET /instances/{id}/runtime-state`, `/runtime-observations` | runtime state and diagnostics observations | `listInstanceRuntimeStates`; `getInstanceRuntimeState`; `getInstanceRuntimeObservations`; matching hooks | Instances | connected | Runtime and diagnostic output is rendered as text, not HTML. |
+| `GET /api/v1/instances/{id}`, `GET /instances/{id}/revisions` | detail/revisions | `getInstance`; `getInstanceRevisions`; matching hooks | Instances/Revisions | connected | Revisions are read-only except rollback workflow below. |
+| `PUT /api/v1/instances/{id}/spec` | spec replace | missing | Instances/Revisions | legacy-only / FE8-P0-04B | Spec editor remains out of FE8-P0-04A. |
+| `POST /api/v1/instances/{id}/rollback`, `DELETE /{id}`, `POST /force-delete` | rollback/delete | `rollbackInstance`; `deleteInstance`; `forceDeleteInstance`; matching hooks | Instances | connected | Rollback requires explicit revision and confirmation; if backend returns apply-ready revision, UI queues a real apply job. Delete/force-delete require confirmation; force-delete requires exact confirmation text. |
+| `POST /api/v1/instances/{id}/apply`, `/restart`, `/start`, `/stop`, `/enable`, `/disable`, `/diagnose` | lifecycle/jobs | `applyInstance`; `reapplyInstance`; `runInstanceLifecycleAction`; `runInstanceDiagnostics`; matching hooks | Instances | connected | Actions require confirmation, invalidate instances/runtime/jobs and render returned job state through `JobStatusPanel`. Backend has no separate apply preview endpoint. |
+| `GET /api/v1/instances/{id}/vless-groups/members` | materialized access groups | `getInstanceAccessGroups`; `useInstanceAccessGroups` | Instances / Access groups | connected read-only | Shows materialization context and links to `Clients -> Groups`. No add/move/remove/create group actions are exposed under Instances. |
+| `POST/PATCH/DELETE /api/v1/instances/{id}/vless-groups/...` | legacy instance VLESS membership writes | missing in new UI | Instances | legacy-only/deprecated | Primary group/member management belongs under Clients -> Groups. |
 
 ### 4.7 Address Pools, Firewall, Traffic
 

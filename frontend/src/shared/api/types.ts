@@ -67,8 +67,135 @@ export type ServiceInstance = APIRecord & {
   endpoint_host?: string;
   endpoint_port?: number;
   status?: string;
+  enabled?: boolean;
+  systemd_unit?: string;
   current_revision_id?: string;
   last_applied_revision_id?: string;
+  created_at?: string;
+  updated_at?: string;
+  spec?: APIRecord;
+};
+
+export type ServiceInstanceDetail = ServiceInstance;
+
+export type RuntimeCheck = APIRecord & {
+  code?: string;
+  display_name?: string;
+  signal?: string;
+  source?: string;
+  required?: boolean;
+  status?: string;
+  message?: string;
+  expected?: unknown;
+  observed?: unknown;
+};
+
+export type ServiceInstanceRuntimeState = APIRecord & {
+  id?: string;
+  instance_id?: string;
+  node_id?: string | null;
+  service_code?: string;
+  systemd_unit?: string;
+  desired_status?: string;
+  runtime_status?: string;
+  health_status?: string;
+  drift_status?: string;
+  health_checks?: RuntimeCheck[];
+  health_reasons?: string[];
+  drift_reasons?: string[];
+  active_state?: string;
+  enabled_state?: string;
+  config_hash?: string;
+  last_job_id?: string | null;
+  last_job_type?: string;
+  last_job_status?: string;
+  applied_revision_id?: string | null;
+  observed_revision_id?: string | null;
+  endpoint_host?: string;
+  endpoint_port?: number;
+  listening_ports?: APIRecord[];
+  result?: APIRecord;
+  error_text?: string;
+  agent_reported_at?: string | null;
+  checked_at?: string;
+  updated_at?: string;
+};
+
+export type ServiceInstanceRuntimeObservation = ServiceInstanceRuntimeState & {
+  source?: string;
+  observed_at?: string;
+  received_at?: string;
+};
+
+export type ServiceInstanceRevision = APIRecord & {
+  id: string;
+  instance_id?: string;
+  source?: string;
+  status?: string;
+  rendered_hash?: string;
+  revision_no?: number;
+  spec?: APIRecord;
+  validation_errors?: unknown[];
+  created_at?: string;
+  applied_at?: string | null;
+  is_current?: boolean;
+  is_last_applied?: boolean;
+};
+
+export type InstanceAccessGroupMaterialization = APIRecord & {
+  instance_id?: string;
+  instance_name?: string;
+  instance_slug?: string;
+  service_code?: string;
+  available_keys?: string[];
+  groups?: Array<APIRecord & {
+    key?: string;
+    label?: string;
+    description?: string;
+    status?: string;
+    service_code?: string;
+    member_count?: number;
+    pending_count?: number;
+    active_count?: number;
+    disabled_count?: number;
+    target_instance_id?: string;
+  }>;
+};
+
+export type InstanceApplyRequest = APIRecord & {
+  reason?: string;
+};
+
+export type InstanceApplyResult = Job;
+
+export type InstanceRollbackRequest = {
+  revision_id?: string;
+};
+
+export type InstanceRollbackResult = APIRecord & {
+  revision?: ServiceInstanceRevision;
+  can_apply?: boolean;
+  message?: string;
+  issue_count?: number;
+};
+
+export type InstanceLifecycleAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable';
+
+export type InstanceLifecycleResult = Job;
+
+export type InstanceDeleteResult = ServiceInstance | (APIRecord & {
+  status?: string;
+  instance?: ServiceInstance;
+});
+
+export type InstanceForceDeleteInput = {
+  confirmation: string;
+  reason?: string;
+};
+
+export type ApiValidationError = APIRecord & {
+  error?: string;
+  fields?: Record<string, string>;
 };
 
 export type ClientAccount = APIRecord & {

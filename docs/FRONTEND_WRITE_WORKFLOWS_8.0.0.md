@@ -104,16 +104,17 @@ to `/legacy/`.
 | Workflow | Status | Notes |
 | --- | --- | --- |
 | Instances list | fully connected | Read path. |
-| Instance detail/runtime/revisions | read-only | Partial runtime/revisions coverage. |
+| Instance detail/runtime/revisions | fully connected | Detail drawer loads `GET /api/v1/instances/{id}`, runtime state, runtime observations and revisions. Runtime/diagnostic output is rendered as text. |
 | Create from service pack | legacy-only | Backend exists; create form not migrated. |
 | Manual create | legacy-only | Backend exists; spec form not migrated. |
 | Draft/spec replace | legacy-only | Backend exists; validation mapping required. |
-| Apply/reapply | legacy-only | Backend exists; async job tracking required. |
-| Lifecycle start/stop/restart/enable/disable | legacy-only | Backend exists; confirmation and job tracking required. |
-| Rollback | legacy-only | Backend exists; confirmation required. |
-| Diagnostics | legacy-only | Backend exists; job tracking required. |
-| Delete/force-delete | legacy-only | Backend exists; destructive confirmation required. |
+| Apply/reapply | fully connected | `POST /api/v1/instances/{id}/apply`; confirmation required; returned job is tracked. Backend has no separate preview endpoint. |
+| Lifecycle start/stop/restart/enable/disable | fully connected | Real backend lifecycle endpoints are wired with confirmation and job tracking. |
+| Rollback | fully connected | Explicit revision selection and confirmation required. Backend rollback creates a new revision; when it is apply-ready, UI queues a real apply job for runtime effect. |
+| Diagnostics | fully connected | `POST /api/v1/instances/{id}/diagnose`; runtime observations are rendered safely as text. |
+| Delete/force-delete | fully connected | Delete and force-delete call real backend endpoints. Force-delete requires exact confirmation text. |
 | Service pack CRUD | legacy-only | Backend exists; form not migrated. |
+| Access group materialization | read-only connected | Instances show materialized access groups and link to `Clients -> Groups`; no add/move/remove/create VLESS group actions are exposed here. |
 | VLESS templates | legacy-only/deprecated | Primary access group management belongs under Clients -> Groups. |
 | Runtime artifact import/list/delete | read-only / legacy-only | List connected; import not migrated; delete endpoint not found for binary artifacts. |
 
