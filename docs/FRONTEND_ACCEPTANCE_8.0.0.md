@@ -12,7 +12,7 @@ Failed/insufficient markdown normalization attempt:
 `b2a9b99c7e47babe26a0ef9e2fca8779fffeb715`
 
 Current docs normalization fix commit:
-`PENDING_FIX_COMMIT_SHA`
+`7b0b025262081e0c528b96ac8ca88acc4b6a42a4`
 
 FE8 overnight batch report commit:
 `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
