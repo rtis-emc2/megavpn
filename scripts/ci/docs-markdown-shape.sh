@@ -37,6 +37,7 @@ forbidden_acceptance = [
     "plus the normalizing commit",
     "reported by",
     "pending at handoff",
+    "Current documentation/evidence HEAD: `<new final commit SHA after this task>`",
 ]
 
 failed = False
@@ -48,19 +49,38 @@ for path, cfg in checks.items():
         failed = True
         continue
 
-    text = p.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    print(f"{path}: {len(lines)} lines")
+    data = p.read_bytes()
 
-    if len(lines) < cfg["min_lines"]:
-        print(f"FAIL: {path} has too few lines; expected >= {cfg['min_lines']}")
+    if b"\r" in data:
+        print(f"FAIL: {path} contains CR bytes; use LF-only line endings")
         failed = True
 
-    if lines[:3] != cfg["first3"]:
-        print(f"FAIL: {path} first three lines wrong: {lines[:3]!r}")
+    if not data.endswith(b"\n"):
+        print(f"FAIL: {path} does not end with LF newline")
         failed = True
 
-    for i, line in enumerate(lines, 1):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        print(f"FAIL: {path} is not valid UTF-8: {exc}")
+        failed = True
+        continue
+
+    raw_lines = text.split("\n")
+    if raw_lines and raw_lines[-1] == "":
+        raw_lines = raw_lines[:-1]
+
+    print(f"{path}: {len(raw_lines)} LF lines")
+
+    if len(raw_lines) < cfg["min_lines"]:
+        print(f"FAIL: {path} has too few LF lines; expected >= {cfg['min_lines']}")
+        failed = True
+
+    if raw_lines[:3] != cfg["first3"]:
+        print(f"FAIL: {path} first three LF lines wrong: {raw_lines[:3]!r}")
+        failed = True
+
+    for i, line in enumerate(raw_lines, 1):
         if len(line) > 240:
             print(f"FAIL: {path}:{i}: line too long ({len(line)} chars)")
             failed = True
@@ -74,5 +94,5 @@ for path, cfg in checks.items():
 if failed:
     raise SystemExit(1)
 
-print("docs-markdown-shape PASS")
+print("docs-markdown-shape LF-only PASS")
 PY

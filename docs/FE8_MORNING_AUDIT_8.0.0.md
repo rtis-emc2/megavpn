@@ -12,8 +12,9 @@ Failed markdown normalization attempts:
 - `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc`
 - `3487c140f594a3db2bbd2dcd564031e312816900`
 - `ceba0a422d35b9c32e3786e858f864855176683d`
+- `b9843fc381fd964d140a065585cc19aa8ad930c7`
 
-Generated UTC: `2026-07-09T08:20:00Z`
+Generated UTC: `2026-07-09T08:48:00Z`
 
 Final recommendation:
 
@@ -21,10 +22,10 @@ Final recommendation:
 - GO for controlled staging validation.
 - NO-GO for final production cutover.
 
-CI status for latest failed raw GitHub validation attempt:
+CI status for latest LF guard gap attempt:
 
-- GitHub Actions run `29003755984` passed for `ceba0a422d35b9c32e3786e858f864855176683d`.
-- That run is insufficient for this issue because CI did not yet include `scripts/ci/docs-markdown-shape.sh`.
+- GitHub Actions run `29005389616` passed for `b9843fc381fd964d140a065585cc19aa8ad930c7`.
+- That run is insufficient for this issue because CI did not yet reject CR bytes or CR-only separators.
 
 ## Repository State
 
@@ -57,6 +58,7 @@ CI status for latest failed raw GitHub validation attempt:
 | Failed raw GitHub validation attempt | `3487c140f594a3db2bbd2dcd564031e312816900` | `29001994538` FAILURE | INSUFFICIENT |
 
 | Failed raw GitHub validation attempt | `ceba0a422d35b9c32e3786e858f864855176683d` | `29003755984` PASS but guard absent | INSUFFICIENT |
+| Failed LF guard gap attempt | `b9843fc381fd964d140a065585cc19aa8ad930c7` | `29005389616` PASS but LF-byte guard absent | INSUFFICIENT |
 ## Completed Tasks
 
 - FE8-P0-04B service pack evidence hygiene.
