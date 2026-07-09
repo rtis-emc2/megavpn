@@ -10,16 +10,20 @@ Failed markdown normalization attempts:
 
 - `b2a9b99c7e47babe26a0ef9e2fca8779fffeb715`
 - `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc`
+- `3487c140f594a3db2bbd2dcd564031e312816900`
 
-Generated UTC: `2026-07-09T07:22:36Z`
-
-CI status for latest failed formatting attempt: GitHub Actions run `28999052460` PASS.
+Generated UTC: `2026-07-09T08:04:59Z`
 
 Final recommendation:
 
 - GO for PR review.
 - GO for controlled staging validation.
 - NO-GO for final production cutover.
+
+CI status for failed raw GitHub validation attempt:
+
+- GitHub Actions run `29001994538` ended as FAILURE for `3487c140f594a3db2bbd2dcd564031e312816900`.
+- The queued jobs were cancelled before runner steps completed, so it is not accepted as PASS evidence.
 
 ## Repository State
 
@@ -49,6 +53,7 @@ Final recommendation:
 | Morning audit docs | `e1677b35f3682d5fbff6a417178cfd15cbabb0b3` | `28994536686` PASS | DONE |
 | Failed markdown normalization attempt | `b2a9b99c7e47babe26a0ef9e2fca8779fffeb715` | `28998178046` PASS | INSUFFICIENT |
 | Failed markdown normalization attempt | `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc` | `28999052460` PASS | INSUFFICIENT |
+| Failed raw GitHub validation attempt | `3487c140f594a3db2bbd2dcd564031e312816900` | `29001994538` FAILURE | INSUFFICIENT |
 
 ## Completed Tasks
 

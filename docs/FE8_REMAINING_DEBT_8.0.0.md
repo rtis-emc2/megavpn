@@ -2,7 +2,7 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-09T07:22:36Z`
+Generated UTC: `2026-07-09T08:04:59Z`
 
 Final cutover status: **NO-GO** until every required item below is completed or explicitly waived by release owners with a dated rationale.
 
@@ -14,6 +14,11 @@ Final cutover status: **NO-GO** until every required item below is completed or 
 | Live disposable smoke | OPEN |
 | Full release gate | OPEN |
 | Legacy rollback | REQUIRED |
+
+## Additional Release-Blocking Review Items
+
+| Area | Status |
+| --- | --- |
 | GitHub Actions Node.js 20 deprecation | OPEN |
 | Responsive evidence | OPEN |
 | i18n final review | OPEN |
