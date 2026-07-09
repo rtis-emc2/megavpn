@@ -11,8 +11,9 @@ Failed markdown normalization attempts:
 - `b2a9b99c7e47babe26a0ef9e2fca8779fffeb715`
 - `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc`
 - `3487c140f594a3db2bbd2dcd564031e312816900`
+- `ceba0a422d35b9c32e3786e858f864855176683d`
 
-Generated UTC: `2026-07-09T08:04:59Z`
+Generated UTC: `2026-07-09T08:20:00Z`
 
 Final recommendation:
 
@@ -20,10 +21,10 @@ Final recommendation:
 - GO for controlled staging validation.
 - NO-GO for final production cutover.
 
-CI status for failed raw GitHub validation attempt:
+CI status for latest failed raw GitHub validation attempt:
 
-- GitHub Actions run `29001994538` ended as FAILURE for `3487c140f594a3db2bbd2dcd564031e312816900`.
-- The queued jobs were cancelled before runner steps completed, so it is not accepted as PASS evidence.
+- GitHub Actions run `29003755984` passed for `ceba0a422d35b9c32e3786e858f864855176683d`.
+- That run is insufficient for this issue because CI did not yet include `scripts/ci/docs-markdown-shape.sh`.
 
 ## Repository State
 
@@ -55,6 +56,7 @@ CI status for failed raw GitHub validation attempt:
 | Failed markdown normalization attempt | `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc` | `28999052460` PASS | INSUFFICIENT |
 | Failed raw GitHub validation attempt | `3487c140f594a3db2bbd2dcd564031e312816900` | `29001994538` FAILURE | INSUFFICIENT |
 
+| Failed raw GitHub validation attempt | `ceba0a422d35b9c32e3786e858f864855176683d` | `29003755984` PASS but guard absent | INSUFFICIENT |
 ## Completed Tasks
 
 - FE8-P0-04B service pack evidence hygiene.

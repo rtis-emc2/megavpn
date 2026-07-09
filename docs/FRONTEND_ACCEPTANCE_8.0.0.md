@@ -2,7 +2,7 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Current documentation/evidence HEAD: final immutable SHA is reported by `git rev-parse HEAD` after this raw-validation fix is committed.
+Current documentation/evidence HEAD: pending final alignment commit
 
 Last functional batch evidence commit: `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
@@ -13,22 +13,19 @@ Failed markdown normalization attempts:
 - `b2a9b99c7e47babe26a0ef9e2fca8779fffeb715`
 - `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc`
 - `3487c140f594a3db2bbd2dcd564031e312816900`
+- `ceba0a422d35b9c32e3786e858f864855176683d`
+
+Current CI run: pending final alignment commit
 
 Final 8.0.0 cutover: **NO-GO**.
 
-Raw GitHub validation baseline:
+Markdown shape guard status:
 
-- GitHub raw validation must pass for the final pushed commit before this task is accepted.
-- GitHub Actions run `29001994538` was FAILURE for `3487c140f594a3db2bbd2dcd564031e312816900`.
-- The run jobs were cancelled before runner steps completed, so it is not accepted as PASS evidence.
+- `scripts/ci/docs-markdown-shape.sh` is required before this evidence is accepted.
+- The guard fails collapsed Markdown by line count, first-line shape and maximum line-length checks.
+- The guard rejects vague acceptance placeholders before final evidence alignment.
 
-Prior passing CI evidence:
-
-- GitHub Actions run `28999052460` PASS for `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc`.
-- GitHub Actions run `29001561143` PASS for `ff1809e7ee308a9791c6d89b5da0507c9125e945`.
-- GitHub Actions run `29001785709` PASS for `92bb9f6e3d5a0b0a97ea2905631b92ba3e6d2d65`.
-
-Current evidence date UTC: `2026-07-09T08:04:59Z`
+Current evidence date UTC: `2026-07-09T08:20:00Z`
 
 FE8-P0-08A Backhaul/Route Policy feature commit:
 `9ed3965fcdaa18554acf78680bc61317b9108564`

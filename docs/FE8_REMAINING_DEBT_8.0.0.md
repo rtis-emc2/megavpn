@@ -2,7 +2,7 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-09T08:04:59Z`
+Generated UTC: `2026-07-09T08:20:00Z`
 
 Final cutover status: **NO-GO** until every required item below is completed or explicitly waived by release owners with a dated rationale.
 

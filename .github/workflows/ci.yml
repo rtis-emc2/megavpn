@@ -129,6 +129,9 @@ jobs:
       - name: Check GitHub Actions pinning
         run: scripts/ci/actions-pinning-check.sh
 
+      - name: Check documentation markdown shape
+        run: scripts/ci/docs-markdown-shape.sh
+
       - name: Documentation consistency
         run: scripts/ci/docs-consistency.sh
 
