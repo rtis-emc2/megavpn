@@ -2,33 +2,28 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Current documentation/evidence HEAD: `cb79e9ccef86994ed7116a4acd52d5c3f27fabc4`
-
 Last functional batch evidence commit: `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
 Morning audit commit: `e1677b35f3682d5fbff6a417178cfd15cbabb0b3`
 
-Failed markdown normalization attempts:
+Failed formatting and guard attempts:
 
 - `b2a9b99c7e47babe26a0ef9e2fca8779fffeb715`
 - `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc`
 - `3487c140f594a3db2bbd2dcd564031e312816900`
 - `ceba0a422d35b9c32e3786e858f864855176683d`
 - `b9843fc381fd964d140a065585cc19aa8ad930c7`
+- `2a942237eaaf8f82c21e25adfd259836cd99d175`
 
-Markdown LF guard commit: `cb79e9ccef86994ed7116a4acd52d5c3f27fabc4`
+Line-ending evidence model:
 
-Previous CI run before LF guard: GitHub Actions run `29005389616` PASS for `b9843fc381fd964d140a065585cc19aa8ad930c7`
-
-Markdown LF guard status:
-
-- `scripts/ci/docs-markdown-shape.sh` rejects CR bytes and CR-only collapsed Markdown.
-- `.gitattributes` normalizes Markdown, shell, TypeScript, JavaScript, JSON and YAML text files to LF.
-- Final pushed HEAD and final GitHub CI are recorded in the task response after raw validation.
+- Current final HEAD is recorded in the final task response and GitHub CI, not self-embedded in this file.
+- `.gitattributes`, `.github/workflows/ci.yml`, guard scripts and evidence docs must be LF-only multiline files in GitHub raw view.
+- `scripts/ci/docs-markdown-shape.sh` rejects CR bytes, missing final LF and collapsed LF structure.
 
 Final 8.0.0 cutover: **NO-GO**.
 
-Current evidence date UTC: `2026-07-09T08:52:00Z`
+Current evidence date UTC: `2026-07-09T09:25:00Z`
 
 FE8-P0-08A Backhaul/Route Policy feature commit:
 `9ed3965fcdaa18554acf78680bc61317b9108564`

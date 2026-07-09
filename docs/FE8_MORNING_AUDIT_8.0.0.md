@@ -6,15 +6,16 @@ Audited functional batch HEAD SHA: `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
 Morning audit commit: `e1677b35f3682d5fbff6a417178cfd15cbabb0b3`
 
-Failed markdown normalization attempts:
+Failed formatting and guard attempts:
 
 - `b2a9b99c7e47babe26a0ef9e2fca8779fffeb715`
 - `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc`
 - `3487c140f594a3db2bbd2dcd564031e312816900`
 - `ceba0a422d35b9c32e3786e858f864855176683d`
 - `b9843fc381fd964d140a065585cc19aa8ad930c7`
+- `2a942237eaaf8f82c21e25adfd259836cd99d175`
 
-Generated UTC: `2026-07-09T08:48:00Z`
+Generated UTC: `2026-07-09T09:25:00Z`
 
 Final recommendation:
 
@@ -22,10 +23,11 @@ Final recommendation:
 - GO for controlled staging validation.
 - NO-GO for final production cutover.
 
-CI status for latest LF guard gap attempt:
+Current line-ending remediation status:
 
-- GitHub Actions run `29005389616` passed for `b9843fc381fd964d140a065585cc19aa8ad930c7`.
-- That run is insufficient for this issue because CI did not yet reject CR bytes or CR-only separators.
+- `.gitattributes`, CI workflow, docs guard, docs consistency script and evidence docs are normalized to LF bytes in this task.
+- GitHub raw view for the final commit must show real multiline files before the task is accepted.
+- Final 8.0.0 cutover remains blocked by release debt and live validation.
 
 ## Repository State
 
@@ -59,6 +61,7 @@ CI status for latest LF guard gap attempt:
 
 | Failed raw GitHub validation attempt | `ceba0a422d35b9c32e3786e858f864855176683d` | `29003755984` PASS but guard absent | INSUFFICIENT |
 | Failed LF guard gap attempt | `b9843fc381fd964d140a065585cc19aa8ad930c7` | `29005389616` PASS but LF-byte guard absent | INSUFFICIENT |
+| Failed LF-only raw evidence attempt | `2a942237eaaf8f82c21e25adfd259836cd99d175` | `29006969002` PASS but raw review rejected | INSUFFICIENT |
 ## Completed Tasks
 
 - FE8-P0-04B service pack evidence hygiene.

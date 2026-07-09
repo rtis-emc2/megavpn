@@ -37,7 +37,7 @@ forbidden_acceptance = [
     "plus the normalizing commit",
     "reported by",
     "pending at handoff",
-    "Current documentation/evidence HEAD: `<new final commit SHA after this task>`",
+    "<new final commit SHA after this task>",
 ]
 
 failed = False

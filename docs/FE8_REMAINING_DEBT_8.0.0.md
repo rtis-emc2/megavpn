@@ -2,7 +2,7 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-09T08:48:00Z`
+Generated UTC: `2026-07-09T09:25:00Z`
 
 Final cutover status: **NO-GO** until every required item below is completed or explicitly waived by release owners with a dated rationale.
 
@@ -25,7 +25,7 @@ Final cutover status: **NO-GO** until every required item below is completed or 
 | Static/raw API guard review | OPEN |
 | Acceptance matrix cleanup | OPEN |
 | PR readiness checklist | OPEN |
-| LF-only evidence guard | OPEN UNTIL FINAL CI PASS |
+| LF-only raw evidence validation | OPEN UNTIL FINAL RAW CHECK PASS |
 
 Release-blocking details:
 
