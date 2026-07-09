@@ -2,13 +2,16 @@ import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@ta
 import {
   applyClientAccessGroupMembers,
   applyClientAccessGroupSync,
+  applyBackhaulLink,
   applyInstance,
+  applyRoutePolicy,
   applyTlsSettings,
   applySingleClientAccessGroupAssignment,
   acceptNodeHostKey,
   bootstrapNode,
   buildClientArtifact,
   cleanupClientConfigs,
+  cleanupRoutePolicy,
   createClient,
   createClientRoute,
   applyNodeFirewall,
@@ -45,6 +48,7 @@ import {
   forceDeleteInstance,
   forceRetireNode,
   getAvailableClientsForGroup,
+  getBackhaulLink,
   getClient,
   getClientAccessGroupMembers,
   getClientAccessGroupScope,
@@ -60,8 +64,9 @@ import {
   getCertificate,
   getMailSettings,
   getPlatformSettings,
-  getUser,
   getFirewallSafetySettings,
+  getRoutePolicy,
+  getUser,
   getNodeFirewallState,
   getNode,
   getNodeAgentState,
@@ -86,6 +91,7 @@ import {
   listNodeServiceDiscoveries,
   listRuntimeArtifacts,
   listRuntimeTargets,
+  listRoutePolicies,
   listSessions,
   listServiceInstallers,
   listServicePacks,
@@ -98,6 +104,9 @@ import {
   previewClientAccessGroupMembers,
   previewClientAccessGroupSync,
   previewNodeFirewall,
+  previewRoutePolicy,
+  probeBackhaulLink,
+  promoteBackhaulLink,
   reapplyInstance,
   reinstallOrUpdateNodeAgent,
   replaceInstanceSpec,
@@ -146,6 +155,7 @@ import {
   updateFirewallPolicy,
   updateFirewallRule,
   updateFirewallSafetySettings,
+  updateBackhaulRouteState,
   updateMailSettings,
   updatePlatformSettings,
   testMailSettings,
@@ -157,7 +167,9 @@ import {
 import type {
   AddressPools,
   Artifact,
+  BackhaulActionResult,
   BackhaulLink,
+  BackhaulRouteStateInput,
   Certificate,
   CertificateActionResult,
   CertificateAuthorityCreateInput,
@@ -274,6 +286,10 @@ import type {
   PlatformSettings,
   PlatformSettingsInput,
   ReadyStatus,
+  RoutePolicy,
+  RoutePolicyApplyResult,
+  RoutePolicyCleanupResult,
+  RoutePolicyPreviewResult,
   RuntimeArtifact,
   RuntimeArtifactDeleteResult,
   RuntimeArtifactImportInput,
@@ -1713,6 +1729,121 @@ export function useCreatePkiRoot() {
 
 export function useBackhaulLinks(options?: QueryOptions<BackhaulLink[]>) {
   return useQuery({ queryKey: ['backhaul-links'], queryFn: endpoints.backhaulLinks, staleTime: stale.normal, ...options });
+}
+
+export function useBackhaulLink(linkId: string | undefined, options?: QueryOptions<BackhaulLink>) {
+  return useQuery({
+    queryKey: ['backhaul-link', linkId],
+    queryFn: () => getBackhaulLink(linkId || ''),
+    enabled: Boolean(linkId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+function invalidateBackhaulQueries(queryClient: ReturnType<typeof useQueryClient>, linkId?: string) {
+  void queryClient.invalidateQueries({ queryKey: ['backhaul-links'] });
+  void queryClient.invalidateQueries({ queryKey: ['route-policies'] });
+  void queryClient.invalidateQueries({ queryKey: ['nodes'] });
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+  if (linkId) void queryClient.invalidateQueries({ queryKey: ['backhaul-link', linkId] });
+}
+
+export function useApplyBackhaulLink() {
+  const queryClient = useQueryClient();
+  return useMutation<BackhaulActionResult, Error, string>({
+    mutationFn: applyBackhaulLink,
+    onSuccess: (result, linkId) => {
+      invalidateBackhaulQueries(queryClient, linkId);
+      invalidateJobsFromResult(queryClient, result);
+    },
+  });
+}
+
+export function useProbeBackhaulLink() {
+  const queryClient = useQueryClient();
+  return useMutation<BackhaulActionResult, Error, string>({
+    mutationFn: probeBackhaulLink,
+    onSuccess: (result, linkId) => {
+      invalidateBackhaulQueries(queryClient, linkId);
+      invalidateJobsFromResult(queryClient, result);
+    },
+  });
+}
+
+export function usePromoteBackhaulLink() {
+  const queryClient = useQueryClient();
+  return useMutation<BackhaulActionResult, Error, { linkId: string; transportId: string }>({
+    mutationFn: ({ linkId, transportId }) => promoteBackhaulLink(linkId, { transport_id: transportId }),
+    onSuccess: (result, input) => {
+      invalidateBackhaulQueries(queryClient, input.linkId);
+      invalidateJobsFromResult(queryClient, result);
+    },
+  });
+}
+
+export function useUpdateBackhaulRouteState() {
+  const queryClient = useQueryClient();
+  return useMutation<BackhaulActionResult, Error, { linkId: string; input: BackhaulRouteStateInput }>({
+    mutationFn: ({ linkId, input }) => updateBackhaulRouteState(linkId, input),
+    onSuccess: (result, input) => {
+      invalidateBackhaulQueries(queryClient, input.linkId);
+      invalidateJobsFromResult(queryClient, result);
+    },
+  });
+}
+
+export function useRoutePolicies(options?: QueryOptions<RoutePolicy[]>) {
+  return useQuery({ queryKey: ['route-policies'], queryFn: listRoutePolicies, staleTime: stale.normal, ...options });
+}
+
+export function useRoutePolicy(nodeId: string | undefined, options?: QueryOptions<RoutePolicy>) {
+  return useQuery({
+    queryKey: ['route-policy', nodeId],
+    queryFn: () => getRoutePolicy(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
+function invalidateRoutePolicyQueries(queryClient: ReturnType<typeof useQueryClient>, nodeId?: string) {
+  void queryClient.invalidateQueries({ queryKey: ['route-policies'] });
+  void queryClient.invalidateQueries({ queryKey: ['nodes'] });
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  if (nodeId) {
+    void queryClient.invalidateQueries({ queryKey: ['route-policy', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node', nodeId] });
+  }
+}
+
+export function usePreviewRoutePolicy() {
+  return useMutation<RoutePolicyPreviewResult, Error, string>({
+    mutationFn: previewRoutePolicy,
+  });
+}
+
+export function useApplyRoutePolicy() {
+  const queryClient = useQueryClient();
+  return useMutation<RoutePolicyApplyResult, Error, string>({
+    mutationFn: applyRoutePolicy,
+    onSuccess: (result, nodeId) => {
+      invalidateRoutePolicyQueries(queryClient, nodeId);
+      invalidateJobsFromResult(queryClient, result);
+    },
+  });
+}
+
+export function useCleanupRoutePolicy() {
+  const queryClient = useQueryClient();
+  return useMutation<RoutePolicyCleanupResult, Error, string>({
+    mutationFn: cleanupRoutePolicy,
+    onSuccess: (result, nodeId) => {
+      invalidateRoutePolicyQueries(queryClient, nodeId);
+      invalidateJobsFromResult(queryClient, result);
+    },
+  });
 }
 
 export function useArtifacts(options?: QueryOptions<Artifact[]>) {

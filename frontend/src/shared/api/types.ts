@@ -1196,6 +1196,100 @@ export type Job = APIRecord & {
 
 export type JobRef = Pick<Job, 'id' | 'type' | 'status'> & APIRecord;
 
+export type BackhaulTransport = APIRecord & {
+  id: string;
+  link_id?: string;
+  driver?: string;
+  priority?: number;
+  status?: string;
+  endpoint_host?: string;
+  endpoint_port?: number;
+  protocol?: string;
+  interface_name?: string;
+  tunnel_cidr?: string;
+  ingress_address?: string;
+  egress_address?: string;
+  config?: APIRecord;
+  secret_refs?: APIRecord;
+  health?: APIRecord;
+  applied_ingress_at?: string | null;
+  applied_egress_at?: string | null;
+  last_error?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type BackhaulLink = APIRecord & {
+  id: string;
+  name?: string;
+  status?: string;
+  ingress_node_id?: string;
+  egress_node_id?: string;
+  selected_transport_id?: string | null;
+  desired_driver?: string;
+  driver?: string;
+  routing_table?: number;
+  route_metric?: number;
+  route_enabled?: boolean;
+  failover_policy?: APIRecord;
+  metadata?: APIRecord;
+  transports?: BackhaulTransport[];
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type BackhaulActionResult = APIRecord & {
+  link?: BackhaulLink;
+  jobs?: JobRef[];
+  job_count?: number;
+};
+
+export type BackhaulRouteStateInput = {
+  enabled: boolean;
+};
+
+export type BackhaulPromoteInput = {
+  transport_id: string;
+};
+
+export type RoutePolicy = APIRecord & {
+  node_id: string;
+  node_name?: string;
+  node_role?: string;
+  node_address?: string;
+  node_status?: string;
+  updated_at?: string;
+};
+
+export type RoutePolicyPreviewResult = APIRecord & {
+  status?: string;
+  node_id?: string;
+  node_name?: string;
+  node_role?: string;
+  node_address?: string;
+  generated_at?: string;
+  revision?: string;
+  output_path?: string;
+  enforcement?: APIRecord;
+  kernel?: APIRecord;
+  summary?: APIRecord;
+  warnings?: APIRecord[];
+  routes?: APIRecord[];
+  system_routes?: APIRecord[];
+};
+
+export type RoutePolicyApplyResult = APIRecord & {
+  status?: string;
+  message?: string;
+  job?: JobRef;
+};
+
+export type RoutePolicyCleanupResult = APIRecord & {
+  status?: string;
+  message?: string;
+  job?: JobRef;
+};
+
 export type ControlPlaneTLSSettings = APIRecord & {
   enabled?: boolean;
   mode?: string;
@@ -1479,16 +1573,6 @@ export type OneTimeSecretDisplay = {
 };
 
 export type DeliveryJobRef = JobRef;
-
-export type BackhaulLink = APIRecord & {
-  id: string;
-  name?: string;
-  status?: string;
-  ingress_node_id?: string;
-  egress_node_id?: string;
-  driver?: string;
-  route_enabled?: boolean;
-};
 
 export type Certificate = APIRecord & {
   id: string;

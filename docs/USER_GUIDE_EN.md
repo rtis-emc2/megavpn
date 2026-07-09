@@ -382,8 +382,9 @@ through an egress node.
 Workflow:
 
 1. Open `Backhaul`.
-2. Create a link: ingress node -> egress node.
-3. Select `Active backhaul transport`: this is the active node-to-node transport
+2. Select an existing link: ingress node -> egress node. Backhaul link
+   create/delete remains a legacy/approved flow in the current RC.
+3. Review `Active backhaul transport`: this is the active node-to-node transport
    used for apply, health checks and route projection. It is not a client VPN
    protocol selector.
 4. In `Optional standby transports`, leave extra transports unchecked unless you
@@ -392,8 +393,8 @@ Workflow:
 5. Select `Apply`.
 6. Wait for successful apply on both sides.
 7. If the active transport is unhealthy but a standby is `standby ready`, open
-   `Manage` and select `Promote to active` on the standby transport.
-8. Select `Test`.
+   detail and select `Promote` on the standby transport.
+8. Select `Probe`.
 9. Verify:
    - both sides are `healthy`;
    - packet loss is `0`;
@@ -609,7 +610,8 @@ Correct model:
 
 Where to configure it:
 
-- `Backhaul`: create the `ingress -> egress` link, click `Apply`, then `Test`.
+- `Backhaul`: select the existing `ingress -> egress` link, click `Apply`, then
+  `Probe`. Link create/delete remains a legacy/approved flow in the current RC.
 - `Instances -> Create from pack`: for packs that contain VLESS, use
   `VLESS routing` before creation. This writes the egress choice into every
   generated Xray/VLESS instance without changing the reusable service-pack
@@ -648,15 +650,15 @@ Where to configure it:
   available groups and the blocking resolution error.
 - `Clients -> Access -> Add route`: for individual route-policy rules, select
   `Egress mode = egress node` and choose the egress node. After route-policy
-  changes, run `Nodes -> Manage -> Inspect route policy` first; if the preview
-  has no blocking warning for the intended path, run `Sync route policy` on the
+  changes, run `Network Policy -> Route Policy -> Preview` first; if the preview
+  has no blocking warning for the intended path, run `Apply route policy` on the
   ingress node.
-- `Nodes -> Manage -> Inspect route policy`: read-only projection for the
+- `Network Policy -> Route Policy -> Preview`: read-only projection for the
   ingress node. It shows enforceable routes, observe-only routes, VLESS/Xray
   system egress routes, blocked reasons, managed table/interface and the
   nft/ip-rule primitives that the agent will own. VLESS UUID-like source
   identities are redacted.
-- `Nodes -> Manage -> Sync route policy`: the ingress agent writes the signed
+- `Network Policy -> Route Policy -> Apply route policy`: the ingress agent writes the signed
   snapshot and installs managed kernel rules. Client traffic is marked in
   `inet megavpn route_policy_prerouting`; local Xray/VLESS `sendThrough`
   traffic is marked in `inet megavpn route_policy_output`; `ip rule fwmark`
@@ -664,7 +666,7 @@ Where to configure it:
   interface. The job result includes telemetry for the route-policy unit/timer,
   `ip rule show`, managed nftables chains and `ip route show table` for managed
   route tables referenced by the current or previous snapshot.
-- `Nodes -> Manage -> Clean route policy`: explicit rollback for managed
+- `Network Policy -> Route Policy -> Cleanup route policy`: explicit rollback for managed
   route-policy runtime. Use it when a node was removed from the ingress path,
   stale route-policy state is suspected after instance/client deletion, or a
   previous apply must be cleared before rebuilding. It removes only MegaVPN
@@ -686,10 +688,11 @@ Minimal path for “enter through VLESS and exit through another node”:
    and automatically materialized into every matching VLESS ingress.
 6. Click `Apply` on the instance if you changed instance-level `Egress mode`.
    VLESS group changes themselves are propagated automatically by catalog sync.
-7. Run `Inspect route policy` on the ingress node and verify that the
-   VLESS/Xray system route is active and uses the expected backhaul table and
-   `mgbh*` interface.
-8. If client route rules are used, run `Sync route policy`.
+7. Run `Network Policy -> Route Policy -> Preview` on the ingress node and
+   verify that the VLESS/Xray system route is active and uses the expected
+   backhaul table and `mgbh*` interface.
+8. If client route rules are used, run `Apply route policy` after a fresh
+   successful preview.
 9. Inspect the `node.route_policy.apply` job result telemetry first. If it is
    inconclusive, verify on the ingress node with `nft list chain inet megavpn
    route_policy_output`, `nft list chain inet megavpn

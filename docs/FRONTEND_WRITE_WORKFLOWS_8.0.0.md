@@ -101,7 +101,7 @@ to `/legacy/`.
 | Node firewall preview | fully connected | `POST /api/v1/nodes/{id}/firewall/preview`; preview job payload/result is rendered as text, not HTML. |
 | Node firewall apply | fully connected | `POST /api/v1/nodes/{id}/firewall/apply`; Apply is disabled until backend preview request succeeds and becomes disabled again when preview is stale or blocking errors exist. |
 | Node firewall disable | fully connected | `POST /api/v1/nodes/{id}/firewall/disable`; emergency confirmation states the exact managed table removal scope and shows job tracking. |
-| Route policy UI | legacy-only | Backend preview/apply/cleanup exists; new UI not migrated. |
+| Route policy UI | fully connected | Node-scoped route policy list/detail is derived from `GET /api/v1/nodes`; preview uses `GET /api/v1/nodes/{id}/routes/preview`, Apply uses `POST /routes/apply`, cleanup uses `POST /routes/cleanup`. Apply is disabled until a fresh successful preview for the selected node; stale preview blocks Apply and jobs are tracked. |
 | Traffic overview | fully connected | `GET /api/v1/traffic/accounting`. |
 | Traffic export | fully connected | Backend export URL opened directly; no token storage. |
 
@@ -146,7 +146,7 @@ to `/legacy/`.
 | Inventory view/sync | fully connected | `GET /inventory` and `POST /inventory/sync`; sync requires confirmation and shows returned job. Inventory payload is rendered as text. |
 | Capabilities install/verify | fully connected | `GET /capabilities`, `GET /capabilities/drift`, `GET /capabilities/install-events`, `GET /services/installers`, `POST /capabilities/install`, `POST /capabilities/verify`; install/verify require confirmation and job tracking. |
 | Service discovery list/import | fully connected | `GET /services/discovered`, `GET /services/discovery-summary`, `POST /services/discover`, `POST /services/discovered/{id}/import`, `POST /services/import-all`; import requires confirmation. Ignore/unignore stays legacy-only. |
-| Route policy preview/apply/cleanup | legacy-only | Backend exists; preview-before-apply required. |
+| Route policy preview/apply/cleanup | fully connected | `GET /routes/preview`, `POST /routes/apply`, `POST /routes/cleanup`; preview output is rendered as text/tables, Apply requires a fresh selected-node preview and cleanup requires confirmation. |
 
 ### Platform
 
@@ -172,8 +172,9 @@ to `/legacy/`.
 
 | Workflow | Status | Notes |
 | --- | --- | --- |
-| List links/drivers | fully connected read path | Current page lists links. |
-| Create/apply/probe/promote/route/delete | legacy-only | Backend exists; job tracking and confirmation required. |
+| List links/drivers | fully connected read path | `GET /api/v1/backhaul-links` and `GET /api/v1/backhaul-links/{id}` power list/detail. Drivers remain backend catalog data. Transport `config` and `secret_refs` are intentionally not rendered. |
+| Apply/probe/promote/route state | fully connected | `POST /backhaul-links/{id}/apply`, `/probe`, `/promote` and `PATCH /route`; confirmation required, backend jobs are tracked and route/Xray convergence remains backend-owned. Backend has no dedicated repair endpoint, so no fake repair action is exposed. |
+| Create/delete links | legacy-only | Backend routes exist, but FE8-P0-08A does not expose create/delete; destructive delete still needs a separate confirmation/evidence pass. |
 
 ### Operations
 

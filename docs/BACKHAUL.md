@@ -58,7 +58,7 @@ The Backhaul create form has two related controls:
 | --- | --- | --- |
 | `Active backhaul transport` | The single active ingress-to-egress transport path. | Stored as `desired_driver`, rendered as the selected transport, used by apply/probe gating and route-policy projection. It is always included and cannot be unchecked in the create form. |
 | `Optional standby transports` | Extra internal profiles generated for this backhaul link. | Stored as `drivers` during create only when explicitly checked. They are generated backup profiles for controlled fallback, diagnostics or later promotion, but they are not active after create. |
-| `Promote to active` | Explicitly changes the selected active transport to a healthy standby transport. | Updates `selected_transport_id` and `desired_driver`, sets the link active when the promoted transport is active on both sides, refreshes affected Xray/VLESS revisions first when needed, then queues route-policy refresh after the apply path is current. |
+| `Promote` | Explicitly changes the selected active transport to a healthy standby transport. | Updates `selected_transport_id` and `desired_driver`, sets the link active when the promoted transport is active on both sides, refreshes affected Xray/VLESS revisions first when needed, then queues route-policy refresh after the apply path is current. |
 
 These controls do not select client-facing VPN protocols. They define the
 internal node-to-node transport between ingress and egress. Client access
@@ -151,13 +151,15 @@ Minimum production path for the first ingress/egress pair:
 4. Create Backhaul link.
 5. Apply profiles.
 6. Confirm both generated jobs are `succeeded`.
-7. Run Backhaul `Test` and verify both ingress and egress probe jobs are `succeeded`.
+7. Run Backhaul `Probe` and verify both ingress and egress probe jobs are `succeeded`.
 8. Check health summary: both sides should report `healthy`, packet loss should be `0`, latency should be visible as average RTT. If a service is active but the test is `failed/degraded`, use the shown reason, route lookup, peer address and packet loss to distinguish missing connected route, firewall/UDP reachability, tunnel handshake and route table problems.
 9. Create client access route with remote egress node.
-10. Open the ingress node diagnostics and run `Inspect route policy`. Confirm
-    the projected VLESS/Xray system route is `active`, the selected table is a
-    non-main managed backhaul table and no blocking warning is present.
-11. Queue route policy sync for the ingress node.
+10. Open `Network Policy -> Route Policy` for the ingress node and run
+    `Preview`. Confirm the projected VLESS/Xray system route is `active`, the
+    selected table is a non-main managed backhaul table and no blocking warning
+    is present.
+11. Run `Apply route policy` for the ingress node after a fresh successful
+    preview.
 12. Verify route projection uses `managed_backhaul` for the primary candidate,
     `managed_backhauls` for the failover set, and route policy job reports
     `enforced=true`.
@@ -176,7 +178,7 @@ Minimum production path for the first ingress/egress pair:
 - One side fails apply: transport and link move to `failed`; Backhaul UI shows `partial`, the applied side, the missing/failing side and the per-side health/error saved from the failed job. Root-cause readiness reasons such as `systemd unit is not active`, `interface is not present`, `active_state=failed` and `unit_status_output` are preserved for operator diagnostics.
 - Selected transport fails while a standby is healthy: traffic and route
   projection still use the selected active transport until an operator promotes
-  the healthy standby. Use `Backhaul -> Manage -> Promote to active`.
+  the healthy standby. Use `Backhaul -> detail -> Promote`.
 - OpenVPN unit fails on start: check the Jobs or Backhaul modal result summary first; it includes the unit name, active state and first useful `systemctl status`/OpenVPN error line before manual SSH inspection is needed.
 - Different `mgbh*` interface names or different tunnel CIDRs on ingress and egress for the same selected transport indicate stale runtime state or different transport profiles, not a healthy single tunnel. Re-apply removes interfaces recorded in the previous managed manifest and the target managed interface before recreating it; unrelated stale interfaces from older/deleted links must be removed by managed Backhaul delete or a controlled one-time cleanup after verifying the owning unit is obsolete.
 - Unit/interface missing after apply: apply job fails; install/verify the runtime capability on that node before applying again.

@@ -4,7 +4,10 @@ import type {
   APIRecord,
   Artifact,
   AuthPayload,
+  BackhaulActionResult,
   BackhaulLink,
+  BackhaulPromoteInput,
+  BackhaulRouteStateInput,
   Certificate,
   CertificateActionResult,
   CertificateAuthorityCreateInput,
@@ -133,6 +136,10 @@ import type {
   NodeServiceInstaller,
   NodeRetireResult,
   ReadyStatus,
+  RoutePolicy,
+  RoutePolicyApplyResult,
+  RoutePolicyCleanupResult,
+  RoutePolicyPreviewResult,
   RuntimeArtifact,
   RuntimeArtifactDeleteResult,
   RuntimeArtifactImportInput,
@@ -329,6 +336,39 @@ export function listNodes(_params: { search?: string; status?: string; role?: st
 
 export function getNode(nodeId: string): Promise<NodeDetail> {
   return apiRequest<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(nodeId)}`);
+}
+
+function routePolicyFromNode(node: NodeEntity): RoutePolicy {
+  return {
+    node_id: node.id,
+    node_name: node.name,
+    node_role: node.role || node.kind,
+    node_address: node.address,
+    node_status: node.status || node.agent_status,
+    updated_at: node.updated_at,
+  };
+}
+
+export async function listRoutePolicies(): Promise<RoutePolicy[]> {
+  const nodes = await listNodes();
+  return nodes.map(routePolicyFromNode);
+}
+
+export async function getRoutePolicy(nodeId: string): Promise<RoutePolicy> {
+  const node = await getNode(nodeId);
+  return routePolicyFromNode(node);
+}
+
+export function previewRoutePolicy(nodeId: string): Promise<RoutePolicyPreviewResult> {
+  return apiRequest<RoutePolicyPreviewResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/routes/preview`);
+}
+
+export function applyRoutePolicy(nodeId: string): Promise<RoutePolicyApplyResult> {
+  return sendJSON<RoutePolicyApplyResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/routes/apply`, 'POST', {});
+}
+
+export function cleanupRoutePolicy(nodeId: string): Promise<RoutePolicyCleanupResult> {
+  return sendJSON<RoutePolicyCleanupResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/routes/cleanup`, 'POST', {});
 }
 
 export function setNodeMaintenance(nodeId: string, enabled: boolean): Promise<NodeDetail> {
@@ -1065,6 +1105,30 @@ export function revokeSession(sessionId: string): Promise<SessionRevokeResult> {
   return sendJSON<SessionRevokeResult>(`/api/v1/admin/sessions/${encodeURIComponent(sessionId)}/revoke`, 'POST', {});
 }
 
+export function listBackhaulLinks(): Promise<BackhaulLink[]> {
+  return apiRequest<BackhaulLink[]>('/api/v1/backhaul-links');
+}
+
+export function getBackhaulLink(linkId: string): Promise<BackhaulLink> {
+  return apiRequest<BackhaulLink>(`/api/v1/backhaul-links/${encodeURIComponent(linkId)}`);
+}
+
+export function applyBackhaulLink(linkId: string): Promise<BackhaulActionResult> {
+  return sendJSON<BackhaulActionResult>(`/api/v1/backhaul-links/${encodeURIComponent(linkId)}/apply`, 'POST', {});
+}
+
+export function probeBackhaulLink(linkId: string): Promise<BackhaulActionResult> {
+  return sendJSON<BackhaulActionResult>(`/api/v1/backhaul-links/${encodeURIComponent(linkId)}/probe`, 'POST', {});
+}
+
+export function promoteBackhaulLink(linkId: string, input: BackhaulPromoteInput): Promise<BackhaulActionResult> {
+  return sendJSON<BackhaulActionResult>(`/api/v1/backhaul-links/${encodeURIComponent(linkId)}/promote`, 'POST', input);
+}
+
+export function updateBackhaulRouteState(linkId: string, input: BackhaulRouteStateInput): Promise<BackhaulActionResult> {
+  return sendJSON<BackhaulActionResult>(`/api/v1/backhaul-links/${encodeURIComponent(linkId)}/route`, 'PATCH', input);
+}
+
 export const endpoints = {
   ready: () => apiRequest<ReadyStatus>('/api/v1/ready'),
   version: () => apiRequest<VersionInfo>('/api/v1/version'),
@@ -1096,8 +1160,18 @@ export const endpoints = {
   pkiRoots: () => listPkiRoots(),
   createPkiRoot,
   importPkiRoot,
-  backhaulLinks: () => apiRequest<BackhaulLink[]>('/api/v1/backhaul-links'),
+  backhaulLinks: () => listBackhaulLinks(),
+  backhaulLink: getBackhaulLink,
+  applyBackhaulLink,
+  probeBackhaulLink,
+  promoteBackhaulLink,
+  updateBackhaulRouteState,
   backhaulDrivers: () => apiRequest<Record<string, unknown>[]>('/api/v1/backhaul/drivers'),
+  routePolicies: () => listRoutePolicies(),
+  routePolicy: getRoutePolicy,
+  previewRoutePolicy,
+  applyRoutePolicy,
+  cleanupRoutePolicy,
   artifacts: () => apiRequest<Artifact[]>('/api/v1/artifacts'),
   shareLinks: () => apiRequest<ShareLink[]>('/api/v1/share-links'),
   addressPools: () => apiRequest<AddressPools>('/api/v1/address-pools'),

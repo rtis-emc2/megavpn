@@ -167,17 +167,22 @@ Affected operation classes:
 
 ## 10. RC1 Limitations
 
-The new console remains incomplete for write parity. The following are
-intentionally disabled or legacy-only until fully wired:
+The new console remains incomplete for final write parity. The following are
+intentionally disabled, backend-missing or legacy-only after FE8-P0-08A:
 
-- node bootstrap/control/terminal;
-- client access group member preview/apply;
-- firewall node preview/apply/disable;
-- instance lifecycle/apply/rollback/delete;
-- client provisioning/artifacts/share/subscriptions;
-- certificate import/issue/revoke/delete;
-- settings save/mail test/TLS apply;
-- backhaul mutations.
+- non-VLESS access service materialization and access-group migration conflict UI;
+- generic client edit, client route update, per-access revoke and client
+  delivery history;
+- nodes create/register/edit, new SSH access method creation with secret
+  material, manual bootstrap bundle reveal, agent identity revoke, reboot,
+  emergency cleanup and stale rotation cleanup;
+- node service discovery ignore/unignore;
+- runtime artifact delete;
+- separate service pack validation, instance spec preview and instance
+  draft-save endpoints;
+- Platform invite revoke and direct Platform user lifecycle mutations;
+- backhaul create/delete;
+- backup/restore browser UI.
 
 This is a security-positive limitation: operators must not see a clickable
 action unless it is backed by real endpoint behavior and safe UX.

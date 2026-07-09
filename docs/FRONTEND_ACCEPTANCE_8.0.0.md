@@ -3,10 +3,13 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`pending final FE8-P0-07B feature commit; previous pushed/evidence commit is b92c78679b60d46bc51f49f94db589ee6e1b0b09`
+`pending final FE8-P0-08A feature commit; previous pushed/evidence commit is f94b2bbf6efa1c4fe403ae98865bc5b4da19db70`
+
+FE8-P0-08A Backhaul/Route Policy feature commit:
+`pending final feat: connect backhaul route policy workflows commit; final SHA is recorded in the task handoff after commit creation`
 
 FE8-P0-07B Platform settings/mail/access feature commit:
-`pending final feat: connect platform settings access workflows commit; final SHA is recorded in the task handoff after commit creation`
+`f94b2bbf6efa1c4fe403ae98865bc5b4da19db70`
 
 FE8-P0-07A Certificates/PKI feature commit:
 `b92c78679b60d46bc51f49f94db589ee6e1b0b09`
@@ -54,14 +57,14 @@ Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
 Current evidence CI:
-Current FE8-P0-07B evidence is the local verification set recorded below;
+Current FE8-P0-08A evidence is the local verification set recorded below;
 GitHub CI run is recorded in the task handoff after push.
-Previous accepted FE8-P0-07A evidence CI run `28983219205` passed for
-`b92c78679b60d46bc51f49f94db589ee6e1b0b09`.
+Previous accepted FE8-P0-07B evidence CI run `28984118898` passed for
+`f94b2bbf6efa1c4fe403ae98865bc5b4da19db70`.
 
-Current evidence date UTC: `2026-07-08T23:54:59Z`
+Current evidence date UTC: `2026-07-09T00:23:08Z`
 
-Status: FE8-P0-07B is locally verified and reviewable. Final 8.0.0 cutover
+Status: FE8-P0-08A is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
 validation, integrated disposable-data smoke and backend version synchronization
 are complete.
@@ -89,12 +92,14 @@ create where the backend supports the exact operation. Platform Settings, Mail
 / Delivery settings and Platform Access users/invites/sessions workflows are
 connected in the new UI without `/legacy/` where the backend supports the exact
 operation. Platform invite revoke remains disabled because the backend has no
-browser invite revoke endpoint. Remaining workflows listed below are still not
-migrated.
+browser invite revoke endpoint. Backhaul list/detail/actions and Route Policy
+preview/apply/cleanup are connected in the new UI without `/legacy/` where the
+backend supports the exact operation. Backhaul create/delete remain legacy-only
+or future scope. Remaining workflows listed below are still not migrated.
 
 ## 1. Summary
 
-This evidence records the current 8.0.0 frontend branch after FE8-P0-07B:
+This evidence records the current 8.0.0 frontend branch after FE8-P0-08A:
 
 - CI push coverage includes `release/8.0.0-frontend-console` and `release/**`;
   pull request coverage remains enabled.
@@ -142,6 +147,13 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-07B:
   control-plane TLS read/save/apply, mail settings read/save/test, users
   list/detail, invite list/create and sessions list/revoke. Invite revoke stays
   disabled because the backend has no browser revoke endpoint.
+- `Infrastructure -> Backhaul` is connected without `/legacy/` for existing
+  link list/detail, apply, probe, transport promote and route projection
+  enable/disable. Create/delete are not exposed in this task.
+- `Network Policy -> Route Policy` is connected without `/legacy/` for
+  node-scoped list/detail, backend preview, apply and cleanup. Apply requires a
+  fresh successful backend preview for the selected node; stale preview disables
+  Apply.
 - Share/subscription one-time URLs are shown only in transient local UI state
   after backend create/rotate responses and are cleared on close.
 - Enrollment token plaintext and SSH terminal ticket URLs are shown only in
@@ -161,9 +173,9 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-07B:
 | `cd frontend && npm ci` | SKIP | This workstation session exposes bundled Node `v24.14.0`, but no native `npm` or `corepack` binary in `PATH`; existing `frontend/node_modules` was used for script-equivalent verification. GitHub CI remains configured for plain `npm ci`. |
 | `cd frontend && npm run typecheck` | PASS | Equivalent command run through bundled Node and local TypeScript: `tsc --noEmit` plus `tsc -p tsconfig.node.json --noEmit`. |
 | `cd frontend && npm run lint` | PASS | Equivalent command run through bundled Node and local ESLint: no warnings or errors. |
-| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 9 files, 77 tests passed. |
-| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 809 keys. |
-| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-DHIAWuss.js`, `web/assets/index-CMdslovF.css`. |
+| `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 10 files, 83 tests passed. |
+| `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 868 keys. |
+| `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-CvUZeaOH.js`, `web/assets/index-CMdslovF.css`. |
 | `scripts/ci/frontend-serving-smoke.sh` | PASS | Root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
 | `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
 | `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
@@ -174,6 +186,34 @@ Local note: this workstation did not expose a native `npm` or `corepack` binary
 in `PATH`; frontend checks were run through the bundled Node runtime and local
 `frontend/node_modules` binaries. The repository standard and GitHub CI path
 remain plain `npm ci` and `npm run ...`.
+
+## FE8-P0-08A Backhaul/Route Policy Test Evidence
+
+`frontend/src/pages/network-policy/BackhaulRoutePolicyPage.test.tsx` verifies
+Backhaul and Route Policy workflows against mocked backend API responses:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Backhaul list/detail loads | `loads Backhaul list/detail safely and does not render transport secrets` asserts `GET /api/v1/backhaul-links`, `GET /api/v1/backhaul-links/{id}` and renders link/transport detail. |
+| Backhaul apply calls backend if supported | `runs Backhaul apply, probe, promote and route-state actions through backend confirmations` asserts `POST /api/v1/backhaul-links/{id}/apply` is not called before confirmation and is called after confirmation. |
+| Backhaul probe calls backend if supported | Same test asserts confirmed `POST /api/v1/backhaul-links/{id}/probe`. Backend has no dedicated repair endpoint, so no fake repair action is exposed. |
+| Backhaul promote calls backend if supported | Same test asserts confirmed `POST /api/v1/backhaul-links/{id}/promote` with `transport_id`. |
+| Backhaul route-state update calls backend if supported | Same test asserts confirmed `PATCH /api/v1/backhaul-links/{id}/route` with `enabled=false`. |
+| Route policy list/detail loads | `loads Route Policy list/detail, previews before apply and shows route jobs` asserts `GET /api/v1/nodes`; list/detail are node-scoped projections because there is no separate route-policy list endpoint. |
+| Preview calls backend | Same test asserts `GET /api/v1/nodes/{id}/routes/preview` and renders returned revision, warnings, routes and system routes as text/tables. |
+| Successful preview enables apply | Same test asserts fresh preview state before clicking `Apply route policy`. |
+| Stale preview disables apply | `keeps Route Policy apply disabled when preview becomes stale` switches the selected node after preview and asserts `Apply route policy` stays disabled. |
+| Apply calls backend and shows job link | Route Policy test confirms `POST /api/v1/nodes/{id}/routes/apply` only after confirmation and renders returned `job-route-apply`. |
+| Cleanup requires confirmation | Route Policy test confirms `POST /api/v1/nodes/{id}/routes/cleanup` is not called before confirmation. |
+| 403/409/422 handled | `surfaces 403, 409 and 422 backend errors without legacy fallback` renders backend errors for Backhaul apply `403`, Backhaul promote `409` and Route Policy preview `422`. |
+| No `/legacy` for implemented workflows | Test `afterEach` asserts every captured backend call excludes `/legacy`. |
+| No raw API in page components | `keeps page components free from raw API and legacy calls` checks Backhaul/Route Policy page sources for no raw `fetch`, `apiRequest`, `sendJSON`, `/api/v1`, `/legacy` or `dangerouslySetInnerHTML`. |
+| i18n keys exist | `npm run i18n:check` evidence below validates English/Russian key parity after adding `backhaul.*`, `routePolicy.*` and `jobs.openJobs`. |
+| Secrets safe | Backhaul detail test verifies transport `config`/`secret_refs` values are not rendered; test spies assert secret-like values are not logged or stored in browser storage. |
+
+Backhaul and route policy workflows work in the new UI without `/legacy/` where
+the backend supports the exact sub-action. Backhaul create/delete remain out of
+FE8-P0-08A scope.
 
 ## FE8-P0-06A Client Routes/Access Maintenance Test Evidence
 
@@ -606,6 +646,10 @@ Fully connected in the new console:
   Access / RBAC` runtime preflight, control-plane TLS read/save/apply, mail
   settings read/save/test, users list/detail, invite list/create and sessions
   list/revoke.
+- `Infrastructure -> Backhaul` existing link list/detail, apply, probe,
+  transport promote and route projection enable/disable.
+- `Network Policy -> Route Policy` node-scoped list/detail, backend preview,
+  apply and cleanup.
 
 Still disabled, read-only or legacy-only:
 
@@ -615,7 +659,7 @@ Still disabled, read-only or legacy-only:
 - client delivery history;
 - nodes create/register/edit, new SSH access method creation with secret
   material, manual bootstrap bundle reveal, agent identity revoke, reboot,
-  emergency cleanup, stale rotation cleanup and route policy preview/apply/cleanup;
+  emergency cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance draft-save
@@ -623,7 +667,7 @@ Still disabled, read-only or legacy-only:
 - Platform invite revoke because the backend has no browser revoke endpoint;
 - direct Platform user lifecycle mutations: status change, reset-password,
   resend-invite and delete user;
-- backhaul mutations;
+- backhaul create/delete;
 - backup/restore browser UI.
 
 ## 13. Known Limitations
@@ -631,8 +675,8 @@ Still disabled, read-only or legacy-only:
 - Backend binary/version metadata remains `7.1.1.0`; synchronizing it to
   `8.0.0` is a separate release task.
 - Full normal operator work still requires `/legacy/` for many workflows outside
-  the migrated Clients, Firewall, Instances/Services, Nodes, Certificates/PKI
-  and Platform settings/mail/access surfaces.
+  the migrated Clients, Firewall, Instances/Services, Nodes, Certificates/PKI,
+  Platform settings/mail/access, Backhaul and Route Policy surfaces.
 - Generic client edit stays disabled because the backend has no generic
   `PATCH/PUT /clients/{id}` endpoint.
 - Client disable stays disabled because the backend exposes activate/suspend
@@ -670,7 +714,7 @@ Still disabled, read-only or legacy-only:
 - No browser screenshot/responsive Playwright evidence was produced in this
   pass.
 - Integrated live API smoke was not run against a disposable DB/API in this
-  session; FE8-P0-06A evidence is frontend/API-contract test coverage against
+  session; current evidence is frontend/API-contract test coverage against
   mocked backend responses plus the local command set recorded above.
 
 ## 14. Go / No-Go
@@ -685,22 +729,22 @@ Recommendation:
   instance creation, runtime artifact list/import, existing Nodes
   observability/diagnostics/inventory and Nodes bootstrap/security/control
   workflows, Certificates/PKI workflows and Platform settings/mail/access
-  workflows where backend endpoints exist in controlled staging after operator
-  review.
+  workflows, Backhaul link actions and Route Policy preview/apply/cleanup where
+  backend endpoints exist in controlled staging after operator review.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
 
 1. run integrated smoke/e2e against disposable DB/API data for VLESS, Clients
    core/artifacts/delivery/routes/access maintenance/config cleanup, Firewall
-   and Instances/Service Packs runtime operator flows;
-2. migrate remaining Nodes create/register/edit, route policy and destructive
-   remediation workflows not included in FE8-P0-05B, including agent identity
-   revoke, reboot, emergency cleanup and stale rotation cleanup;
+   Instances/Service Packs, Backhaul and Route Policy runtime operator flows;
+2. migrate remaining Nodes create/register/edit and destructive remediation
+   workflows not included in FE8-P0-05B, including agent identity revoke,
+   reboot, emergency cleanup and stale rotation cleanup;
 3. add backend/browser support for runtime artifact delete if it is required for
    final operator parity;
-4. decide whether direct Platform user lifecycle mutations and invite revoke
-   require backend/browser parity for final cutover;
+4. decide whether Backhaul create/delete, direct Platform user lifecycle
+   mutations and invite revoke require backend/browser parity for final cutover;
 5. add E2E/browser responsive evidence for critical operator flows;
 6. synchronize backend/frontend version and release-chain artifacts to `8.0.0`;
 7. run full release gate in the release environment.
