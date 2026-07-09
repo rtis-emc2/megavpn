@@ -2,7 +2,12 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Current documentation/evidence HEAD: pending final evidence alignment commit
+Current documentation/evidence HEAD:
+
+- Multiline markdown rewrite commit:
+  `e62db4acf49084fad566e2e47c042ea06255d759`
+- Final evidence alignment commit:
+  this commit, `docs: record final 8.0.0 evidence markdown fix`
 
 Last functional batch evidence commit: `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
