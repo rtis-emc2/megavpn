@@ -2,7 +2,7 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Current documentation/evidence HEAD: `b9843fc381fd964d140a065585cc19aa8ad930c7`
+Current documentation/evidence HEAD: `cb79e9ccef86994ed7116a4acd52d5c3f27fabc4`
 
 Last functional batch evidence commit: `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
@@ -16,17 +16,19 @@ Failed markdown normalization attempts:
 - `ceba0a422d35b9c32e3786e858f864855176683d`
 - `b9843fc381fd964d140a065585cc19aa8ad930c7`
 
-Current CI run: GitHub Actions run `29005389616` PASS for `b9843fc381fd964d140a065585cc19aa8ad930c7`
+Markdown LF guard commit: `cb79e9ccef86994ed7116a4acd52d5c3f27fabc4`
+
+Previous CI run before LF guard: GitHub Actions run `29005389616` PASS for `b9843fc381fd964d140a065585cc19aa8ad930c7`
 
 Markdown LF guard status:
 
-- `scripts/ci/docs-markdown-shape.sh` must reject CR bytes and CR-only collapsed Markdown.
-- `.gitattributes` must normalize Markdown, shell, TypeScript, JavaScript, JSON and YAML text files to LF.
-- Final LF guard commit and final CI are recorded in the final task response after push.
+- `scripts/ci/docs-markdown-shape.sh` rejects CR bytes and CR-only collapsed Markdown.
+- `.gitattributes` normalizes Markdown, shell, TypeScript, JavaScript, JSON and YAML text files to LF.
+- Final pushed HEAD and final GitHub CI are recorded in the task response after raw validation.
 
 Final 8.0.0 cutover: **NO-GO**.
 
-Current evidence date UTC: `2026-07-09T08:48:00Z`
+Current evidence date UTC: `2026-07-09T08:52:00Z`
 
 FE8-P0-08A Backhaul/Route Policy feature commit:
 `9ed3965fcdaa18554acf78680bc61317b9108564`
