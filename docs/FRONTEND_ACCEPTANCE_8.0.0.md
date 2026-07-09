@@ -2,20 +2,27 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Last functional batch evidence commit:
-`4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
+Current documentation/evidence HEAD: pending final evidence alignment commit
 
-Morning audit commit:
-`e1677b35f3682d5fbff6a417178cfd15cbabb0b3`
+Last functional batch evidence commit: `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
-Failed/insufficient markdown normalization attempt:
-`b2a9b99c7e47babe26a0ef9e2fca8779fffeb715`
+Morning audit commit: `e1677b35f3682d5fbff6a417178cfd15cbabb0b3`
 
-Current docs normalization fix commit:
-`7b0b025262081e0c528b96ac8ca88acc4b6a42a4`
+Failed markdown normalization attempts:
 
-FE8 overnight batch report commit:
-`4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
+- `b2a9b99c7e47babe26a0ef9e2fca8779fffeb715`
+- `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc`
+
+Last confirmed passing CI before this fix:
+
+GitHub Actions run `28999052460` PASS for
+`9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc`.
+
+CI for this fix: pending at handoff.
+
+Current evidence date UTC: `2026-07-09T07:22:36Z`
+
+Final 8.0.0 cutover: **NO-GO**.
 
 FE8-P0-08A Backhaul/Route Policy feature commit:
 `9ed3965fcdaa18554acf78680bc61317b9108564`
