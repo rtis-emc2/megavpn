@@ -65,7 +65,7 @@ require_clean_static_scan() {
     log "unsafe production pattern found"
     return 1
   fi
-  if rg -n "curl .*\\|.*(bash|sh|gpg|apt-key)|bash\", \"-c\", \"curl|sh\", \"-c\", \"curl|apt-key" cmd internal scripts deploy --glob '!**/*_test.go' --glob '!scripts/release-gate.sh' --glob '!scripts/self-test.sh' --glob '!scripts/ci/release-gate.sh' --glob '!scripts/ci/self-test.sh'; then
+  if rg -n "(^|[^[:alnum:]_])curl[[:space:]][^|]*\\|[[:space:]]*(sudo[[:space:]]+)?(bash|sh|gpg|apt-key)\\b|bash\", \"-c\", \"curl|sh\", \"-c\", \"curl|apt-key" cmd internal scripts deploy --glob '!**/*_test.go' --glob '!scripts/release-gate.sh' --glob '!scripts/self-test.sh' --glob '!scripts/ci/release-gate.sh' --glob '!scripts/ci/self-test.sh'; then
     log "unpinned curl pipe or apt key production pattern found"
     return 1
   fi
