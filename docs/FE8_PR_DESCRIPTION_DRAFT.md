@@ -4,9 +4,27 @@ Branch: `release/8.0.0-frontend-console`
 
 Generated UTC: `2026-07-09T10:57:57Z`
 
-Current HEAD: `24638d090d44bd9d6f3eea53b07d334533333e90`
+PR readiness evidence HEAD before this status-only PR body update:
+`6c69879c9c0d5e0a4d182e17140a059f0b62509c`
 
-Current CI: GitHub Actions run `29012228790` PASS.
+PR readiness evidence CI before this status-only PR body update:
+GitHub Actions run `29013369835` PASS.
+
+## Status
+
+Ready for human review and controlled staging validation.
+
+Not ready for final 8.0.0 production cutover.
+
+Production cutover remains blocked by:
+
+- backend version metadata still reporting `7.1.1.0`;
+- full release gate without skips not yet passed;
+- live disposable API/DB/node smoke not yet completed;
+- responsive evidence not yet attached;
+- human i18n wording review still open;
+- backend-missing/future-scope deferred items not yet explicitly accepted or
+  closed.
 
 ## PR Title
 
