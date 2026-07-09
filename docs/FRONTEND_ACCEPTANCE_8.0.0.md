@@ -25,10 +25,14 @@ Final 8.0.0 cutover: **NO-GO**.
 
 Final release debt readiness assessment:
 
-- Baseline documentation/evidence HEAD inspected:
-  `3d4e1ae2d69649eaa88a2baadc17c3dbf03efe05`.
-- Baseline CI: GitHub Actions run `29008173288` PASS for
-  `3d4e1ae2d69649eaa88a2baadc17c3dbf03efe05`.
+- LF guard recovery evidence HEAD inspected:
+  `772c7371387777045de990d19357f8c767c38dc5`.
+- LF guard recovery CI: GitHub Actions run `29010925982` PASS for
+  `772c7371387777045de990d19357f8c767c38dc5`.
+- GitHub raw evidence: `.gitattributes`, `.github/workflows/ci.yml`,
+  `scripts/ci/docs-markdown-shape.sh`, `scripts/ci/docs-consistency.sh`,
+  `scripts/ci/text-lf-guard.sh` and the three evidence docs are LF-only
+  multiline files for `772c7371387777045de990d19357f8c767c38dc5`.
 - This readiness package commit is recorded in the final task response and
   GitHub CI after push; self-embedding that SHA in this file would change the
   commit hash.
@@ -46,12 +50,13 @@ Final release debt readiness assessment:
   screenshot set was captured.
 - i18n review status: PARTIAL / OPEN. Key parity passes, but human
   English/Russian operator wording review remains required.
-- Static guard status: PASS locally. Raw page-level `/api/v1` calls are absent,
-  production `console.log` / `console.debug` and `dangerouslySetInnerHTML` are
-  absent from `frontend/src`, and browser storage in the new UI is limited to
-  API base and locale.
+- Static and text guard status: PASS locally and in CI. Raw page-level
+  `/api/v1` calls are absent, production `console.log` / `console.debug` and
+  `dangerouslySetInnerHTML` are absent from `frontend/src`, browser storage in
+  the new UI is limited to API base and locale, and text LF shape is protected
+  by `scripts/ci/text-lf-guard.sh`.
 
-Current evidence date UTC: `2026-07-09T09:57:57Z`
+Current evidence date UTC: `2026-07-09T10:26:02Z`
 
 FE8-P0-08A Backhaul/Route Policy feature commit:
 `9ed3965fcdaa18554acf78680bc61317b9108564`

@@ -2,16 +2,16 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-09T09:57:57Z`
+Generated UTC: `2026-07-09T10:26:02Z`
 
 Status: **READY FOR PR REVIEW, NOT READY FOR FINAL CUTOVER**.
 
-Baseline evidence HEAD inspected:
-`3d4e1ae2d69649eaa88a2baadc17c3dbf03efe05`.
+Current accepted evidence HEAD inspected:
+`772c7371387777045de990d19357f8c767c38dc5`.
 
-Latest baseline CI:
-GitHub Actions run `29008173288` PASS for
-`3d4e1ae2d69649eaa88a2baadc17c3dbf03efe05`.
+Latest accepted CI:
+GitHub Actions run `29010925982` PASS for
+`772c7371387777045de990d19357f8c767c38dc5`.
 
 ## Ready For PR Review
 
@@ -29,6 +29,9 @@ GitHub Actions run `29008173288` PASS for
   clean npm install covered by GitHub CI because this workstation has no npm.
 - GitHub Actions pins were updated to upstream node24 actions while preserving
   commit-SHA pinning.
+- `.gitattributes`, CI workflow, documentation guards and evidence docs are
+  LF-only multiline files in GitHub raw view; `scripts/ci/text-lf-guard.sh`
+  is wired into CI and `scripts/ci/docs-consistency.sh`.
 
 ## Ready For Staging Validation
 

@@ -2,7 +2,7 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-09T09:57:57Z`
+Generated UTC: `2026-07-09T10:26:02Z`
 
 Final cutover status: **NO-GO** until every required item below is completed or explicitly waived by release owners with a dated rationale.
 
@@ -25,7 +25,7 @@ Final cutover status: **NO-GO** until every required item below is completed or 
 | Static/raw API guard review | CLOSED |
 | Acceptance matrix cleanup | PARTIAL / OPEN |
 | PR readiness checklist | ADDED |
-| LF-only raw evidence validation | PASS LOCALLY / PENDING FINAL CI |
+| LF-only raw evidence validation | CLOSED |
 
 Release-blocking details:
 
@@ -57,19 +57,23 @@ Release-blocking details:
   release wording must be refreshed after live smoke, version sync and final
   gate evidence.
 - PR readiness checklist: added in `docs/FE8_PR_READINESS_8.0.0.md`.
+- LF-only raw evidence validation: closed by
+  `772c7371387777045de990d19357f8c767c38dc5`; GitHub CI run `29010925982`
+  passed and GitHub raw validation showed LF-only multiline files for
+  `.gitattributes`, `.github/workflows/ci.yml`, docs guards and evidence docs.
 
 ## Current Release Readiness Evidence
 
 | Item | Status | Evidence |
 | --- | --- | --- |
-| Baseline HEAD inspected | PASS | `3d4e1ae2d69649eaa88a2baadc17c3dbf03efe05` |
-| Latest baseline CI | PASS | GitHub Actions run `29008173288` for `3d4e1ae2d69649eaa88a2baadc17c3dbf03efe05` |
+| LF guard recovery HEAD inspected | PASS | `772c7371387777045de990d19357f8c767c38dc5` |
+| Latest LF guard recovery CI | PASS | GitHub Actions run `29010925982` for `772c7371387777045de990d19357f8c767c38dc5` |
 | `/legacy/` rollback path | PASS | `web/legacy` exists and serving smoke passes. |
 | Package manager | PASS | npm-only: `frontend/package-lock.json` exists and `frontend/pnpm-lock.yaml` is absent. |
 | Version sync | OPEN | Backend version `7.1.1.0`, frontend package `8.0.0`, HEAD has no version tag. |
 | GitHub Actions runtime pins | CLOSED | checkout `v7.0.0`, setup-go `v6.5.0`, setup-node `v6.4.0`, upload-artifact `v7.0.1`; each inspected `action.yml` uses `node24`. |
 | Static frontend guards | PASS | `scripts/ci/frontend-static-guards.sh` passed locally. |
-| Docs guards | PASS | `scripts/ci/docs-markdown-shape.sh` and `scripts/ci/docs-consistency.sh` passed locally. |
+| Text LF guards | PASS | `scripts/ci/text-lf-guard.sh`, `scripts/ci/docs-markdown-shape.sh` and `scripts/ci/docs-consistency.sh` passed locally and in CI. |
 | Release gate | PARTIAL | Diagnostic run with `MEGAVPN_RELEASE_ALLOW_SKIPS=1` passed 19 gates and skipped 7 workstation/live-env gates. |
 | Live disposable smoke | OPEN | Required API/DB/node inputs are unavailable. |
 | Responsive evidence | OPEN | Real workflow screenshots are not captured. |
