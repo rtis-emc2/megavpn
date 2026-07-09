@@ -2,12 +2,14 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Current documentation/evidence HEAD:
+Documentation/evidence commits recorded:
 
 - Multiline markdown rewrite commit:
   `e62db4acf49084fad566e2e47c042ea06255d759`
-- Final evidence alignment commit:
-  this commit, `docs: record final 8.0.0 evidence markdown fix`
+- Final evidence markdown fix commit:
+  `ff1809e7ee308a9791c6d89b5da0507c9125e945`
+- Final CI evidence commit:
+  `92bb9f6e3d5a0b0a97ea2905631b92ba3e6d2d65`
 
 Last functional batch evidence commit: `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
@@ -27,6 +29,11 @@ CI for this fix:
 
 GitHub Actions run `29001561143` PASS for
 `ff1809e7ee308a9791c6d89b5da0507c9125e945`.
+
+Final evidence CI:
+
+GitHub Actions run `29001785709` PASS for
+`92bb9f6e3d5a0b0a97ea2905631b92ba3e6d2d65`.
 
 Current evidence date UTC: `2026-07-09T07:22:36Z`
 
