@@ -3,7 +3,10 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`9ed3965fcdaa18554acf78680bc61317b9108564`
+`4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
+
+FE8 overnight batch report commit:
+`4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
 FE8-P0-08A Backhaul/Route Policy feature commit:
 `9ed3965fcdaa18554acf78680bc61317b9108564`
@@ -57,17 +60,18 @@ Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
 Current evidence CI:
-GitHub Actions run `28985121588` passed for
+GitHub Actions run `28985369032` passed for
+`4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`.
+Previous accepted FE8-P0-08A evidence CI run `28985121588` passed for
 `9ed3965fcdaa18554acf78680bc61317b9108564`.
-Previous accepted FE8-P0-07B evidence CI run `28984118898` passed for
-`f94b2bbf6efa1c4fe403ae98865bc5b4da19db70`.
 
-Current evidence date UTC: `2026-07-09T00:27:35Z`
+Current evidence date UTC: `2026-07-09T04:36:45Z`
 
-Status: FE8-P0-08A is locally verified and reviewable. Final 8.0.0 cutover
-remains NO-GO until the remaining non-migrated workflows, live/staging operator
-validation, integrated disposable-data smoke and backend version synchronization
-are complete.
+Status: FE8-P0-08A plus the overnight evidence report are CI-verified and
+reviewable. Final 8.0.0 cutover remains NO-GO until the remaining
+backend-missing/future-scope sub-actions are explicitly accepted or closed,
+live/staging operator validation, integrated disposable-data smoke and backend
+version synchronization are complete.
 
 VLESS is connected in the new UI without `/legacy/`. Firewall is connected in
 the new UI without `/legacy/`. Clients core/artifacts are connected in the new

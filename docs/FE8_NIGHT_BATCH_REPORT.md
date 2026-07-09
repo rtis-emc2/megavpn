@@ -6,7 +6,7 @@ Batch input baseline commit: `24a0d129a0ca89caf3ec0e5f9c18616c0af9d95f`
 
 Report start commit: `9ed3965fcdaa18554acf78680bc61317b9108564`
 
-Final report commit: pending `docs: add 8.0.0 overnight batch report`
+Final report commit: `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
 Generated UTC: `2026-07-09T00:27:35Z`
 
