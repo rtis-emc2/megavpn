@@ -2,10 +2,9 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-09T04:36:45Z`
+Generated UTC: `2026-07-09T06:32:24Z`
 
-Final cutover status: **NO-GO** until every required item below is completed
-or explicitly waived by release owners with a dated rationale.
+Final cutover status: **NO-GO** until every required item below is completed or explicitly waived by release owners with a dated rationale.
 
 ## Release-Blocking Debt
 

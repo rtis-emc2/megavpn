@@ -1,21 +1,18 @@
 # RTIS MegaVPN Frontend Acceptance 8.0.0
 
-Branch:
-`release/8.0.0-frontend-console`
-
-Current documentation/evidence HEAD:
-`e1677b35f3682d5fbff6a417178cfd15cbabb0b3` plus the normalizing commit
-created by `FE8-morning-audit-markdown-evidence-fix`.
-
-Current documentation/evidence note:
-the immutable SHA of the normalizing commit is recorded by Git and CI after
-commit creation. That pushed commit supersedes `e1677b35...` as branch HEAD.
+Branch: `release/8.0.0-frontend-console`
 
 Last functional batch evidence commit:
 `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
 Morning audit commit:
 `e1677b35f3682d5fbff6a417178cfd15cbabb0b3`
+
+Failed/insufficient markdown normalization attempt:
+`b2a9b99c7e47babe26a0ef9e2fca8779fffeb715`
+
+Current docs normalization fix commit:
+`PENDING_FIX_COMMIT_SHA`
 
 FE8 overnight batch report commit:
 `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
@@ -71,9 +68,12 @@ Firewall implementation commit:
 Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
-Current CI run:
+Last confirmed passing CI before this fix:
 GitHub Actions run `28994536686` passed for
 `e1677b35f3682d5fbff6a417178cfd15cbabb0b3`.
+
+CI for this fix:
+pending at handoff.
 
 Last functional batch CI:
 GitHub Actions run `28985369032` passed for
@@ -83,7 +83,9 @@ Previous accepted FE8-P0-08A evidence CI:
 GitHub Actions run `28985121588` passed for
 `9ed3965fcdaa18554acf78680bc61317b9108564`.
 
-Current evidence date UTC: `2026-07-09T06:10:28Z`
+Current evidence date UTC: `2026-07-09T06:32:24Z`
+
+Final 8.0.0 cutover: NO-GO.
 
 Status: FE8-P0-08A plus the overnight evidence report are CI-verified and
 reviewable. Final 8.0.0 cutover remains NO-GO until the remaining
@@ -192,7 +194,7 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-08A:
 | `go test ./...` | PASS | All Go package tests pass, including `internal/api/http`. |
 | `go test -race ./...` | PASS | Race detector tests pass. |
 | `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin` | PASS | All operational binaries build. |
-| `cd frontend && npm ci` | SKIP | This workstation session exposes bundled Node `v24.14.0`, but no native `npm` or `corepack` binary in `PATH`; existing `frontend/node_modules` was used for script-equivalent verification. GitHub CI remains configured for plain `npm ci`. |
+| `cd frontend && npm ci` | SKIP | Local shell has no native `npm` or `corepack` binary in `PATH`. |
 | `cd frontend && npm run typecheck` | PASS | Equivalent command run through bundled Node and local TypeScript: `tsc --noEmit` plus `tsc -p tsconfig.node.json --noEmit`. |
 | `cd frontend && npm run lint` | PASS | Equivalent command run through bundled Node and local ESLint: no warnings or errors. |
 | `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 10 files, 83 tests passed. |
@@ -217,7 +219,7 @@ Backhaul and Route Policy workflows against mocked backend API responses:
 | Required behavior | Test evidence |
 | --- | --- |
 | Backhaul list/detail loads | `loads Backhaul list/detail safely and does not render transport secrets` asserts `GET /api/v1/backhaul-links`, `GET /api/v1/backhaul-links/{id}` and renders link/transport detail. |
-| Backhaul apply calls backend if supported | `runs Backhaul apply, probe, promote and route-state actions through backend confirmations` asserts `POST /api/v1/backhaul-links/{id}/apply` is not called before confirmation and is called after confirmation. |
+| Backhaul apply calls backend if supported | Confirmed apply calls the backend only after confirmation. |
 | Backhaul probe calls backend if supported | Same test asserts confirmed `POST /api/v1/backhaul-links/{id}/probe`. Backend has no dedicated repair endpoint, so no fake repair action is exposed. |
 | Backhaul promote calls backend if supported | Same test asserts confirmed `POST /api/v1/backhaul-links/{id}/promote` with `transport_id`. |
 | Backhaul route-state update calls backend if supported | Same test asserts confirmed `PATCH /api/v1/backhaul-links/{id}/route` with `enabled=false`. |
@@ -303,7 +305,7 @@ and PKI workflows against mocked backend API responses:
 | Expiry/status/usage display | Certificate table renders status, expiry state and usage; detail shows status, validity dates and usage without PEM/secret material. |
 | Import sends real API request | `previews and imports certificates through real endpoints with stale preview protection` asserts `POST /api/v1/platform/certificates/preview` and `POST /api/v1/platform/certificates/import`. |
 | Import preview stale disables apply | Same test changes private-key input after preview and verifies import remains disabled until preview is run again. |
-| Private key is not logged/stored/rendered | `does not log or persist certificate private keys and keeps implemented workflow off legacy` spies on `console.log` and `Storage.setItem`, verifies private-key material is not persisted or rendered after submit, and keeps it only in the backend request body. |
+| Private key is not logged/stored/rendered | Test spies verify key material is not logged, stored or rendered after submit. |
 | Self-signed create is real | `creates self-signed certificates, issues from CA and creates managed service PKI roots` asserts `POST /api/v1/platform/certificates/self-signed`. |
 | Managed CA / issue cert are real | Same test asserts `POST /api/v1/platform/certificates/authorities` and `POST /api/v1/platform/certificates/issue-from-ca`. |
 | PKI root create/list is real | Same test asserts `GET/POST /api/v1/platform/pki-roots`; CA key material is backend-generated and not returned to the browser. |
@@ -354,7 +356,7 @@ workflows against mocked backend API responses:
 | Node detail loads | Same test asserts `GET /api/v1/nodes/{id}` and opens the detail drawer. |
 | Agent/runtime state displays | Same test renders heartbeat, communication state, agent metadata and timestamps from `GET /api/v1/nodes/{id}/diagnostics`. |
 | Diagnostics output is text | Same test renders script-like backend strings and asserts no `<script>` element is created. |
-| Inventory view/sync | Inventory tab renders payload as text; `runs maintenance, inventory, capabilities, diagnostics and discovery only after confirmation` asserts confirmed `POST /api/v1/nodes/{id}/inventory/sync` and returned job tracking. |
+| Inventory view/sync | Inventory payload renders as text and sync requires confirmation. |
 | Maintenance mode | Same mutation test asserts maintenance is not called before confirmation and then calls `POST /api/v1/nodes/{id}/maintenance/enable`. |
 | Capability install/verify | Same mutation test asserts confirmed `POST /api/v1/nodes/{id}/capabilities/install` and `/verify` with backend payload. |
 | Diagnostics run/retry | Same mutation test asserts confirmed `POST /diagnostics/channel-probe`, `/retry-inventory`, `/retry-discovery`, `/reconcile-runtime` and `/requeue-stuck-job`. |

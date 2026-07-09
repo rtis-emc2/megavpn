@@ -2,19 +2,17 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Audited HEAD SHA:
-`4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
+Audited HEAD SHA: `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
-Morning audit commit:
-`e1677b35f3682d5fbff6a417178cfd15cbabb0b3`
+Morning audit commit: `e1677b35f3682d5fbff6a417178cfd15cbabb0b3`
+
+Markdown/evidence normalization attempt: `b2a9b99c7e47babe26a0ef9e2fca8779fffeb715`
 
 Pre-audit working tree: clean.
 
-Generated UTC: `2026-07-09T04:36:45Z`
+Generated UTC: `2026-07-09T06:32:24Z`
 
-CI status for audited HEAD:
-[GitHub Actions run 28985369032][ci-28985369032] PASS for
-`4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`.
+CI status for audited HEAD: GitHub Actions run `28985369032` PASS.
 
 Final recommendation:
 
