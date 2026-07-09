@@ -9,47 +9,123 @@ or explicitly waived by release owners with a dated rationale.
 
 ## Release-Blocking Debt
 
-| Area | Required work | Current status |
-| --- | --- | --- |
-| Version sync | Synchronize backend/frontend/release metadata from `7.1.1.0` to `8.0.0`. | OPEN |
-| Live disposable smoke | Run connected VLESS, Firewall, Clients, Instances/Services, Nodes, Certificates/PKI, Platform, Backhaul and Route Policy flows against disposable API/DB data. | OPEN |
-| Full release gate | Run the full release gate in the release environment after version sync and live smoke. | OPEN |
-| Legacy rollback | Keep `/legacy/` available until final cutover is signed off and rollback has been exercised. | REQUIRED |
-| GitHub Actions Node.js 20 deprecation | Review workflow Node runtime warnings and update pinned Actions/runtime versions where required. | OPEN |
-| Responsive evidence | Capture Desktop/Pad/Phone manual evidence for critical operator workflows. | OPEN |
-| i18n final review | Review English/Russian wording for operator clarity beyond key parity. | OPEN |
-| Static/raw API guard review | Re-run and inspect static guard coverage before release tag. | OPEN |
-| Acceptance matrix cleanup | Replace historical/pending handoff wording with final release evidence after all live checks. | OPEN |
-| PR readiness checklist | Prepare final PR summary, release notes diff, CI evidence and rollback notes. | OPEN |
+| Area | Status |
+| --- | --- |
+| Version sync | OPEN |
+| Live disposable smoke | OPEN |
+| Full release gate | OPEN |
+| Legacy rollback | REQUIRED |
+| GitHub Actions Node.js 20 deprecation | OPEN |
+| Responsive evidence | OPEN |
+| i18n final review | OPEN |
+| Static/raw API guard review | OPEN |
+| Acceptance matrix cleanup | OPEN |
+| PR readiness checklist | OPEN |
+
+Release-blocking details:
+
+- Version sync:
+  synchronize backend/frontend/release metadata from `7.1.1.0` to `8.0.0`.
+- Live disposable smoke:
+  run connected VLESS, Firewall, Clients, Instances/Services, Nodes,
+  Certificates/PKI, Platform, Backhaul and Route Policy flows against
+  disposable API/DB data.
+- Full release gate:
+  run the full release gate in the release environment after version sync and
+  live smoke.
+- Legacy rollback:
+  keep `/legacy/` available until final cutover is signed off and rollback has
+  been exercised.
+- GitHub Actions Node.js 20 deprecation:
+  review workflow Node runtime warnings and update pinned Actions/runtime
+  versions where required.
+- Responsive evidence:
+  capture Desktop/Pad/Phone manual evidence for critical operator workflows.
+- i18n final review:
+  review English/Russian wording for operator clarity beyond key parity.
+- Static/raw API guard review:
+  re-run and inspect static guard coverage before release tag.
+- Acceptance matrix cleanup:
+  replace historical/pending handoff wording with final release evidence after
+  all live checks.
+- PR readiness checklist:
+  prepare final PR summary, release notes diff, CI evidence and rollback notes.
 
 ## Backend-Missing Sub-Actions
 
-| Domain | Sub-action | Required backend or contract decision |
-| --- | --- | --- |
-| Clients | Generic edit | No generic `PATCH/PUT /api/v1/clients/{id}` endpoint. |
-| Clients | Route update | No `PUT/PATCH /api/v1/clients/{id}/routes/{route_id}` endpoint. |
-| Clients | Per-access revoke | Backend supports client-level revoke and service-access delete, not exact per-access revoke. |
-| Clients | Delivery history | No client-scoped delivery history list/status endpoint. |
-| Services | Runtime artifact delete | No binary runtime artifact DELETE endpoint. |
-| Services | Service pack validation | No separate validation endpoint; create/update uses backend validation directly. |
-| Instances | Spec preview/draft-save | No separate preview endpoint or draft-save HTTP route. |
-| Platform Access | Invite revoke | No browser backend endpoint for invite revoke. |
-| Backhaul | Dedicated repair action | No dedicated repair endpoint; UI exposes apply/probe/promote/route state only. |
-| Operations | Backup/restore browser UI | Browser parity endpoint/UX is not implemented for this release candidate. |
+| Domain | Sub-action |
+| --- | --- |
+| Clients | Generic edit |
+| Clients | Route update |
+| Clients | Per-access revoke |
+| Clients | Delivery history |
+| Services | Runtime artifact delete |
+| Services | Service pack validation |
+| Instances | Spec preview/draft-save |
+| Platform Access | Invite revoke |
+| Backhaul | Dedicated repair action |
+| Operations | Backup/restore browser UI |
+
+Backend-missing reasons:
+
+- Generic client edit:
+  no generic `PATCH/PUT /api/v1/clients/{id}` endpoint.
+- Client route update:
+  no `PUT/PATCH /api/v1/clients/{id}/routes/{route_id}` endpoint.
+- Per-access revoke:
+  backend supports client-level revoke and service-access delete, not exact
+  per-access revoke.
+- Client delivery history:
+  no client-scoped delivery history list/status endpoint.
+- Runtime artifact delete:
+  no binary runtime artifact DELETE endpoint.
+- Service pack validation:
+  no separate validation endpoint; create/update uses backend validation
+  directly.
+- Instance spec preview/draft-save:
+  no separate preview endpoint or draft-save HTTP route.
+- Platform invite revoke:
+  no browser backend endpoint for invite revoke.
+- Backhaul dedicated repair action:
+  no dedicated repair endpoint; UI exposes apply/probe/promote/route state.
+- Backup/restore browser UI:
+  browser parity endpoint/UX is not implemented for this release candidate.
 
 ## Future-Scope Sub-Actions
 
-| Domain | Sub-action | Current release decision |
-| --- | --- | --- |
-| Clients -> Groups | Non-VLESS materialization | Connected workflow is VLESS-only; non-VLESS services remain catalog-only/future. |
-| Clients -> Groups | Migration conflict UI | Backend inventory exists, UI remains future scope. |
-| Nodes | Create/register/edit | Not migrated in FE8-P0-05A/05B. |
-| Nodes | New SSH access method with secret material | Not exposed to avoid browser secret handling without a reviewed flow. |
-| Nodes | Manual bootstrap bundle reveal | Not exposed; one-time bootstrap values remain backend-controlled. |
-| Nodes | Agent identity revoke, reboot, emergency cleanup, stale rotation cleanup | Destructive remediation remains future scope/legacy-only. |
-| Nodes | Service discovery ignore/unignore | Not migrated in FE8-P0-05A. |
-| Platform Access | User lifecycle mutations | Status change, reset-password, resend-invite and delete remain future scope. |
-| Backhaul | Link create/delete | Backend routes exist, but new console exposes list/detail/actions only after FE8-P0-08A. |
+| Domain | Sub-action |
+| --- | --- |
+| Clients -> Groups | Non-VLESS materialization |
+| Clients -> Groups | Migration conflict UI |
+| Nodes | Create/register/edit |
+| Nodes | New SSH access method with secret material |
+| Nodes | Manual bootstrap bundle reveal |
+| Nodes | Agent identity revoke/reboot/cleanup |
+| Nodes | Service discovery ignore/unignore |
+| Platform Access | User lifecycle mutations |
+| Backhaul | Link create/delete |
+
+Future-scope decisions:
+
+- Non-VLESS materialization:
+  connected workflow is VLESS-only; non-VLESS services remain catalog-only.
+- Migration conflict UI:
+  backend inventory exists, UI remains future scope.
+- Nodes create/register/edit:
+  not migrated in FE8-P0-05A/05B.
+- New SSH access method with secret material:
+  not exposed to avoid browser secret handling without a reviewed flow.
+- Manual bootstrap bundle reveal:
+  not exposed; one-time bootstrap values remain backend-controlled.
+- Agent identity revoke, reboot, emergency cleanup and stale rotation cleanup:
+  destructive remediation remains future scope or legacy-only.
+- Service discovery ignore/unignore:
+  not migrated in FE8-P0-05A.
+- Platform user lifecycle mutations:
+  status change, reset-password, resend-invite and delete remain future scope.
+- Backhaul link create/delete:
+  backend routes exist, but new console exposes list/detail/actions only after
+  FE8-P0-08A.
 
 ## Live Smoke Plan
 
@@ -58,18 +134,26 @@ Minimum disposable smoke coverage before final release decision:
 1. VLESS group create/edit/scope/member preview/apply/remove/sync.
 2. Firewall address group/policy/rule CRUD, preview, apply and emergency
    disable on disposable nodes.
-3. Client create/status/revoke/delete, artifacts build/download/delete,
-   delivery share/subscription/email, route create/delete, access
-   rotation/delete and config cleanup.
-4. Instance runtime lifecycle, service-pack instance create, manual create,
-   spec replace and runtime artifact URL import.
-5. Nodes diagnostics/inventory/capabilities/service discovery plus
-   bootstrap/security/control for configured disposable nodes.
-6. Certificates/PKI import preview/apply, self-signed, managed CA,
-   issue-from-CA, default/revoke/delete and PKI root create.
-7. Platform settings save/apply, mail settings/test, users/invites/sessions.
-8. Backhaul apply/probe/promote/route projection and Route Policy
-   preview/apply/cleanup on disposable topology.
+3. Client create/status/revoke/delete.
+4. Client artifacts build/download/delete.
+5. Client delivery share/subscription/email.
+6. Client route create/delete.
+7. Client access rotation/delete and config cleanup.
+8. Instance runtime lifecycle.
+9. Service-pack instance create.
+10. Manual instance create.
+11. Instance spec replace.
+12. Runtime artifact URL import.
+13. Nodes diagnostics/inventory/capabilities/service discovery.
+14. Nodes bootstrap/security/control for configured disposable nodes.
+15. Certificates/PKI import preview/apply.
+16. Certificates/PKI self-signed, managed CA and issue-from-CA.
+17. Certificates/PKI default/revoke/delete and PKI root create.
+18. Platform settings save/apply.
+19. Mail settings/test.
+20. Users/invites/sessions.
+21. Backhaul apply/probe/promote/route projection.
+22. Route Policy preview/apply/cleanup on disposable topology.
 
 ## Release-Gate Plan
 
@@ -85,9 +169,11 @@ Minimum disposable smoke coverage before final release decision:
 1. Update backend binary/version metadata from `7.1.1.0` to `8.0.0`.
 2. Update frontend visible version/release metadata if it is derived outside
    the backend `/api/v1/version` response.
-3. Re-run `go test ./...`, `go test -race ./...`, frontend build/tests and
-   `scripts/ci/docs-consistency.sh`.
-4. Confirm release notes and acceptance evidence reference the synchronized
+3. Re-run `go test ./...`.
+4. Re-run `go test -race ./...`.
+5. Re-run frontend build/tests.
+6. Re-run `scripts/ci/docs-consistency.sh`.
+7. Confirm release notes and acceptance evidence reference the synchronized
    version on the final SHA.
 
 ## Responsive Evidence Plan
@@ -99,18 +185,22 @@ Required manual screenshots or recorded checks:
 2. Tablet/pad viewport for the same high-risk workflow entry points.
 3. Phone/narrow viewport for navigation, destructive confirmations,
    one-time-secret panels and job tracking.
-4. Confirmation that text does not overlap, destructive controls remain
-   reachable and secret material is not exposed.
+4. Confirmation that text does not overlap.
+5. Confirmation that destructive controls remain reachable.
+6. Confirmation that secret material is not exposed.
 
 ## PR Readiness Checklist
 
 - Branch is pushed to `origin/release/8.0.0-frontend-console`.
 - `/legacy/` rollback path exists and remains documented.
 - Latest GitHub Actions CI run is green on the evidence SHA.
-- Package manager remains npm-only: `frontend/package-lock.json` present and
-  `frontend/pnpm-lock.yaml` absent.
-- PR summary lists connected workflows, backend-missing sub-actions, release
-  blockers and rollback plan.
+- Package manager remains npm-only.
+- `frontend/package-lock.json` is present.
+- `frontend/pnpm-lock.yaml` is absent.
+- PR summary lists connected workflows.
+- PR summary lists backend-missing sub-actions.
+- PR summary lists release blockers.
+- PR summary includes rollback plan.
 - No automatic merge or main-branch mutation before review.
 
 ## Security And Safety Requirements Still Active

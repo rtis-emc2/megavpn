@@ -1,9 +1,21 @@
 # RTIS MegaVPN Frontend Acceptance 8.0.0
 
-Branch: `release/8.0.0-frontend-console`
+Branch:
+`release/8.0.0-frontend-console`
 
-Latest evidence commit:
+Current documentation/evidence HEAD:
+`e1677b35f3682d5fbff6a417178cfd15cbabb0b3` plus the normalizing commit
+created by `FE8-morning-audit-markdown-evidence-fix`.
+
+Current documentation/evidence note:
+the immutable SHA of the normalizing commit is recorded by Git and CI after
+commit creation. That pushed commit supersedes `e1677b35...` as branch HEAD.
+
+Last functional batch evidence commit:
 `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
+
+Morning audit commit:
+`e1677b35f3682d5fbff6a417178cfd15cbabb0b3`
 
 FE8 overnight batch report commit:
 `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
@@ -59,13 +71,19 @@ Firewall implementation commit:
 Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
-Current evidence CI:
+Current CI run:
+GitHub Actions run `28994536686` passed for
+`e1677b35f3682d5fbff6a417178cfd15cbabb0b3`.
+
+Last functional batch CI:
 GitHub Actions run `28985369032` passed for
 `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`.
-Previous accepted FE8-P0-08A evidence CI run `28985121588` passed for
+
+Previous accepted FE8-P0-08A evidence CI:
+GitHub Actions run `28985121588` passed for
 `9ed3965fcdaa18554acf78680bc61317b9108564`.
 
-Current evidence date UTC: `2026-07-09T04:36:45Z`
+Current evidence date UTC: `2026-07-09T06:10:28Z`
 
 Status: FE8-P0-08A plus the overnight evidence report are CI-verified and
 reviewable. Final 8.0.0 cutover remains NO-GO until the remaining
