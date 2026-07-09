@@ -2,7 +2,7 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Current documentation/evidence HEAD: pending final alignment commit
+Current documentation/evidence HEAD: `3a92fd3038d963c64c7e6fa02dfdcd6d874737bb`
 
 Last functional batch evidence commit: `4d3f571cec7d9f8c9e3adb8bc7b74ecc5a6d1481`
 
@@ -15,17 +15,17 @@ Failed markdown normalization attempts:
 - `3487c140f594a3db2bbd2dcd564031e312816900`
 - `ceba0a422d35b9c32e3786e858f864855176683d`
 
-Current CI run: pending final alignment commit
+Current CI run: GitHub Actions run `29005150156` PASS for `3a92fd3038d963c64c7e6fa02dfdcd6d874737bb`
 
 Final 8.0.0 cutover: **NO-GO**.
 
 Markdown shape guard status:
 
-- `scripts/ci/docs-markdown-shape.sh` is required before this evidence is accepted.
+- `scripts/ci/docs-markdown-shape.sh` is committed and wired into GitHub Actions.
 - The guard fails collapsed Markdown by line count, first-line shape and maximum line-length checks.
-- The guard rejects vague acceptance placeholders before final evidence alignment.
+- The guard rejects vague acceptance wording before evidence alignment.
 
-Current evidence date UTC: `2026-07-09T08:20:00Z`
+Current evidence date UTC: `2026-07-09T08:36:25Z`
 
 FE8-P0-08A Backhaul/Route Policy feature commit:
 `9ed3965fcdaa18554acf78680bc61317b9108564`
