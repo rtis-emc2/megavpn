@@ -3,10 +3,10 @@
 Branch: `release/8.0.0-frontend-console`
 
 Latest evidence commit:
-`pending final FE8-P0-08A feature commit; previous pushed/evidence commit is f94b2bbf6efa1c4fe403ae98865bc5b4da19db70`
+`9ed3965fcdaa18554acf78680bc61317b9108564`
 
 FE8-P0-08A Backhaul/Route Policy feature commit:
-`pending final feat: connect backhaul route policy workflows commit; final SHA is recorded in the task handoff after commit creation`
+`9ed3965fcdaa18554acf78680bc61317b9108564`
 
 FE8-P0-07B Platform settings/mail/access feature commit:
 `f94b2bbf6efa1c4fe403ae98865bc5b4da19db70`
@@ -57,12 +57,12 @@ Firewall evidence alignment commit:
 `d0c6af9db88018c5cae14be4542b453a310b658f`
 
 Current evidence CI:
-Current FE8-P0-08A evidence is the local verification set recorded below;
-GitHub CI run is recorded in the task handoff after push.
+GitHub Actions run `28985121588` passed for
+`9ed3965fcdaa18554acf78680bc61317b9108564`.
 Previous accepted FE8-P0-07B evidence CI run `28984118898` passed for
 `f94b2bbf6efa1c4fe403ae98865bc5b4da19db70`.
 
-Current evidence date UTC: `2026-07-09T00:23:08Z`
+Current evidence date UTC: `2026-07-09T00:27:35Z`
 
 Status: FE8-P0-08A is locally verified and reviewable. Final 8.0.0 cutover
 remains NO-GO until the remaining non-migrated workflows, live/staging operator
