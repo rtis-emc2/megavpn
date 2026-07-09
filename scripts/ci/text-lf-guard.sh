@@ -38,7 +38,7 @@ checks = {
         ],
     },
     "scripts/ci/text-lf-guard.sh": {
-        "min_lines": 80,
+        "min_lines": 120,
         "first3": [
             "#!/usr/bin/env bash",
             "set -euo pipefail",
@@ -47,6 +47,7 @@ checks = {
     },
     "docs/FE8_MORNING_AUDIT_8.0.0.md": {
         "min_lines": 120,
+        "max_line": 240,
         "first3": [
             "# FE8 8.0.0 Morning Audit",
             "",
@@ -55,6 +56,7 @@ checks = {
     },
     "docs/FE8_REMAINING_DEBT_8.0.0.md": {
         "min_lines": 100,
+        "max_line": 240,
         "first3": [
             "# FE8 Remaining Debt For 8.0.0",
             "",
@@ -63,8 +65,62 @@ checks = {
     },
     "docs/FRONTEND_ACCEPTANCE_8.0.0.md": {
         "min_lines": 200,
+        "max_line": 240,
         "first3": [
             "# RTIS MegaVPN Frontend Acceptance 8.0.0",
+            "",
+            "Branch: `release/8.0.0-frontend-console`",
+        ],
+        "forbidden": [
+            "git rev-parse HEAD",
+            "pending final evidence",
+            "plus the normalizing commit",
+            "reported by",
+            "pending at handoff",
+            "<new final commit SHA after this task>",
+        ],
+    },
+    "docs/FE8_PR_READINESS_8.0.0.md": {
+        "min_lines": 50,
+        "max_line": 240,
+        "first3": [
+            "# FE8 8.0.0 PR Readiness Package",
+            "",
+            "Branch: `release/8.0.0-frontend-console`",
+        ],
+    },
+    "docs/FE8_LIVE_SMOKE_PLAN_8.0.0.md": {
+        "min_lines": 80,
+        "max_line": 240,
+        "first3": [
+            "# FE8 8.0.0 Live Smoke Plan",
+            "",
+            "Branch: `release/8.0.0-frontend-console`",
+        ],
+    },
+    "docs/FE8_RESPONSIVE_EVIDENCE_PLAN_8.0.0.md": {
+        "min_lines": 40,
+        "max_line": 240,
+        "first3": [
+            "# FE8 8.0.0 Responsive Evidence Plan",
+            "",
+            "Branch: `release/8.0.0-frontend-console`",
+        ],
+    },
+    "docs/releases/8.0.0.md": {
+        "min_lines": 100,
+        "max_line": 240,
+        "first3": [
+            "# Release 8.0.0",
+            "",
+            "Release `8.0.0` introduces the MegaVPN Console frontend architecture.",
+        ],
+    },
+    "docs/FE8_DOC_WRITING_RULES.md": {
+        "min_lines": 30,
+        "max_line": 240,
+        "first3": [
+            "# FE8 Evidence Doc Writing Rules",
             "",
             "Branch: `release/8.0.0-frontend-console`",
         ],
@@ -112,6 +168,18 @@ for path, cfg in checks.items():
     if lines[:3] != cfg["first3"]:
         print(f"FAIL: {path} first three lines mismatch: {lines[:3]!r}")
         failed = True
+
+    max_line = cfg.get("max_line")
+    if max_line is not None:
+        for i, line in enumerate(lines, 1):
+            if len(line) > max_line:
+                print(f"FAIL: {path}:{i}: line too long ({len(line)} chars, max {max_line})")
+                failed = True
+
+    for token in cfg.get("forbidden", []):
+        if token in text:
+            print(f"FAIL: {path} contains forbidden placeholder: {token!r}")
+            failed = True
 
 if failed:
     raise SystemExit(1)
