@@ -23,7 +23,10 @@ Last confirmed passing CI before this fix:
 GitHub Actions run `28999052460` PASS for
 `9ab4dbfc38a88fcc08ce62bbffb6989f4676cbbc`.
 
-CI for this fix: pending at handoff.
+CI for this fix:
+
+GitHub Actions run `29001561143` PASS for
+`ff1809e7ee308a9791c6d89b5da0507c9125e945`.
 
 Current evidence date UTC: `2026-07-09T07:22:36Z`
 
@@ -85,7 +88,8 @@ GitHub Actions run `28994536686` passed for
 `e1677b35f3682d5fbff6a417178cfd15cbabb0b3`.
 
 CI for this fix:
-pending at handoff.
+GitHub Actions run `29001561143` PASS for
+`ff1809e7ee308a9791c6d89b5da0507c9125e945`.
 
 Last functional batch CI:
 GitHub Actions run `28985369032` passed for
