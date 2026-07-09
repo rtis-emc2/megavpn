@@ -129,6 +129,9 @@ jobs:
       - name: Check GitHub Actions pinning
         run: scripts/ci/actions-pinning-check.sh
 
+      - name: Check text LF shape
+        run: scripts/ci/text-lf-guard.sh
+
       - name: Check documentation markdown shape
         run: scripts/ci/docs-markdown-shape.sh
 
