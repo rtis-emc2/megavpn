@@ -55,6 +55,60 @@ jobs:
       - name: Make build parity
         run: make build
 
+  postgres-integration:
+    name: PostgreSQL integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: megavpn_test
+          POSTGRES_USER: megavpn_test
+          POSTGRES_PASSWORD: megavpn_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U megavpn_test -d megavpn_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MEGAVPN_TEST_DATABASE_DSN: postgres://megavpn_test:megavpn_test@127.0.0.1:5432/megavpn_test?sslmode=disable
+    steps:
+      - name: Checkout
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Setup Go
+        # actions/setup-go v6.5.0
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Wait for PostgreSQL
+        run: |
+          set -euo pipefail
+          for attempt in {1..30}; do
+            if pg_isready -h 127.0.0.1 -p 5432 -U megavpn_test -d megavpn_test; then
+              exit 0
+            fi
+            sleep 2
+          done
+          printf 'PostgreSQL service did not become ready\n' >&2
+          exit 1
+
+      - name: Download modules
+        run: go mod download
+
+      - name: PostgreSQL integration gate
+        run: scripts/ci/postgres-integration.sh
+
   race:
     name: Go race tests
     runs-on: ubuntu-latest
