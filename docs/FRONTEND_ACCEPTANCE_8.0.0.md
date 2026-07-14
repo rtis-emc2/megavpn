@@ -56,7 +56,12 @@ Final release debt readiness assessment:
   the new UI is limited to API base and locale, and text LF shape is protected
   by `scripts/ci/text-lf-guard.sh`.
 
-Current FE8-P0-09A evidence date UTC: `2026-07-14T16:36:06Z`
+Current FE8-P0-09B evidence date UTC: `2026-07-14T20:04:58Z`
+
+FE8-P0-09B Nodes create/edit feature commit:
+recorded in the final task response after commit and push.
+
+Previous FE8-P0-09A evidence date UTC: `2026-07-14T16:36:06Z`
 
 FE8-P0-09A Clients Full Parity feature commit:
 recorded in the final task response after commit and push.
@@ -153,7 +158,9 @@ connected in the new UI without `/legacy/`. Nodes bootstrap/security/control
 workflows are connected in the new UI without `/legacy/` for configured nodes:
 enrollment token create/rotate/revoke, bootstrap/reinstall job queueing,
 host-key scan/pin, SSH session ticket launch, agent token rotation and
-retire/force-retire. Client generic edit, routes list/create/update/delete,
+retire/force-retire. Nodes create and edit safe profile metadata are connected
+in the new UI without `/legacy/` for control-plane node records. Client generic
+edit, routes list/create/update/delete,
 service access list/rotation/revoke/delete, generated config cleanup and
 client delivery history are connected in the new UI without `/legacy/` where
 the backend supports the operation.
@@ -371,6 +378,35 @@ and PKI workflows against mocked backend API responses:
 | i18n keys exist | `npm run i18n:check` covers new `certificates.*` key parity. |
 
 Certificates/PKI workflows work in the new UI without `/legacy/`.
+
+## FE8-P0-09B Nodes Create/Edit Test Evidence
+
+`frontend/src/pages/infrastructure/NodesPage.test.tsx` verifies node create and
+safe metadata edit workflows against mocked backend API responses:
+
+| Required behavior | Test evidence |
+| --- | --- |
+| Create node action is permission-aware | Create test asserts the action is enabled with `node.write`; no-permission test asserts it is disabled with a permission-required title when only `node.read` is present. |
+| Create form sends real backend request | Same create test asserts `POST /api/v1/nodes` with name, address, kind, role, location label, OS family/version, architecture and `execution_mode=agent_managed`. |
+| Backend-supported enum values | Same create test selects `remote`, `egress` and `agent_managed`, matching backend `validateNodeProfile` accepted values. |
+| Successful create refreshes node list | Same create test asserts `GET /api/v1/nodes` is called more than once after create mutation success. |
+| Successful create does not fake online/enrolled state | Same create test renders backend-returned `draft` node status and `unknown` agent status for the newly created node. |
+| Create conflict preserves input | `preserves create input on conflict and maps backend field validation` asserts HTTP 409 is rendered safely and name/address values remain in the form. |
+| Create validation maps fields | Same test asserts HTTP 422 `fields.address` appears next to the address field. |
+| Edit form loads current values | `edits safe node metadata without mutating runtime, lifecycle or secret fields` asserts current name/address values are prefilled from `GET /api/v1/nodes/{id}`. |
+| Edit form sends real backend request | Same edit test asserts `PUT /api/v1/nodes/{id}` with changed profile metadata. |
+| Immutable/runtime/secret fields are not editable | Same edit test asserts no status, agent status, token or secret fields are present, and PUT omits ID, status, agent status, heartbeat and secret refs. |
+| Successful edit refreshes list/detail | Same edit test asserts repeated `GET /api/v1/nodes` and `GET /api/v1/nodes/{id}` after successful update. |
+| Edit 404/409/422 handled safely | `handles node edit 404, 409 and 422 safely` renders not-found, conflict and field validation errors as text while preserving operator input for retry. |
+| No `/legacy` workflow | Nodes tests assert implemented workflows never request `/legacy`. |
+| No raw page API calls | `keeps raw API paths and legacy workflow links out of the Nodes page component` verifies no raw `/api/v1`, raw `fetch`, `dangerouslySetInnerHTML` or `/legacy` in the page component. |
+| No secret browser storage/logging | Create/edit tests spy on `Storage.setItem`, `console.log` and `console.debug` and verify profile workflows do not persist or log form values. |
+
+Nodes create/edit safe profile workflows work in the new UI without `/legacy/`
+for control-plane node records. Agent registration/onboarding, creating a new
+SSH access method with secret material, manual bootstrap bundle reveal, agent
+identity revoke, reboot, emergency cleanup, stale rotation cleanup and service
+discovery ignore/unignore remain separate/open workflows.
 
 ## FE8-P0-05B Nodes Security/Control Test Evidence
 
@@ -734,9 +770,9 @@ Still disabled, read-only or legacy-only:
 
 - non-VLESS access group materialization workflows;
 - migration conflict UI for access groups;
-- nodes create/register/edit, new SSH access method creation with secret
-  material, manual bootstrap bundle reveal, agent identity revoke, reboot,
-  emergency cleanup and stale rotation cleanup;
+- node agent registration/onboarding, new SSH access method creation with
+  secret material, manual bootstrap bundle reveal, agent identity revoke,
+  reboot, emergency cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance draft-save
@@ -809,8 +845,9 @@ Remaining blockers for final cutover:
 1. run integrated smoke/e2e against disposable DB/API data for VLESS, Clients
    core/artifacts/delivery/routes/access maintenance/config cleanup, Firewall
    Instances/Service Packs, Backhaul and Route Policy runtime operator flows;
-2. migrate remaining Nodes create/register/edit and destructive remediation
-   workflows not included in FE8-P0-05B, including agent identity revoke,
+2. migrate remaining Nodes onboarding/registration, new SSH access method
+   creation with secret material and destructive remediation workflows not
+   included in FE8-P0-05B/FE8-P0-09B step 1, including agent identity revoke,
    reboot, emergency cleanup and stale rotation cleanup;
 3. add backend/browser support for runtime artifact delete if it is required for
    final operator parity;

@@ -105,7 +105,7 @@ Backend-missing reasons:
 | --- | --- |
 | Clients -> Groups | Non-VLESS materialization |
 | Clients -> Groups | Migration conflict UI |
-| Nodes | Create/register/edit |
+| Nodes | Agent registration/onboarding |
 | Nodes | New SSH access method with secret material |
 | Nodes | Manual bootstrap bundle reveal |
 | Nodes | Agent identity revoke/reboot/cleanup |
@@ -117,7 +117,10 @@ Future-scope decisions:
 
 - Non-VLESS materialization stays catalog-only in this frontend cutover.
 - Migration conflict UI remains future scope.
-- Nodes create/register/edit are not migrated in FE8-P0-05A/05B.
+- Nodes create/edit safe control-plane profile metadata is migrated in
+  FE8-P0-09B step 1. Agent registration/onboarding remains future scope or
+  approved legacy/dedicated workflow because it can involve bootstrap and
+  secret-bearing setup.
 - New SSH access method creation needs a reviewed browser secret flow.
 - Manual bootstrap bundle reveal remains backend-controlled.
 - Agent identity revoke, reboot and cleanup remain future scope or legacy-only.
@@ -142,7 +145,7 @@ Minimum disposable smoke coverage before final release decision:
 11. Manual instance create.
 12. Instance spec replace.
 13. Runtime artifact URL import.
-14. Nodes diagnostics, inventory, capabilities and discovery.
+14. Nodes create/edit, diagnostics, inventory, capabilities and discovery.
 15. Nodes bootstrap, security and control for disposable nodes.
 16. Certificates/PKI import preview/apply.
 17. Certificates/PKI self-signed, managed CA and issue-from-CA.

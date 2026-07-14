@@ -144,6 +144,32 @@
     "maintenance": "Maintenance",
     "detailTitle": "Node detail",
     "createNode": "Create node",
+    "editNode": "Edit node",
+    "kind": "Node kind",
+    "locationLabel": "Location label",
+    "osFamily": "OS family",
+    "osVersion": "OS version",
+    "architecture": "Architecture",
+    "profileUpdated": "Node profile updated.",
+    "profileSafeFieldsNote": "This form updates only safe node profile metadata. Runtime state, trust, bootstrap, retirement and secret-backed access are managed by dedicated workflows.",
+    "kindOptions": {
+      "local": "Local",
+      "remote": "Remote"
+    },
+    "roleOptions": {
+      "ingress": "Ingress",
+      "egress": "Egress"
+    },
+    "executionModeOptions": {
+      "agentManaged": "Agent managed",
+      "sshBootstrap": "SSH bootstrap",
+      "manualBundle": "Manual bundle",
+      "localManaged": "Local managed"
+    },
+    "validation": {
+      "nameRequired": "Node name is required.",
+      "addressRequired": "Node address is required."
+    },
     "control": "Control",
     "routePolicy": "Route policy",
     "bootstrap": "Bootstrap",

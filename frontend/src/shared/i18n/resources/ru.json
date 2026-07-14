@@ -144,6 +144,32 @@
     "maintenance": "Maintenance",
     "detailTitle": "Node detail",
     "createNode": "Создать node",
+    "editNode": "Редактировать node",
+    "kind": "Тип node",
+    "locationLabel": "Метка локации",
+    "osFamily": "Семейство ОС",
+    "osVersion": "Версия ОС",
+    "architecture": "Архитектура",
+    "profileUpdated": "Профиль node обновлен.",
+    "profileSafeFieldsNote": "Эта форма обновляет только безопасные метаданные профиля node. Runtime state, trust, bootstrap, retirement и secret-backed access управляются отдельными workflow.",
+    "kindOptions": {
+      "local": "Local",
+      "remote": "Remote"
+    },
+    "roleOptions": {
+      "ingress": "Ingress",
+      "egress": "Egress"
+    },
+    "executionModeOptions": {
+      "agentManaged": "Agent managed",
+      "sshBootstrap": "SSH bootstrap",
+      "manualBundle": "Manual bundle",
+      "localManaged": "Local managed"
+    },
+    "validation": {
+      "nameRequired": "Требуется имя node.",
+      "addressRequired": "Требуется адрес node."
+    },
     "control": "Управление",
     "routePolicy": "Route policy",
     "bootstrap": "Bootstrap",

@@ -1,8 +1,9 @@
-import { Activity, Boxes, CheckCircle2, DownloadCloud, Fingerprint, KeyRound, PackageCheck, Play, RefreshCw, RotateCcw, Search, ServerCog, ShieldAlert, ShieldCheck, TerminalSquare, Trash2, Wrench } from 'lucide-react';
+import { Activity, Boxes, CheckCircle2, DownloadCloud, FilePenLine, Fingerprint, KeyRound, PackageCheck, PlusCircle, Play, RefreshCw, RotateCcw, Search, ServerCog, ShieldAlert, ShieldCheck, TerminalSquare, Trash2, Wrench } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { APIError } from '../../shared/api/client';
+import { useAuth } from '../../shared/auth/AuthProvider';
 import type {
   APIRecord,
   BootstrapRequest,
@@ -12,6 +13,7 @@ import type {
   NodeAccessMethod,
   NodeCapability,
   NodeCapabilityInstallInput,
+  NodeCreateInput,
   NodeDetail,
   NodeDiagnostics,
   NodeDiagnosticsAction,
@@ -19,9 +21,11 @@ import type {
   NodeServiceDiscovery,
   NodeServiceInstaller,
 } from '../../shared/api/types';
+import { hasPermission } from '../../shared/permissions/permissions';
 import {
   useAcceptNodeHostKey,
   useBootstrapNode,
+  useCreateNode,
   useCreateEnrollmentToken,
   useDiscoverNodeServices,
   useForceRetireNode,
@@ -51,9 +55,10 @@ import {
   useScanNodeHostKey,
   useSetNodeMaintenance,
   useSyncNodeInventory,
+  useUpdateNode,
   useVerifyNodeCapability,
 } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, OneTimeSecretPanel, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
@@ -86,6 +91,30 @@ type OneTimePanelState = {
   expiresAt?: string;
 };
 
+type NodeProfileFormState = {
+  name: string;
+  address: string;
+  kind: NodeCreateInput['kind'];
+  role: NodeCreateInput['role'];
+  locationLabel: string;
+  osFamily: string;
+  osVersion: string;
+  architecture: string;
+  executionMode: NodeCreateInput['execution_mode'];
+};
+
+const defaultNodeProfileForm: NodeProfileFormState = {
+  name: '',
+  address: '',
+  kind: 'remote',
+  role: 'egress',
+  locationLabel: '',
+  osFamily: 'linux',
+  osVersion: 'unknown',
+  architecture: 'amd64',
+  executionMode: 'agent_managed',
+};
+
 function formatAPIError(error: unknown): string {
   if (!(error instanceof APIError)) {
     return error instanceof Error ? error.message : 'Request failed';
@@ -94,10 +123,17 @@ function formatAPIError(error: unknown): string {
     ? 'Permission denied'
     : error.status === 409
       ? 'Conflict'
-      : error.status === 422
+      : error.status === 422 || error.status === 400
         ? 'Validation failed'
         : `HTTP ${error.status}`;
   return `${prefix}: ${error.message}`;
+}
+
+function fieldErrors(error: unknown): Record<string, string> {
+  if (!(error instanceof APIError) || typeof error.payload !== 'object' || error.payload === null) return {};
+  const payload = error.payload as { fields?: unknown };
+  if (!payload.fields || typeof payload.fields !== 'object') return {};
+  return Object.fromEntries(Object.entries(payload.fields as Record<string, unknown>).map(([key, value]) => [key, String(value)]));
 }
 
 function nodeLabel(node?: NodeDetail | null): string {
@@ -121,6 +157,35 @@ function safeJSON(value: unknown): string {
 
 function runtimePlatform(node: NodeDetail): string {
   return [node.os_family, node.os_version, node.architecture].filter(Boolean).join(' / ') || 'n/a';
+}
+
+function nodeFormFromNode(node?: NodeDetail | null): NodeProfileFormState {
+  if (!node) return defaultNodeProfileForm;
+  return {
+    name: node.name || '',
+    address: node.address || '',
+    kind: (node.kind || defaultNodeProfileForm.kind) as NodeProfileFormState['kind'],
+    role: (node.role || defaultNodeProfileForm.role) as NodeProfileFormState['role'],
+    locationLabel: node.location_label || '',
+    osFamily: node.os_family || defaultNodeProfileForm.osFamily,
+    osVersion: node.os_version || defaultNodeProfileForm.osVersion,
+    architecture: node.architecture || defaultNodeProfileForm.architecture,
+    executionMode: (node.execution_mode || defaultNodeProfileForm.executionMode) as NodeProfileFormState['executionMode'],
+  };
+}
+
+function nodeInputFromForm(form: NodeProfileFormState): NodeCreateInput {
+  return {
+    name: form.name.trim(),
+    address: form.address.trim(),
+    kind: form.kind,
+    role: form.role,
+    location_label: form.locationLabel.trim(),
+    os_family: form.osFamily.trim(),
+    os_version: form.osVersion.trim(),
+    architecture: form.architecture.trim(),
+    execution_mode: form.executionMode,
+  };
 }
 
 function recordJobsFrom(result: unknown): Job[] {
@@ -159,8 +224,11 @@ function compactDiagnostics(diagnostics?: NodeDiagnostics): APIRecord {
 export function NodesPage() {
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
+  const auth = useAuth();
+  const canWriteNodes = hasPermission(auth.permissions, auth.roles, 'node.write');
   const nodes = useNodes();
   const [selectedId, setSelectedId] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
@@ -179,8 +247,28 @@ export function NodesPage() {
     <PageScaffold
       title={t('nodes.title')}
       subtitle={t('nodes.subtitle')}
-      actions={<Button disabled title={t('common.permissionRequired', { permission: 'node.write' })}>{t('nodes.createNode')}</Button>}
+      actions={(
+        <Button
+          icon={<PlusCircle size={16} />}
+          variant="primary"
+          disabled={!canWriteNodes}
+          title={!canWriteNodes ? t('common.permissionRequired', { permission: 'node.write' }) : undefined}
+          onClick={() => setCreateOpen(true)}
+        >
+          {t('nodes.createNode')}
+        </Button>
+      )}
     >
+      <NodeProfileModal
+        mode="create"
+        open={createOpen}
+        canWrite={canWriteNodes}
+        onClose={() => setCreateOpen(false)}
+        onDone={(created) => {
+          setSelectedId(created.id);
+          setCreateOpen(false);
+        }}
+      />
       <Card>
         <CardBody>
           <Toolbar>
@@ -232,9 +320,138 @@ export function NodesPage() {
   );
 }
 
+function NodeProfileModal({ mode, node, open, canWrite, onClose, onDone }: {
+  mode: 'create' | 'edit';
+  node?: NodeDetail;
+  open: boolean;
+  canWrite: boolean;
+  onClose: () => void;
+  onDone: (node: NodeDetail) => void;
+}) {
+  const { t } = useTranslation();
+  const createNode = useCreateNode();
+  const updateNode = useUpdateNode();
+  const [form, setForm] = useState<NodeProfileFormState>(nodeFormFromNode(node));
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
+  const mutation = mode === 'create' ? createNode : updateNode;
+  const mutationErrors = fieldErrors(mutation.error);
+  const errors = { ...mutationErrors, ...localErrors };
+  const busy = createNode.isPending || updateNode.isPending;
+
+  const patch = (patchValue: Partial<NodeProfileFormState>) => {
+    setForm((current) => ({ ...current, ...patchValue }));
+    setLocalErrors((current) => {
+      const next = { ...current };
+      Object.keys(patchValue).forEach((key) => {
+        delete next[key];
+      });
+      return next;
+    });
+  };
+
+  const validate = () => {
+    const next: Record<string, string> = {};
+    if (!form.name.trim()) next.name = t('nodes.validation.nameRequired');
+    if (!form.address.trim()) next.address = t('nodes.validation.addressRequired');
+    setLocalErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  const close = () => {
+    createNode.reset();
+    updateNode.reset();
+    setForm(nodeFormFromNode(mode === 'edit' ? node : null));
+    setLocalErrors({});
+    onClose();
+  };
+
+  const submit = async () => {
+    if (!canWrite || !validate()) return;
+    const input = nodeInputFromForm(form);
+    try {
+      const saved = mode === 'create'
+        ? await createNode.mutateAsync(input)
+        : await updateNode.mutateAsync({ nodeId: node?.id || '', input });
+      createNode.reset();
+      updateNode.reset();
+      setForm(defaultNodeProfileForm);
+      setLocalErrors({});
+      onDone(saved);
+    } catch {
+      // The mutation error is rendered below; keep operator input intact for correction/retry.
+    }
+  };
+
+  return (
+    <Modal title={mode === 'create' ? t('nodes.createNode') : t('nodes.editNode')} open={open} onClose={close}>
+      <div className="page-stack">
+        {!canWrite ? <div role="alert" className="error-state-inline">{t('common.permissionRequired', { permission: 'node.write' })}</div> : null}
+        {mutation.error ? <div role="alert" className="error-state-inline">{formatAPIError(mutation.error)}</div> : null}
+        <FormGrid>
+          <FormField label={t('common.name')}>
+            <TextField value={form.name} onChange={(event) => patch({ name: event.target.value })} autoComplete="off" />
+            {errors.name ? <span role="alert">{errors.name}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.address')}>
+            <TextField value={form.address} onChange={(event) => patch({ address: event.target.value })} autoComplete="off" />
+            {errors.address ? <span role="alert">{errors.address}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.kind')}>
+            <Select value={form.kind} onChange={(event) => patch({ kind: event.target.value as NodeProfileFormState['kind'] })}>
+              <option value="local">{t('nodes.kindOptions.local')}</option>
+              <option value="remote">{t('nodes.kindOptions.remote')}</option>
+            </Select>
+            {errors.kind ? <span role="alert">{errors.kind}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.role')}>
+            <Select value={form.role} onChange={(event) => patch({ role: event.target.value as NodeProfileFormState['role'] })}>
+              <option value="ingress">{t('nodes.roleOptions.ingress')}</option>
+              <option value="egress">{t('nodes.roleOptions.egress')}</option>
+            </Select>
+            {errors.role ? <span role="alert">{errors.role}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.locationLabel')}>
+            <TextField value={form.locationLabel} onChange={(event) => patch({ locationLabel: event.target.value })} />
+            {errors.location_label ? <span role="alert">{errors.location_label}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.osFamily')}>
+            <TextField value={form.osFamily} onChange={(event) => patch({ osFamily: event.target.value })} />
+            {errors.os_family ? <span role="alert">{errors.os_family}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.osVersion')}>
+            <TextField value={form.osVersion} onChange={(event) => patch({ osVersion: event.target.value })} />
+            {errors.os_version ? <span role="alert">{errors.os_version}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.architecture')}>
+            <TextField value={form.architecture} onChange={(event) => patch({ architecture: event.target.value })} />
+            {errors.architecture ? <span role="alert">{errors.architecture}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.executionMode')}>
+            <Select value={form.executionMode} onChange={(event) => patch({ executionMode: event.target.value as NodeProfileFormState['executionMode'] })}>
+              <option value="agent_managed">{t('nodes.executionModeOptions.agentManaged')}</option>
+              <option value="ssh_bootstrap">{t('nodes.executionModeOptions.sshBootstrap')}</option>
+              <option value="manual_bundle">{t('nodes.executionModeOptions.manualBundle')}</option>
+              <option value="local_managed">{t('nodes.executionModeOptions.localManaged')}</option>
+            </Select>
+            {errors.execution_mode ? <span role="alert">{errors.execution_mode}</span> : null}
+          </FormField>
+        </FormGrid>
+        <p className="muted">{t('nodes.profileSafeFieldsNote')}</p>
+        <Toolbar>
+          <Button variant="primary" disabled={!canWrite || busy} onClick={() => void submit()}>{mode === 'create' ? t('nodes.createNode') : t('common.save')}</Button>
+          <Button onClick={close}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </div>
+    </Modal>
+  );
+}
+
 function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId: string; open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
+  const auth = useAuth();
+  const canWriteNodes = hasPermission(auth.permissions, auth.roles, 'node.write');
   const [activeTab, setActiveTab] = useState<NodeTab>('overview');
+  const [editOpen, setEditOpen] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
   const [notice, setNotice] = useState('');
   const [jobIds, setJobIds] = useState<string[]>([]);
@@ -438,7 +655,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 onClose={() => setOneTimePanel(null)}
               />
             ) : null}
-            {activeTab === 'overview' ? <OverviewTab node={current} busy={busy} onConfirm={setConfirm} /> : null}
+            {activeTab === 'overview' ? <OverviewTab node={current} busy={busy} onConfirm={setConfirm} canWrite={canWriteNodes} onEdit={() => setEditOpen(true)} /> : null}
             {activeTab === 'runtime' ? <RuntimeTab node={current} diagnostics={diagnostics} /> : null}
             {activeTab === 'inventory' ? <InventoryTab node={current} inventory={inventory} busy={busy} onConfirm={setConfirm} /> : null}
             {activeTab === 'capabilities' ? (
@@ -470,6 +687,19 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
             {activeTab === 'terminal' ? <TerminalTab node={current} accessMethods={accessMethods} busy={busy} onConfirm={setConfirm} /> : null}
             {activeTab === 'lifecycle' ? <LifecycleTab node={current} busy={busy} onConfirm={setConfirm} /> : null}
             {activeTab === 'jobs' ? <NodeJobsTab jobIds={effectiveJobIds} diagnostics={diagnostics.data} /> : null}
+            <NodeProfileModal
+              mode="edit"
+              node={current}
+              open={editOpen}
+              canWrite={canWriteNodes}
+              onClose={() => setEditOpen(false)}
+              onDone={(updated) => {
+                setNotice(t('nodes.profileUpdated'));
+                setEditOpen(false);
+                setActiveTab('overview');
+                if (updated.id) void detail.refetch();
+              }}
+            />
             <NodeConfirmDialog action={confirm} busy={busy} onConfirm={() => void runConfirmed()} onClose={() => setConfirm(null)} />
           </div>
         ) : null}
@@ -478,7 +708,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   );
 }
 
-function OverviewTab({ node, busy, onConfirm }: { node: NodeDetail; busy: boolean; onConfirm: (action: ConfirmAction) => void }) {
+function OverviewTab({ node, busy, onConfirm, canWrite, onEdit }: { node: NodeDetail; busy: boolean; onConfirm: (action: ConfirmAction) => void; canWrite: boolean; onEdit: () => void }) {
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
   const maintenanceEnabled = node.status === 'maintenance';
@@ -501,6 +731,14 @@ function OverviewTab({ node, busy, onConfirm }: { node: NodeDetail; busy: boolea
           </div>
           <Toolbar>
             <StatusBadge status={node.status} />
+            <Button
+              icon={<FilePenLine size={16} />}
+              disabled={!canWrite || busy}
+              title={!canWrite ? t('common.permissionRequired', { permission: 'node.write' }) : undefined}
+              onClick={onEdit}
+            >
+              {t('nodes.editNode')}
+            </Button>
             <Button
               variant={maintenanceEnabled ? 'secondary' : 'danger'}
               icon={<Wrench size={16} />}

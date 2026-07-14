@@ -130,8 +130,9 @@ to `/legacy/`.
 | Workflow | Status | Notes |
 | --- | --- | --- |
 | Nodes list/detail | fully connected | Existing node list/detail uses `GET /api/v1/nodes` and `GET /api/v1/nodes/{id}` with search/status/role filters and a detail drawer. |
-| Create/register | disabled intentionally | Backend exists; form not migrated. |
-| Edit metadata | legacy-only | Backend exists. |
+| Create node record | fully connected | `POST /api/v1/nodes` through `createNode` / `useCreateNode`; form exposes only safe profile metadata and leaves enrollment/bootstrap/agent registration to dedicated workflows. |
+| Edit node metadata | fully connected | `PUT /api/v1/nodes/{id}` through `updateNode` / `useUpdateNode`; generic edit does not mutate status, maintenance, retire state, agent identity, tokens, secret refs, heartbeat/runtime state or access credentials. |
+| Agent registration/onboarding | legacy-only / dedicated workflows | Browser node create creates the control-plane node record only. SSH access method creation with secret material and any operator-approved onboarding flow remain outside this step. |
 | Retire | fully connected | `DELETE /api/v1/nodes/{id}` with confirmation and backend dependency validation. |
 | Force retire | fully connected | `POST /api/v1/nodes/{id}/force-retire` with typed node-name confirmation, reason and backend cleanup validation. |
 | Maintenance mode | fully connected | `POST /api/v1/nodes/{id}/maintenance/enable` and `/disable`; confirmation required, backend error states are rendered safely. |

@@ -168,14 +168,12 @@ Affected operation classes:
 ## 10. RC1 Limitations
 
 The new console remains incomplete for final write parity. The following are
-intentionally disabled, backend-missing or legacy-only after FE8-P0-08A:
+intentionally disabled, backend-missing or legacy-only after FE8-P0-09B step 1:
 
 - non-VLESS access service materialization and access-group migration conflict UI;
-- generic client edit, client route update, per-access revoke and client
-  delivery history;
-- nodes create/register/edit, new SSH access method creation with secret
-  material, manual bootstrap bundle reveal, agent identity revoke, reboot,
-  emergency cleanup and stale rotation cleanup;
+- node agent registration/onboarding, new SSH access method creation with
+  secret material, manual bootstrap bundle reveal, agent identity revoke,
+  reboot, emergency cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance

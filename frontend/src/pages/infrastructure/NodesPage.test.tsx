@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AuthProvider } from '../../shared/auth/AuthProvider';
 import i18n from '../../shared/i18n';
 import { NodesPage } from './NodesPage';
 
@@ -15,7 +16,7 @@ type FetchCall = {
 const node = {
   id: 'node-1',
   name: 'Edge One',
-  kind: 'linux',
+  kind: 'remote',
   role: 'ingress',
   status: 'online',
   address: '203.0.113.10',
@@ -23,7 +24,7 @@ const node = {
   os_family: 'ubuntu',
   os_version: '24.04',
   architecture: 'amd64',
-  execution_mode: 'agent',
+  execution_mode: 'agent_managed',
   agent_status: 'online',
   agent_version: '8.0.0-agent',
   agent_protocol_version: 'v1',
@@ -31,6 +32,20 @@ const node = {
   last_heartbeat_at: '2026-07-09T08:00:00Z',
   created_at: '2026-07-08T10:00:00Z',
   updated_at: '2026-07-09T08:01:00Z',
+};
+
+const authPayload = {
+  user: {
+    id: 'operator-1',
+    username: 'admin',
+    status: 'active',
+  },
+  session: {
+    id: 'session-1',
+    expires_at: '2026-08-10T00:00:00Z',
+  },
+  roles: ['operator'],
+  permissions: ['node.read', 'node.write', 'node.bootstrap'],
 };
 
 const diagnostics = {
@@ -174,17 +189,20 @@ function job(id: string, type = 'node.inventory.sync') {
   };
 }
 
-function renderPage() {
+function renderPage(auth: typeof authPayload = authPayload) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
+  queryClient.setQueryData(['auth', 'session'], auth);
   render(
     <MemoryRouter>
       <QueryClientProvider client={queryClient}>
-        <NodesPage />
+        <AuthProvider>
+          <NodesPage />
+        </AuthProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -198,13 +216,26 @@ async function openNode() {
   await screen.findByRole('heading', { name: 'Edge One' });
 }
 
+function activeDialog(): HTMLElement {
+  const dialogs = screen.getAllByRole('dialog');
+  const dialog = dialogs[dialogs.length - 1];
+  if (!dialog) throw new Error('dialog not found');
+  return dialog;
+}
+
 describe('NodesPage', () => {
   const calls: FetchCall[] = [];
   let actionErrors: Record<string, number>;
+  let nodeList: Array<typeof node>;
+  let createdNode: typeof node | null;
+  let currentNode: typeof node;
 
   beforeEach(async () => {
     calls.length = 0;
     actionErrors = {};
+    currentNode = { ...node };
+    createdNode = null;
+    nodeList = [currentNode];
     window.localStorage.clear();
     await i18n.changeLanguage('en');
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -213,8 +244,58 @@ describe('NodesPage', () => {
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
       calls.push({ method, path: `${url.pathname}${url.search}`, body });
 
-      if (method === 'GET' && url.pathname === '/api/v1/nodes') return json([node]);
-      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1') return json(node);
+      if (method === 'GET' && url.pathname === '/api/v1/auth/me') return json(authPayload);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes') return json(nodeList);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1') return json(currentNode);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-created' && createdNode) return json(createdNode);
+      if (method === 'POST' && url.pathname === '/api/v1/nodes') {
+        if (actionErrors.create === 403) return json({ error: 'node.write permission required' }, 403);
+        if (actionErrors.create === 409) return json({ error: 'node name "Edge Two" is already used by an active node' }, 409);
+        if (actionErrors.create === 422) return json({ error: 'invalid node payload', fields: { address: 'Address is invalid' } }, 422);
+        createdNode = {
+          ...node,
+          id: 'node-created',
+          name: String(body?.name || ''),
+          kind: String(body?.kind || 'remote'),
+          role: String(body?.role || 'egress'),
+          status: 'draft',
+          address: String(body?.address || ''),
+          location_label: String(body?.location_label || ''),
+          os_family: String(body?.os_family || 'linux'),
+          os_version: String(body?.os_version || 'unknown'),
+          architecture: String(body?.architecture || 'amd64'),
+          execution_mode: String(body?.execution_mode || 'agent_managed'),
+          agent_status: 'unknown',
+          agent_version: '',
+          agent_protocol_version: '',
+          agent_last_seen_at: '',
+          last_heartbeat_at: '',
+          created_at: '2026-07-09T08:10:00Z',
+          updated_at: '2026-07-09T08:10:00Z',
+        };
+        nodeList = [currentNode, createdNode];
+        return json(createdNode, 201);
+      }
+      if (method === 'PUT' && url.pathname === '/api/v1/nodes/node-1') {
+        if (actionErrors.update === 404) return json({ error: 'node not found' }, 404);
+        if (actionErrors.update === 409) return json({ error: 'node name "Edge Conflict" is already used by an active node' }, 409);
+        if (actionErrors.update === 422) return json({ error: 'invalid node payload', fields: { name: 'Name is invalid' } }, 422);
+        currentNode = {
+          ...currentNode,
+          name: String(body?.name || currentNode.name),
+          kind: String(body?.kind || currentNode.kind),
+          role: String(body?.role || currentNode.role),
+          address: String(body?.address || currentNode.address),
+          location_label: String(body?.location_label || ''),
+          os_family: String(body?.os_family || currentNode.os_family),
+          os_version: String(body?.os_version || currentNode.os_version),
+          architecture: String(body?.architecture || currentNode.architecture),
+          execution_mode: String(body?.execution_mode || currentNode.execution_mode),
+          updated_at: '2026-07-09T08:11:00Z',
+        };
+        nodeList = createdNode ? [currentNode, createdNode] : [currentNode];
+        return json(currentNode);
+      }
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/diagnostics') return json(diagnostics);
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/inventory') return json(inventory);
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/capabilities') return json(capabilities);
@@ -289,6 +370,147 @@ describe('NodesPage', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('creates a node through the typed API layer and keeps backend lifecycle state authoritative', async () => {
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    renderPage();
+    const createButton = await screen.findByRole('button', { name: 'Create node' });
+    expect(createButton).toBeEnabled();
+    await userEvent.click(createButton);
+
+    const dialog = activeDialog();
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Edge Two');
+    await userEvent.type(within(dialog).getByLabelText('Address'), '198.51.100.20');
+    await userEvent.type(within(dialog).getByLabelText('Location label'), 'US edge');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Node kind'), 'remote');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Role'), 'egress');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Execution mode'), 'agent_managed');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create node' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes')).toBe(true));
+    const createCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes');
+    expect(createCall?.body).toMatchObject({
+      name: 'Edge Two',
+      address: '198.51.100.20',
+      kind: 'remote',
+      role: 'egress',
+      location_label: 'US edge',
+      os_family: 'linux',
+      os_version: 'unknown',
+      architecture: 'amd64',
+      execution_mode: 'agent_managed',
+    });
+    expect(createCall?.body).not.toHaveProperty('id');
+    expect(createCall?.body).not.toHaveProperty('status');
+    expect(createCall?.body).not.toHaveProperty('agent_status');
+    expect(createCall?.body).not.toHaveProperty('secret_ref_id');
+
+    await screen.findByRole('heading', { name: 'Edge Two' });
+    expect((await screen.findAllByText('draft')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('unknown')).length).toBeGreaterThan(0);
+    expect(calls.filter((call) => call.method === 'GET' && call.path === '/api/v1/nodes').length).toBeGreaterThan(1);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+    expect(storageSet).not.toHaveBeenCalled();
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleDebug).not.toHaveBeenCalled();
+  });
+
+  it('keeps node create disabled without node.write permission', async () => {
+    renderPage({ ...authPayload, permissions: ['node.read'] });
+    const createButton = await screen.findByRole('button', { name: 'Create node' });
+    expect(createButton).toBeDisabled();
+    expect(createButton).toHaveAttribute('title', 'Permission required: node.write');
+  });
+
+  it('preserves create input on conflict and maps backend field validation', async () => {
+    actionErrors.create = 409;
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Create node' }));
+    let dialog = activeDialog();
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Edge Two');
+    await userEvent.type(within(dialog).getByLabelText('Address'), '198.51.100.20');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create node' }));
+    await within(dialog).findByText(/Conflict: node name "Edge Two" is already used by an active node/);
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('Edge Two');
+    expect(within(dialog).getByLabelText('Address')).toHaveValue('198.51.100.20');
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    actionErrors.create = 422;
+    await userEvent.click(screen.getByRole('button', { name: 'Create node' }));
+    dialog = activeDialog();
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Field Error');
+    await userEvent.type(within(dialog).getByLabelText('Address'), 'bad address');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create node' }));
+    await within(dialog).findByText(/Validation failed: invalid node payload/);
+    expect(await within(dialog).findByText('Address is invalid')).toBeInTheDocument();
+  });
+
+  it('edits safe node metadata without mutating runtime, lifecycle or secret fields', async () => {
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await openNode();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit node' }));
+    const dialog = activeDialog();
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('Edge One');
+    expect(within(dialog).getByLabelText('Address')).toHaveValue('203.0.113.10');
+    expect(within(dialog).queryByLabelText('Status')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Agent status')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/secret/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/token/i)).not.toBeInTheDocument();
+
+    await userEvent.clear(within(dialog).getByLabelText('Name'));
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Edge One Renamed');
+    await userEvent.clear(within(dialog).getByLabelText('Address'));
+    await userEvent.type(within(dialog).getByLabelText('Address'), '203.0.113.11');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Role'), 'egress');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Execution mode'), 'ssh_bootstrap');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'PUT' && call.path === '/api/v1/nodes/node-1')).toBe(true));
+    const updateCall = calls.find((call) => call.method === 'PUT' && call.path === '/api/v1/nodes/node-1');
+    expect(updateCall?.body).toMatchObject({
+      name: 'Edge One Renamed',
+      address: '203.0.113.11',
+      role: 'egress',
+      execution_mode: 'ssh_bootstrap',
+    });
+    expect(updateCall?.body).not.toHaveProperty('id');
+    expect(updateCall?.body).not.toHaveProperty('status');
+    expect(updateCall?.body).not.toHaveProperty('agent_status');
+    expect(updateCall?.body).not.toHaveProperty('last_heartbeat_at');
+    expect(updateCall?.body).not.toHaveProperty('secret_ref_id');
+    await screen.findByText('Node profile updated.');
+    expect(calls.filter((call) => call.method === 'GET' && call.path === '/api/v1/nodes/node-1').length).toBeGreaterThan(1);
+    expect(calls.filter((call) => call.method === 'GET' && call.path === '/api/v1/nodes').length).toBeGreaterThan(1);
+    expect(storageSet).not.toHaveBeenCalled();
+    expect(consoleLog).not.toHaveBeenCalled();
+  });
+
+  it('handles node edit 404, 409 and 422 safely', async () => {
+    actionErrors.update = 404;
+    await openNode();
+    await userEvent.click(screen.getByRole('button', { name: 'Edit node' }));
+    let dialog = activeDialog();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await within(dialog).findByText(/HTTP 404: node not found/);
+
+    actionErrors.update = 409;
+    await userEvent.clear(within(dialog).getByLabelText('Name'));
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Edge Conflict');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await within(dialog).findByText(/Conflict: node name "Edge Conflict" is already used by an active node/);
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('Edge Conflict');
+
+    actionErrors.update = 422;
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    dialog = activeDialog();
+    await within(dialog).findByText(/Validation failed: invalid node payload/);
+    expect(await within(dialog).findByText('Name is invalid')).toBeInTheDocument();
   });
 
   it('loads node detail, observability data and renders backend text safely', async () => {

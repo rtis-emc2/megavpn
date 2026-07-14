@@ -20,6 +20,7 @@ import {
   createClientAccessGroup,
   createInvite,
   createManagedCertificateAuthority,
+  createNode,
   createPkiRoot,
   createSelfSignedCertificate,
   createInstanceFromServicePack,
@@ -158,6 +159,7 @@ import {
   updateBackhaulRouteState,
   updateClient,
   updateMailSettings,
+  updateNode,
   updatePlatformSettings,
   updateClientRoute,
   testMailSettings,
@@ -272,6 +274,7 @@ import type {
   NodeCapabilityInstallEvent,
   NodeCapabilityInstallInput,
   NodeCapabilityVerifyInput,
+  NodeCreateInput,
   NodeDetail,
   NodeDiagnostics,
   NodeDiagnosticsAction,
@@ -284,6 +287,7 @@ import type {
   NodeServiceDiscoverySummary,
   NodeServiceInstaller,
   NodeRetireResult,
+  NodeUpdateInput,
   PkiRoot,
   PkiRootCreateInput,
   PlatformSettings,
@@ -389,6 +393,22 @@ export function useNodeDetail(nodeId: string | undefined, options?: QueryOptions
     enabled: Boolean(nodeId),
     staleTime: stale.normal,
     ...options,
+  });
+}
+
+export function useCreateNode() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeDetail, Error, NodeCreateInput>({
+    mutationFn: createNode,
+    onSuccess: (node) => invalidateNodeQueries(queryClient, node.id),
+  });
+}
+
+export function useUpdateNode() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeDetail, Error, { nodeId: string; input: NodeUpdateInput }>({
+    mutationFn: ({ nodeId, input }) => updateNode(nodeId, input),
+    onSuccess: (node, input) => invalidateNodeQueries(queryClient, node.id || input.nodeId),
   });
 }
 

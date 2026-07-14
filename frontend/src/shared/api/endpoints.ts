@@ -119,6 +119,7 @@ import type {
   NodeCapabilityVerifyInput,
   NodeCapabilityVerifyResult,
   NodeAgentState,
+  NodeCreateInput,
   NodeDetail,
   NodeDiagnosticResult,
   NodeDiagnostics,
@@ -136,6 +137,7 @@ import type {
   NodeServiceDiscoverySummary,
   NodeServiceInstaller,
   NodeRetireResult,
+  NodeUpdateInput,
   ReadyStatus,
   RoutePolicy,
   RoutePolicyApplyResult,
@@ -337,6 +339,14 @@ export function listNodes(_params: { search?: string; status?: string; role?: st
 
 export function getNode(nodeId: string): Promise<NodeDetail> {
   return apiRequest<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(nodeId)}`);
+}
+
+export function createNode(input: NodeCreateInput): Promise<NodeDetail> {
+  return sendJSON<NodeDetail>('/api/v1/nodes', 'POST', input);
+}
+
+export function updateNode(nodeId: string, input: NodeUpdateInput): Promise<NodeDetail> {
+  return sendJSON<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(nodeId)}`, 'PUT', input);
 }
 
 function routePolicyFromNode(node: NodeEntity): RoutePolicy {

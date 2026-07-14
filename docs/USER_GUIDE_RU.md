@@ -330,40 +330,49 @@ Production defaults:
 ## 8. Добавление node
 
 Новая React UI управляет уже существующими nodes без `/legacy/` для
-observability, runtime/agent state, maintenance mode, inventory sync, runtime
-capability install/verify, diagnostics retry/run, service discovery scan/import,
-bootstrap/reinstall job queueing, enrollment tokens, host-key scan/pin, SSH
-session ticket launch, agent token rotation, retire/force-retire и job
-tracking.
+control-plane create/edit safe profile metadata, observability, runtime/agent
+state, maintenance mode, inventory sync, runtime capability install/verify,
+diagnostics retry/run, service discovery scan/import, bootstrap/reinstall job
+queueing, enrollment tokens, host-key scan/pin, SSH session ticket launch,
+agent token rotation, retire/force-retire и job tracking.
 
-Ограничение FE8-P0-05B: создание новой node, edit metadata и создание нового
-SSH access method с secret material пока не выведены в новую UI. Для этих
-secret-bearing setup шагов в текущем RC используйте legacy/approved flow:
+Чтобы создать control-plane запись node:
 
-1. Откройте `/legacy/` или текущий approved bootstrap workflow.
-2. Нажмите `Add node`.
-3. Укажите:
+1. Откройте `Nodes`.
+2. Нажмите `Create node`.
+3. Укажите безопасные profile metadata:
    - понятное имя;
-   - role: `ingress`, `egress` или runtime-specific role;
-   - публичный или management address;
-   - setup method.
-4. Для SSH bootstrap добавьте SSH access method:
+   - address или hostname;
+   - kind: `local` или `remote`;
+   - role: `ingress` или `egress`;
+   - OS family/version, architecture и execution mode.
+4. Сохраните запись. Новая UI не меняет статус на `online` и не считает node
+   enrolled, пока это не вернет backend/agent.
+
+Ограничение FE8-P0-09B step 1: agent registration/onboarding и создание нового
+SSH access method с secret material пока не выведены в generic create/edit
+форму. Для secret-bearing setup шагов в текущем RC используйте approved
+bootstrap workflow:
+
+1. Откройте `/legacy/` или текущий approved bootstrap workflow, если нужен новый
+   SSH access method с secret material.
+2. Для SSH bootstrap добавьте SSH access method:
    - `ssh_user`;
    - `ssh_host`;
    - `ssh_port`;
    - `ssh_host_key_sha256`;
    - private key secret.
-5. Нажмите `Scan host key` после того, как `ssh_host` и `ssh_port` указаны
+3. Нажмите `Scan host key` после того, как `ssh_host` и `ssh_port` указаны
    корректно. UI заполнит `ssh_host_key_sha256` найденным fingerprint.
-6. Сверьте fingerprint внешним доверенным способом: через cloud/provider
+4. Сверьте fingerprint внешним доверенным способом: через cloud/provider
    console или provisioning record, затем сохраните SSH access.
-7. После сохранения access method вернитесь в новую UI: `Nodes -> node`.
-8. На вкладке `Security` выполните `Scan host key`, проверьте fingerprint
+5. После сохранения access method вернитесь в новую UI: `Nodes -> node`.
+6. На вкладке `Security` выполните `Scan host key`, проверьте fingerprint
    внешним доверенным способом и нажмите `Pin fingerprint`.
-9. На вкладке `Security` создайте или rotate enrollment token. Plaintext
+7. На вкладке `Security` создайте или rotate enrollment token. Plaintext
    показывается только один раз; скопируйте его сразу и закройте panel.
-10. На вкладке `Bootstrap` запустите bootstrap или reinstall agent. UI покажет
-    backend job tracking.
+8. На вкладке `Bootstrap` запустите bootstrap или reinstall agent. UI покажет
+   backend job tracking.
 11. На вкладке `Terminal / Access` можно запросить short-lived backend SSH
     terminal session URL для настроенного SSH method. Browser не хранит SSH
     credentials и не реализует SSH самостоятельно.

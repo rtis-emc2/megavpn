@@ -73,6 +73,22 @@ export type NodeDetail = NodeEntity;
 
 export type Node = NodeEntity;
 
+export type NodeProfileInput = {
+  name: string;
+  address: string;
+  kind?: 'local' | 'remote';
+  role?: 'ingress' | 'egress';
+  location_label?: string;
+  os_family?: string;
+  os_version?: string;
+  architecture?: string;
+  execution_mode?: 'agent_managed' | 'ssh_bootstrap' | 'manual_bundle' | 'local_managed';
+};
+
+export type NodeCreateInput = NodeProfileInput;
+
+export type NodeUpdateInput = NodeProfileInput;
+
 export type NodeAgentState = APIRecord & {
   node_id?: string;
   status?: string;
