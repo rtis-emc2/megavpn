@@ -265,12 +265,28 @@ export type NodeAccessMethod = APIRecord & {
   ssh_user?: string;
   ssh_host_key_sha256?: string;
   auth_type?: string;
+  secret_configured?: boolean;
   secret_ref_id?: string | null;
   created_at?: string;
   updated_at?: string;
 };
 
 export type NodeAccessMethodsResult = NodeAccessMethod[];
+
+export type NodeSSHAccessMethodCreateInput = {
+  ssh_host: string;
+  ssh_port: number;
+  ssh_user: string;
+  ssh_host_key_sha256: string;
+  private_key: string;
+  is_enabled: boolean;
+};
+
+export type NodeSSHAccessMethodCreateResult = NodeAccessMethod & {
+  method: 'ssh';
+  auth_type: 'ssh_key';
+  secret_configured: boolean;
+};
 
 export type EnrollmentToken = APIRecord & {
   id: string;
@@ -359,6 +375,7 @@ export type NodeMutationResult =
   | BootstrapResult
   | HostKeyScanResult
   | HostKeyDecisionResult
+  | NodeSSHAccessMethodCreateResult
   | SshSessionLaunchResult
   | NodeRetireResult;
 

@@ -21,6 +21,7 @@ import {
   createInvite,
   createManagedCertificateAuthority,
   createNode,
+  createNodeSSHAccessMethod,
   createPkiRoot,
   createSelfSignedCertificate,
   createInstanceFromServicePack,
@@ -287,6 +288,8 @@ import type {
   NodeServiceDiscoverySummary,
   NodeServiceInstaller,
   NodeRetireResult,
+  NodeSSHAccessMethodCreateInput,
+  NodeSSHAccessMethodCreateResult,
   NodeUpdateInput,
   PkiRoot,
   PkiRootCreateInput,
@@ -326,6 +329,11 @@ import type {
 } from '../api/types';
 
 type QueryOptions<T> = Omit<UseQueryOptions<T, Error>, 'queryKey' | 'queryFn'>;
+
+export type NodeSSHAccessMethodCreateVariables = Omit<NodeSSHAccessMethodCreateInput, 'private_key'> & {
+  nodeId: string;
+  readPrivateKey: () => string;
+};
 
 const stale = {
   fast: 5_000,
@@ -537,6 +545,17 @@ export function useNodeBootstrapRuns(nodeId: string | undefined, options?: Query
     staleTime: stale.normal,
     retry: false,
     ...options,
+  });
+}
+
+export function useCreateNodeSSHAccessMethod() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeSSHAccessMethodCreateResult, Error, NodeSSHAccessMethodCreateVariables>({
+    mutationFn: ({ nodeId, readPrivateKey, ...input }) => createNodeSSHAccessMethod(nodeId, {
+      ...input,
+      private_key: readPrivateKey(),
+    }),
+    onSuccess: (_method, input) => invalidateNodeQueries(queryClient, input.nodeId),
   });
 }
 

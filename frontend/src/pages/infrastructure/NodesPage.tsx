@@ -8,6 +8,7 @@ import type {
   APIRecord,
   BootstrapRequest,
   EnrollmentToken,
+  HostKeyScanEntry,
   HostKeyScanResult,
   Job,
   NodeAccessMethod,
@@ -27,6 +28,7 @@ import {
   useBootstrapNode,
   useCreateNode,
   useCreateEnrollmentToken,
+  useCreateNodeSSHAccessMethod,
   useDiscoverNodeServices,
   useForceRetireNode,
   useImportAllNodeServiceDiscoveries,
@@ -58,7 +60,7 @@ import {
   useUpdateNode,
   useVerifyNodeCapability,
 } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
@@ -450,6 +452,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const { t } = useTranslation();
   const auth = useAuth();
   const canWriteNodes = hasPermission(auth.permissions, auth.roles, 'node.write');
+  const canBootstrapNodes = hasPermission(auth.permissions, auth.roles, 'node.bootstrap');
   const [activeTab, setActiveTab] = useState<NodeTab>('overview');
   const [editOpen, setEditOpen] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
@@ -477,6 +480,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const importDiscovery = useImportNodeServiceDiscovery();
   const importAllDiscoveries = useImportAllNodeServiceDiscoveries();
   const createEnrollment = useCreateEnrollmentToken();
+  const createSSHAccess = useCreateNodeSSHAccessMethod();
   const rotateEnrollment = useRotateEnrollmentToken();
   const revokeEnrollment = useRevokeEnrollmentToken();
   const bootstrap = useBootstrapNode();
@@ -497,6 +501,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     || importDiscovery.isPending
     || importAllDiscoveries.isPending
     || createEnrollment.isPending
+    || createSSHAccess.isPending
     || rotateEnrollment.isPending
     || revokeEnrollment.isPending
     || bootstrap.isPending
@@ -680,7 +685,13 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 tokens={enrollmentTokens}
                 accessMethods={accessMethods}
                 scanHostKey={scanHostKey}
+                createSSHAccess={createSSHAccess}
+                canBootstrap={canBootstrapNodes}
                 busy={busy}
+                onSSHAccessCreated={() => {
+                  setNotice(t('nodes.sshAccessMethodCreated'));
+                  void accessMethods.refetch();
+                }}
                 onConfirm={setConfirm}
               />
             ) : null}
@@ -1076,13 +1087,16 @@ function BootstrapTab({ node, accessMethods, runs, busy, onConfirm }: {
   );
 }
 
-function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, busy, onConfirm }: {
+function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, createSSHAccess, canBootstrap, busy, onSSHAccessCreated, onConfirm }: {
   node: NodeDetail;
   diagnostics?: NodeDiagnostics;
   tokens: ReturnType<typeof useNodeEnrollmentTokens>;
   accessMethods: ReturnType<typeof useNodeAccessMethods>;
   scanHostKey: ReturnType<typeof useScanNodeHostKey>;
+  createSSHAccess: ReturnType<typeof useCreateNodeSSHAccessMethod>;
+  canBootstrap: boolean;
   busy: boolean;
+  onSSHAccessCreated: () => void;
   onConfirm: (action: ConfirmAction) => void;
 }) {
   const { t } = useTranslation();
@@ -1090,6 +1104,7 @@ function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, bu
   const [ttlHours, setTTLHours] = useState(24);
   const [methodId, setMethodId] = useState('');
   const [scanResult, setScanResult] = useState<HostKeyScanResult | null>(null);
+  const [sshAccessOpen, setSSHAccessOpen] = useState(false);
   const methods = sshMethods(accessMethods.data);
   const selectedMethod = methods.find((method) => method.id === methodId) || defaultSSHMethod(accessMethods.data);
   const ttl = Number.isFinite(ttlHours) && ttlHours > 0 ? ttlHours : 24;
@@ -1160,8 +1175,17 @@ function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, bu
             {!selectedMethod ? <div role="alert" className="error-state-inline">{t('nodes.sshAccessMissing')}</div> : null}
             <Toolbar>
               <Button variant="primary" icon={<Fingerprint size={16} />} disabled={busy || !selectedMethod} onClick={() => void runScan()}>{t('nodes.scanHostKey')}</Button>
+              <Button
+                icon={<PlusCircle size={16} />}
+                disabled={busy || !canBootstrap}
+                title={!canBootstrap ? t('common.permissionRequired', { permission: 'node.bootstrap' }) : undefined}
+                onClick={() => setSSHAccessOpen(true)}
+              >
+                {t('nodes.addSSHAccessMethod')}
+              </Button>
               <Button icon={<RefreshCw size={16} />} onClick={() => void accessMethods.refetch()}>{t('common.refresh')}</Button>
             </Toolbar>
+            {!canBootstrap ? <p className="muted">{t('nodes.addSSHAccessPermissionHint')}</p> : null}
             {accessMethods.isError ? <div role="alert" className="error-state-inline">{t('nodes.accessMethodsUnavailable')}: {formatAPIError(accessMethods.error)}</div> : null}
             {scanHostKey.isError ? <div role="alert" className="error-state-inline">{formatAPIError(scanHostKey.error)}</div> : null}
             {changedPin ? <div role="alert" className="error-state-inline">{t('nodes.hostKeyChangedWarning')}</div> : null}
@@ -1193,6 +1217,22 @@ function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, bu
           </div>
         </CardBody>
       </Card>
+      <AccessMethodsTable methods={accessMethods.data || []} />
+      {sshAccessOpen ? (
+        <NodeSSHAccessMethodModal
+          node={node}
+          open={sshAccessOpen}
+          canBootstrap={canBootstrap}
+          busy={busy}
+          scanHostKey={scanHostKey}
+          createSSHAccess={createSSHAccess}
+          onClose={() => setSSHAccessOpen(false)}
+          onDone={() => {
+            setSSHAccessOpen(false);
+            onSSHAccessCreated();
+          }}
+        />
+      ) : null}
       <Card>
         <CardBody>
           <div className="page-stack">
@@ -1212,6 +1252,246 @@ function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, bu
   );
 }
 
+function parseSSHPort(value: string): number | null {
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+}
+
+function NodeSSHAccessMethodModal({ node, open, canBootstrap, busy, scanHostKey, createSSHAccess, onClose, onDone }: {
+  node: NodeDetail;
+  open: boolean;
+  canBootstrap: boolean;
+  busy: boolean;
+  scanHostKey: ReturnType<typeof useScanNodeHostKey>;
+  createSSHAccess: ReturnType<typeof useCreateNodeSSHAccessMethod>;
+  onClose: () => void;
+  onDone: (method: NodeAccessMethod) => void;
+}) {
+  const { t } = useTranslation();
+  const [sshHost, setSSHHost] = useState(node.address || '');
+  const [sshPort, setSSHPort] = useState('22');
+  const [sshUser, setSSHUser] = useState('');
+  const [scanResult, setScanResult] = useState<HostKeyScanResult | null>(null);
+  const [selectedFingerprint, setSelectedFingerprint] = useState('');
+  const [fingerprintVerified, setFingerprintVerified] = useState(false);
+  const [privateKey, setPrivateKey] = useState('');
+  const [isEnabled, setIsEnabled] = useState(true);
+  const [error, setError] = useState('');
+  const fingerprints = scanResult?.fingerprints || [];
+  const port = parseSSHPort(sshPort);
+  const targetReady = Boolean(sshHost.trim() && port && sshUser.trim());
+  const verifiedReady = Boolean(selectedFingerprint && fingerprintVerified);
+  const createReady = Boolean(targetReady && verifiedReady && privateKey);
+  const pending = busy || scanHostKey.isPending || createSSHAccess.isPending;
+
+  const clearTrustState = () => {
+    setScanResult(null);
+    setSelectedFingerprint('');
+    setFingerprintVerified(false);
+    setPrivateKey('');
+  };
+
+  const close = () => {
+    setPrivateKey('');
+    createSSHAccess.reset();
+    scanHostKey.reset();
+    onClose();
+  };
+
+  const runScan = async () => {
+    setError('');
+    setSelectedFingerprint('');
+    setFingerprintVerified(false);
+    if (!sshHost.trim() || !port) {
+      setError(t('nodes.sshAccessTargetInvalid'));
+      setScanResult(null);
+      return;
+    }
+    try {
+      const result = await scanHostKey.mutateAsync({
+        nodeId: node.id,
+        input: {
+          ssh_host: sshHost.trim(),
+          ssh_port: port,
+        },
+      });
+      setScanResult(result);
+      if (!(result.fingerprints || []).length) {
+        setError(t('nodes.sshAccessNoFingerprints'));
+      }
+    } catch (scanError) {
+      setScanResult(null);
+      setError(formatAPIError(scanError));
+    }
+  };
+
+  const selectFingerprint = (entry: HostKeyScanEntry) => {
+    const fingerprint = entry.fingerprint || '';
+    setSelectedFingerprint(fingerprint);
+    setFingerprintVerified(false);
+    setPrivateKey('');
+  };
+
+  const submit = async () => {
+    setError('');
+    const normalizedPort = parseSSHPort(sshPort);
+    if (!canBootstrap) {
+      setError(t('common.permissionRequired', { permission: 'node.bootstrap' }));
+      return;
+    }
+    if (!sshHost.trim() || !normalizedPort || !sshUser.trim()) {
+      setError(t('nodes.sshAccessTargetInvalid'));
+      return;
+    }
+    if (!selectedFingerprint || !fingerprintVerified) {
+      setError(t('nodes.sshAccessFingerprintRequired'));
+      return;
+    }
+    if (!privateKey) {
+      setError(t('nodes.sshAccessPrivateKeyRequired'));
+      return;
+    }
+
+    let privateKeyForRequest = privateKey;
+    setPrivateKey('');
+    try {
+      const created = await createSSHAccess.mutateAsync({
+        nodeId: node.id,
+        ssh_host: sshHost.trim(),
+        ssh_port: normalizedPort,
+        ssh_user: sshUser.trim(),
+        ssh_host_key_sha256: selectedFingerprint,
+        is_enabled: isEnabled,
+        readPrivateKey: () => {
+          const value = privateKeyForRequest;
+          privateKeyForRequest = '';
+          return value;
+        },
+      });
+      setError('');
+      onDone(created);
+    } catch (submitError) {
+      setError(formatAPIError(submitError));
+    } finally {
+      privateKeyForRequest = '';
+      createSSHAccess.reset();
+    }
+  };
+
+  return (
+    <Modal title={t('nodes.addSSHAccessMethod')} open={open} onClose={close}>
+      <div className="page-stack">
+        <p className="muted">{t('nodes.sshAccessCreateIntro')}</p>
+        <FormGrid>
+          <FormField label={t('nodes.sshHost')}>
+            <TextField
+              value={sshHost}
+              onChange={(event) => {
+                setSSHHost(event.target.value);
+                clearTrustState();
+              }}
+            />
+          </FormField>
+          <FormField label={t('nodes.sshPort')}>
+            <TextField
+              type="number"
+              min={1}
+              max={65535}
+              value={sshPort}
+              onChange={(event) => {
+                setSSHPort(event.target.value);
+                clearTrustState();
+              }}
+            />
+          </FormField>
+          <FormField label={t('nodes.sshUser')}>
+            <TextField value={sshUser} onChange={(event) => setSSHUser(event.target.value)} />
+          </FormField>
+        </FormGrid>
+        <Toolbar>
+          <Button variant="primary" icon={<Fingerprint size={16} />} disabled={pending || !sshHost.trim() || !port} onClick={() => void runScan()}>
+            {scanHostKey.isPending ? t('nodes.scanningHostKey') : t('nodes.scanFingerprints')}
+          </Button>
+        </Toolbar>
+        {scanResult ? (
+          <div className="page-stack">
+            <div className="definition-grid">
+              <span>{t('nodes.scanHost')}</span><strong>{scanResult.host || sshHost.trim()}</strong>
+              <span>{t('nodes.scanPort')}</span><strong>{scanResult.port || port || 'n/a'}</strong>
+            </div>
+            <DataTable
+              rows={fingerprints}
+              title={t('nodes.sshAccessScannedFingerprints')}
+              columns={[
+                {
+                  key: 'select',
+                  header: t('common.select'),
+                  render: (row) => (
+                    <input
+                      type="radio"
+                      name="new-ssh-access-fingerprint"
+                      aria-label={`${t('nodes.selectFingerprint')} ${row.fingerprint || ''}`.trim()}
+                      checked={Boolean(row.fingerprint && row.fingerprint === selectedFingerprint)}
+                      disabled={!row.fingerprint}
+                      onChange={() => selectFingerprint(row)}
+                    />
+                  ),
+                },
+                { key: 'fingerprint', header: t('nodes.fingerprint'), render: (row) => <code>{text(row.fingerprint)}</code> },
+                { key: 'algorithm', header: t('nodes.algorithm'), render: (row) => text(row.algorithm) },
+                { key: 'bits', header: t('nodes.bits'), render: (row) => String(row.bits ?? 'n/a') },
+                { key: 'known-host', header: t('nodes.knownHostLine'), render: (row) => <code>{text(row.known_host_line)}</code> },
+              ]}
+            />
+            <Checkbox
+              checked={fingerprintVerified}
+              disabled={!selectedFingerprint}
+              onChange={(event) => setFingerprintVerified(event.target.checked)}
+              label={t('nodes.fingerprintIndependentVerification')}
+            />
+          </div>
+        ) : null}
+        {verifiedReady ? (
+          <div className="page-stack">
+            <p className="muted">{t('nodes.sshPrivateKeyWarning')}</p>
+            <FormField label={t('nodes.privateKey')} full>
+              <Textarea
+                rows={9}
+                value={privateKey}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => setPrivateKey(event.target.value)}
+              />
+            </FormField>
+            <Checkbox
+              checked={isEnabled}
+              onChange={(event) => setIsEnabled(event.target.checked)}
+              label={t('nodes.enableSSHAccessMethod')}
+            />
+          </div>
+        ) : null}
+        {error ? <div role="alert" className="error-state-inline">{error}</div> : null}
+        <Toolbar>
+          <Button
+            variant="primary"
+            icon={<ShieldCheck size={16} />}
+            disabled={pending || !canBootstrap || !createReady}
+            title={!canBootstrap ? t('common.permissionRequired', { permission: 'node.bootstrap' }) : undefined}
+            onClick={() => void submit()}
+          >
+            {t('nodes.createSSHAccessMethod')}
+          </Button>
+          <Button onClick={close}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </div>
+    </Modal>
+  );
+}
+
+function accessSecretConfigured(method: NodeAccessMethod): boolean {
+  return method.secret_configured === true || Boolean(method.secret_ref_id);
+}
+
 function AccessMethodsTable({ methods }: { methods: NodeAccessMethod[] }) {
   const { t } = useTranslation();
   return (
@@ -1226,7 +1506,7 @@ function AccessMethodsTable({ methods }: { methods: NodeAccessMethod[] }) {
         { key: 'user', header: t('nodes.sshUser'), render: (row) => text(row.ssh_user) },
         { key: 'auth', header: t('nodes.authType'), render: (row) => text(row.auth_type) },
         { key: 'pin', header: t('nodes.currentPin'), render: (row) => <code>{text(row.ssh_host_key_sha256)}</code> },
-        { key: 'secret', header: t('nodes.secretAvailable'), render: (row) => row.secret_ref_id ? t('common.yes') : t('common.no') },
+        { key: 'secret', header: t('nodes.secretAvailable'), render: (row) => accessSecretConfigured(row) ? t('common.yes') : t('common.no') },
       ]}
     />
   );
@@ -1240,7 +1520,7 @@ function TerminalTab({ node, accessMethods, busy, onConfirm }: {
 }) {
   const { t } = useTranslation();
   const method = defaultSSHMethod(accessMethods.data);
-  const canLaunch = Boolean(method?.is_enabled && method.secret_ref_id && method.ssh_host_key_sha256);
+  const canLaunch = Boolean(method?.is_enabled && accessSecretConfigured(method) && method.ssh_host_key_sha256);
   return (
     <div className="page-stack">
       <Card>

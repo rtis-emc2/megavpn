@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -140,7 +140,7 @@ const accessMethods = [
     ssh_user: 'ubuntu',
     ssh_host_key_sha256: 'SHA256:oldfingerprint',
     auth_type: 'ssh_key',
-    secret_ref_id: 'secret-1',
+    secret_configured: true,
     created_at: '2026-07-08T10:00:00Z',
     updated_at: '2026-07-08T10:00:00Z',
   },
@@ -189,6 +189,20 @@ function job(id: string, type = 'node.inventory.sync') {
   };
 }
 
+function trackedBody(method: string, path: string, body?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!body) return undefined;
+  if (method === 'POST' && path === '/api/v1/nodes/node-1/access-methods/ssh') {
+    const fields = Object.keys(body).sort();
+    const { private_key: privateKey, ...safeBody } = body;
+    return {
+      ...safeBody,
+      private_key_present: typeof privateKey === 'string' && privateKey.length > 0,
+      request_fields: fields,
+    };
+  }
+  return body;
+}
+
 function renderPage(auth: typeof authPayload = authPayload) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -209,8 +223,8 @@ function renderPage(auth: typeof authPayload = authPayload) {
   return queryClient;
 }
 
-async function openNode() {
-  renderPage();
+async function openNode(auth: typeof authPayload = authPayload) {
+  renderPage(auth);
   expect((await screen.findAllByText('Edge One')).length).toBeGreaterThan(0);
   await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
   await screen.findByRole('heading', { name: 'Edge One' });
@@ -229,6 +243,7 @@ describe('NodesPage', () => {
   let nodeList: Array<typeof node>;
   let createdNode: typeof node | null;
   let currentNode: typeof node;
+  let currentAccessMethods: typeof accessMethods;
 
   beforeEach(async () => {
     calls.length = 0;
@@ -236,13 +251,16 @@ describe('NodesPage', () => {
     currentNode = { ...node };
     createdNode = null;
     nodeList = [currentNode];
+    currentAccessMethods = accessMethods.map((method) => ({ ...method }));
     window.localStorage.clear();
+    window.sessionStorage.clear();
     await i18n.changeLanguage('en');
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://megavpn.test');
       const method = String(init?.method || 'GET').toUpperCase();
+      const path = `${url.pathname}${url.search}`;
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
-      calls.push({ method, path: `${url.pathname}${url.search}`, body });
+      calls.push({ method, path, body: trackedBody(method, path, body) });
 
       if (method === 'GET' && url.pathname === '/api/v1/auth/me') return json(authPayload);
       if (method === 'GET' && url.pathname === '/api/v1/nodes') return json(nodeList);
@@ -313,7 +331,7 @@ describe('NodesPage', () => {
         return json({ node_id: 'node-1', total: 1, discovered: 1, imported: 0, ignored: 0, importable_count: 1, by_service: { 'xray-core': 1 } });
       }
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/enrollment-tokens') return json(enrollmentTokens);
-      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/access-methods') return json(accessMethods);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/access-methods') return json(currentAccessMethods);
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/bootstrap-runs') return json(bootstrapRuns);
       if (method === 'GET' && url.pathname.startsWith('/api/v1/jobs/')) return json(job(url.pathname.split('/')[4]));
       if (method === 'GET' && url.pathname.endsWith('/logs')) return json([{ level: 'info', message: 'queued' }]);
@@ -349,10 +367,43 @@ describe('NodesPage', () => {
         return json({ ...enrollmentTokens[0], status: 'revoked' });
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/ssh/host-key-scan') {
+        if (actionErrors.scanHostKey === 500) return json({ error: 'ssh-keyscan failed' }, 500);
+        if (actionErrors.scanHostKey === 204) return json({ host: body?.ssh_host || 'edge-one.example.test', port: body?.ssh_port || 22, fingerprints: [] });
         return json({ host: 'edge-one.example.test', port: 22, fingerprints: [{ fingerprint: 'SHA256:newfingerprint', algorithm: 'ssh-ed25519', bits: 256, known_host_line: 'edge-one.example.test ssh-ed25519 AAAA' }] });
       }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/access-methods/ssh') {
+        if (actionErrors.createSSHAccess) {
+          const messages: Record<number, string> = {
+            400: 'private_key is not a valid unencrypted SSH private key',
+            403: 'node.bootstrap permission required',
+            404: 'node not found',
+            409: 'ssh access method already exists',
+            422: 'invalid ssh access method payload',
+            503: 'secret storage is not configured',
+            500: 'ssh access method create failed',
+          };
+          return json({ error: messages[actionErrors.createSSHAccess] || 'ssh access method create failed' }, actionErrors.createSSHAccess);
+        }
+        const createdAccessMethod = {
+          id: 'access-created',
+          node_id: 'node-1',
+          method: 'ssh',
+          is_enabled: body?.is_enabled !== false,
+          ssh_host: String(body?.ssh_host || ''),
+          ssh_port: Number(body?.ssh_port || 22),
+          ssh_user: String(body?.ssh_user || ''),
+          ssh_host_key_sha256: String(body?.ssh_host_key_sha256 || ''),
+          auth_type: 'ssh_key',
+          secret_configured: true,
+          created_at: '2026-07-09T08:09:00Z',
+          updated_at: '2026-07-09T08:09:00Z',
+        };
+        currentAccessMethods = [...currentAccessMethods, createdAccessMethod];
+        return json(createdAccessMethod, 201);
+      }
       if (method === 'PUT' && url.pathname === '/api/v1/nodes/node-1/access-methods') {
-        return json((body?.items as unknown[]) || accessMethods);
+        currentAccessMethods = ((body?.items as typeof accessMethods | undefined) || currentAccessMethods).map((method) => ({ ...method }));
+        return json(currentAccessMethods);
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/bootstrap') {
         return json({ job: job('job-bootstrap', 'node.bootstrap'), bootstrap_run: { id: 'bootstrap-run-new', node_id: 'node-1', job_id: 'job-bootstrap', status: 'queued', bootstrap_mode: body?.bootstrap_mode || 'ssh_bootstrap', created_at: '2026-07-09T08:07:00Z' } }, 202);
@@ -658,6 +709,123 @@ describe('NodesPage', () => {
     expect(storageSet.mock.calls.some(([key, value]) => String(key).toLowerCase().includes('token') || String(value).includes('enroll-secret-token') || String(value).includes('ssh-session-ticket'))).toBe(false);
     expect(window.localStorage.getItem('enrollment_token')).toBeNull();
     expect(window.sessionStorage.getItem('enrollment_token')).toBeNull();
+  });
+
+  it('keeps SSH access method creation gated by node.bootstrap permission', async () => {
+    await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
+    await userEvent.click(screen.getByRole('tab', { name: 'Security' }));
+
+    const addButton = await screen.findByRole('button', { name: 'Add SSH access method' });
+    expect(addButton).toBeDisabled();
+    expect(addButton).toHaveAttribute('title', 'Permission required: node.bootstrap');
+    expect(screen.getByText('Permission required: node.bootstrap.')).toBeInTheDocument();
+    expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/access-methods/ssh')).toBe(false);
+  });
+
+  it('creates an SSH access method through the dedicated endpoint after explicit fingerprint verification', async () => {
+    const privateKey = [
+      '-----BEGIN OPENSSH PRIVATE KEY-----',
+      'test-private-key-material',
+      '-----END OPENSSH PRIVATE KEY-----',
+    ].join('\n');
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    await openNode();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Security' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Add SSH access method' }));
+    const dialog = activeDialog();
+    expect(within(dialog).getByLabelText('SSH host')).toHaveValue('203.0.113.10');
+    expect(within(dialog).getByLabelText('SSH port')).toHaveValue(22);
+    expect(within(dialog).queryByLabelText('Private key')).not.toBeInTheDocument();
+
+    await userEvent.clear(within(dialog).getByLabelText('SSH host'));
+    await userEvent.type(within(dialog).getByLabelText('SSH host'), '198.51.100.50');
+    await userEvent.type(within(dialog).getByLabelText('SSH user'), 'deploy');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Scan fingerprints' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/ssh/host-key-scan')).toBe(true));
+    const scanCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/ssh/host-key-scan');
+    expect(scanCall?.body).toEqual({ ssh_host: '198.51.100.50', ssh_port: 22 });
+    expect(scanCall?.body).not.toHaveProperty('ssh_user');
+    expect(scanCall?.body).not.toHaveProperty('private_key');
+
+    const radio = (await within(dialog).findAllByRole('radio', { name: 'Select fingerprint SHA256:newfingerprint' }))[0];
+    expect(radio).not.toBeChecked();
+    expect(within(dialog).getByRole('button', { name: 'Create SSH access method' })).toBeDisabled();
+    await userEvent.click(radio);
+    expect(within(dialog).queryByLabelText('Private key')).not.toBeInTheDocument();
+    await userEvent.click(within(dialog).getByLabelText('I verified this fingerprint through an independent trusted channel.'));
+    const privateKeyInput = within(dialog).getByLabelText('Private key');
+    fireEvent.change(privateKeyInput, { target: { value: privateKey } });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create SSH access method' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/access-methods/ssh')).toBe(true));
+    const createCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/access-methods/ssh');
+    expect(createCall?.body).toMatchObject({
+      ssh_host: '198.51.100.50',
+      ssh_port: 22,
+      ssh_user: 'deploy',
+      ssh_host_key_sha256: 'SHA256:newfingerprint',
+      is_enabled: true,
+      private_key_present: true,
+    });
+    expect(createCall?.body?.request_fields).toEqual(['is_enabled', 'private_key', 'ssh_host', 'ssh_host_key_sha256', 'ssh_port', 'ssh_user']);
+    expect(createCall?.body).not.toHaveProperty('private_key');
+    expect(createCall?.body).not.toHaveProperty('secret_ref_id');
+    expect(createCall?.body).not.toHaveProperty('method');
+    expect(createCall?.body).not.toHaveProperty('auth_type');
+    expect(createCall?.body).not.toHaveProperty('secret_type');
+    expect(calls.some((call) => call.path === '/api/v1/secret-refs')).toBe(false);
+    expect(calls.some((call) => call.method === 'PUT' && call.path === '/api/v1/nodes/node-1/access-methods')).toBe(false);
+
+    await screen.findByText('Backend created the SSH access method. Connectivity is not implied until bootstrap or terminal checks run.');
+    expect(screen.queryByRole('dialog', { name: 'Add SSH access method' })).not.toBeInTheDocument();
+    expect((await screen.findAllByText('198.51.100.50')).length).toBeGreaterThan(0);
+    expect(screen.queryByText(privateKey)).not.toBeInTheDocument();
+    expect(JSON.stringify(calls)).not.toContain('test-private-key-material');
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+    expect(storageSet.mock.calls.some(([key, value]) => String(key).toLowerCase().includes('ssh') || String(value).includes('test-private-key-material'))).toBe(false);
+    expect(window.localStorage.getItem('ssh_private_key')).toBeNull();
+    expect(window.sessionStorage.getItem('ssh_private_key')).toBeNull();
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleDebug).not.toHaveBeenCalled();
+  });
+
+  it('blocks SSH access creation on stale scans and clears private key material after backend errors', async () => {
+    const privateKey = '-----BEGIN OPENSSH PRIVATE KEY-----\nfailed-key-material\n-----END OPENSSH PRIVATE KEY-----';
+    actionErrors.scanHostKey = 204;
+    await openNode();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Security' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Add SSH access method' }));
+    let dialog = activeDialog();
+    await userEvent.type(within(dialog).getByLabelText('SSH user'), 'deploy');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Scan fingerprints' }));
+    await within(dialog).findByText('The scan returned no host fingerprints. Creation is blocked until a fingerprint is available.');
+    expect(within(dialog).queryByLabelText('Private key')).not.toBeInTheDocument();
+
+    actionErrors.scanHostKey = 0;
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Scan fingerprints' }));
+    const radio = (await within(dialog).findAllByRole('radio', { name: 'Select fingerprint SHA256:newfingerprint' }))[0];
+    await userEvent.click(radio);
+    await userEvent.click(within(dialog).getByLabelText('I verified this fingerprint through an independent trusted channel.'));
+    expect(within(dialog).getByLabelText('Private key')).toBeInTheDocument();
+    await userEvent.clear(within(dialog).getByLabelText('SSH port'));
+    await userEvent.type(within(dialog).getByLabelText('SSH port'), '2222');
+    expect(within(dialog).queryByLabelText('Private key')).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Scan fingerprints' }));
+    await userEvent.click((await within(dialog).findAllByRole('radio', { name: 'Select fingerprint SHA256:newfingerprint' }))[0]);
+    await userEvent.click(within(dialog).getByLabelText('I verified this fingerprint through an independent trusted channel.'));
+    const privateKeyInput = within(dialog).getByLabelText('Private key');
+    fireEvent.change(privateKeyInput, { target: { value: privateKey } });
+    actionErrors.createSSHAccess = 503;
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create SSH access method' }));
+    await within(dialog).findByText(/HTTP 503: secret storage is not configured/);
+    dialog = activeDialog();
+    expect(within(dialog).getByLabelText('Private key')).toHaveValue('');
+    expect(JSON.stringify(calls)).not.toContain('failed-key-material');
   });
 
   it('shows backend 403, 422 and 409 errors safely', async () => {

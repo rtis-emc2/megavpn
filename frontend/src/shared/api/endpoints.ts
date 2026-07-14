@@ -137,6 +137,8 @@ import type {
   NodeServiceDiscoverySummary,
   NodeServiceInstaller,
   NodeRetireResult,
+  NodeSSHAccessMethodCreateInput,
+  NodeSSHAccessMethodCreateResult,
   NodeUpdateInput,
   ReadyStatus,
   RoutePolicy,
@@ -517,6 +519,10 @@ export function listNodeAccessMethods(nodeId: string): Promise<NodeAccessMethods
 
 export function replaceNodeAccessMethods(nodeId: string, items: NodeAccessMethod[]): Promise<NodeAccessMethodsResult> {
   return sendJSON<NodeAccessMethodsResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/access-methods`, 'PUT', { items });
+}
+
+export function createNodeSSHAccessMethod(nodeId: string, input: NodeSSHAccessMethodCreateInput): Promise<NodeSSHAccessMethodCreateResult> {
+  return sendJSON<NodeSSHAccessMethodCreateResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/access-methods/ssh`, 'POST', input);
 }
 
 export function scanNodeHostKey(nodeId: string, input: { ssh_host?: string; ssh_port?: number } = {}): Promise<HostKeyScanResult> {
