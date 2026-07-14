@@ -1304,7 +1304,7 @@ func (s *Store) createInstanceWithOptions(ctx context.Context, x domain.Instance
 		}
 		return x, applyReadyErr
 	}
-	if x.ServiceCode == "xray-core" {
+	if x.ServiceCode == "xray-core" && in(strings.TrimSpace(rev.Status), "validated", "applied") {
 		if materialized, err := s.materializeGlobalVLESSGroupMembershipsForInstance(ctx, x.ID); err != nil {
 			if cleanupErr := s.discardUnqueuedInstanceDraft(ctx, x.ID); cleanupErr != nil {
 				return x, errors.Join(err, fmt.Errorf("discard unqueueable instance draft: %w", cleanupErr))
