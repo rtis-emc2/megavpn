@@ -2,13 +2,13 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-09T10:57:57Z`
+Generated UTC: `2026-07-14T19:31:03Z`
 
-PR readiness evidence HEAD before this status-only PR body update:
-`6c69879c9c0d5e0a4d182e17140a059f0b62509c`
+Current FE8 evidence HEAD:
+`1ffda5b00efb98fa9f60d22a998f1e9e2c52daf2`
 
-PR readiness evidence CI before this status-only PR body update:
-GitHub Actions run `29013369835` PASS.
+Current FE8 evidence CI:
+GitHub Actions run `29361072970` PASS.
 
 ## Status
 
@@ -55,9 +55,10 @@ the new React console serves the root UI and migrated workflows.
   lifecycle actions, diagnostics, delete/force-delete and job tracking.
 - `Services`: service pack list/detail/create/update/enable/disable/delete,
   create instance from pack and runtime artifact list/metadata/import.
-- `Nodes`: observability, diagnostics, inventory, bootstrap, enrollment tokens,
-  SSH session ticket launch, host-key scan/pin, agent token rotation and retire
-  workflows where backend endpoints exist.
+- `Nodes`: create/edit, observability, diagnostics, inventory, secure SSH
+  access-method creation, bootstrap, enrollment tokens, SSH session ticket
+  launch, host-key scan/pin, agent token rotation and retire workflows where
+  backend endpoints exist.
 - `Platform -> Certificates`: certificate list/detail, import preview/apply,
   self-signed create, managed CA create, issue, set default, revoke/delete and
   managed PKI root creation where backend endpoints exist.
@@ -87,8 +88,11 @@ the new React console serves the root UI and migrated workflows.
 
 ## CI Evidence
 
-- Current HEAD: `24638d090d44bd9d6f3eea53b07d334533333e90`.
-- GitHub Actions CI: `29012228790` PASS.
+- Current evidence HEAD: `1ffda5b00efb98fa9f60d22a998f1e9e2c52daf2`.
+- GitHub Actions CI: `29361072970` PASS.
+- PostgreSQL integration job: `PostgreSQL integration tests` PASS against
+  PostgreSQL 16, including non-skipping SSH access-method store and
+  HTTP/PostgreSQL tests.
 - Local Go checks passed: `gofmt -l cmd internal`, `go vet ./...`,
   `go test ./...`, `go test -race ./...` and
   `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin`.
@@ -123,7 +127,10 @@ any final production cutover decision.
 - Version tag and release metadata are not synchronized to final `8.0.0`.
 - Full production release gate has not passed without skips.
 - Live disposable API/DB/node smoke has not run.
-- Backup/restore and PostgreSQL disposable integration evidence are missing.
+- Disposable PostgreSQL integration evidence exists for the tested backend
+  suites, including SSH access-method creation.
+- Backup/restore evidence remains missing.
+- Full live disposable API/DB/node smoke remains missing.
 - Responsive desktop/tablet/phone workflow evidence is missing.
 - Human English/Russian i18n wording review remains open.
 - Backend-missing and future-scope sub-actions remain documented in

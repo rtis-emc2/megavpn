@@ -333,8 +333,9 @@ Production defaults:
 control-plane create/edit safe profile metadata, observability, runtime/agent
 state, maintenance mode, inventory sync, runtime capability install/verify,
 diagnostics retry/run, service discovery scan/import, bootstrap/reinstall job
-queueing, enrollment tokens, host-key scan/pin, SSH session ticket launch,
-agent token rotation, retire/force-retire и job tracking.
+queueing, enrollment tokens, secure SSH access method creation, host-key
+scan/pin, SSH session ticket launch, agent token rotation, retire/force-retire
+и job tracking.
 
 Чтобы создать control-plane запись node:
 
@@ -349,34 +350,57 @@ agent token rotation, retire/force-retire и job tracking.
 4. Сохраните запись. Новая UI не меняет статус на `online` и не считает node
    enrolled, пока это не вернет backend/agent.
 
-Ограничение FE8-P0-09B step 1: agent registration/onboarding и создание нового
-SSH access method с secret material пока не выведены в generic create/edit
-форму. Для secret-bearing setup шагов в текущем RC используйте approved
-bootstrap workflow:
+Ограничение FE8-P0-09B: generic create/edit форма создает только control-plane
+node record. Agent registration/onboarding и live bootstrap остаются отдельными
+операционными шагами.
 
-1. Откройте `/legacy/` или текущий approved bootstrap workflow, если нужен новый
-   SSH access method с secret material.
-2. Для SSH bootstrap добавьте SSH access method:
-   - `ssh_user`;
-   - `ssh_host`;
-   - `ssh_port`;
-   - `ssh_host_key_sha256`;
-   - private key secret.
-3. Нажмите `Scan host key` после того, как `ssh_host` и `ssh_port` указаны
-   корректно. UI заполнит `ssh_host_key_sha256` найденным fingerprint.
-4. Сверьте fingerprint внешним доверенным способом: через cloud/provider
-   console или provisioning record, затем сохраните SSH access.
-5. После сохранения access method вернитесь в новую UI: `Nodes -> node`.
-6. На вкладке `Security` выполните `Scan host key`, проверьте fingerprint
-   внешним доверенным способом и нажмите `Pin fingerprint`.
-7. На вкладке `Security` создайте или rotate enrollment token. Plaintext
+Чтобы добавить новый SSH access method с secret material в новой UI:
+
+1. Откройте `Nodes`.
+2. Выберите node.
+3. Откройте `Security`.
+4. Нажмите `Add SSH access method`.
+5. Укажите:
+   - SSH host;
+   - SSH port;
+   - SSH user.
+6. Нажмите `Scan host key`.
+7. Просмотрите каждый returned fingerprint.
+8. Выберите ожидаемый fingerprint вручную.
+9. Проверьте fingerprint через независимый доверенный канал:
+   - cloud/provider console;
+   - provisioning record;
+   - local console;
+   - другой approved source.
+10. Подтвердите independent verification в UI.
+11. Введите dedicated SSH private key.
+12. Оставьте access method enabled, если он должен быть доступен сразу.
+13. Отправьте форму.
+14. Убедитесь, что method появился в access-method list.
+15. Переходите к Bootstrap только после того, как method сконфигурирован.
+
+Security notes:
+
+- scan сам по себе не устанавливает trust;
+- первый fingerprint не выбирается автоматически;
+- используйте dedicated automation/bootstrap key;
+- passphrase-protected keys не поддерживаются этим workflow;
+- key отправляется один раз в encrypted backend storage;
+- key больше не отображается после отправки;
+- browser не хранит key;
+- потеря исходного private key требует явного replacement/rotation workflow;
+- успешное создание не доказывает, что SSH connectivity или bootstrap работают.
+
+Для дальнейших bootstrap/security операций:
+
+1. На вкладке `Security` создайте или rotate enrollment token. Plaintext
    показывается только один раз; скопируйте его сразу и закройте panel.
-8. На вкладке `Bootstrap` запустите bootstrap или reinstall agent. UI покажет
+2. На вкладке `Bootstrap` запустите bootstrap или reinstall agent. UI покажет
    backend job tracking.
-11. На вкладке `Terminal / Access` можно запросить short-lived backend SSH
-    terminal session URL для настроенного SSH method. Browser не хранит SSH
-    credentials и не реализует SSH самостоятельно.
-12. Дождитесь heartbeat: node должна перейти в `online`.
+3. На вкладке `Terminal / Access` можно запросить short-lived backend SSH
+   terminal session URL для настроенного SSH method. Browser не хранит SSH
+   credentials и не реализует SSH самостоятельно.
+4. Дождитесь heartbeat: node должна перейти в `online`.
 
 `ssh_host_key_sha256` защищает bootstrap от MITM. Fingerprint должен
 соответствовать реальному host key node. Не обходите это поле непроверенным

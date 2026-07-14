@@ -2,7 +2,7 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-14T16:36:06Z`
+Generated UTC: `2026-07-14T19:31:03Z`
 
 Final cutover status: **NO-GO** until every required item below is completed or explicitly waived by release owners with a dated rationale.
 
@@ -38,8 +38,11 @@ Release-blocking details:
   certificate id was available in this workstation session. Use
   `docs/FE8_LIVE_SMOKE_PLAN_8.0.0.md` before final cutover.
 - Full release gate: local diagnostic gate can run with explicit skips, but it
-  is not production release evidence while clean npm install, disposable DB,
-  backup/restore, API smoke and service matrix inputs are missing.
+  is not production release evidence while clean npm install, backup/restore,
+  API smoke and service matrix inputs are missing. Disposable PostgreSQL
+  integration evidence now exists for the tested backend suites, including
+  secure SSH access-method creation; local workstation PostgreSQL availability
+  is not equivalent to that GitHub CI service evidence.
 - Legacy rollback: keep `/legacy/` until cutover is signed off and tested.
 - GitHub Actions Node.js 20 deprecation: closed by moving pinned Actions to
   upstream node24 major pins while preserving commit-SHA pinning.
@@ -74,6 +77,7 @@ Release-blocking details:
 | GitHub Actions runtime pins | CLOSED | checkout `v7.0.0`, setup-go `v6.5.0`, setup-node `v6.4.0`, upload-artifact `v7.0.1`; each inspected `action.yml` uses `node24`. |
 | Static frontend guards | PASS | `scripts/ci/frontend-static-guards.sh` passed locally. |
 | Text LF guards | PASS | `scripts/ci/text-lf-guard.sh`, `scripts/ci/docs-markdown-shape.sh` and `scripts/ci/docs-consistency.sh` passed locally and in CI. |
+| SSH access-method PostgreSQL evidence | PASS | Evidence HEAD `1ffda5b00efb98fa9f60d22a998f1e9e2c52daf2`; GitHub Actions run `29361072970`, job `PostgreSQL integration tests`. |
 | Release gate | PARTIAL | Diagnostic run with `MEGAVPN_RELEASE_ALLOW_SKIPS=1` passed 19 gates and skipped 7 workstation/live-env gates. |
 | Live disposable smoke | OPEN | Required API/DB/node inputs are unavailable. |
 | Responsive evidence | OPEN | Real workflow screenshots are not captured. |
@@ -106,7 +110,6 @@ Backend-missing reasons:
 | Clients -> Groups | Non-VLESS materialization |
 | Clients -> Groups | Migration conflict UI |
 | Nodes | Agent registration/onboarding |
-| Nodes | New SSH access method with secret material |
 | Nodes | Manual bootstrap bundle reveal |
 | Nodes | Agent identity revoke/reboot/cleanup |
 | Nodes | Service discovery ignore/unignore |
@@ -121,7 +124,13 @@ Future-scope decisions:
   FE8-P0-09B step 1. Agent registration/onboarding remains future scope or
   approved legacy/dedicated workflow because it can involve bootstrap and
   secret-bearing setup.
-- New SSH access method creation needs a reviewed browser secret flow.
+- New SSH access method creation was completed through a dedicated atomic
+  backend endpoint, explicit host-key verification workflow, transient
+  private-key form handling, encrypted PostgreSQL secret storage and
+  non-skipping PostgreSQL/HTTP integration evidence. Evidence: backend commit
+  `9dd92d299415c91058fc2bf0df2d6ac26a8b2838`, frontend commit
+  `d5dc323856677324ced54f14a8c2a5b79d84b025`, PostgreSQL evidence HEAD
+  `1ffda5b00efb98fa9f60d22a998f1e9e2c52daf2`, CI run `29361072970`.
 - Manual bootstrap bundle reveal remains backend-controlled.
 - Agent identity revoke, reboot and cleanup remain future scope or legacy-only.
 - Service discovery ignore/unignore is not migrated in FE8-P0-05A.

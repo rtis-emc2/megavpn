@@ -165,15 +165,61 @@ Affected operation classes:
 - rollback;
 - node retire/force-retire.
 
-## 10. RC1 Limitations
+## 10. Secure SSH Access Method Creation Review
+
+Nodes -> Security now supports creating a new SSH access method with secret
+material without `/legacy/`. The reviewed scope is secure configuration and
+encrypted persistence, not live SSH connectivity or bootstrap success.
+
+Backend controls:
+
+- purpose-specific `POST /api/v1/nodes/{id}/access-methods/ssh` endpoint;
+- `node.bootstrap` authorization and existing CSRF/session handling;
+- unknown-field rejection, including caller-supplied `secret_ref_id`;
+- private-key parsing and rejection of public, malformed or passphrase-protected
+  private keys;
+- encrypted secret storage through the existing secret service;
+- one PostgreSQL transaction for duplicate check, secret ref insert,
+  access-method insert and audit insert;
+- advisory-lock/duplicate protection for concurrent creates;
+- redacted response containing `secret_configured` instead of secret reference
+  or ciphertext fields;
+- redacted logs and audit payloads, with rollback preventing orphan access
+  methods or orphan committed secrets.
+
+Frontend controls:
+
+- host-key scan runs before key entry;
+- the first returned fingerprint is not selected automatically;
+- operators must explicitly select a fingerprint and confirm independent
+  verification before the private-key input is shown;
+- private-key material is not stored in localStorage, sessionStorage or
+  IndexedDB and is not placed in query keys or global app state;
+- form state is cleared on target/trust changes, submit, close/cancel, backend
+  failure, success and modal unmount;
+- the UI does not render `secret_ref_id`, does not call the generic secret-ref
+  endpoint, and does not request `/legacy/`.
+
+Evidence controls:
+
+- real PostgreSQL store tests cover atomic persistence, retired-node rejection
+  and concurrent duplicate behavior;
+- real HTTP/router/PostgreSQL test covers auth, CSRF, handler, store,
+  encrypted persistence and redacted response;
+- GitHub Actions run `29361072970`, job `PostgreSQL integration tests`, ran the
+  required SSH integration tests without skips.
+
+The UI minimizes secret lifetime and prevents application-level persistence;
+JavaScript runtime memory erasure is not guaranteed.
+
+## 11. RC1 Limitations
 
 The new console remains incomplete for final write parity. The following are
-intentionally disabled, backend-missing or legacy-only after FE8-P0-09B step 1:
+intentionally disabled, backend-missing or legacy-only after FE8-P0-09B:
 
 - non-VLESS access service materialization and access-group migration conflict UI;
-- node agent registration/onboarding, new SSH access method creation with
-  secret material, manual bootstrap bundle reveal, agent identity revoke,
-  reboot, emergency cleanup and stale rotation cleanup;
+- node agent registration/onboarding, manual bootstrap bundle reveal, agent
+  identity revoke, reboot, emergency cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance
@@ -185,7 +231,7 @@ intentionally disabled, backend-missing or legacy-only after FE8-P0-09B step 1:
 This is a security-positive limitation: operators must not see a clickable
 action unless it is backed by real endpoint behavior and safe UX.
 
-## 11. Required Checks
+## 12. Required Checks
 
 For RC1 evidence, run:
 
