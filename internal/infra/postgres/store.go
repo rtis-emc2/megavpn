@@ -3720,8 +3720,8 @@ func (s *Store) ListInstanceRevisions(ctx context.Context, instanceID string, li
 		limit = 20
 	}
 	rows, err := s.db.Query(ctx, `select r.id,r.instance_id,r.source,r.status,coalesce(r.rendered_hash,''),r.revision_no,r.spec_json,coalesce(r.validation_errors_json,'[]'::jsonb),r.created_at,r.applied_at,
-			(r.id = i.current_revision_id) as is_current,
-			(r.id = i.last_applied_revision_id) as is_last_applied
+				coalesce(r.id = i.current_revision_id, false) as is_current,
+				coalesce(r.id = i.last_applied_revision_id, false) as is_last_applied
 		from instance_revisions r
 		join instances i on i.id=r.instance_id
 		where r.instance_id=$1
