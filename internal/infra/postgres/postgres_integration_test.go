@@ -3583,7 +3583,11 @@ func TestPostgresIntegrationDeleteClientRemovesProvisioningRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rotate subscription: %v", err)
 	}
-	createdBy := id.New()
+	createdByUser, _, err := store.EnsureBootstrapPlatformUser(ctx, "it-cleanup-admin-"+suffix, "it-cleanup-admin-"+suffix+"@example.invalid", "Integration Cleanup Admin", "integration-password-hash")
+	if err != nil {
+		t.Fatalf("create email delivery user: %v", err)
+	}
+	createdBy := createdByUser.ID
 	if _, err := store.CreateClientEmailDelivery(ctx, domain.ClientEmailDelivery{
 		ClientAccountID: client.ID,
 		Email:           client.Email,
