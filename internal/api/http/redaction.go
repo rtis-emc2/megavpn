@@ -7,6 +7,7 @@ import (
 )
 
 const redactedValue = "[redacted]"
+const nodeBootstrapBundleSecretRefKey = "agent_bootstrapenv_secret_ref_id"
 
 func redactedJob(job domain.Job) domain.Job {
 	job.Payload = redactSensitiveMap(job.Payload)
@@ -26,9 +27,28 @@ func redactedJobs(jobs []domain.Job) []domain.Job {
 }
 
 func redactedBootstrapRun(run domain.NodeBootstrapRun) domain.NodeBootstrapRun {
+	run.ManualBundleAvailable = bootstrapManualBundleAvailable(run.ResultPayload)
 	run.RequestPayload = redactSensitiveMap(run.RequestPayload)
-	run.ResultPayload = redactSensitiveMap(run.ResultPayload)
+	run.ResultPayload = redactBootstrapRunResultPayload(run.ResultPayload)
 	return run
+}
+
+func bootstrapManualBundleAvailable(payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	return strings.TrimSpace(stringifyHTTP(payload[nodeBootstrapBundleSecretRefKey])) != ""
+}
+
+func redactBootstrapRunResultPayload(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := redactSensitiveMap(src)
+	delete(out, nodeBootstrapBundleSecretRefKey)
+	delete(out, "agent_bootstrapenv")
+	delete(out, "agent_bootstrap_env")
+	return out
 }
 
 func redactedBootstrapRuns(runs []domain.NodeBootstrapRun) []domain.NodeBootstrapRun {

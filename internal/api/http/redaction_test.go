@@ -79,11 +79,57 @@ func TestRedactedBootstrapRunRemovesManualBundleSecret(t *testing.T) {
 	}
 
 	got := redactedBootstrapRun(run)
-	if got.ResultPayload["agent_bootstrapenv"] != redactedValue {
-		t.Fatalf("agent_bootstrapenv was not redacted: %#v", got.ResultPayload)
+	if got.ResultPayload["agent_bootstrapenv"] != nil {
+		t.Fatalf("agent_bootstrapenv should be removed: %#v", got.ResultPayload)
 	}
-	if got.ResultPayload["agent_bootstrapenv_secret_ref_id"] != "secret-ref-id" {
-		t.Fatalf("secret ref id should remain visible: %#v", got.ResultPayload)
+	if got.ResultPayload["agent_bootstrapenv_secret_ref_id"] != nil {
+		t.Fatalf("secret ref id should be removed: %#v", got.ResultPayload)
+	}
+	if !got.ManualBundleAvailable {
+		t.Fatalf("manual_bundle_available = false, want true: %#v", got)
+	}
+}
+
+func TestRedactedBootstrapRunManualBundleUnavailable(t *testing.T) {
+	run := domain.NodeBootstrapRun{
+		ResultPayload: map[string]any{
+			"agent_env":                    "MEGAVPN_AGENT_CONTROL_PLANE_URL=https://control.example.com",
+			"agent_bootstrapenv_available": true,
+		},
+	}
+
+	got := redactedBootstrapRun(run)
+	if got.ManualBundleAvailable {
+		t.Fatalf("manual_bundle_available = true, want false: %#v", got)
+	}
+	if got.ResultPayload["agent_env"] != "MEGAVPN_AGENT_CONTROL_PLANE_URL=https://control.example.com" {
+		t.Fatalf("non-secret agent_env should remain visible: %#v", got.ResultPayload)
+	}
+}
+
+func TestRedactedNodeDiagnosticsUsesSafeBootstrapProjection(t *testing.T) {
+	run := domain.NodeBootstrapRun{
+		ResultPayload: map[string]any{
+			"agent_bootstrapenv_secret_ref_id": "secret-ref-id",
+			"agent_bootstrapenv":               "MEGAVPN_AGENT_ENROLLMENT_TOKEN=secret",
+		},
+	}
+	diag := domain.NodeDiagnostics{
+		LastBootstrap:           &run,
+		LastSuccessfulBootstrap: &run,
+	}
+
+	got := redactedNodeDiagnostics(diag)
+	if got.LastBootstrap == nil || !got.LastBootstrap.ManualBundleAvailable {
+		t.Fatalf("last bootstrap projection = %#v", got.LastBootstrap)
+	}
+	if got.LastSuccessfulBootstrap == nil || !got.LastSuccessfulBootstrap.ManualBundleAvailable {
+		t.Fatalf("last successful bootstrap projection = %#v", got.LastSuccessfulBootstrap)
+	}
+	for _, projected := range []*domain.NodeBootstrapRun{got.LastBootstrap, got.LastSuccessfulBootstrap} {
+		if projected.ResultPayload["agent_bootstrapenv_secret_ref_id"] != nil || projected.ResultPayload["agent_bootstrapenv"] != nil {
+			t.Fatalf("diagnostics leaked bundle fields: %#v", projected.ResultPayload)
+		}
 	}
 }
 

@@ -80,17 +80,18 @@ type NodeAccessMethod struct {
 }
 
 type NodeBootstrapRun struct {
-	ID             string         `json:"id"`
-	NodeID         string         `json:"node_id"`
-	JobID          *string        `json:"job_id,omitempty"`
-	Status         string         `json:"status"`
-	BootstrapMode  string         `json:"bootstrap_mode"`
-	RequestPayload map[string]any `json:"request_payload"`
-	ResultPayload  map[string]any `json:"result_payload,omitempty"`
-	StartedAt      *time.Time     `json:"started_at,omitempty"`
-	FinishedAt     *time.Time     `json:"finished_at,omitempty"`
-	CreatedBy      *string        `json:"created_by,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
+	ID                    string         `json:"id"`
+	NodeID                string         `json:"node_id"`
+	JobID                 *string        `json:"job_id,omitempty"`
+	Status                string         `json:"status"`
+	BootstrapMode         string         `json:"bootstrap_mode"`
+	RequestPayload        map[string]any `json:"request_payload"`
+	ResultPayload         map[string]any `json:"result_payload,omitempty"`
+	ManualBundleAvailable bool           `json:"manual_bundle_available"`
+	StartedAt             *time.Time     `json:"started_at,omitempty"`
+	FinishedAt            *time.Time     `json:"finished_at,omitempty"`
+	CreatedBy             *string        `json:"created_by,omitempty"`
+	CreatedAt             time.Time      `json:"created_at"`
 }
 
 type NodeEnrollmentToken struct {

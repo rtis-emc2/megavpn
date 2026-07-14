@@ -79,6 +79,7 @@ type Store interface {
 	CreateNodeSSHAccessMethod(context.Context, string, domain.NodeSSHAccessMethodCreateInput) (domain.NodeAccessMethod, error)
 	CreateNodeBootstrapJob(context.Context, string, string, map[string]any) (domain.Job, domain.NodeBootstrapRun, error)
 	ListNodeBootstrapRuns(context.Context, string, int) ([]domain.NodeBootstrapRun, error)
+	GetNodeBootstrapRun(context.Context, string, string) (domain.NodeBootstrapRun, error)
 	LatestNodeInventory(context.Context, string) (domain.NodeInventorySnapshot, error)
 	ListAllNodeCapabilities(context.Context) (map[string][]domain.NodeCapability, error)
 	ListNodeCapabilities(context.Context, string) ([]domain.NodeCapability, error)
@@ -346,6 +347,9 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected := func(pattern, permission string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
 		mux.Handle(pattern, s.withPermission(permission, nethttp.HandlerFunc(h)))
 	}
+	protectedSecret := func(pattern, permission string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
+		mux.Handle(pattern, secretBearingHeadersMiddleware(s.withPermission(permission, nethttp.HandlerFunc(h))))
+	}
 	protectedAll := func(pattern string, permissions []string, h func(nethttp.ResponseWriter, *nethttp.Request)) {
 		mux.Handle(pattern, s.withPermissions(permissions, nethttp.HandlerFunc(h)))
 	}
@@ -463,7 +467,9 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("GET /api/v1/nodes/{id}/ssh/terminal", "node.bootstrap", s.nodeSSHTerminal)
 	protected("POST /api/v1/nodes/{id}/bootstrap", "node.bootstrap", s.createNodeBootstrapJob)
 	protected("GET /api/v1/nodes/{id}/bootstrap-runs", "node.read", s.listNodeBootstrapRuns)
-	protected("GET /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle", "node.bootstrap", s.getNodeBootstrapBundle)
+	protectedSecret("GET /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle", "node.bootstrap", s.getNodeBootstrapBundle)
+	protectedSecret("POST /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle/reveal", "node.bootstrap", s.revealNodeBootstrapBundle)
+	protectedSecret("POST /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle/download", "node.bootstrap", s.downloadNodeBootstrapBundle)
 	protected("POST /api/v1/nodes/{id}/agent-token/rotate", "node.bootstrap", s.rotateNodeAgentToken)
 	protected("POST /api/v1/nodes/{id}/enrollment-token/rotate", "node.bootstrap", s.rotateNodeEnrollmentToken)
 	protected("POST /api/v1/nodes/{id}/agent-identity/revoke", "node.bootstrap", s.revokeNodeAgentIdentity)

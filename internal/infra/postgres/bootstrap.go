@@ -527,26 +527,43 @@ func (s *Store) ListNodeBootstrapRuns(ctx context.Context, nodeID string, limit 
 	defer rows.Close()
 	out := []domain.NodeBootstrapRun{}
 	for rows.Next() {
-		var x domain.NodeBootstrapRun
-		var reqRaw, resRaw []byte
-		if err := rows.Scan(&x.ID, &x.NodeID, &x.JobID, &x.Status, &x.BootstrapMode, &reqRaw, &resRaw, &x.StartedAt, &x.FinishedAt, &x.CreatedBy, &x.CreatedAt); err != nil {
+		x, err := scanNodeBootstrapRun(rows)
+		if err != nil {
 			return nil, err
-		}
-		if err := decodeJSONField(reqRaw, &x.RequestPayload, "node_bootstrap_runs.request_payload_json"); err != nil {
-			return nil, err
-		}
-		if err := decodeJSONField(resRaw, &x.ResultPayload, "node_bootstrap_runs.result_payload_json"); err != nil {
-			return nil, err
-		}
-		if x.RequestPayload == nil {
-			x.RequestPayload = map[string]any{}
-		}
-		if x.ResultPayload == nil {
-			x.ResultPayload = map[string]any{}
 		}
 		out = append(out, x)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) GetNodeBootstrapRun(ctx context.Context, nodeID string, runID string) (domain.NodeBootstrapRun, error) {
+	row := s.db.QueryRow(ctx, `select id,node_id,job_id,status,bootstrap_mode,request_payload_json,coalesce(result_payload_json,'{}'::jsonb),started_at,finished_at,created_by,created_at from node_bootstrap_runs where node_id=$1 and id=$2`, nodeID, strings.TrimSpace(runID))
+	return scanNodeBootstrapRun(row)
+}
+
+type nodeBootstrapRunScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanNodeBootstrapRun(scanner nodeBootstrapRunScanner) (domain.NodeBootstrapRun, error) {
+	var x domain.NodeBootstrapRun
+	var reqRaw, resRaw []byte
+	if err := scanner.Scan(&x.ID, &x.NodeID, &x.JobID, &x.Status, &x.BootstrapMode, &reqRaw, &resRaw, &x.StartedAt, &x.FinishedAt, &x.CreatedBy, &x.CreatedAt); err != nil {
+		return domain.NodeBootstrapRun{}, err
+	}
+	if err := decodeJSONField(reqRaw, &x.RequestPayload, "node_bootstrap_runs.request_payload_json"); err != nil {
+		return domain.NodeBootstrapRun{}, err
+	}
+	if err := decodeJSONField(resRaw, &x.ResultPayload, "node_bootstrap_runs.result_payload_json"); err != nil {
+		return domain.NodeBootstrapRun{}, err
+	}
+	if x.RequestPayload == nil {
+		x.RequestPayload = map[string]any{}
+	}
+	if x.ResultPayload == nil {
+		x.ResultPayload = map[string]any{}
+	}
+	return x, nil
 }
 
 func enabledMethodSummary(methods []domain.NodeAccessMethod) []map[string]any {

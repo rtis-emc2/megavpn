@@ -2094,6 +2094,89 @@ values($1,$2,$3,'applied','{"default_policy_enforcement":"enforced"}'::jsonb,now
 	}
 }
 
+func TestPostgresIntegrationGetNodeBootstrapRunScopedAndResolvesManualBundleSecret(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	nodeA, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-bootstrap-bundle-a-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "draft",
+		Address:       "10.51.0.10",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "ssh_bootstrap",
+		AgentStatus:   "unknown",
+	})
+	if err != nil {
+		t.Fatalf("create node A: %v", err)
+	}
+	nodeB, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-bootstrap-bundle-b-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "draft",
+		Address:       "10.51.0.11",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "ssh_bootstrap",
+		AgentStatus:   "unknown",
+	})
+	if err != nil {
+		t.Fatalf("create node B: %v", err)
+	}
+
+	runID := id.New()
+	bundle := "TEST_BOOTSTRAP_BUNDLE_TOKEN=synthetic-integration-token\nTEST_BOOTSTRAP_NODE_ID=" + nodeA.ID + "\n"
+	secret, err := store.CreateSecretRef(ctx, "opaque", []byte(bundle), map[string]any{
+		"scope":            "node_bootstrap",
+		"node_id":          nodeA.ID,
+		"bootstrap_run_id": runID,
+		"bootstrap_mode":   "manual_bundle",
+		"material":         "agent_bootstrap_env",
+	})
+	if err != nil {
+		t.Fatalf("create manual bundle secret ref: %v", err)
+	}
+	if _, err := store.db.Exec(ctx, `insert into node_bootstrap_runs(
+  id,node_id,status,bootstrap_mode,request_payload_json,result_payload_json,started_at,finished_at,created_at
+) values(
+  $1,$2,'succeeded','manual_bundle','{}'::jsonb,
+  jsonb_build_object(
+    'agent_bootstrapenv_secret_ref_id',$3::text,
+    'agent_env','MEGAVPN_AGENT_CONTROL_PLANE_URL=https://control.example.test',
+    'agent_bootstrapenv_available',true
+  ),
+  now(),now(),now()
+)`, runID, nodeA.ID, secret.ID); err != nil {
+		t.Fatalf("insert bootstrap run: %v", err)
+	}
+
+	run, err := store.GetNodeBootstrapRun(ctx, nodeA.ID, runID)
+	if err != nil {
+		t.Fatalf("get scoped bootstrap run: %v", err)
+	}
+	if run.ID != runID || run.NodeID != nodeA.ID || run.BootstrapMode != "manual_bundle" || run.Status != "succeeded" {
+		t.Fatalf("run = %#v", run)
+	}
+	if got := strings.TrimSpace(fmt.Sprint(run.ResultPayload["agent_bootstrapenv_secret_ref_id"])); got != secret.ID {
+		t.Fatalf("secret ref in internal result = %q, want %q", got, secret.ID)
+	}
+	if _, err := store.GetNodeBootstrapRun(ctx, nodeB.ID, runID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-node bootstrap run error = %v, want pgx.ErrNoRows", err)
+	}
+	ref, plaintext, err := store.ResolveSecretValue(ctx, secret.ID)
+	if err != nil {
+		t.Fatalf("resolve manual bundle secret: %v", err)
+	}
+	if ref.SecretType != "opaque" || ref.Meta["node_id"] != nodeA.ID || ref.Meta["material"] != "agent_bootstrap_env" || string(plaintext) != bundle {
+		t.Fatalf("resolved manual bundle secret mismatch: ref=%#v plaintext=%q", ref, string(plaintext))
+	}
+}
+
 func TestPostgresIntegrationCreateNodeSSHAccessMethodAtomic(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 	attachPostgresIntegrationSecretService(t, store)
