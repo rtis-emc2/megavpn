@@ -156,8 +156,10 @@ import {
   updateFirewallRule,
   updateFirewallSafetySettings,
   updateBackhaulRouteState,
+  updateClient,
   updateMailSettings,
   updatePlatformSettings,
+  updateClientRoute,
   testMailSettings,
   type FirewallAddressGroupEntryInput,
   type FirewallAddressGroupInput,
@@ -219,6 +221,7 @@ import type {
   ClientSubscriptionCreateResult,
   ClientSubscriptionRevokeResult,
   ClientSubscriptionRotateResult,
+  ClientUpdateInput,
   ClientConfigCleanupResult,
   Dashboard,
   BootstrapRequest,
@@ -1047,6 +1050,14 @@ export function useCreateClient() {
   });
 }
 
+export function useUpdateClient() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientDetail, Error, { clientId: string; input: ClientUpdateInput }>({
+    mutationFn: ({ clientId, input }) => updateClient(clientId, input),
+    onSuccess: (client, input) => invalidateClientQueries(queryClient, client.id || input.clientId),
+  });
+}
+
 export function useUpdateClientStatus() {
   const queryClient = useQueryClient();
   return useMutation<ClientDetail, Error, { clientId: string; input: ClientStatusUpdateInput }>({
@@ -1092,6 +1103,14 @@ export function useCreateClientRoute() {
   });
 }
 
+export function useUpdateClientRoute() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientRoute, Error, { clientId: string; routeId: string; input: ClientRouteInput }>({
+    mutationFn: ({ clientId, routeId, input }) => updateClientRoute(clientId, routeId, input),
+    onSuccess: (_result, input) => invalidateClientQueries(queryClient, input.clientId),
+  });
+}
+
 export function useDeleteClientRoute() {
   const queryClient = useQueryClient();
   return useMutation<ClientRoute, Error, { clientId: string; routeId: string }>({
@@ -1122,8 +1141,10 @@ export function useRotateClientAccess() {
 }
 
 export function useRevokeClientAccess() {
+  const queryClient = useQueryClient();
   return useMutation<ClientAccessRevokeResult, Error, { clientId: string; accessId: string }>({
     mutationFn: ({ clientId, accessId }) => revokeClientAccess(clientId, accessId),
+    onSuccess: (_result, input) => invalidateClientQueries(queryClient, input.clientId),
   });
 }
 
@@ -1972,7 +1993,7 @@ export function useClientDeliveryHistory(clientId: string | undefined, options?:
   return useQuery({
     queryKey: ['client-delivery-history', clientId],
     queryFn: () => listClientDeliveryHistory(clientId || ''),
-    enabled: false,
+    enabled: Boolean(clientId),
     staleTime: stale.normal,
     ...options,
   });

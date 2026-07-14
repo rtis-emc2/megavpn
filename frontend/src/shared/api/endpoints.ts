@@ -60,6 +60,7 @@ import type {
   ClientSubscriptionCreateResult,
   ClientSubscriptionRevokeResult,
   ClientSubscriptionRotateResult,
+  ClientUpdateInput,
   Dashboard,
   AgentTokenRotateResult,
   BootstrapRequest,
@@ -215,8 +216,8 @@ export function createClient(input: ClientCreateInput): Promise<ClientDetail> {
   return sendJSON<ClientDetail>('/api/v1/clients', 'POST', input);
 }
 
-export function updateClient(_clientId: string, _input: Partial<ClientCreateInput>): Promise<never> {
-  return Promise.reject(new Error('Backend has no generic client update endpoint in this release.'));
+export function updateClient(clientId: string, input: ClientUpdateInput): Promise<ClientDetail> {
+  return sendJSON<ClientDetail>(`/api/v1/clients/${encodeURIComponent(clientId)}`, 'PATCH', input);
 }
 
 export function updateClientStatus(clientId: string, input: ClientStatusUpdateInput): Promise<ClientDetail> {
@@ -243,8 +244,8 @@ export function createClientRoute(clientId: string, input: ClientRouteInput): Pr
   return sendJSON<ClientRoute>(`/api/v1/clients/${encodeURIComponent(clientId)}/routes`, 'POST', input);
 }
 
-export function updateClientRoute(_clientId: string, _routeId: string, _input: Partial<ClientRouteInput>): Promise<never> {
-  return Promise.reject(new Error('Backend has no client route update endpoint in this release.'));
+export function updateClientRoute(clientId: string, routeId: string, input: ClientRouteInput): Promise<ClientRoute> {
+  return sendJSON<ClientRoute>(`/api/v1/clients/${encodeURIComponent(clientId)}/routes/${encodeURIComponent(routeId)}`, 'PATCH', input);
 }
 
 export function deleteClientRoute(clientId: string, routeId: string): Promise<ClientRoute> {
@@ -306,8 +307,8 @@ export async function rotateClientAccess(clientId: string, accessId: string, inp
   return sanitizeClientAccessRotationResult(result, accessId);
 }
 
-export function revokeClientAccess(_clientId: string, _accessId: string): Promise<ClientAccessRevokeResult> {
-  return Promise.reject(new Error('Backend has no per-access revoke endpoint in this release; delete service access is available.'));
+export function revokeClientAccess(clientId: string, accessId: string): Promise<ClientAccessRevokeResult> {
+  return sendJSON<ClientAccessRevokeResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/accesses/${encodeURIComponent(accessId)}/revoke`, 'POST', {});
 }
 
 export function deleteClientAccess(clientId: string, accessId: string): Promise<ClientAccessDeleteResult> {
@@ -991,8 +992,8 @@ export function sendClientArtifactEmail(clientId: string, _artifactId: string | 
   return sendJSON<ClientEmailDeliveryResult>(`/api/v1/clients/${encodeURIComponent(clientId)}/deliver-email`, 'POST', input);
 }
 
-export function listClientDeliveryHistory(_clientId: string): Promise<ClientDeliveryHistoryItem[]> {
-  return Promise.reject(new Error('Backend has no client delivery history list endpoint in this release.'));
+export function listClientDeliveryHistory(clientId: string): Promise<ClientDeliveryHistoryItem[]> {
+  return apiRequest<ClientDeliveryHistoryItem[]>(`/api/v1/clients/${encodeURIComponent(clientId)}/deliveries?limit=50`);
 }
 
 export function listCertificates(): Promise<Certificate[]> {

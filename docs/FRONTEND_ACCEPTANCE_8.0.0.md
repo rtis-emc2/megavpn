@@ -56,7 +56,12 @@ Final release debt readiness assessment:
   the new UI is limited to API base and locale, and text LF shape is protected
   by `scripts/ci/text-lf-guard.sh`.
 
-Current evidence date UTC: `2026-07-09T10:26:02Z`
+Current FE8-P0-09A evidence date UTC: `2026-07-14T16:36:06Z`
+
+FE8-P0-09A Clients Full Parity feature commit:
+recorded in the final task response after commit and push.
+
+Previous evidence date UTC: `2026-07-09T10:26:02Z`
 
 FE8-P0-08A Backhaul/Route Policy feature commit:
 `9ed3965fcdaa18554acf78680bc61317b9108564`
@@ -129,8 +134,9 @@ Current evidence date UTC: `2026-07-09T06:32:24Z`
 
 Final 8.0.0 cutover: NO-GO.
 
-Status: FE8-P0-08A plus the overnight evidence report are CI-verified and
-reviewable. Final 8.0.0 cutover remains NO-GO until the remaining
+Status: FE8-P0-09A Clients Full Parity updates are implemented locally for
+review/CI evidence; the pushed feature commit is recorded in the final task
+response. Final 8.0.0 cutover remains NO-GO until the remaining
 backend-missing/future-scope sub-actions are explicitly accepted or closed,
 live/staging operator validation, integrated disposable-data smoke and backend
 version synchronization are complete.
@@ -147,10 +153,10 @@ connected in the new UI without `/legacy/`. Nodes bootstrap/security/control
 workflows are connected in the new UI without `/legacy/` for configured nodes:
 enrollment token create/rotate/revoke, bootstrap/reinstall job queueing,
 host-key scan/pin, SSH session ticket launch, agent token rotation and
-retire/force-retire. Client routes list/create/delete, service access
-list/rotation/delete and generated config cleanup are connected in the new UI
-without `/legacy/` where the backend supports the operation. Route update and
-per-access revoke remain disabled with backend-missing reasons.
+retire/force-retire. Client generic edit, routes list/create/update/delete,
+service access list/rotation/revoke/delete, generated config cleanup and
+client delivery history are connected in the new UI without `/legacy/` where
+the backend supports the operation.
 Certificates/PKI workflows are connected in the new UI without `/legacy/` for
 certificate list/detail, import preview/apply, self-signed create, managed CA
 create, issue-from-CA, set default, revoke/delete and managed service PKI root
@@ -182,10 +188,11 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-08A:
 - `Clients -> Delivery` is connected without `/legacy/` for share link
   create/rotate/revoke, VLESS subscription create-or-rotate/revoke and email
   delivery.
-- `Clients -> Routes/Maintenance` is connected without `/legacy/` for route
-  list/create/delete, service access list/rotation/delete and generated config
-  cleanup. Route update and per-access revoke stay disabled because the backend
-  has no endpoints for those exact sub-actions.
+- `Clients -> Routes/Maintenance` is connected without `/legacy/` for generic
+  client edit, route list/create/update/delete, service access
+  list/rotation/revoke/delete and generated config cleanup.
+- `Clients -> Delivery` includes backend client delivery history with masked
+  destination hints and redacted safe error summaries.
 - Existing `Instances` runtime control is connected without `/legacy/` for
   list/detail, runtime state, revisions/rollback, apply/reapply, lifecycle
   actions, diagnostics, delete/force-delete, read-only access group
@@ -281,32 +288,37 @@ Backhaul and route policy workflows work in the new UI without `/legacy/` where
 the backend supports the exact sub-action. Backhaul create/delete remain out of
 FE8-P0-08A scope.
 
-## FE8-P0-06A Client Routes/Access Maintenance Test Evidence
+## FE8-P0-09A / FE8-P0-06A Client Full Parity Test Evidence
 
 `frontend/src/pages/clients/ClientsPage.test.tsx` verifies client
-routes/access rotation/config cleanup workflows against mocked backend API
-responses:
+generic edit, routes/access maintenance/config cleanup and delivery history
+workflows against mocked backend API responses:
 
 | Required behavior | Test evidence |
 | --- | --- |
-| Client routes load if supported | `loads, creates and deletes client routes through the backend` asserts `GET /api/v1/clients/{id}/routes` and renders the returned route. |
+| Generic client edit | `edits generic client metadata through the backend PATCH endpoint` asserts `PATCH /api/v1/clients/{id}` with display name, email and notes from the form. |
+| Client routes load if supported | `loads, creates, updates and deletes client routes through the backend` asserts `GET /api/v1/clients/{id}/routes` and renders the returned route. |
 | Route create calls backend | Same test asserts `POST /api/v1/clients/{id}/routes` with `service_access_id`, name and destination from the form. |
+| Route update calls backend | Same test asserts `PATCH /api/v1/clients/{id}/routes/{route_id}` with updated name and destination. |
 | Route delete requires confirmation | Same test asserts `DELETE /api/v1/clients/{id}/routes/{route_id}` is not called before `Confirm`. |
 | Access list loads | Access and Maintenance tabs render `GET /api/v1/clients/{id}/accesses` data. |
 | Access identity is redacted | Access/Maintenance tests assert full `xray_uuid` test value is not rendered and redacted identity text is shown instead. |
-| Rotate requires confirmation | `rotates and deletes access and cleans configs with confirmation and job tracking` asserts `POST /api/v1/clients/{id}/accesses/{access_id}/rotate-xray` is not called before `Confirm`. |
+| Rotate requires confirmation | `rotates, revokes and deletes access and cleans configs with confirmation and job tracking` asserts `POST /api/v1/clients/{id}/accesses/{access_id}/rotate-xray` is not called before `Confirm`. |
 | Rotation calls backend and tracks job | Same test asserts confirmed rotate endpoint call and renders returned `job-rotate` job link/status panel. Current backend returns a redacted job, not a plaintext secret/config/token. |
-| Revoke/delete access handling | Same test verifies per-access revoke is disabled because backend has no exact endpoint, and confirmed service-access delete calls `DELETE /api/v1/clients/{id}/accesses/{access_id}`. |
+| Revoke access handling | Same test asserts `POST /api/v1/clients/{id}/accesses/{access_id}/revoke` is not called before confirmation and renders revoked route/share-link counts. |
+| Delete access handling | Same test asserts confirmed service-access delete calls `DELETE /api/v1/clients/{id}/accesses/{access_id}` and renders cleanup/job counts. |
 | Config cleanup requires confirmation | Same test asserts `DELETE /api/v1/clients/{id}/configs` is not called before `Confirm` and renders result counts after success. |
+| Delivery history loads safely | Email delivery test asserts `GET /api/v1/clients/{id}/deliveries?limit=50`, masked destination hints, redacted error summary and no raw secret-like error content. |
 | 403/409/422 handled | Existing Clients tests render `403` permission denial and client create `409` conflict / `422` field validation errors through shared API error handling. |
 | No secret storage/logging | Maintenance test spies on `Storage.setItem`, verifies secret-like values are not persisted, and asserts no production console logging. |
 | No `/legacy` calls | Client tests assert implemented workflows never request `/legacy`. |
 | No raw page API calls | Client static test keeps raw `/api/v1`, raw `fetch` and `dangerouslySetInnerHTML` out of the page component. |
 
-Client routes/access rotation/config cleanup workflows work in the new UI
-without `/legacy/` where the backend supports the exact sub-action. Route
-update and per-access revoke remain disabled because the backend has no
-corresponding endpoints.
+Client edit, routes/access rotation/revoke/delete/config cleanup and delivery
+history workflows work in the new UI without `/legacy/` where the backend
+supports the exact sub-action. Client access rotation/config cleanup still have
+no backend preview endpoints, so the UI uses explicit confirmation and real
+backend validation instead of fake preview.
 
 ## FE8-P0-07B Platform Settings/Mail/Access Test Evidence
 
@@ -703,8 +715,9 @@ Fully connected in the new console:
 - `Nodes` bootstrap/security/control for configured nodes: enrollment token
   create/rotate/revoke, bootstrap/reinstall job queueing, host-key scan/pin,
   SSH session ticket launch, agent token rotation and retire/force-retire.
-- `Clients -> Routes/Maintenance` route list/create/delete, service access
-  list/rotation/delete and generated config cleanup.
+- `Clients -> Routes/Maintenance` generic client edit, route
+  list/create/update/delete, service access list/rotation/revoke/delete,
+  delivery history and generated config cleanup.
 - `Platform -> Certificates` certificate list/detail, import preview/apply,
   self-signed create, managed CA create, issue-from-CA, set default,
   revoke/delete and managed service PKI root create;
@@ -721,8 +734,6 @@ Still disabled, read-only or legacy-only:
 
 - non-VLESS access group materialization workflows;
 - migration conflict UI for access groups;
-- client route update and per-access revoke;
-- client delivery history;
 - nodes create/register/edit, new SSH access method creation with secret
   material, manual bootstrap bundle reveal, agent identity revoke, reboot,
   emergency cleanup and stale rotation cleanup;
@@ -743,19 +754,13 @@ Still disabled, read-only or legacy-only:
 - Full normal operator work still requires `/legacy/` for many workflows outside
   the migrated Clients, Firewall, Instances/Services, Nodes, Certificates/PKI,
   Platform settings/mail/access, Backhaul and Route Policy surfaces.
-- Generic client edit stays disabled because the backend has no generic
-  `PATCH/PUT /clients/{id}` endpoint.
 - Client disable stays disabled because the backend exposes activate/suspend
   but no separate browser disable endpoint.
-- Client route update stays disabled because the backend has no
-  `PUT/PATCH /clients/{id}/routes/{route_id}` endpoint.
-- Per-access revoke stays disabled because the backend exposes client-level
-  revoke and service-access delete, but no per-access revoke endpoint.
 - Client access rotation/config cleanup have no backend preview endpoints; the
   new UI requires explicit confirmation and then calls the real backend
   mutation with backend validation and job/result tracking.
-- Client delivery history stays unavailable because the backend has no
-  client-scoped delivery history list/status endpoint in this release.
+- Client delivery history renders safe backend history DTOs only: masked
+  destination hints, counts, statuses and redacted error summaries.
 - Client email delivery is connected, but the backend endpoint is synchronous,
   sends the client's available artifacts/configs and does not accept an
   artifact-specific email payload yet.

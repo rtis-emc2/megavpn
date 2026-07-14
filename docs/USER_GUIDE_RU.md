@@ -864,18 +864,15 @@ VLESS-специфичные режимы и runtime validation - в
 11. Одноразовые share/subscription URL показываются только в transient panel.
     Скопируйте значение явно через `Copy` и закройте panel после сохранения.
 12. На вкладке `Routes` просматривайте client routes, создавайте route для
-    active service access и удаляйте route только через confirmation. Route
-    update остается disabled, потому что backend не предоставляет
-    `PUT/PATCH /clients/{id}/routes/{route_id}`.
-13. На вкладке `Maintenance` выполняйте access rotation, service access delete
-    и cleanup generated configs. Все destructive actions требуют confirmation,
-    rotation возвращает backend job, а cleanup/delete показывают только counts.
+    active service access, изменяйте explicit route через backend PATCH и
+    удаляйте route только через confirmation.
+13. На вкладке `Maintenance` выполняйте access rotation, service access revoke,
+    service access delete и cleanup generated configs. Все destructive actions
+    требуют confirmation, rotation возвращает backend job, а revoke,
+    cleanup/delete показывают только counts.
     Full UUID, config payloads, private keys, tokens и credentials не
     отображаются и не сохраняются в browser storage.
-14. Per-access revoke остается disabled: backend поддерживает client-level
-    revoke и service-access delete, но не предоставляет отдельный per-access
-    revoke endpoint.
-15. Для полного удаления клиента используйте `Clients -> Delete`. Операция
+14. Для полного удаления клиента используйте `Clients -> Delete`. Операция
     удаляет client account, service accesses, routes, generated configs,
     delivery links, VLESS subscriptions и service-access secret refs, после чего
     ставит apply jobs для затронутых service instances.
@@ -960,8 +957,8 @@ service access metadata.
 
 - email endpoint отправляет доступные artifacts/configs клиента и пока не
   принимает artifact-specific payload;
-- delivery history не отображается, потому что в backend нет client-scoped
-  delivery history list endpoint;
+- delivery history отображает только masked destination hint, status, counts и
+  redacted safe error summary; raw email/error payload не рендерится;
 - delivery endpoints в этой версии возвращают synchronous status, а не async
   job.
 

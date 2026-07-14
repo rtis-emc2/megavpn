@@ -30,7 +30,7 @@ const authPayload = {
   },
   session: {
     id: 'session-current',
-    expires_at: '2026-07-10T00:00:00Z',
+    expires_at: '2026-08-10T00:00:00Z',
   },
   roles: ['superadmin'],
   permissions: ['settings.manage', 'auth.manage'],
@@ -160,7 +160,7 @@ describe('Platform settings, mail and access pages', () => {
       display_name: 'New User',
       token_hint: 'tok...abcd',
       status: 'sent',
-      expires_at: '2026-07-10T00:00:00Z',
+      expires_at: '2026-08-10T00:00:00Z',
       sent_at: '2026-07-08T05:00:00Z',
       delivery_error: '',
       created_by: 'operator-1',
@@ -174,7 +174,7 @@ describe('Platform settings, mail and access pages', () => {
       display_name: 'Operator One',
       ip: '203.0.113.10',
       user_agent: 'Firefox',
-      expires_at: '2026-07-10T00:00:00Z',
+      expires_at: '2026-08-10T00:00:00Z',
       revoked_at: null,
       created_at: '2026-07-08T06:00:00Z',
     }];

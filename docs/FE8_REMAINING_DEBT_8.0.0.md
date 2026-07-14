@@ -2,7 +2,7 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-09T10:26:02Z`
+Generated UTC: `2026-07-14T16:36:06Z`
 
 Final cutover status: **NO-GO** until every required item below is completed or explicitly waived by release owners with a dated rationale.
 
@@ -83,10 +83,6 @@ Release-blocking details:
 
 | Domain | Sub-action |
 | --- | --- |
-| Clients | Generic edit |
-| Clients | Route update |
-| Clients | Per-access revoke |
-| Clients | Delivery history |
 | Services | Runtime artifact delete |
 | Services | Service pack validation |
 | Instances | Spec preview/draft-save |
@@ -96,10 +92,6 @@ Release-blocking details:
 
 Backend-missing reasons:
 
-- Generic client edit: no generic `PATCH/PUT /api/v1/clients/{id}` endpoint.
-- Client route update: no `PUT/PATCH /api/v1/clients/{id}/routes/{route_id}` endpoint.
-- Per-access revoke: backend supports client-level revoke and access delete only.
-- Client delivery history: no client-scoped delivery history endpoint exists.
 - Runtime artifact delete: no binary runtime artifact DELETE endpoint exists.
 - Service pack validation: no separate validation endpoint exists.
 - Instance spec preview/draft-save: no separate preview or draft-save route exists.
@@ -142,9 +134,9 @@ Minimum disposable smoke coverage before final release decision:
 3. Firewall preview, apply and emergency disable on disposable nodes.
 4. Client create, status, revoke and delete.
 5. Client artifacts build, download and delete.
-6. Client delivery share, subscription and email.
-7. Client route create and delete.
-8. Client access rotation/delete and config cleanup.
+6. Client delivery share, subscription, email and history.
+7. Client route create, update and delete.
+8. Client access rotation, revoke, delete and config cleanup.
 9. Instance runtime lifecycle.
 10. Service-pack instance create.
 11. Manual instance create.

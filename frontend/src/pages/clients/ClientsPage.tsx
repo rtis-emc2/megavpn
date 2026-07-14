@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { APIError } from '../../shared/api/client';
 import { getClientArtifactDownload } from '../../shared/api/endpoints';
-import type { ClientAccess, ClientAccessDeleteResult, ClientAccessGroup, ClientAccessGroupMembershipResult, ClientAccessRotationResult, ClientAccount, ClientArtifact, ClientArtifactBuildResult, ClientConfigCleanupResult, ClientDetail, ClientEmailDeliveryResult, ClientRoute, ClientRouteInput, ClientServiceAccess, ClientShareLink, ClientSubscription, Job, OneTimeSecretDisplay } from '../../shared/api/types';
+import type { ClientAccess, ClientAccessDeleteResult, ClientAccessGroup, ClientAccessGroupMembershipResult, ClientAccessRevokeResult, ClientAccessRotationResult, ClientAccount, ClientArtifact, ClientArtifactBuildResult, ClientConfigCleanupResult, ClientDeliveryHistoryItem, ClientDetail, ClientEmailDeliveryResult, ClientRoute, ClientRouteInput, ClientServiceAccess, ClientShareLink, ClientSubscription, ClientUpdateInput, Job, OneTimeSecretDisplay } from '../../shared/api/types';
 import {
   useApplySingleClientAccessGroupAssignment,
   useBuildClientArtifact,
@@ -12,6 +12,7 @@ import {
   useClientAccessOverview,
   useClientAccesses,
   useClientArtifacts,
+  useClientDeliveryHistory,
   useCleanupClientConfigs,
   useClientShareLinks,
   useClientSubscriptions,
@@ -26,6 +27,7 @@ import {
   useDeleteClient,
   useDeleteClientArtifact,
   useDeleteClientRoute,
+  useRevokeClientAccess,
   useJobs,
   usePreviewSingleClientAccessGroupAssignment,
   useRevokeClientShareLink,
@@ -36,6 +38,8 @@ import {
   useRotateClientShareLink,
   useRotateClientSubscription,
   useSendClientArtifactEmail,
+  useUpdateClient,
+  useUpdateClientRoute,
   useUpdateClientStatus,
 } from '../../shared/query/hooks';
 import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, TextField, Textarea, Toolbar } from '../../shared/ui';
@@ -161,6 +165,39 @@ function oneTimeSecretFromResult(result: ClientAccessRotationResult | null): One
 
 function queuedJobCount(result?: Pick<ClientAccessDeleteResult, 'instance_apply_jobs_queued' | 'route_policy_jobs_queued'> | null): number {
   return Number(result?.instance_apply_jobs_queued || 0) + Number(result?.route_policy_jobs_queued || 0);
+}
+
+function toDateTimeLocal(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function fromDateTimeLocal(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const date = new Date(trimmed);
+  return Number.isNaN(date.getTime()) ? trimmed : date.toISOString();
+}
+
+function routeInputFromRoute(route: ClientRoute): ClientRouteInput {
+  return {
+    service_access_id: route.service_access_id || '',
+    instance_id: route.service_access_id ? '' : route.instance_id || '',
+    node_id: route.service_access_id || route.instance_id ? '' : route.node_id || '',
+    name: route.name || route.destination || route.id,
+    status: route.status || 'active',
+    action: route.action || 'allow',
+    destination_type: route.destination_type || 'cidr',
+    destination: route.destination || '',
+    protocol: route.protocol || 'any',
+    ports: route.ports || '*',
+    description: route.description || '',
+    policy: route.policy,
+    metadata: route.metadata,
+  };
 }
 
 export function ClientsPage() {
@@ -369,6 +406,7 @@ function OverviewTab({ client, onConfirm }: { client: ClientDetail; onConfirm: (
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
   const updateStatus = useUpdateClientStatus();
+  const [editOpen, setEditOpen] = useState(false);
   const [notice, setNotice] = useState('');
   const canSuspend = client.status !== 'suspended' && client.status !== 'revoked' && client.status !== 'deleted';
   const canActivate = client.status !== 'active' && client.status !== 'deleted';
@@ -406,20 +444,80 @@ function OverviewTab({ client, onConfirm }: { client: ClientDetail; onConfirm: (
         <CardBody>
           <div className="page-stack">
             <Toolbar>
-              <Button disabled title={t('clients.core.noGenericEditEndpoint')}>{t('common.edit')}</Button>
+              <Button onClick={() => setEditOpen(true)}>{t('common.edit')}</Button>
               <Button icon={<UserCheck size={16} />} disabled={!canActivate || updateStatus.isPending} onClick={() => void runStatus('active')}>{t('clients.core.activate')}</Button>
               <Button icon={<UserMinus size={16} />} disabled={!canSuspend || updateStatus.isPending} onClick={() => void runStatus('suspended')}>{t('clients.core.suspend')}</Button>
               <Button disabled title={t('clients.core.noDisableEndpoint')}>{t('clients.core.disable')}</Button>
               <Button variant="danger" icon={<ShieldCheck size={16} />} onClick={() => onConfirm({ type: 'revoke', client })}>{t('clients.core.revoke')}</Button>
               <Button variant="danger" icon={<Trash2 size={16} />} onClick={() => onConfirm({ type: 'delete', client })}>{t('common.delete')}</Button>
             </Toolbar>
-            <p className="muted">{t('clients.core.noGenericEditEndpoint')}</p>
             {notice ? <div role="status">{notice}</div> : null}
             {updateStatus.error ? <div role="alert" className="error-state-inline">{formatAPIError(updateStatus.error)}</div> : null}
           </div>
         </CardBody>
       </Card>
+      <EditClientModal key={`${client.id}:${client.updated_at || ''}`} client={client} open={editOpen} onClose={() => setEditOpen(false)} />
     </div>
+  );
+}
+
+function EditClientModal({ client, open, onClose }: { client: ClientDetail; open: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
+  const updateClient = useUpdateClient();
+  const [form, setForm] = useState({
+    display_name: client.display_name || '',
+    email: client.email || '',
+    notes: client.notes || '',
+    expires_at: toDateTimeLocal(client.expires_at),
+  });
+  const errors = fieldErrors(updateClient.error);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const input: ClientUpdateInput = {
+      display_name: form.display_name.trim(),
+      email: form.email.trim(),
+      notes: form.notes.trim(),
+    };
+    const nextExpires = fromDateTimeLocal(form.expires_at);
+    if (nextExpires || client.expires_at) {
+      input.expires_at = nextExpires;
+    }
+    try {
+      await updateClient.mutateAsync({ clientId: client.id, input });
+      onClose();
+    } catch {
+      // React Query exposes the APIError through mutation state for safe rendering.
+    }
+  };
+
+  return (
+    <Modal title={t('clients.core.editClient')} open={open} onClose={onClose}>
+      <form className="page-stack" onSubmit={(event) => void submit(event)}>
+        <FormGrid>
+          <FormField label={t('clients.displayName')}>
+            <TextField value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} />
+            {errors.display_name ? <small className="error-state-inline">{errors.display_name}</small> : null}
+          </FormField>
+          <FormField label={t('common.email')}>
+            <TextField type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+            {errors.email ? <small className="error-state-inline">{errors.email}</small> : null}
+          </FormField>
+          <FormField label={t('common.expires')}>
+            <TextField type="datetime-local" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} />
+            {errors.expires_at ? <small className="error-state-inline">{errors.expires_at}</small> : null}
+          </FormField>
+          <FormField label={t('common.description')} full>
+            <Textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+          </FormField>
+        </FormGrid>
+        {updateClient.error ? <div role="alert" className="error-state-inline">{formatAPIError(updateClient.error)}</div> : null}
+        <Toolbar>
+          <Button variant="primary" type="submit" disabled={updateClient.isPending}>{t('common.save')}</Button>
+          <Button type="button" onClick={onClose}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </form>
+    </Modal>
   );
 }
 
@@ -577,6 +675,7 @@ function RoutesTab({ client }: { client: ClientDetail }) {
   const routes = useClientRoutes(client.id);
   const accesses = useClientAccesses(client.id);
   const createRoute = useCreateClientRoute();
+  const updateRoute = useUpdateClientRoute();
   const deleteRoute = useDeleteClientRoute();
   const activeAccesses = useMemo(() => (accesses.data || []).filter((access) => access.status !== 'revoked' && access.status !== 'deleted'), [accesses.data]);
   const [form, setForm] = useState<ClientRouteInput>({
@@ -590,12 +689,12 @@ function RoutesTab({ client }: { client: ClientDetail }) {
     ports: '*',
     description: '',
   });
+  const [editRoute, setEditRoute] = useState<ClientRoute | null>(null);
   const [confirmRoute, setConfirmRoute] = useState<ClientRoute | null>(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
   const effectiveAccessId = form.service_access_id || activeAccesses[0]?.id || '';
-  const routeUpdateReason = t('clients.routes.updateUnavailable');
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -633,7 +732,7 @@ function RoutesTab({ client }: { client: ClientDetail }) {
     }
   };
 
-  const busy = createRoute.isPending || deleteRoute.isPending;
+  const busy = createRoute.isPending || updateRoute.isPending || deleteRoute.isPending;
 
   return (
     <QueryBoundary
@@ -711,7 +810,7 @@ function RoutesTab({ client }: { client: ClientDetail }) {
               header: t('common.actions'),
               render: (row) => (
                 <Toolbar>
-                  <Button disabled title={routeUpdateReason}>{t('common.edit')}</Button>
+                  <Button disabled={busy} onClick={() => setEditRoute(row)}>{t('common.edit')}</Button>
                   <Button variant="danger" icon={<Trash2 size={16} />} disabled={busy} onClick={() => setConfirmRoute(row)}>{t('common.delete')}</Button>
                 </Toolbar>
               ),
@@ -729,13 +828,119 @@ function RoutesTab({ client }: { client: ClientDetail }) {
             </Toolbar>
           </div>
         </ConfirmDialog>
+        <RouteEditModal
+          key={editRoute?.id || 'route-edit-closed'}
+          client={client}
+          route={editRoute}
+          accesses={activeAccesses}
+          busy={busy}
+          onClose={() => setEditRoute(null)}
+          onSave={async (routeID, input) => {
+            setNotice('');
+            setError('');
+            try {
+              await updateRoute.mutateAsync({ clientId: client.id, routeId: routeID, input });
+              setNotice(t('clients.routes.updated'));
+              setEditRoute(null);
+            } catch (err) {
+              setError(formatAPIError(err));
+            }
+          }}
+        />
       </div>
     </QueryBoundary>
   );
 }
 
+function RouteEditModal({
+  client,
+  route,
+  accesses,
+  busy,
+  onClose,
+  onSave,
+}: {
+  client: ClientDetail;
+  route: ClientRoute | null;
+  accesses: ClientAccess[];
+  busy: boolean;
+  onClose: () => void;
+  onSave: (routeID: string, input: ClientRouteInput) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [form, setForm] = useState<ClientRouteInput>(() => routeInputFromRoute(route || { id: '' }));
+  if (!route) return null;
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    await onSave(route.id, {
+      ...form,
+      service_access_id: form.service_access_id || undefined,
+      instance_id: form.service_access_id ? undefined : form.instance_id || undefined,
+      node_id: form.service_access_id || form.instance_id ? undefined : form.node_id || undefined,
+      name: form.name.trim(),
+      destination: form.destination.trim(),
+      ports: (form.ports || '*').trim(),
+      description: form.description?.trim(),
+    });
+  };
+  return (
+    <Modal title={t('clients.routes.editRoute')} open={Boolean(route)} onClose={onClose}>
+      <form className="page-stack" onSubmit={(event) => void submit(event)}>
+        <p className="muted">{t('clients.routes.editImpact', { route: shortID(route.id), client: clientLabel(client) })}</p>
+        <FormGrid>
+          <FormField label={t('clients.core.serviceAccess')}>
+            <Select value={form.service_access_id || ''} onChange={(event) => setForm({ ...form, service_access_id: event.target.value })}>
+              <option value="">{t('clients.routes.keepInstanceOrNodeTarget')}</option>
+              {accesses.map((access) => (
+                <option key={access.id} value={access.id}>{shortID(access.id)} / {shortID(access.instance_id)}</option>
+              ))}
+            </Select>
+          </FormField>
+          <FormField label={t('common.name')}>
+            <TextField required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+          </FormField>
+          <FormField label={t('common.status')}>
+            <Select value={form.status || 'active'} onChange={(event) => setForm({ ...form, status: event.target.value })}>
+              {['pending', 'active', 'disabled'].map((status) => <option key={status} value={status}>{status}</option>)}
+            </Select>
+          </FormField>
+          <FormField label={t('clients.routes.action')}>
+            <Select value={form.action} onChange={(event) => setForm({ ...form, action: event.target.value })}>
+              {routeActions.map((action) => <option key={action} value={action}>{action}</option>)}
+            </Select>
+          </FormField>
+          <FormField label={t('clients.routes.destinationType')}>
+            <Select value={form.destination_type} onChange={(event) => setForm({ ...form, destination_type: event.target.value })}>
+              {routeDestinationTypes.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+            </Select>
+          </FormField>
+          <FormField label={t('clients.routes.destination')}>
+            <TextField required value={form.destination} onChange={(event) => setForm({ ...form, destination: event.target.value })} />
+          </FormField>
+          <FormField label={t('clients.routes.protocol')}>
+            <Select value={form.protocol || 'any'} onChange={(event) => setForm({ ...form, protocol: event.target.value })}>
+              {routeProtocols.map((protocol) => <option key={protocol} value={protocol}>{protocol}</option>)}
+            </Select>
+          </FormField>
+          <FormField label={t('clients.routes.ports')}>
+            <TextField value={form.ports || '*'} onChange={(event) => setForm({ ...form, ports: event.target.value })} />
+          </FormField>
+          <FormField label={t('common.description')} full>
+            <Textarea value={form.description || ''} onChange={(event) => setForm({ ...form, description: event.target.value })} />
+          </FormField>
+        </FormGrid>
+        <Toolbar>
+          <Button variant="primary" type="submit" disabled={busy}>{t('common.save')}</Button>
+          <Button type="button" onClick={onClose}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </form>
+    </Modal>
+  );
+}
+
 type MaintenanceConfirmAction =
   | { type: 'rotate-access'; access: ClientAccess; driver: RotationDriver }
+  | { type: 'revoke-access'; access: ClientAccess }
   | { type: 'delete-access'; access: ClientAccess }
   | { type: 'cleanup-configs' };
 
@@ -744,12 +949,14 @@ function MaintenanceTab({ client }: { client: ClientDetail }) {
   const fmt = useLocaleFormat();
   const accesses = useClientAccesses(client.id);
   const rotateAccess = useRotateClientAccess();
+  const revokeAccess = useRevokeClientAccess();
   const deleteAccess = useDeleteClientAccess();
   const cleanupConfigs = useCleanupClientConfigs();
   const [selectedAccessId, setSelectedAccessId] = useState('');
   const [driver, setDriver] = useState<RotationDriver | ''>('');
   const [confirm, setConfirm] = useState<MaintenanceConfirmAction | null>(null);
   const [rotationResult, setRotationResult] = useState<ClientAccessRotationResult | null>(null);
+  const [revokeResult, setRevokeResult] = useState<ClientAccessRevokeResult | null>(null);
   const [deleteResult, setDeleteResult] = useState<ClientAccessDeleteResult | null>(null);
   const [cleanupResult, setCleanupResult] = useState<ClientConfigCleanupResult | null>(null);
   const [oneTimeSecret, setOneTimeSecret] = useState<OneTimeSecretDisplay | null>(null);
@@ -760,7 +967,7 @@ function MaintenanceTab({ client }: { client: ClientDetail }) {
   const selectedAccess = activeAccesses.find((access) => access.id === selectedAccessId) || activeAccesses[0] || null;
   const effectiveAccessId = selectedAccess?.id || '';
   const effectiveDriver = driver || accessDriverHint(selectedAccess);
-  const busy = rotateAccess.isPending || deleteAccess.isPending || cleanupConfigs.isPending;
+  const busy = rotateAccess.isPending || revokeAccess.isPending || deleteAccess.isPending || cleanupConfigs.isPending;
 
   const selectAccess = (accessId: string) => {
     const nextAccess = activeAccesses.find((access) => access.id === accessId) || null;
@@ -772,6 +979,7 @@ function MaintenanceTab({ client }: { client: ClientDetail }) {
     setError('');
     setNotice('');
     setRotationResult(null);
+    setRevokeResult(null);
     setDeleteResult(null);
     setCleanupResult(null);
   };
@@ -785,6 +993,10 @@ function MaintenanceTab({ client }: { client: ClientDetail }) {
         setRotationResult(result);
         setOneTimeSecret(oneTimeSecretFromResult(result));
         setNotice(t('clients.maintenance.rotationQueued'));
+      } else if (confirm.type === 'revoke-access') {
+        const result = await revokeAccess.mutateAsync({ clientId: client.id, accessId: confirm.access.id });
+        setRevokeResult(result);
+        setNotice(t('clients.maintenance.accessRevoked'));
       } else if (confirm.type === 'delete-access') {
         const result = await deleteAccess.mutateAsync({ clientId: client.id, accessId: confirm.access.id });
         setDeleteResult(result);
@@ -841,7 +1053,7 @@ function MaintenanceTab({ client }: { client: ClientDetail }) {
               </FormGrid>
               <Toolbar>
                 <Button variant="danger" icon={<KeyRound size={16} />} disabled={!selectedAccess || !effectiveDriver || busy} onClick={openRotateConfirm}>{t('clients.maintenance.rotateAccess')}</Button>
-                <Button disabled title={t('clients.maintenance.revokeUnavailable')} icon={<Ban size={16} />}>{t('clients.maintenance.revokeAccess')}</Button>
+                <Button variant="danger" icon={<Ban size={16} />} disabled={!selectedAccess || busy} onClick={() => selectedAccess && setConfirm({ type: 'revoke-access', access: selectedAccess })}>{t('clients.maintenance.revokeAccess')}</Button>
                 <Button variant="danger" icon={<Trash2 size={16} />} disabled={!selectedAccess || busy} onClick={() => selectedAccess && setConfirm({ type: 'delete-access', access: selectedAccess })}>{t('clients.maintenance.deleteAccess')}</Button>
                 <Button icon={<RefreshCw size={16} />} onClick={() => void accesses.refetch()}>{t('common.refresh')}</Button>
               </Toolbar>
@@ -886,12 +1098,31 @@ function MaintenanceTab({ client }: { client: ClientDetail }) {
           </div>
         ) : null}
 
+        {revokeResult ? <AccessRevokeResultPanel result={revokeResult} /> : null}
         {deleteResult ? <AccessDeleteResultPanel result={deleteResult} /> : null}
         {cleanupResult ? <ConfigCleanupResultPanel result={cleanupResult} /> : null}
 
         <MaintenanceConfirmDialog action={confirm} client={client} busy={busy} onConfirm={() => void runConfirmed()} onClose={() => setConfirm(null)} />
       </div>
     </QueryBoundary>
+  );
+}
+
+function AccessRevokeResultPanel({ result }: { result: ClientAccessRevokeResult }) {
+  const { t } = useTranslation();
+  const jobsQueued = Number(result.instance_apply_jobs_queued || 0) + Number(result.route_policy_jobs_queued || 0);
+  return (
+    <div className="inline-panel">
+      <div className="definition-grid">
+        <span>{t('clients.maintenance.revoked')}</span><strong>{result.revoked ? t('common.yes') : t('common.no')}</strong>
+        <span>{t('clients.maintenance.alreadyRevoked')}</span><strong>{result.already_revoked ? t('common.yes') : t('common.no')}</strong>
+        <span>{t('clients.maintenance.routesRevoked')}</span><strong>{result.access_routes_revoked || 0}</strong>
+        <span>{t('clients.maintenance.shareLinksRevoked')}</span><strong>{result.share_links_revoked || 0}</strong>
+        <span>{t('clients.maintenance.jobsQueued')}</span><strong>{jobsQueued}</strong>
+      </div>
+      {jobsQueued ? <Link to="/operations/jobs">{t('clients.maintenance.openJobs')}</Link> : null}
+      {result.queue_errors?.length ? <div role="alert" className="error-state-inline">{result.queue_errors.join('; ')}</div> : null}
+    </div>
   );
 }
 
@@ -932,12 +1163,16 @@ function MaintenanceConfirmDialog({ action, client, busy, onConfirm, onClose }: 
   if (!action) return null;
   const title = action.type === 'rotate-access'
     ? t('clients.maintenance.rotateAccess')
+    : action.type === 'revoke-access'
+      ? t('clients.maintenance.revokeAccess')
     : action.type === 'delete-access'
       ? t('clients.maintenance.deleteAccess')
       : t('clients.maintenance.cleanupConfigs');
   const object = action.type === 'cleanup-configs' ? clientLabel(client) : shortID(action.access.id);
   const impact = action.type === 'rotate-access'
     ? t('clients.maintenance.rotateImpact', { access: object, driver: action.driver })
+    : action.type === 'revoke-access'
+      ? t('clients.maintenance.revokeImpact', { access: object })
     : action.type === 'delete-access'
       ? t('clients.maintenance.deleteImpact', { access: object })
       : t('clients.maintenance.cleanupConfirmImpact', { client: clientLabel(client) });
@@ -1044,6 +1279,7 @@ function DeliveryTab({ client, initialArtifactId }: { client: ClientDetail; init
   const artifacts = useClientArtifacts(client.id);
   const shareLinks = useClientShareLinks(client.id);
   const subscriptions = useClientSubscriptions(client.id);
+  const deliveryHistory = useClientDeliveryHistory(client.id);
   const createShare = useCreateClientShareLink();
   const revokeShare = useRevokeClientShareLink();
   const rotateShare = useRotateClientShareLink();
@@ -1156,10 +1392,10 @@ function DeliveryTab({ client, initialArtifactId }: { client: ClientDetail; init
 
   return (
     <QueryBoundary
-      isLoading={artifacts.isLoading || shareLinks.isLoading || subscriptions.isLoading}
-      isError={artifacts.isError || shareLinks.isError || subscriptions.isError}
-      error={artifacts.error || shareLinks.error || subscriptions.error}
-      refetch={() => { void artifacts.refetch(); void shareLinks.refetch(); void subscriptions.refetch(); }}
+      isLoading={artifacts.isLoading || shareLinks.isLoading || subscriptions.isLoading || deliveryHistory.isLoading}
+      isError={artifacts.isError || shareLinks.isError || subscriptions.isError || deliveryHistory.isError}
+      error={artifacts.error || shareLinks.error || subscriptions.error || deliveryHistory.error}
+      refetch={() => { void artifacts.refetch(); void shareLinks.refetch(); void subscriptions.refetch(); void deliveryHistory.refetch(); }}
     >
       <div className="page-stack">
         {oneTimeSecret ? (
@@ -1282,6 +1518,7 @@ function DeliveryTab({ client, initialArtifactId }: { client: ClientDetail; init
               <p className="muted">{t('clients.delivery.emailBackendScope')}</p>
               <Toolbar>
                 <Button variant="primary" icon={<Mail size={16} />} disabled={!client.email || busy} onClick={() => void runSendEmail()}>{t('clients.delivery.sendEmail')}</Button>
+                <Button icon={<RefreshCw size={16} />} onClick={() => void deliveryHistory.refetch()}>{t('common.refresh')}</Button>
               </Toolbar>
               {emailResult?.delivery ? (
                 <div className="inline-panel">
@@ -1300,7 +1537,19 @@ function DeliveryTab({ client, initialArtifactId }: { client: ClientDetail; init
         <Card>
           <CardBody>
             <h3 className="card-title">{t('clients.delivery.history')}</h3>
-            <p className="muted">{t('clients.delivery.historyUnavailable')}</p>
+            <DataTable
+              rows={deliveryHistory.data || []}
+              columns={[
+                { key: 'status', header: t('common.status'), render: (row: ClientDeliveryHistoryItem) => <StatusBadge status={row.status} /> },
+                { key: 'channel', header: t('clients.delivery.channel'), render: (row: ClientDeliveryHistoryItem) => text(row.channel || row.delivery_type) },
+                { key: 'destination', header: t('clients.delivery.destination'), render: (row: ClientDeliveryHistoryItem) => text(row.destination_hint) },
+                { key: 'artifacts', header: t('clients.delivery.artifacts'), render: (row: ClientDeliveryHistoryItem) => fmt.number(row.artifact_count || row.related_artifact_ids?.length || 0) },
+                { key: 'shareLinks', header: t('clients.delivery.shareLinks'), render: (row: ClientDeliveryHistoryItem) => fmt.number(row.share_link_count || row.related_share_link_ids?.length || 0) },
+                { key: 'created', header: t('common.created'), render: (row: ClientDeliveryHistoryItem) => fmt.date(row.created_at) },
+                { key: 'completed', header: t('clients.delivery.completed'), render: (row: ClientDeliveryHistoryItem) => fmt.date(row.completed_at || row.sent_at || row.failed_at) },
+                { key: 'error', header: t('common.error'), render: (row: ClientDeliveryHistoryItem) => text(row.safe_error_summary) },
+              ]}
+            />
           </CardBody>
         </Card>
 

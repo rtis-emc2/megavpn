@@ -47,7 +47,7 @@ to `/legacy/`.
 | --- | --- | --- |
 | List/search/filter | fully connected | `GET /api/v1/clients`; search/status filters run in the workspace over the backend list. |
 | Create client | fully connected | `POST /api/v1/clients`; validation/conflict responses are preserved and mapped in the form where possible. |
-| Edit client | backend-missing | No generic `PATCH/PUT /clients/{id}` route found. |
+| Edit client | fully connected | `PATCH /api/v1/clients/{id}` updates display name, email, notes and expiry with backend validation and query invalidation. |
 | Activate/suspend | fully connected | `POST /api/v1/clients/{id}/suspend` and `/activate`; query invalidation is wired. |
 | Delete client | fully connected | `DELETE /api/v1/clients/{id}` with confirmation and client list invalidation. |
 | Provision through access groups | fully connected for single-client VLESS | Client detail uses the same access-group member preview/apply backend model as `Clients -> Groups`; no one-job-per-client bulk path is introduced. Non-VLESS provisioning remains legacy-only. |
@@ -55,11 +55,11 @@ to `/legacy/`.
 | Routes list | fully connected | `GET /api/v1/clients/{id}/routes`; routes render in the client detail drawer without `/legacy/`. |
 | Route create | fully connected | `POST /api/v1/clients/{id}/routes`; form targets an active service access, preserves backend validation errors and does not fake success. |
 | Route delete | fully connected | `DELETE /api/v1/clients/{id}/routes/{route_id}` with destructive confirmation; backend revokes the route and queues route policy convergence where applicable. |
-| Route update | backend-missing | No `PUT/PATCH /api/v1/clients/{id}/routes/{route_id}` endpoint exists; edit action stays disabled with reason. |
+| Route update | fully connected | `PATCH /api/v1/clients/{id}/routes/{route_id}` updates explicit routes with backend validation and route-policy convergence; baseline service routes remain backend-protected. |
 | Accesses list | fully connected | `GET /api/v1/clients/{id}/accesses`; service access identity is redacted and UUID/credential metadata is not displayed. |
 | Access rotation | fully connected | `POST /api/v1/clients/{id}/accesses/{access_id}/rotate-*`; driver suffix is whitelisted, confirmation is required, returned job is linked/tracked and no frontend secret generation is used. Backend has no preview endpoint. |
 | Access delete | fully connected | `DELETE /api/v1/clients/{id}/accesses/{access_id}` with confirmation; cleanup counts and queued job counts are shown. |
-| Access revoke | backend-missing | Backend has client-level revoke and service-access delete, but no per-access revoke endpoint; action stays disabled with reason. |
+| Access revoke | fully connected | `POST /api/v1/clients/{id}/accesses/{access_id}/revoke` requires confirmation, revokes the selected service access without deleting it, revokes related active routes/share links and shows queued convergence counts. |
 | Config cleanup | fully connected | `DELETE /api/v1/clients/{id}/configs` with destructive confirmation; result counts are shown and no config payloads/tokens are rendered. |
 | Artifact build | fully connected | `POST /api/v1/clients/{id}/artifacts`; returned job is tracked in the drawer. |
 | Artifact download | fully connected | `GET /api/v1/clients/{id}/artifacts/{artifact_id}/download` opened through a backend URL; no token storage. |
@@ -67,7 +67,7 @@ to `/legacy/`.
 | Email delivery | fully connected | `POST /api/v1/clients/{id}/deliver-email`; synchronous backend result is shown safely. Backend sends the client's available artifacts/configs and has no artifact-specific email payload yet. |
 | Share link create/rotate/revoke | fully connected | `GET/POST /api/v1/clients/{id}/share-links`, `POST /share-links/{link_id}/rotate`, `POST /share-links/{link_id}/revoke`; create/rotate show one-time URL only in transient UI state and revoke/rotate require confirmation. |
 | VLESS subscription create-or-rotate/revoke | fully connected for VLESS | `GET /api/v1/clients/{id}/subscriptions`, `POST /subscriptions/rotate`, `POST /subscriptions/{subscription_id}/revoke`; backend exposes create-or-rotate rather than separate create. One-time subscription URL is not persisted. |
-| Delivery history | backend-missing | No client-scoped delivery history list/status endpoint exists in this release. |
+| Delivery history | fully connected | `GET /api/v1/clients/{id}/deliveries`; UI renders masked destination hints, counts, statuses and redacted safe error summaries only. |
 
 ### Clients -> Groups
 

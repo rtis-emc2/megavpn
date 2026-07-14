@@ -87,3 +87,25 @@ type ClientServiceAccessDeleteResult struct {
 	RoutePolicyJobsQueued   int64                     `json:"route_policy_jobs_queued"`
 	QueueErrors             []string                  `json:"queue_errors,omitempty"`
 }
+
+type ClientUpdate struct {
+	DisplayName  *string    `json:"display_name,omitempty"`
+	Email        *string    `json:"email,omitempty"`
+	Notes        *string    `json:"notes,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	ClearExpires bool       `json:"clear_expires,omitempty"`
+}
+
+type ClientServiceAccessRevokeResult struct {
+	ClientID                string   `json:"client_id"`
+	ServiceAccessID         string   `json:"service_access_id"`
+	InstanceID              string   `json:"instance_id"`
+	Revoked                 bool     `json:"revoked"`
+	AlreadyRevoked          bool     `json:"already_revoked"`
+	AccessRoutesRevoked     int64    `json:"access_routes_revoked"`
+	ShareLinksRevoked       int64    `json:"share_links_revoked"`
+	SubscriptionsRevoked    int64    `json:"subscriptions_revoked"`
+	InstanceApplyJobsQueued int64    `json:"instance_apply_jobs_queued"`
+	RoutePolicyJobsQueued   int64    `json:"route_policy_jobs_queued"`
+	QueueErrors             []string `json:"queue_errors,omitempty"`
+}

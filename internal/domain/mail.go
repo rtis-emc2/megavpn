@@ -53,3 +53,22 @@ type ClientEmailDelivery struct {
 	SentAt          *time.Time     `json:"sent_at,omitempty"`
 	CreatedAt       time.Time      `json:"created_at"`
 }
+
+type ClientDeliveryHistoryItem struct {
+	ID                  string     `json:"id"`
+	ClientAccountID     string     `json:"client_account_id"`
+	DeliveryType        string     `json:"delivery_type"`
+	Channel             string     `json:"channel"`
+	DestinationHint     string     `json:"destination_hint"`
+	Status              string     `json:"status"`
+	ArtifactCount       int        `json:"artifact_count"`
+	ShareLinkCount      int        `json:"share_link_count"`
+	SafeErrorSummary    string     `json:"safe_error_summary,omitempty"`
+	RelatedArtifactIDs  []string   `json:"related_artifact_ids,omitempty"`
+	RelatedShareLinkIDs []string   `json:"related_share_link_ids,omitempty"`
+	CreatedBy           *string    `json:"created_by,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	SentAt              *time.Time `json:"sent_at,omitempty"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
+	FailedAt            *time.Time `json:"failed_at,omitempty"`
+}

@@ -184,6 +184,7 @@ type Store interface {
 	ListClients(context.Context) ([]domain.Client, error)
 	GetClient(context.Context, string) (domain.Client, error)
 	CreateClient(context.Context, domain.Client) (domain.Client, error)
+	UpdateClient(context.Context, string, domain.ClientUpdate) (domain.Client, error)
 	SetClientStatus(context.Context, string, string) (domain.Client, error)
 	DeleteClient(context.Context, string) (domain.ClientDeleteResult, error)
 	ProvisionClient(context.Context, string, []string) (domain.Job, error)
@@ -194,8 +195,10 @@ type Store interface {
 	DeleteArtifact(context.Context, string, string) (domain.ArtifactDeleteResult, error)
 	ListServiceAccesses(context.Context, string) ([]domain.ServiceAccess, error)
 	DeleteClientServiceAccess(context.Context, string, string) (domain.ClientServiceAccessDeleteResult, error)
+	RevokeClientServiceAccess(context.Context, string, string) (domain.ClientServiceAccessRevokeResult, error)
 	ListClientAccessRoutes(context.Context, string) ([]domain.ClientAccessRoute, error)
 	CreateClientAccessRoute(context.Context, string, domain.ClientAccessRoute) (domain.ClientAccessRoute, error)
+	UpdateClientAccessRoute(context.Context, string, string, domain.ClientAccessRoute) (domain.ClientAccessRoute, error)
 	DeleteClientAccessRoute(context.Context, string, string) (domain.ClientAccessRoute, error)
 	RotateServiceAccess(context.Context, string, string, string) (domain.Job, error)
 	ListBackhaulLinks(context.Context) ([]domain.BackhaulLink, error)
@@ -220,6 +223,7 @@ type Store interface {
 	ResolveSecretValue(context.Context, string) (domain.SecretRef, []byte, error)
 	CreateClientEmailDelivery(context.Context, domain.ClientEmailDelivery) (domain.ClientEmailDelivery, error)
 	UpdateClientEmailDeliveryStatus(context.Context, string, string, string, map[string]any) error
+	ListClientEmailDeliveries(context.Context, string, int, int) ([]domain.ClientDeliveryHistoryItem, error)
 	CreateJob(context.Context, domain.Job) (domain.Job, error)
 	ListJobs(context.Context, int) ([]domain.Job, error)
 	GetJob(context.Context, string) (domain.Job, error)
@@ -539,6 +543,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("GET /api/v1/clients", "client.read", s.listClients)
 	protected("POST /api/v1/clients", "client.write", s.createClient)
 	protected("GET /api/v1/clients/{id}", "client.read", s.getClient)
+	protected("PATCH /api/v1/clients/{id}", "client.write", s.updateClient)
 	protected("DELETE /api/v1/clients/{id}", "client.write", s.deleteClient)
 	protected("DELETE /api/v1/clients/{id}/configs", "client.write", s.clearClientConfigs)
 	protected("POST /api/v1/clients/{id}/provision", "client.provision", s.provisionClient)
@@ -549,8 +554,10 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protectedAll("GET /api/v1/clients/{id}/access-groups", []string{"client.read", "access_group.read"}, s.clientAccessGroups)
 	protectedAll("PATCH /api/v1/clients/{id}/access-groups/{service_code}", []string{"client.provision", "access_group.member.write"}, s.setClientAccessGroupForClient)
 	protected("DELETE /api/v1/clients/{id}/accesses/{access_id}", "client.provision", s.deleteClientServiceAccess)
+	protected("POST /api/v1/clients/{id}/accesses/{access_id}/revoke", "client.provision", s.revokeClientServiceAccess)
 	protected("GET /api/v1/clients/{id}/routes", "client.read", s.clientAccessRoutes)
 	protected("POST /api/v1/clients/{id}/routes", "client.provision", s.createClientAccessRoute)
+	protected("PATCH /api/v1/clients/{id}/routes/{route_id}", "client.provision", s.updateClientAccessRoute)
 	protected("DELETE /api/v1/clients/{id}/routes/{route_id}", "client.provision", s.deleteClientAccessRoute)
 	protected("POST /api/v1/clients/{id}/accesses/{access_id}/rotate-openvpn", "client.provision", s.rotateClientAccess("openvpn"))
 	protected("POST /api/v1/clients/{id}/accesses/{access_id}/rotate-xray", "client.provision", s.rotateClientAccess("xray-core"))
@@ -572,6 +579,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/clients/{id}/subscriptions/rotate", "client.provision", s.rotateClientSubscription)
 	protected("POST /api/v1/clients/{id}/subscriptions/{subscription_id}/revoke", "client.provision", s.revokeClientSubscription)
 	protected("POST /api/v1/clients/{id}/deliver-email", "artifact.export", s.deliverClientEmail)
+	protected("GET /api/v1/clients/{id}/deliveries", "artifact.read", s.clientDeliveries)
 	protected("GET /api/v1/backhaul/drivers", "node.read", s.listBackhaulDrivers)
 	protected("GET /api/v1/backhaul-links", "node.read", s.listBackhaulLinks)
 	protected("POST /api/v1/backhaul-links", "node.write", s.createBackhaulLink)
@@ -643,6 +651,63 @@ type shareLinkRotateRequest struct {
 }
 type subscriptionRequest struct {
 	TTLHours int `json:"ttl_hours"`
+}
+
+type clientUpdateRequest struct {
+	DisplayName *string
+	Email       *string
+	Notes       *string
+	ExpiresAt   *time.Time
+	ExpiresSet  bool
+}
+
+func (r *clientUpdateRequest) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for key, value := range raw {
+		switch key {
+		case "display_name":
+			var x string
+			if string(value) == "null" {
+				x = ""
+			} else if err := json.Unmarshal(value, &x); err != nil {
+				return fmt.Errorf("display_name must be a string")
+			}
+			r.DisplayName = &x
+		case "email":
+			var x string
+			if string(value) == "null" {
+				x = ""
+			} else if err := json.Unmarshal(value, &x); err != nil {
+				return fmt.Errorf("email must be a string")
+			}
+			r.Email = &x
+		case "notes":
+			var x string
+			if string(value) == "null" {
+				x = ""
+			} else if err := json.Unmarshal(value, &x); err != nil {
+				return fmt.Errorf("notes must be a string")
+			}
+			r.Notes = &x
+		case "expires_at":
+			r.ExpiresSet = true
+			if string(value) == "null" {
+				r.ExpiresAt = nil
+				continue
+			}
+			var x time.Time
+			if err := json.Unmarshal(value, &x); err != nil {
+				return fmt.Errorf("expires_at must be an RFC3339 timestamp or null")
+			}
+			r.ExpiresAt = &x
+		default:
+			return fmt.Errorf("unsupported client update field %q", key)
+		}
+	}
+	return nil
 }
 
 type capabilityInstallRequest struct {
@@ -1793,6 +1858,28 @@ func (s *Server) createClient(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	writeJSON(w, 201, x)
 }
+
+func (s *Server) updateClient(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var req clientUpdateRequest
+	if !decode(r, &req) {
+		writeErr(w, 400, "invalid client update payload")
+		return
+	}
+	input := domain.ClientUpdate{
+		DisplayName:  req.DisplayName,
+		Email:        req.Email,
+		Notes:        req.Notes,
+		ExpiresAt:    req.ExpiresAt,
+		ClearExpires: req.ExpiresSet && req.ExpiresAt == nil,
+	}
+	x, err := s.store.UpdateClient(r.Context(), idParam(r), input)
+	if err != nil {
+		writeErr(w, classifyClientRouteErrStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, x)
+}
+
 func (s *Server) deleteClient(w nethttp.ResponseWriter, r *nethttp.Request) {
 	x, err := s.store.DeleteClient(r.Context(), idParam(r))
 	if err != nil {
@@ -1858,6 +1945,15 @@ func (s *Server) deleteClientServiceAccess(w nethttp.ResponseWriter, r *nethttp.
 	writeJSON(w, 200, x)
 }
 
+func (s *Server) revokeClientServiceAccess(w nethttp.ResponseWriter, r *nethttp.Request) {
+	x, err := s.store.RevokeClientServiceAccess(r.Context(), idParam(r), strings.TrimSpace(r.PathValue("access_id")))
+	if err != nil {
+		writeErr(w, classifyClientRouteErrStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, x)
+}
+
 func (s *Server) clientAccessRoutes(w nethttp.ResponseWriter, r *nethttp.Request) {
 	x, err := s.store.ListClientAccessRoutes(r.Context(), idParam(r))
 	if err != nil {
@@ -1884,11 +1980,42 @@ func (s *Server) createClientAccessRoute(w nethttp.ResponseWriter, r *nethttp.Re
 	writeJSON(w, 201, x)
 }
 
+func (s *Server) updateClientAccessRoute(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var route domain.ClientAccessRoute
+	if !decode(r, &route) {
+		writeErr(w, 400, "invalid route update payload")
+		return
+	}
+	x, err := s.store.UpdateClientAccessRoute(r.Context(), idParam(r), strings.TrimSpace(r.PathValue("route_id")), route)
+	if err != nil {
+		writeErr(w, classifyClientRouteErrStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, x)
+}
+
 func (s *Server) deleteClientAccessRoute(w nethttp.ResponseWriter, r *nethttp.Request) {
 	x, err := s.store.DeleteClientAccessRoute(r.Context(), idParam(r), strings.TrimSpace(r.PathValue("route_id")))
 	if err != nil {
 		writeErr(w, classifyClientRouteErrStatus(err), err.Error())
 		return
+	}
+	writeJSON(w, 200, x)
+}
+
+func (s *Server) clientDeliveries(w nethttp.ResponseWriter, r *nethttp.Request) {
+	x, err := s.store.ListClientEmailDeliveries(
+		r.Context(),
+		idParam(r),
+		boundedQueryInt(r, "limit", 50, 1, 200),
+		boundedQueryInt(r, "offset", 0, 0, 1000000),
+	)
+	if err != nil {
+		writeErr(w, classifyClientRouteErrStatus(err), err.Error())
+		return
+	}
+	if x == nil {
+		x = []domain.ClientDeliveryHistoryItem{}
 	}
 	writeJSON(w, 200, x)
 }
@@ -1901,7 +2028,9 @@ func classifyClientRouteErrStatus(err error) int {
 		strings.Contains(err.Error(), "unsupported"),
 		strings.Contains(err.Error(), "invalid"),
 		strings.Contains(err.Error(), "must be"),
-		strings.Contains(err.Error(), "must target"):
+		strings.Contains(err.Error(), "must target"),
+		strings.Contains(err.Error(), "too long"),
+		strings.Contains(err.Error(), "future"):
 		return 400
 	case strings.Contains(err.Error(), "not found"):
 		return 404

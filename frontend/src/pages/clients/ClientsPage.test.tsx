@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -171,6 +171,10 @@ describe('ClientsPage', () => {
       if (method === 'GET' && url.pathname === '/api/v1/clients/client-1') {
         return json(client);
       }
+      if (method === 'PATCH' && url.pathname === '/api/v1/clients/client-1') {
+        if (body.email === 'blocked@example.test') return json({ status: 'error', error: 'email already exists' }, 409);
+        return json({ ...client, display_name: body.display_name, email: body.email, notes: body.notes, expires_at: body.expires_at || null, updated_at: '2026-07-08T10:45:00Z' });
+      }
       if (method === 'GET' && url.pathname === '/api/v1/clients/client-2') {
         return json({ ...client, id: 'client-2', username: 'bravo', display_name: 'Bravo User', email: 'bravo@example.test' });
       }
@@ -203,6 +207,20 @@ describe('ClientsPage', () => {
           route_policy_jobs_queued: 1,
         });
       }
+      if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/accesses/access-1/revoke') {
+        return json({
+          client_id: 'client-1',
+          service_access_id: 'access-1',
+          instance_id: 'instance-1',
+          revoked: true,
+          already_revoked: false,
+          access_routes_revoked: 1,
+          share_links_revoked: 1,
+          subscriptions_revoked: 0,
+          instance_apply_jobs_queued: 1,
+          route_policy_jobs_queued: 1,
+        });
+      }
       if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/accesses/access-1/rotate-xray') {
         return json({ id: 'job-rotate', type: 'client.access.rotate', status: 'queued', scope_type: 'client', scope_id: 'client-1', token: 'rotated-access-secret', result: { token: 'nested-rotated-secret' } }, 202);
       }
@@ -214,6 +232,10 @@ describe('ClientsPage', () => {
       }
       if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/routes') {
         return json({ ...route, id: 'route-2', name: body.name, destination: body.destination, service_access_id: body.service_access_id }, 201);
+      }
+      if (method === 'PATCH' && url.pathname === '/api/v1/clients/client-1/routes/route-1') {
+        if (body.destination === 'bad route') return json({ status: 'error', error: 'destination must be a valid CIDR prefix' }, 400);
+        return json({ ...route, name: body.name, destination: body.destination, ports: body.ports, description: body.description, updated_at: '2026-07-08T10:50:00Z' });
       }
       if (method === 'DELETE' && url.pathname === '/api/v1/clients/client-1/routes/route-1') {
         return json({ ...route, status: 'revoked' });
@@ -295,6 +317,39 @@ describe('ClientsPage', () => {
       if (method === 'POST' && url.pathname === '/api/v1/clients/client-1/deliver-email') {
         return json({ status: 'ok', delivery: { id: 'delivery-1', client_account_id: 'client-1', email: 'alpha@example.test', subject: body.subject, status: 'sent', artifact_ids: ['artifact-1'], share_link_ids: body.create_share_link ? ['share-2'] : [], created_at: '2026-07-08T10:40:00Z' } });
       }
+      if (method === 'GET' && url.pathname === '/api/v1/clients/client-1/deliveries') {
+        return json([
+          {
+            id: 'delivery-1',
+            client_account_id: 'client-1',
+            delivery_type: 'client_access_email',
+            channel: 'email',
+            destination_hint: 'a***@example.test',
+            status: 'sent',
+            artifact_count: 1,
+            share_link_count: 1,
+            safe_error_summary: '',
+            related_artifact_ids: ['artifact-1'],
+            related_share_link_ids: ['share-2'],
+            created_at: '2026-07-08T10:40:00Z',
+            sent_at: '2026-07-08T10:41:00Z',
+            completed_at: '2026-07-08T10:41:00Z',
+          },
+          {
+            id: 'delivery-2',
+            client_account_id: 'client-1',
+            delivery_type: 'client_access_email',
+            channel: 'email',
+            destination_hint: 'b***@example.test',
+            status: 'failed',
+            artifact_count: 0,
+            share_link_count: 0,
+            safe_error_summary: 'delivery failed; sensitive error details are redacted',
+            created_at: '2026-07-08T10:35:00Z',
+            failed_at: '2026-07-08T10:35:30Z',
+          },
+        ]);
+      }
       if (method === 'GET' && url.pathname === '/api/v1/jobs') {
         return json([
           { id: 'job-artifact', type: 'artifact.build', status: 'queued', scope_type: 'client', scope_id: 'client-1', payload: { client_id: 'client-1' }, created_at: '2026-07-08T10:20:00Z', result: {} },
@@ -351,6 +406,26 @@ describe('ClientsPage', () => {
     await screen.findByText('Username is invalid');
   });
 
+  it('edits generic client metadata through the backend PATCH endpoint', async () => {
+    await openClient();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Edit' }).at(-1)!);
+    const dialog = screen.getAllByRole('dialog').at(-1)!;
+    await userEvent.clear(within(dialog).getByLabelText('Display name'));
+    await userEvent.type(within(dialog).getByLabelText('Display name'), 'Alpha Renamed');
+    await userEvent.clear(within(dialog).getByLabelText('Email'));
+    await userEvent.type(within(dialog).getByLabelText('Email'), 'alpha.renamed@example.test');
+    await userEvent.clear(within(dialog).getByLabelText('Description'));
+    await userEvent.type(within(dialog).getByLabelText('Description'), 'Updated operator note');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'PATCH' && call.path === '/api/v1/clients/client-1')).toBe(true));
+    expect(calls.find((call) => call.method === 'PATCH' && call.path === '/api/v1/clients/client-1')?.body).toMatchObject({
+      display_name: 'Alpha Renamed',
+      email: 'alpha.renamed@example.test',
+      notes: 'Updated operator note',
+    });
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+  });
+
   it('runs status, revoke and delete actions only through confirmed backend mutations', async () => {
     await openClient();
     await userEvent.click(screen.getByRole('button', { name: 'Suspend' }));
@@ -399,7 +474,7 @@ describe('ClientsPage', () => {
     await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/client-access-groups/group-1/members/client-1')).toBe(true));
   });
 
-  it('loads, creates and deletes client routes through the backend', async () => {
+  it('loads, creates, updates and deletes client routes through the backend', async () => {
     await openClient();
     await userEvent.click(screen.getByRole('tab', { name: 'Routes' }));
     expect((await screen.findAllByText('office-cidr')).length).toBeGreaterThan(0);
@@ -416,6 +491,20 @@ describe('ClientsPage', () => {
       destination: '10.43.0.0/16',
     });
 
+    await userEvent.click(screen.getAllByRole('button', { name: 'Edit' }).at(-1)!);
+    const dialog = screen.getAllByRole('dialog').at(-1)!;
+    await userEvent.clear(within(dialog).getByLabelText('Name'));
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'office-cidr-updated');
+    await userEvent.clear(within(dialog).getByLabelText('Destination'));
+    await userEvent.type(within(dialog).getByLabelText('Destination'), '10.44.0.0/16');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'PATCH' && call.path === '/api/v1/clients/client-1/routes/route-1')).toBe(true));
+    expect(calls.find((call) => call.method === 'PATCH' && call.path === '/api/v1/clients/client-1/routes/route-1')?.body).toMatchObject({
+      service_access_id: 'access-1',
+      name: 'office-cidr-updated',
+      destination: '10.44.0.0/16',
+    });
+
     await userEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
     expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/clients/client-1/routes/route-1')).toBe(false);
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
@@ -423,12 +512,12 @@ describe('ClientsPage', () => {
     expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
   });
 
-  it('rotates and deletes access and cleans configs with confirmation and job tracking', async () => {
+  it('rotates, revokes and deletes access and cleans configs with confirmation and job tracking', async () => {
     await openClient();
     await userEvent.click(screen.getByRole('tab', { name: 'Maintenance' }));
     expect((await screen.findAllByText('Backend-held identity (redacted)')).length).toBeGreaterThan(0);
     expect(screen.queryByText('uuid-secret-full')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Revoke access' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Revoke access' })).toBeEnabled();
 
     await userEvent.click(screen.getByRole('button', { name: 'Rotate access' }));
     expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/accesses/access-1/rotate-xray')).toBe(false);
@@ -441,6 +530,13 @@ describe('ClientsPage', () => {
     expect(screen.getByText('rotated-access-secret')).toBeInTheDocument();
     await userEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1)!);
     expect(screen.queryByText('rotated-access-secret')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke access' }));
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/accesses/access-1/revoke')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/accesses/access-1/revoke')).toBe(true));
+    expect(screen.getByText('Routes revoked')).toBeInTheDocument();
+    expect(screen.getByText('Share links revoked')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Delete access' }));
     expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/clients/client-1/accesses/access-1')).toBe(false);
@@ -552,11 +648,15 @@ describe('ClientsPage', () => {
     await openClient();
     await userEvent.click(screen.getByRole('tab', { name: 'Delivery' }));
     await screen.findByText('Target email: alpha@example.test');
+    expect((await screen.findAllByText('a***@example.test')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('delivery failed; sensitive error details are redacted').length).toBeGreaterThan(0);
+    expect(screen.queryByText('token=')).not.toBeInTheDocument();
     await userEvent.clear(screen.getByLabelText('Subject'));
     await userEvent.type(screen.getByLabelText('Subject'), 'Access package');
     await userEvent.click(screen.getByLabelText('Create a share link for email delivery if needed'));
     await userEvent.click(screen.getByRole('button', { name: 'Send by email' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/deliver-email')).toBe(true));
+    await waitFor(() => expect(calls.some((call) => call.method === 'GET' && call.path === '/api/v1/clients/client-1/deliveries?limit=50')).toBe(true));
     expect(calls.find((call) => call.method === 'POST' && call.path === '/api/v1/clients/client-1/deliver-email')?.body).toMatchObject({ subject: 'Access package', create_share_link: true });
     expect(screen.getByText('delivery-1')).toBeInTheDocument();
   });

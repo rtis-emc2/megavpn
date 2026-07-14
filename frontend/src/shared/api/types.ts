@@ -691,6 +691,13 @@ export type ClientCreateInput = {
   status?: ClientStatus;
 };
 
+export type ClientUpdateInput = {
+  display_name?: string;
+  email?: string;
+  notes?: string;
+  expires_at?: string | null;
+};
+
 export type ClientStatusUpdateInput = {
   status: Extract<ClientStatus, 'active' | 'suspended'>;
 };
@@ -762,7 +769,15 @@ export type ClientAccessRotationResult = Job & {
 export type ClientAccessRevokeResult = APIRecord & {
   client_id?: string;
   service_access_id?: string;
+  instance_id?: string;
   revoked?: boolean;
+  already_revoked?: boolean;
+  access_routes_revoked?: number;
+  share_links_revoked?: number;
+  subscriptions_revoked?: number;
+  instance_apply_jobs_queued?: number;
+  route_policy_jobs_queued?: number;
+  queue_errors?: string[];
 };
 
 export type ClientAccessDeleteResult = APIRecord & {
@@ -1562,7 +1577,24 @@ export type ClientEmailDeliveryResult = APIRecord & {
   error?: string;
 };
 
-export type ClientDeliveryHistoryItem = ClientEmailDelivery;
+export type ClientDeliveryHistoryItem = APIRecord & {
+  id: string;
+  client_account_id?: string;
+  delivery_type?: string;
+  channel?: string;
+  destination_hint?: string;
+  status?: string;
+  artifact_count?: number;
+  share_link_count?: number;
+  safe_error_summary?: string;
+  related_artifact_ids?: string[];
+  related_share_link_ids?: string[];
+  created_by?: string;
+  created_at?: string;
+  sent_at?: string | null;
+  completed_at?: string | null;
+  failed_at?: string | null;
+};
 
 export type OneTimeSecretDisplay = {
   kind: 'share_link' | 'subscription' | 'client_access_rotation';
