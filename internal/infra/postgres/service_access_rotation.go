@@ -186,6 +186,11 @@ func (s *Store) rotateXrayClientIdentityForServiceAccesses(ctx context.Context, 
 	}
 	defer rows.Close()
 
+	type xrayServiceAccessRotationUpdate struct {
+		accessID string
+		metadata map[string]any
+	}
+	updates := []xrayServiceAccessRotationUpdate{}
 	instanceSeen := map[string]struct{}{}
 	instanceIDs := make([]string, 0)
 	for rows.Next() {
@@ -209,9 +214,7 @@ func (s *Store) rotateXrayClientIdentityForServiceAccesses(ctx context.Context, 
 		delete(metadata, "uuid")
 		delete(metadata, "rotate_credentials")
 		delete(metadata, "force_new_xray_uuid")
-		if _, err := tx.Exec(ctx, `update service_accesses set status='pending',metadata_json=$2,updated_at=now() where id=$1`, accessID, mustJSON(metadata)); err != nil {
-			return nil, err
-		}
+		updates = append(updates, xrayServiceAccessRotationUpdate{accessID: accessID, metadata: metadata})
 		if _, ok := instanceSeen[instanceID]; !ok {
 			instanceSeen[instanceID] = struct{}{}
 			instanceIDs = append(instanceIDs, instanceID)
@@ -219,6 +222,13 @@ func (s *Store) rotateXrayClientIdentityForServiceAccesses(ctx context.Context, 
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	rows.Close()
+
+	for _, update := range updates {
+		if _, err := tx.Exec(ctx, `update service_accesses set status='pending',metadata_json=$2,updated_at=now() where id=$1`, update.accessID, mustJSON(update.metadata)); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err

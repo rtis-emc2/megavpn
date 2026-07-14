@@ -31,7 +31,7 @@ run_json_checked() {
   tmp_files+=("$log_file")
 
   printf 'Running focused PostgreSQL integration: package=%s pattern=%s\n' "$package" "$pattern"
-  go test -json -count=1 -timeout=10m "$package" -run "$pattern" | tee "$log_file"
+  go test -json -count=1 -timeout=5m "$package" -run "$pattern" | tee "$log_file"
 
   python3 - "$log_file" "$label" "${required_tests[@]}" <<'PY'
 import json
@@ -92,7 +92,7 @@ PY
 }
 
 printf 'Running full PostgreSQL infra integration suite.\n'
-go test -count=1 -v -timeout=20m ./internal/infra/postgres
+go test -count=1 -v -timeout=15m ./internal/infra/postgres
 
 run_json_checked \
   ./internal/infra/postgres \

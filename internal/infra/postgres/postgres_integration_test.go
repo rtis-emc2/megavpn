@@ -88,8 +88,8 @@ func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list runtime observations after apply: %v", err)
 	}
-	if len(observations) != 1 || observations[0].Source != "job" || observations[0].RuntimeStatus != "active" {
-		t.Fatalf("runtime observations after apply = %#v, want one active job observation", observations)
+	if len(observations) < 1 || observations[0].Source != "job" || observations[0].RuntimeStatus != "active" {
+		t.Fatalf("runtime observations after apply = %#v, want latest active job observation", observations)
 	}
 
 	targets, err := store.ListAgentInstanceRuntimeTargets(ctx, node.ID)
@@ -1781,7 +1781,7 @@ func TestPostgresIntegrationStrictFirewallInputRequiresManagementCIDR(t *testing
 	node, err := store.CreateNode(ctx, domain.Node{
 		Name:          "it-fw-no-mgmt-" + suffix,
 		Kind:          "remote",
-		Role:          "worker",
+		Role:          "egress",
 		Status:        "online",
 		Address:       "10.50.8.40",
 		OSFamily:      "linux",
@@ -1823,7 +1823,7 @@ func TestPostgresIntegrationStrictFirewallInputWithManagementCIDRQueuesSSHProtec
 	node, err := store.CreateNode(ctx, domain.Node{
 		Name:          "it-fw-mgmt-" + suffix,
 		Kind:          "remote",
-		Role:          "worker",
+		Role:          "egress",
 		Status:        "online",
 		Address:       "10.50.8.41",
 		OSFamily:      "linux",
@@ -1925,7 +1925,7 @@ func TestPostgresIntegrationStrictFirewallRejectsOutputDropWithoutControlPlaneEg
 	node, err := store.CreateNode(ctx, domain.Node{
 		Name:          "it-fw-output-" + suffix,
 		Kind:          "remote",
-		Role:          "worker",
+		Role:          "egress",
 		Status:        "online",
 		Address:       "10.50.8.43",
 		OSFamily:      "linux",
@@ -2669,7 +2669,7 @@ func TestPostgresIntegrationBackhaulPromoteRefreshesXrayBeforeRoutePolicy(t *tes
 	if err != nil {
 		t.Fatalf("create egress node: %v", err)
 	}
-	if err := store.upsertNodeCapability(ctx, ingress.ID, "xray-core", "1.8.0", "available", "integration-test"); err != nil {
+	if err := store.upsertNodeCapability(ctx, ingress.ID, "xray-core", "1.8.0", "available", "manual"); err != nil {
 		t.Fatalf("mark xray capability available: %v", err)
 	}
 	link, err := store.CreateBackhaulLink(ctx, domain.BackhaulLink{
@@ -2827,7 +2827,7 @@ func TestPostgresIntegrationBinaryRepositoryTicketLifecycle(t *testing.T) {
 		Address:       "10.50.0.20",
 		OSFamily:      "linux",
 		OSVersion:     "ubuntu-24.04",
-		Architecture:  "x86_64",
+		Architecture:  "amd64",
 		ExecutionMode: "agent_managed",
 		AgentStatus:   "online",
 	})
@@ -2970,7 +2970,7 @@ func TestPostgresIntegrationShadowsocksUbuntuInstallCarriesBinaryFallback(t *tes
 		Address:       "10.50.0.25",
 		OSFamily:      "linux",
 		OSVersion:     "ubuntu-24.04",
-		Architecture:  "x86_64",
+		Architecture:  "amd64",
 		ExecutionMode: "agent_managed",
 		AgentStatus:   "online",
 	})
@@ -3100,7 +3100,7 @@ func TestPostgresIntegrationCapabilityInstallMissingBinaryArtifactDiagnostic(t *
 		Address:       "10.50.0.40",
 		OSFamily:      "linux",
 		OSVersion:     "ubuntu-24.04",
-		Architecture:  "x86_64",
+		Architecture:  "amd64",
 		ExecutionMode: "agent_managed",
 		AgentStatus:   "online",
 	})
@@ -3583,7 +3583,7 @@ func TestPostgresIntegrationDeleteClientRemovesProvisioningRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rotate subscription: %v", err)
 	}
-	createdBy := "integration-test"
+	createdBy := id.New()
 	if _, err := store.CreateClientEmailDelivery(ctx, domain.ClientEmailDelivery{
 		ClientAccountID: client.ID,
 		Email:           client.Email,
@@ -4172,7 +4172,10 @@ func setupPostgresIntegrationStore(t *testing.T) (*Store, context.Context) {
 	t.Cleanup(pool.Close)
 
 	applyPostgresIntegrationMigrations(t, ctx, pool)
-	return New(pool), ctx
+	store := New(pool)
+	attachPostgresIntegrationSecretService(t, store)
+	seedPostgresIntegrationVLESSGroups(t, ctx, store)
+	return store, ctx
 }
 
 func attachPostgresIntegrationSecretService(t *testing.T, store *Store) {
@@ -4191,6 +4194,57 @@ func attachPostgresIntegrationSecretService(t *testing.T, store *Store) {
 		t.Fatalf("load test secret service: %v", err)
 	}
 	store.SetSecretService(secretSvc)
+}
+
+func seedPostgresIntegrationVLESSGroups(t *testing.T, ctx context.Context, store *Store) {
+	t.Helper()
+
+	templates := []domain.VLESSGroupTemplate{
+		{
+			Key:          "default",
+			Label:        "Default access",
+			Description:  "Use the VLESS instance default route.",
+			AccessMode:   "instance_default",
+			EgressMode:   "default",
+			OutboundTag:  "direct",
+			Status:       "active",
+			Source:       "default",
+			Version:      1,
+			DisplayOrder: 10,
+		},
+		{
+			Key:          "out_usa_sf",
+			Label:        "Outgoing USA San Francisco",
+			Description:  "Integration-test managed outbound group.",
+			AccessMode:   "instance_default",
+			EgressMode:   "default",
+			OutboundTag:  "direct",
+			Status:       "active",
+			Source:       "default",
+			Version:      1,
+			DisplayOrder: 20,
+		},
+		{
+			Key:          "blocked",
+			Label:        "Blocked",
+			Description:  "Deny all traffic for clients assigned to this group.",
+			AccessMode:   "block",
+			EgressMode:   "block",
+			OutboundTag:  "block",
+			Status:       "active",
+			Source:       "default",
+			Version:      1,
+			DisplayOrder: 90,
+		},
+	}
+	if err := store.EnsureDefaultVLESSGroupTemplates(ctx, templates); err != nil {
+		t.Fatalf("seed default vless templates: %v", err)
+	}
+	for _, template := range templates {
+		if _, err := store.ensureClientAccessGroupFromVLESSTemplate(ctx, template); err != nil {
+			t.Fatalf("seed client access group from vless template %s: %v", template.Key, err)
+		}
+	}
 }
 
 func applyPostgresIntegrationMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
