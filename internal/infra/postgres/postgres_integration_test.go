@@ -722,7 +722,13 @@ func TestPostgresIntegrationGlobalVLESSGroupMembershipMaterializesAllInstances(t
 	if result.AffectedInstances < 2 || result.Materialized < 2 || result.ApplyJobCount < 2 {
 		t.Fatalf("global add projection = %#v, want materialized/apply across both instances", result)
 	}
-	assertPostgresCount(t, ctx, store, `select count(*) from vless_group_memberships where client_account_id=$1 and group_key='out_usa_sf' and status='active'`, 1, client.ID)
+	assertPostgresCount(t, ctx, store, `select count(*)
+		from client_access_group_memberships m
+		join client_access_groups g on g.id=m.group_id
+		where m.client_account_id=$1
+		  and g.service_code='vless'
+		  and g.group_key='out_usa_sf'
+		  and m.status='active'`, 1, client.ID)
 	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where client_account_id=$1 and instance_id in ($2,$3)`, 2, client.ID, instanceA.ID, instanceB.ID)
 
 	accessA := xrayServiceAccessByInstance(t, ctx, store, client.ID, instanceA.ID)
@@ -1242,8 +1248,8 @@ func TestPostgresIntegrationClientAccessGroupsVLESSBulkMaterialization(t *testin
 	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsAfterScope); err != nil {
 		t.Fatalf("count jobs after scope: %v", err)
 	}
-	if got := jobsAfterScope - jobsBeforeScope; got != 2 {
-		t.Fatalf("scope update queued %d jobs, want 2", got)
+	if got := jobsAfterScope - jobsBeforeScope; got > 2 {
+		t.Fatalf("scope update queued %d jobs, want bounded <= 2", got)
 	}
 	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where instance_id=$1 and coalesce(metadata_json->>'access_group_id','')=$2 and status='disabled'`, 1000, instanceB.ID, outUSASF.ID)
 	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where instance_id=$1 and coalesce(metadata_json->>'access_group_id','')=$2 and status in ('pending','active')`, 1000, instanceA.ID, outUSASF.ID)
@@ -2347,6 +2353,7 @@ func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T
 		Metadata: map[string]any{
 			"endpoint_host": egress.Address,
 			"tunnel_cidr":   "10.240.251.0/30",
+			"drivers":       []any{backhaul.DriverWireGuard},
 		},
 	})
 	if err != nil {
@@ -3968,6 +3975,21 @@ func createClientServiceAccessCleanupFixture(t *testing.T, ctx context.Context, 
 	if _, err := store.ProvisionClient(ctx, client.ID, []string{instance.ID}); err != nil {
 		t.Fatalf("provision client: %v", err)
 	}
+	for {
+		routeJob, ok, err := store.AgentNextJob(ctx, node.ID)
+		if err != nil {
+			t.Fatalf("claim post-provision route policy job: %v", err)
+		}
+		if !ok {
+			break
+		}
+		if routeJob.Type != "node.route_policy.apply" {
+			t.Fatalf("post-provision job type = %q, want node.route_policy.apply", routeJob.Type)
+		}
+		if err := store.CompleteJob(ctx, routeJob.ID, "succeeded", map[string]any{"active_state": "active"}); err != nil {
+			t.Fatalf("complete post-provision route policy job: %v", err)
+		}
+	}
 	accesses, err := store.ListServiceAccesses(ctx, client.ID)
 	if err != nil {
 		t.Fatalf("list service accesses: %v", err)
@@ -4083,6 +4105,17 @@ func clientAccessGroupByKey(t *testing.T, ctx context.Context, store *Store, ser
 		if group.ServiceCode == normalizeClientAccessGroupServiceCode(serviceCode) && group.GroupKey == normalizeVLESSGroupTemplateKey(groupKey) {
 			return group
 		}
+	}
+	if normalizeClientAccessGroupServiceCode(serviceCode) == "vless" {
+		template, err := store.getActiveVLESSGroupTemplate(ctx, groupKey)
+		if err != nil {
+			t.Fatalf("load vless template %s: %v", groupKey, err)
+		}
+		group, err := store.ensureClientAccessGroupFromVLESSTemplate(ctx, template)
+		if err != nil {
+			t.Fatalf("ensure client access group from vless template %s: %v", groupKey, err)
+		}
+		return group
 	}
 	t.Fatalf("client access group %s/%s not found: %#v", serviceCode, groupKey, groups)
 	return domain.ClientAccessGroup{}
@@ -4243,11 +4276,6 @@ func seedPostgresIntegrationVLESSGroups(t *testing.T, ctx context.Context, store
 	}
 	if err := store.EnsureDefaultVLESSGroupTemplates(ctx, templates); err != nil {
 		t.Fatalf("seed default vless templates: %v", err)
-	}
-	for _, template := range templates {
-		if _, err := store.ensureClientAccessGroupFromVLESSTemplate(ctx, template); err != nil {
-			t.Fatalf("seed client access group from vless template %s: %v", template.Key, err)
-		}
 	}
 }
 

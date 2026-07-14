@@ -2998,7 +2998,16 @@ func recoverStaleJobLeasesTx(ctx context.Context, tx pgx.Tx, now time.Time) ([]d
 		}
 		recovered = append(recovered, job)
 	}
-	return recovered, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	for _, job := range recovered {
+		if _, err := tx.Exec(ctx, `delete from resource_locks where job_id=$1`, job.ID); err != nil {
+			return nil, err
+		}
+	}
+	return recovered, nil
 }
 func (s *Store) ListAudit(ctx context.Context, limit int) ([]domain.AuditEvent, error) {
 	if limit <= 0 || limit > 500 {
