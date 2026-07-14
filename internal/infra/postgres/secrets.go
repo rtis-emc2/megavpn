@@ -6,25 +6,36 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
 )
 
 var ErrSecretServiceUnavailable = errors.New("secret service is not configured")
 
-func (s *Store) CreateSecretRef(ctx context.Context, secretType string, rawValue []byte, meta map[string]any) (domain.SecretRef, error) {
+type preparedSecretRef struct {
+	ref        domain.SecretRef
+	ciphertext []byte
+	nonce      []byte
+}
+
+type secretRefInsertExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func (s *Store) prepareSecretRef(secretType string, rawValue []byte, meta map[string]any) (preparedSecretRef, error) {
 	secretType = strings.TrimSpace(secretType)
 	if secretType == "" {
-		return domain.SecretRef{}, errors.New("secret_type is required")
+		return preparedSecretRef{}, errors.New("secret_type is required")
 	}
 	if len(rawValue) == 0 {
-		return domain.SecretRef{}, errors.New("secret value is required")
+		return preparedSecretRef{}, errors.New("secret value is required")
 	}
 	if !isAllowedSecretType(secretType) {
-		return domain.SecretRef{}, errors.New("unsupported secret_type")
+		return preparedSecretRef{}, errors.New("unsupported secret_type")
 	}
 	if s.secretSvc == nil {
-		return domain.SecretRef{}, ErrSecretServiceUnavailable
+		return preparedSecretRef{}, ErrSecretServiceUnavailable
 	}
 	if meta == nil {
 		meta = map[string]any{}
@@ -32,7 +43,7 @@ func (s *Store) CreateSecretRef(ctx context.Context, secretType string, rawValue
 
 	ciphertext, nonce, keyVersion, err := s.secretSvc.Encrypt(rawValue)
 	if err != nil {
-		return domain.SecretRef{}, err
+		return preparedSecretRef{}, err
 	}
 
 	ref := domain.SecretRef{
@@ -42,12 +53,25 @@ func (s *Store) CreateSecretRef(ctx context.Context, secretType string, rawValue
 		Meta:       meta,
 		CreatedAt:  time.Now().UTC(),
 	}
-	if _, err := s.db.Exec(ctx, `insert into secret_refs(id,secret_type,ciphertext,key_version,nonce,meta_json,created_at) values($1,$2,$3,$4,$5,$6,$7)`,
-		ref.ID, ref.SecretType, ciphertext, ref.KeyVersion, nonce, mustJSON(ref.Meta), ref.CreatedAt); err != nil {
+	return preparedSecretRef{ref: ref, ciphertext: ciphertext, nonce: nonce}, nil
+}
+
+func insertPreparedSecretRef(ctx context.Context, exec secretRefInsertExecutor, prepared preparedSecretRef) error {
+	_, err := exec.Exec(ctx, `insert into secret_refs(id,secret_type,ciphertext,key_version,nonce,meta_json,created_at) values($1,$2,$3,$4,$5,$6,$7)`,
+		prepared.ref.ID, prepared.ref.SecretType, prepared.ciphertext, prepared.ref.KeyVersion, prepared.nonce, mustJSON(prepared.ref.Meta), prepared.ref.CreatedAt)
+	return err
+}
+
+func (s *Store) CreateSecretRef(ctx context.Context, secretType string, rawValue []byte, meta map[string]any) (domain.SecretRef, error) {
+	prepared, err := s.prepareSecretRef(secretType, rawValue, meta)
+	if err != nil {
 		return domain.SecretRef{}, err
 	}
-	_, _ = s.CreateAudit(ctx, "system", "secret_ref.create", "secret_ref", &ref.ID, "secret ref stored")
-	return ref, nil
+	if err := insertPreparedSecretRef(ctx, s.db, prepared); err != nil {
+		return domain.SecretRef{}, err
+	}
+	_, _ = s.CreateAudit(ctx, "system", "secret_ref.create", "secret_ref", &prepared.ref.ID, "secret ref stored")
+	return prepared.ref, nil
 }
 
 func (s *Store) GetSecretRef(ctx context.Context, secretRefID string) (domain.SecretRef, error) {

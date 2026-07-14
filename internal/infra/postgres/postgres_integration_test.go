@@ -2,18 +2,24 @@ package postgres
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rtis-emc2/megavpn/internal/backhaul"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
+	"github.com/rtis-emc2/megavpn/internal/secrets"
 )
 
 func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
@@ -2076,6 +2082,228 @@ values($1,$2,$3,'applied','{"default_policy_enforcement":"enforced"}'::jsonb,now
 	}
 }
 
+func TestPostgresIntegrationCreateNodeSSHAccessMethodAtomic(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	attachPostgresIntegrationSecretService(t, store)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-ssh-access-" + suffix,
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "draft",
+		Address:       "203.0.113.20",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "ssh_bootstrap",
+		AgentStatus:   "unknown",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	_, err = store.CreateNodeSSHAccessMethod(ctx, id.New(), domain.NodeSSHAccessMethodCreateInput{
+		SSHHost:          "203.0.113.99",
+		SSHUser:          "support",
+		SSHHostKeySHA256: "SHA256:abcdefghijklmnopqrstuvwxyzABCDEFGH1234567890+/=",
+		PrivateKey:       generatedOpenSSHPrivateKey(t),
+		IsEnabled:        true,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("missing node error = %v, want pgx.ErrNoRows", err)
+	}
+
+	if _, err := store.ReplaceNodeAccessMethods(ctx, node.ID, []domain.NodeAccessMethod{{
+		Method:    "manual_bundle",
+		IsEnabled: true,
+		AuthType:  "none",
+	}}); err != nil {
+		t.Fatalf("seed unrelated access method: %v", err)
+	}
+
+	privateKey := generatedOpenSSHPrivateKey(t)
+	actorID := id.New()
+	created, err := store.CreateNodeSSHAccessMethod(ctx, node.ID, domain.NodeSSHAccessMethodCreateInput{
+		SSHHost:          "203.0.113.20",
+		SSHUser:          "support",
+		SSHHostKeySHA256: "SHA256:abcdefghijklmnopqrstuvwxyzABCDEFGH1234567890+/=",
+		PrivateKey:       privateKey,
+		IsEnabled:        true,
+		ActorUserID:      &actorID,
+	})
+	if err != nil {
+		t.Fatalf("create ssh access method: %v", err)
+	}
+	if created.Method != "ssh" || created.AuthType != "ssh_key" || created.SSHPort != 22 || created.SecretRefID == nil {
+		t.Fatalf("created method = %#v", created)
+	}
+
+	methods, err := store.ListNodeAccessMethods(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("list access methods: %v", err)
+	}
+	if len(methods) != 2 {
+		t.Fatalf("methods len = %d, want unrelated + ssh: %#v", len(methods), methods)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from node_access_methods where node_id=$1 and method='manual_bundle'`, 1, node.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from node_access_methods where node_id=$1 and method='ssh'`, 1, node.ID)
+
+	var secretType string
+	var ciphertext, metaRaw []byte
+	if err := store.db.QueryRow(ctx, `select secret_type,ciphertext,meta_json from secret_refs where id=$1`, *created.SecretRefID).Scan(&secretType, &ciphertext, &metaRaw); err != nil {
+		t.Fatalf("select secret ref: %v", err)
+	}
+	if secretType != "ssh_key" {
+		t.Fatalf("secret_type = %q, want ssh_key", secretType)
+	}
+	if string(ciphertext) == privateKey {
+		t.Fatal("stored ciphertext must not equal plaintext private key")
+	}
+	var meta map[string]any
+	if err := decodeJSONField(metaRaw, &meta, "secret_refs.meta_json"); err != nil {
+		t.Fatalf("decode secret meta: %v", err)
+	}
+	if meta["purpose"] != "node_ssh_bootstrap" || meta["node_id"] != node.ID || meta["access_method_id"] != created.ID || meta["auth_type"] != "ssh_key" {
+		t.Fatalf("secret meta = %#v", meta)
+	}
+	ref, plaintext, err := store.ResolveSecretValue(ctx, *created.SecretRefID)
+	if err != nil {
+		t.Fatalf("resolve secret: %v", err)
+	}
+	if ref.SecretType != "ssh_key" || string(plaintext) != privateKey {
+		t.Fatalf("resolved secret mismatch: ref=%#v", ref)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from audit_events where action='node.ssh_access_method.create' and resource_id=$1 and summary not like '%PRIVATE KEY%'`, 1, node.ID)
+
+	_, err = store.CreateNodeSSHAccessMethod(ctx, node.ID, domain.NodeSSHAccessMethodCreateInput{
+		SSHHost:          "203.0.113.20",
+		SSHPort:          22,
+		SSHUser:          "support",
+		SSHHostKeySHA256: "SHA256:abcdefghijklmnopqrstuvwxyzABCDEFGH1234567890+/=",
+		PrivateKey:       generatedOpenSSHPrivateKey(t),
+		IsEnabled:        true,
+	})
+	if !errors.Is(err, domain.ErrNodeSSHAccessMethodDuplicate) {
+		t.Fatalf("duplicate error = %v, want ErrNodeSSHAccessMethodDuplicate", err)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from node_access_methods where node_id=$1 and method='ssh'`, 1, node.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where meta_json->>'node_id'=$1 and meta_json->>'purpose'='node_ssh_bootstrap'`, 1, node.ID)
+
+	passwordRef, err := store.CreateSecretRef(ctx, "password", []byte("not-an-ssh-key"), map[string]any{"node_id": node.ID})
+	if err != nil {
+		t.Fatalf("create password secret: %v", err)
+	}
+	passwordRefID := passwordRef.ID
+	_, err = store.ReplaceNodeAccessMethods(ctx, node.ID, []domain.NodeAccessMethod{{
+		Method:           "ssh",
+		IsEnabled:        true,
+		SSHHost:          "203.0.113.21",
+		SSHPort:          22,
+		SSHUser:          "support",
+		SSHHostKeySHA256: "SHA256:abcdefghijklmnopqrstuvwxyzABCDEFGH1234567890+/=",
+		AuthType:         "ssh_key",
+		SecretRefID:      &passwordRefID,
+	}})
+	if err == nil || !strings.Contains(err.Error(), "ssh_key secret") {
+		t.Fatalf("expected incompatible secret type rejection, got %v", err)
+	}
+}
+
+func TestPostgresIntegrationCreateNodeSSHAccessMethodRejectsRetiredNode(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	attachPostgresIntegrationSecretService(t, store)
+
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-ssh-retired-" + strings.ReplaceAll(id.New(), "-", "")[:10],
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "draft",
+		Address:       "203.0.113.30",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "ssh_bootstrap",
+		AgentStatus:   "unknown",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if _, err := store.RetireNode(ctx, node.ID); err != nil {
+		t.Fatalf("retire node: %v", err)
+	}
+	_, err = store.CreateNodeSSHAccessMethod(ctx, node.ID, domain.NodeSSHAccessMethodCreateInput{
+		SSHHost:          "203.0.113.30",
+		SSHUser:          "support",
+		SSHHostKeySHA256: "SHA256:abcdefghijklmnopqrstuvwxyzABCDEFGH1234567890+/=",
+		PrivateKey:       generatedOpenSSHPrivateKey(t),
+		IsEnabled:        true,
+	})
+	if !errors.Is(err, domain.ErrNodeNotManageable) {
+		t.Fatalf("retired node error = %v, want ErrNodeNotManageable", err)
+	}
+}
+
+func TestPostgresIntegrationCreateNodeSSHAccessMethodConcurrentDuplicate(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	attachPostgresIntegrationSecretService(t, store)
+
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-ssh-concurrent-" + strings.ReplaceAll(id.New(), "-", "")[:10],
+		Kind:          "remote",
+		Role:          "egress",
+		Status:        "draft",
+		Address:       "203.0.113.40",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "ssh_bootstrap",
+		AgentStatus:   "unknown",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := store.CreateNodeSSHAccessMethod(ctx, node.ID, domain.NodeSSHAccessMethodCreateInput{
+				SSHHost:          "203.0.113.40",
+				SSHPort:          22,
+				SSHUser:          "support",
+				SSHHostKeySHA256: "SHA256:abcdefghijklmnopqrstuvwxyzABCDEFGH1234567890+/=",
+				PrivateKey:       generatedOpenSSHPrivateKey(t),
+				IsEnabled:        true,
+			})
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	successes := 0
+	duplicates := 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, domain.ErrNodeSSHAccessMethodDuplicate):
+			duplicates++
+		default:
+			t.Fatalf("unexpected concurrent create error: %v", err)
+		}
+	}
+	if successes != 1 || duplicates != 1 {
+		t.Fatalf("concurrent results successes=%d duplicates=%d, want 1/1", successes, duplicates)
+	}
+	assertPostgresCount(t, ctx, store, `select count(*) from node_access_methods where node_id=$1 and method='ssh'`, 1, node.ID)
+}
+
 func TestPostgresIntegrationBackhaulRouteToggleRefreshesRoutePolicy(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 
@@ -3945,6 +4173,24 @@ func setupPostgresIntegrationStore(t *testing.T) (*Store, context.Context) {
 
 	applyPostgresIntegrationMigrations(t, ctx, pool)
 	return New(pool), ctx
+}
+
+func attachPostgresIntegrationSecretService(t *testing.T, store *Store) {
+	t.Helper()
+
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	rawKey := make([]byte, 32)
+	if _, err := rand.Read(rawKey); err != nil {
+		t.Fatalf("generate test master key: %v", err)
+	}
+	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(rawKey)), 0o600); err != nil {
+		t.Fatalf("write test master key: %v", err)
+	}
+	secretSvc, err := secrets.LoadFromFile(keyPath, "test-v1")
+	if err != nil {
+		t.Fatalf("load test secret service: %v", err)
+	}
+	store.SetSecretService(secretSvc)
 }
 
 func applyPostgresIntegrationMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

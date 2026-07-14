@@ -97,8 +97,14 @@ func (s *Store) ReplaceNodeAccessMethods(ctx context.Context, nodeID string, met
 			if methods[i].SecretRefID == nil {
 				return nil, errors.New("secret_ref_id is required for ssh access method")
 			}
-			if _, err := s.GetSecretRef(ctx, *methods[i].SecretRefID); err != nil {
+			ref, err := s.GetSecretRef(ctx, *methods[i].SecretRefID)
+			if err != nil {
 				return nil, errors.New("secret_ref_id does not exist")
+			}
+			if methods[i].AuthType == "ssh_key" {
+				if err := validateSSHAccessSecretRef(nodeID, ref); err != nil {
+					return nil, err
+				}
 			}
 		} else {
 			methods[i].SSHPort = 0
@@ -155,6 +161,19 @@ func isSafeSSHAccessHost(host string) bool {
 		return true
 	}
 	return sshHostPattern.MatchString(host)
+}
+
+func validateSSHAccessSecretRef(nodeID string, ref domain.SecretRef) error {
+	if strings.TrimSpace(ref.SecretType) != "ssh_key" {
+		return errors.New("secret_ref_id must reference an ssh_key secret")
+	}
+	if metaNodeID := strings.TrimSpace(stringify(ref.Meta["node_id"])); metaNodeID != "" && metaNodeID != strings.TrimSpace(nodeID) {
+		return errors.New("secret_ref_id belongs to another node")
+	}
+	if metaAuthType := strings.TrimSpace(stringify(ref.Meta["auth_type"])); metaAuthType != "" && metaAuthType != "ssh_key" {
+		return errors.New("secret_ref_id auth_type is not ssh_key")
+	}
+	return nil
 }
 
 func (s *Store) CreateNodeBootstrapJob(ctx context.Context, nodeID, bootstrapMode string, options map[string]any) (domain.Job, domain.NodeBootstrapRun, error) {
