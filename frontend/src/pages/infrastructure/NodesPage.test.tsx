@@ -253,10 +253,11 @@ function renderPage(auth: typeof authPayload = authPayload) {
 }
 
 async function openNode(auth: typeof authPayload = authPayload) {
-  renderPage(auth);
+  const queryClient = renderPage(auth);
   expect((await screen.findAllByText('Edge One')).length).toBeGreaterThan(0);
   await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
   await screen.findByRole('heading', { name: 'Edge One' });
+  return queryClient;
 }
 
 function activeDialog(): HTMLElement {
@@ -279,6 +280,9 @@ describe('NodesPage', () => {
   let currentBootstrapRuns: NodeBootstrapRun[];
   let manualBundleRevealContent: string;
   let manualBundleDownloadContent: string;
+  let emptyEnrollmentIssueResponse: boolean;
+  let delayEnrollmentCreateResponse: boolean;
+  let resolveEnrollmentCreateResponse: (() => void) | null;
 
   beforeEach(async () => {
     calls.length = 0;
@@ -293,6 +297,9 @@ describe('NodesPage', () => {
     currentBootstrapRuns = bootstrapRuns.map((run) => ({ ...run }));
     manualBundleRevealContent = '';
     manualBundleDownloadContent = '';
+    emptyEnrollmentIssueResponse = false;
+    delayEnrollmentCreateResponse = false;
+    resolveEnrollmentCreateResponse = null;
     window.localStorage.clear();
     window.sessionStorage.clear();
     await i18n.changeLanguage('en');
@@ -442,13 +449,48 @@ describe('NodesPage', () => {
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/services/import-all') return json([{ id: 'instance-imported', node_id: 'node-1', service_code: 'xray-core', name: 'xray-live', status: 'active' }], 201);
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/enrollment-token') {
-        return json({ id: 'token-new', node_id: 'node-1', token: 'enroll-secret-token', token_hint: 'enroll...token', status: 'active', expires_at: '2026-07-10T08:05:00Z', created_at: '2026-07-09T08:05:00Z' }, 201);
+        if (delayEnrollmentCreateResponse) {
+          await new Promise<void>((resolve) => {
+            resolveEnrollmentCreateResponse = resolve;
+          });
+        }
+        if (actionErrors.enrollmentCreate) {
+          const messages: Record<number, string> = {
+            400: 'invalid ttl_hours',
+            403: 'node.bootstrap permission required',
+            404: 'node not found',
+            409: 'node lifecycle conflict',
+            429: 'rate limited',
+            500: 'enrollment token create failed',
+            503: 'enrollment token service unavailable',
+          };
+          return json({ error: messages[actionErrors.enrollmentCreate] || 'enrollment token create failed' }, actionErrors.enrollmentCreate);
+        }
+        if (emptyEnrollmentIssueResponse) return json({ id: 'token-empty', node_id: 'node-1', token_hint: 'empty...token', status: 'active', expires_at: '2026-07-10T08:05:00Z', created_at: '2026-07-09T08:05:00Z' }, 201);
+        currentEnrollmentTokens = [{ id: 'token-new', node_id: 'node-1', token_hint: 'enroll...token', status: 'active', expires_at: '2026-08-10T08:05:00Z', created_at: '2026-07-09T08:05:00Z' }, ...currentEnrollmentTokens.map((token) => ({ ...token, status: token.status === 'active' ? 'revoked' : token.status }))];
+        return json({ id: 'token-new', node_id: 'node-1', token: 'enroll-secret-token', token_hint: 'enroll...token', status: 'active', expires_at: '2026-08-10T08:05:00Z', created_at: '2026-07-09T08:05:00Z' }, 201);
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/enrollment-token/rotate') {
-        return json({ id: 'token-rotated', node_id: 'node-1', token: 'enroll-rotated-token', token_hint: 'rotate...token', status: 'active', expires_at: '2026-07-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' });
+        if (actionErrors.enrollmentRotate) {
+          const messages: Record<number, string> = {
+            400: 'invalid ttl_hours',
+            403: 'node.bootstrap permission required',
+            404: 'node not found',
+            409: 'credential conflict',
+            429: 'rate limited',
+            500: 'enrollment token rotate failed',
+            503: 'enrollment token service unavailable',
+          };
+          return json({ error: messages[actionErrors.enrollmentRotate] || 'enrollment token rotate failed' }, actionErrors.enrollmentRotate);
+        }
+        if (emptyEnrollmentIssueResponse) return json({ id: 'token-empty-rotate', node_id: 'node-1', token_hint: 'empty...rotate', status: 'active', expires_at: '2026-07-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' });
+        currentEnrollmentTokens = [{ id: 'token-rotated', node_id: 'node-1', token_hint: 'rotate...token', status: 'active', expires_at: '2026-08-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' }, ...currentEnrollmentTokens.map((token) => ({ ...token, status: token.status === 'active' ? 'revoked' : token.status }))];
+        return json({ id: 'token-rotated', node_id: 'node-1', token: 'enroll-rotated-token', token_hint: 'rotate...token', status: 'active', expires_at: '2026-08-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' });
       }
-      if (method === 'DELETE' && url.pathname === '/api/v1/nodes/node-1/enrollment-tokens/token-1') {
-        return json({ ...currentEnrollmentTokens[0], status: 'revoked' });
+      if (method === 'DELETE' && url.pathname.startsWith('/api/v1/nodes/node-1/enrollment-tokens/')) {
+        const tokenId = url.pathname.split('/').pop() || '';
+        currentEnrollmentTokens = currentEnrollmentTokens.map((token) => token.id === tokenId ? { ...token, status: 'revoked' } : token);
+        return json(currentEnrollmentTokens.find((token) => token.id === tokenId) || { id: tokenId, node_id: 'node-1', status: 'revoked' });
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/ssh/host-key-scan') {
         if (actionErrors.scanHostKey === 500) return json({ error: 'ssh-keyscan failed' }, 500);
@@ -494,7 +536,7 @@ describe('NodesPage', () => {
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/agent-token/rotate') return json(job('job-agent-rotate', 'node.agent.rotate_token'), 202);
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/ssh/sessions') {
-        return json({ session_id: 'ssh-session-ticket', node_id: 'node-1', expires_at: '2026-07-09T08:06:30Z', endpoint: { server_side_proxy_only: true } }, 201);
+        return json({ session_id: 'ssh-session-ticket', node_id: 'node-1', expires_at: '2026-08-10T08:06:30Z', endpoint: { server_side_proxy_only: true } }, 201);
       }
       if (method === 'DELETE' && url.pathname === '/api/v1/nodes/node-1') return json({ ...node, status: 'retired' });
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/force-retire') return json({ status: 'retired', node: { ...node, status: 'retired' } });
@@ -725,7 +767,7 @@ describe('NodesPage', () => {
 
   it('runs node bootstrap, security and lifecycle workflows safely', async () => {
     const storageSet = vi.spyOn(Storage.prototype, 'setItem');
-    await openNode();
+    const queryClient = await openNode();
 
     await userEvent.click(screen.getByRole('tab', { name: 'Security' }));
     expect((await screen.findAllByText('enroll...hint')).length).toBeGreaterThan(0);
@@ -733,19 +775,41 @@ describe('NodesPage', () => {
     await userEvent.type(screen.getByLabelText('Token TTL hours'), '48');
     await userEvent.click(screen.getByRole('button', { name: 'Create token' }));
     expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token?ttl_hours=48')).toBe(false);
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    await userEvent.click(screen.getByLabelText(/I understand that this enrollment token is sensitive/));
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token?ttl_hours=48')).toBe(true));
     expect(screen.queryByText('enroll-secret-token')).not.toBeInTheDocument();
+    expect(document.body.textContent || '').not.toContain('enroll-secret-token');
+    const createMutation = queryClient.getMutationCache().getAll().find((mutation) => JSON.stringify(mutation.state.variables || {}).includes('node-1') && mutation.options.gcTime === 0);
+    expect(createMutation?.state.data).toBeUndefined();
+    expect(JSON.stringify(createMutation?.state.variables || {})).not.toContain('enroll-secret-token');
+    expect(JSON.stringify(queryClient.getQueryCache().getAll().map((query) => query.state.data))).not.toContain('enroll-secret-token');
     await userEvent.click(screen.getByRole('button', { name: 'Reveal' }));
     expect(await screen.findByText('enroll-secret-token')).toBeInTheDocument();
     let closeButtons = screen.getAllByRole('button', { name: 'Close' });
     await userEvent.click(closeButtons[closeButtons.length - 1]);
     expect(screen.queryByText('enroll-secret-token')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'Revoke' })[0]);
-    expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/nodes/node-1/enrollment-tokens/token-1')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Rotate token' }));
+    expect(screen.getByText('Existing active enrollment credentials may be revoked or replaced according to backend behavior.')).toBeInTheDocument();
+    expect(screen.getByText('Reissue does not automatically update a remote machine, bootstrap file or running agent.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    await userEvent.click(screen.getByLabelText(/previous enrollment credential may stop working/));
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/nodes/node-1/enrollment-tokens/token-1')).toBe(true));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token/rotate?ttl_hours=48')).toBe(true));
+    expect(screen.queryByText('enroll-rotated-token')).not.toBeInTheDocument();
+    expect(JSON.stringify(queryClient.getQueryCache().getAll().map((query) => query.state.data))).not.toContain('enroll-rotated-token');
+    await userEvent.click(screen.getByRole('button', { name: 'Reveal' }));
+    expect(await screen.findByText('enroll-rotated-token')).toBeInTheDocument();
+    closeButtons = screen.getAllByRole('button', { name: 'Close' });
+    await userEvent.click(closeButtons[closeButtons.length - 1]);
+    expect(screen.queryByText('enroll-rotated-token')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Revoke' })[0]);
+    expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/nodes/node-1/enrollment-tokens/token-rotated')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/nodes/node-1/enrollment-tokens/token-rotated')).toBe(true));
 
     await userEvent.click(screen.getByRole('button', { name: 'Scan host key' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/ssh/host-key-scan')).toBe(true));
@@ -791,7 +855,7 @@ describe('NodesPage', () => {
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/force-retire')).toBe(true));
     expect(calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/force-retire')?.body).toMatchObject({ confirmation: 'Edge One', reason: 'lost node' });
 
-    expect(storageSet.mock.calls.some(([key, value]) => String(key).toLowerCase().includes('token') || String(value).includes('enroll-secret-token') || String(value).includes('ssh-session-ticket'))).toBe(false);
+    expect(storageSet.mock.calls.some(([key, value]) => String(key).toLowerCase().includes('token') || String(value).includes('enroll-secret-token') || String(value).includes('enroll-rotated-token') || String(value).includes('ssh-session-ticket'))).toBe(false);
     expect(window.localStorage.getItem('enrollment_token')).toBeNull();
     expect(window.sessionStorage.getItem('enrollment_token')).toBeNull();
   });
@@ -1076,7 +1140,7 @@ describe('NodesPage', () => {
         token: 'hidden-active-token',
         enrollment_token: 'hidden-enrollment-token',
         secret_ref_id: 'secret-ref-hidden',
-      },
+      } as unknown as EnrollmentToken,
       last_bootstrap: {
         ...currentBootstrapRuns[1],
         result_payload: {
@@ -1091,7 +1155,7 @@ describe('NodesPage', () => {
       token: 'hidden-list-token',
       enrollment_token: 'hidden-list-enrollment-token',
       secret_ref_id: 'secret-list-ref',
-    }];
+    } as unknown as EnrollmentToken];
 
     await openNode();
     expect(screen.getByRole('tab', { name: 'Onboarding' })).toBeInTheDocument();
@@ -1194,6 +1258,173 @@ describe('NodesPage', () => {
     expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
   });
 
+  it('issues an enrollment token from onboarding with explicit confirmation and one-time display', async () => {
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: clipboardWrite } });
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'missing_agent_identity',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+      },
+    };
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [];
+    currentInventory = null;
+    const queryClient = await openNode();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    expect(await screen.findByRole('button', { name: 'Issue enrollment token' })).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText('Enrollment token TTL'));
+    await userEvent.type(screen.getByLabelText('Enrollment token TTL'), '0');
+    expect(await screen.findByText('Token TTL must be between 1 and 720 hours.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Issue enrollment token' })).toBeDisabled();
+    await userEvent.clear(screen.getByLabelText('Enrollment token TTL'));
+    await userEvent.type(screen.getByLabelText('Enrollment token TTL'), '12');
+    await userEvent.click(screen.getByRole('button', { name: 'Issue enrollment token' }));
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token?ttl_hours=12')).toBe(false);
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    expect(screen.getAllByText('The plaintext token is shown only in the immediate response.').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Issuing a token does not prove agent connectivity, registration or heartbeat.').length).toBeGreaterThan(0);
+
+    await userEvent.click(screen.getByLabelText(/enrollment token is sensitive/));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token?ttl_hours=12')).toBe(true));
+    expect(screen.getByRole('tab', { name: 'Onboarding' })).toHaveAttribute('aria-selected', 'true');
+    expect(document.body.textContent || '').not.toContain('enroll-secret-token');
+    expect(clipboardWrite).not.toHaveBeenCalled();
+    expect(JSON.stringify(queryClient.getQueryCache().getAll().map((query) => query.state.data))).not.toContain('enroll-secret-token');
+    const issueMutation = queryClient.getMutationCache().getAll().find((mutation) => mutation.options.gcTime === 0 && JSON.stringify(mutation.state.variables || {}).includes('node-1'));
+    expect(issueMutation?.state.data).toBeUndefined();
+    expect(JSON.stringify(issueMutation?.state.variables || {})).not.toContain('enroll-secret-token');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reveal' }));
+    expect(await screen.findByText('enroll-secret-token')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    expect(clipboardWrite).toHaveBeenCalledWith('enroll-secret-token');
+    expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/inventory/sync')).toBe(false);
+  });
+
+  it('reissues enrollment from onboarding only for recovery states', async () => {
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'offline',
+      communication_state: 'auth_failure',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+        last_auth_failure_at: '2026-07-09T08:10:00Z',
+      },
+      active_enrollment_token: currentEnrollmentTokens[0],
+    };
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+
+    expect(await screen.findByRole('button', { name: 'Reissue enrollment token' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reissue enrollment token' }));
+    expect(screen.getByText('Existing active enrollment credentials may be revoked or replaced according to backend behavior.')).toBeInTheDocument();
+    expect(screen.getByText('Reissue does not automatically update a remote machine, bootstrap file or running agent.')).toBeInTheDocument();
+    expect(screen.getByText('Reissue does not prove recovery until registration and heartbeat are observed.')).toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token/rotate?ttl_hours=24')).toBe(false);
+    await userEvent.click(screen.getByLabelText(/previous enrollment credential may stop working/));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token/rotate?ttl_hours=24')).toBe(true));
+    expect(screen.getByRole('tab', { name: 'Onboarding' })).toHaveAttribute('aria-selected', 'true');
+    expect(document.body.textContent || '').not.toContain('enroll-rotated-token');
+    await userEvent.click(screen.getByRole('button', { name: 'Reveal' }));
+    expect(await screen.findByText('enroll-rotated-token')).toBeInTheDocument();
+    expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/inventory/sync')).toBe(false);
+  });
+
+  it('does not show onboarding token actions for healthy registered nodes', async () => {
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'online',
+      communication_state: 'inventory_ok',
+      agent: {
+        node_id: 'node-1',
+        status: 'active',
+        registered_at: '2026-07-09T08:00:00Z',
+        last_seen_at: '2026-07-09T08:00:30Z',
+        last_inventory_sync_at: '2026-07-09T08:01:00Z',
+        token_rotation_status: 'active',
+      },
+      latest_inventory: inventory,
+    };
+    currentInventory = clone(inventory);
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+
+    expect((await screen.findAllByText('Ready')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Issue enrollment token' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reissue enrollment token' })).not.toBeInTheDocument();
+  });
+
+  it('handles empty onboarding token responses safely without showing an empty secret panel', async () => {
+    emptyEnrollmentIssueResponse = true;
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'missing_agent_identity',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+      },
+    };
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [];
+    currentInventory = null;
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Issue enrollment token' }));
+    await userEvent.click(screen.getByLabelText(/enrollment token is sensitive/));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByText('The backend accepted the request but did not return a token value. Refresh status and retry only after checking backend logs.')).toBeInTheDocument();
+    expect(screen.queryByText('********************************')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reveal' })).not.toBeInTheDocument();
+  });
+
+  it('discards stale onboarding token responses after the drawer closes', async () => {
+    delayEnrollmentCreateResponse = true;
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'missing_agent_identity',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+      },
+    };
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [];
+    currentInventory = null;
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Issue enrollment token' }));
+    await userEvent.click(screen.getByLabelText(/enrollment token is sensitive/));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(resolveEnrollmentCreateResponse).not.toBeNull());
+    await userEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]);
+    resolveEnrollmentCreateResponse?.();
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token?ttl_hours=24')).toBe(true));
+
+    expect(document.body.textContent || '').not.toContain('enroll-secret-token');
+    expect(screen.queryByRole('button', { name: 'Reveal' })).not.toBeInTheDocument();
+  });
+
   it('keeps onboarding visible without node.bootstrap and shows the read-only permission hint', async () => {
     await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
     await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
@@ -1201,6 +1432,8 @@ describe('NodesPage', () => {
     expect(await screen.findByText('Read-only onboarding status')).toBeInTheDocument();
     expect(screen.getByText('node.bootstrap is required for onboarding actions. Status remains visible with read permissions.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create token' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Issue enrollment token' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reissue enrollment token' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Queue bootstrap' })).not.toBeInTheDocument();
   });
 

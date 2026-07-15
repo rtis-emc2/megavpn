@@ -103,6 +103,7 @@ describe('node onboarding model', () => {
     expect(model.overallStatus).toBe('not_started');
     expect(model.currentStep).toBe('profile');
     expect(stepStatus(model, 'profile')).toBe('current');
+    expect(model.recommendedAction).toBe('none');
   });
 
   it('completes the profile step from a loaded node and blocks retired nodes', () => {
@@ -114,17 +115,19 @@ describe('node onboarding model', () => {
     expect(retired.overallStatus).toBe('blocked');
     expect(retired.currentStep).toBe('profile');
     expect(retired.steps.every((step) => step.status === 'blocked')).toBe(true);
+    expect(retired.recommendedAction).toBe('none');
   });
 
   it('advances credential with an active redacted enrollment token and ignores plaintext token fields', () => {
     const model = deriveNodeOnboardingModel({
       node,
-      enrollmentTokens: [{ ...activeToken, token: 'plain-secret-token', enrollment_token: 'enroll-secret-token' }],
+      enrollmentTokens: [{ ...activeToken, token: 'plain-secret-token', enrollment_token: 'enroll-secret-token' } as unknown as EnrollmentToken],
     });
 
     expect(stepStatus(model, 'credential')).toBe('complete');
     expect(stepEvidence(model, 'credential')).toBe('credential_active_token');
     expect(model.overallStatus).toBe('in_progress');
+    expect(model.recommendedAction).toBe('none');
     expect(JSON.stringify(model)).not.toContain('plain-secret-token');
     expect(JSON.stringify(model)).not.toContain('enroll-secret-token');
   });
@@ -136,6 +139,7 @@ describe('node onboarding model', () => {
     expect(stepStatus(model, 'registration')).toBe('current');
     expect(model.currentStep).toBe('registration');
     expect(model.overallStatus).toBe('in_progress');
+    expect(model.recommendedAction).toBe('none');
   });
 
   it('maps queued and running bootstrap to the current bootstrap step', () => {
@@ -183,6 +187,7 @@ describe('node onboarding model', () => {
     });
     expect(stepStatus(revoked, 'registration')).toBe('warning');
     expect(revoked.overallStatus).toBe('action_required');
+    expect(revoked.recommendedAction).toBe('reissue_enrollment_token');
   });
 
   it('keeps heartbeat current after registration until a heartbeat is observed', () => {
@@ -190,6 +195,7 @@ describe('node onboarding model', () => {
 
     expect(stepStatus(model, 'heartbeat')).toBe('current');
     expect(model.heartbeatObserved).toBe(false);
+    expect(model.recommendedAction).toBe('none');
   });
 
   it('completes online heartbeat and warns on degraded or offline heartbeat', () => {
@@ -270,6 +276,7 @@ describe('node onboarding model', () => {
     });
     expect(stepStatus(queuedOnly, 'inventory')).toBe('current');
     expect(queuedOnly.inventoryObserved).toBe(false);
+    expect(queuedOnly.recommendedAction).toBe('none');
   });
 
   it('requires registration, heartbeat and inventory evidence before ready', () => {
@@ -279,6 +286,7 @@ describe('node onboarding model', () => {
         diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: state, latest_inventory: inventory }),
       });
       expect(ready.overallStatus).toBe('ready');
+      expect(ready.recommendedAction).toBe('none');
     }
 
     const communicationOnly = deriveNodeOnboardingModel({
@@ -308,5 +316,61 @@ describe('node onboarding model', () => {
     expect(stepEvidence(model, 'bootstrap')).toBe('bootstrap_unknown_status');
     expect(runs.map((run) => run.id).join(',')).toBe(runOrder);
     expect(tokens.map((token) => token.id).join(',')).toBe(tokenOrder);
+    expect(model.recommendedAction).toBe('none');
+  });
+
+  it('recommends enrollment token issue only when no usable credential exists', () => {
+    const model = deriveNodeOnboardingModel({
+      node,
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      bootstrapRuns: [],
+    });
+
+    expect(stepStatus(model, 'credential')).toBe('current');
+    expect(model.recommendedAction).toBe('issue_enrollment_token');
+  });
+
+  it('recommends enrollment token reissue only for source-defined recovery states', () => {
+    const authFailure = deriveNodeOnboardingModel({
+      node,
+      diagnostics: diagnostics({ communication_state: 'auth_failure' }),
+      enrollmentTokens: [activeToken],
+    });
+    expect(authFailure.recommendedAction).toBe('reissue_enrollment_token');
+
+    const pendingReenroll = deriveNodeOnboardingModel({
+      node,
+      diagnostics: diagnostics({ agent: { node_id: 'node-1', status: 'missing', token_rotation_status: 'pending_reenroll' } }),
+      enrollmentTokens: [activeToken],
+    });
+    expect(pendingReenroll.recommendedAction).toBe('reissue_enrollment_token');
+
+    const revokedCredential = deriveNodeOnboardingModel({
+      node,
+      diagnostics: diagnostics({ agent: { node_id: 'node-1', status: 'revoked', token_rotation_status: 'revoked' } }),
+      enrollmentTokens: [activeToken],
+    });
+    expect(revokedCredential.recommendedAction).toBe('reissue_enrollment_token');
+  });
+
+  it('does not recommend reissue for missing heartbeat, missing inventory or queued bootstrap alone', () => {
+    const missingHeartbeat = deriveNodeOnboardingModel({
+      node,
+      diagnostics: registeredDiagnostics(),
+    });
+    expect(missingHeartbeat.recommendedAction).toBe('none');
+
+    const missingInventory = deriveNodeOnboardingModel({
+      node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'job_running' }),
+    });
+    expect(missingInventory.recommendedAction).toBe('none');
+
+    const queued = deriveNodeOnboardingModel({ node, enrollmentTokens: [activeToken], bootstrapRuns: [queuedRun] });
+    expect(queued.recommendedAction).toBe('none');
+
+    const running = deriveNodeOnboardingModel({ node, enrollmentTokens: [activeToken], bootstrapRuns: [runningRun] });
+    expect(running.recommendedAction).toBe('none');
   });
 });

@@ -28,7 +28,7 @@ export function OneTimeSecretPanel({ label, value, expiresAt, onClose }: OneTime
   const { t } = useTranslation();
   const [revealed, setRevealed] = useState(false);
   return (
-    <div className="inline-panel" role="status">
+    <div className="inline-panel" role="region" aria-label={label}>
       <div className="page-stack">
         <strong>{label}</strong>
         <p className="muted">{t('clients.delivery.oneTimeWarning')}</p>

@@ -48,6 +48,7 @@ import {
   discoverNodeServices,
   disableNodeFirewall,
   endpoints,
+  extractEnrollmentTokenSecret,
   forceDeleteInstance,
   forceRetireNode,
   getAvailableClientsForGroup,
@@ -233,6 +234,7 @@ import type {
   BootstrapResult,
   EnrollmentToken,
   EnrollmentTokenCreateInput,
+  EnrollmentTokenIssueResult,
   FirewallAddressGroup,
   FirewallApplyRequest,
   FirewallApplyResult,
@@ -349,6 +351,12 @@ export type NodeBootstrapBundleDownloadVariables = {
   nodeId: string;
   runId: string;
   consume: (result: NodeBootstrapBundleDownloadResult) => void;
+};
+
+export type EnrollmentTokenIssueVariables = {
+  nodeId: string;
+  input?: EnrollmentTokenCreateInput;
+  consume: (result: EnrollmentTokenIssueResult) => void;
 };
 
 const stale = {
@@ -577,17 +585,31 @@ export function useCreateNodeSSHAccessMethod() {
 
 export function useCreateEnrollmentToken() {
   const queryClient = useQueryClient();
-  return useMutation<EnrollmentToken, Error, { nodeId: string; input?: EnrollmentTokenCreateInput }>({
-    mutationFn: ({ nodeId, input }) => createEnrollmentToken(nodeId, input || {}),
-    onSuccess: (_token, input) => invalidateNodeQueries(queryClient, input.nodeId),
+  return useMutation<void, Error, EnrollmentTokenIssueVariables>({
+    gcTime: 0,
+    mutationFn: async ({ nodeId, input, consume }) => {
+      const result = await createEnrollmentToken(nodeId, input || {});
+      extractEnrollmentTokenSecret(result);
+      consume(result);
+    },
+    onSettled: (_data, _error, input) => {
+      if (input?.nodeId) invalidateNodeQueries(queryClient, input.nodeId);
+    },
   });
 }
 
 export function useRotateEnrollmentToken() {
   const queryClient = useQueryClient();
-  return useMutation<EnrollmentToken, Error, { nodeId: string; input?: EnrollmentTokenCreateInput }>({
-    mutationFn: ({ nodeId, input }) => rotateEnrollmentToken(nodeId, input || {}),
-    onSuccess: (_token, input) => invalidateNodeQueries(queryClient, input.nodeId),
+  return useMutation<void, Error, EnrollmentTokenIssueVariables>({
+    gcTime: 0,
+    mutationFn: async ({ nodeId, input, consume }) => {
+      const result = await rotateEnrollmentToken(nodeId, input || {});
+      extractEnrollmentTokenSecret(result);
+      consume(result);
+    },
+    onSettled: (_data, _error, input) => {
+      if (input?.nodeId) invalidateNodeQueries(queryClient, input.nodeId);
+    },
   });
 }
 

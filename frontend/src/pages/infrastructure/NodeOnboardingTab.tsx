@@ -1,4 +1,4 @@
-import { RefreshCw } from 'lucide-react';
+import { KeyRound, RefreshCw, RotateCcw } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
@@ -8,8 +8,14 @@ import type {
   NodeDiagnostics,
   NodeInventorySnapshot,
 } from '../../shared/api/types';
-import { Badge, Button, Card, CardBody, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, FormField, FormGrid, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
+import {
+  ENROLLMENT_TOKEN_TTL_DEFAULT_HOURS,
+  ENROLLMENT_TOKEN_TTL_MAX_HOURS,
+  ENROLLMENT_TOKEN_TTL_MIN_HOURS,
+  validateEnrollmentTokenTTL,
+} from './enrollmentTokenControls';
 import {
   deriveNodeOnboardingModel,
   type NodeOnboardingStep,
@@ -27,8 +33,10 @@ type NodeOnboardingTabProps = {
   inventory?: NodeInventorySnapshot;
   inventoryError?: unknown;
   canBootstrap: boolean;
+  busy: boolean;
   onOpenTab: (tab: NodeOnboardingTargetTab) => void;
   onRefresh: () => Promise<void>;
+  onRequestEnrollmentToken: (input: { mode: 'issue' | 'reissue'; ttlHours: number }) => void;
   formatError: (error: unknown) => string;
 };
 
@@ -132,13 +140,16 @@ export function NodeOnboardingTab({
   inventory,
   inventoryError,
   canBootstrap,
+  busy,
   onOpenTab,
   onRefresh,
+  onRequestEnrollmentToken,
   formatError,
 }: NodeOnboardingTabProps) {
   const { t } = useTranslation();
   const [refreshStatus, setRefreshStatus] = useState('');
   const [refreshError, setRefreshError] = useState('');
+  const [ttlInput, setTTLInput] = useState(String(ENROLLMENT_TOKEN_TTL_DEFAULT_HOURS));
   const model = useMemo(() => deriveNodeOnboardingModel({
     node,
     diagnostics,
@@ -146,6 +157,12 @@ export function NodeOnboardingTab({
     bootstrapRuns,
     inventory,
   }), [node, diagnostics, enrollmentTokens, bootstrapRuns, inventory]);
+  const ttlValidation = validateEnrollmentTokenTTL(ttlInput);
+  const actionMode = model.recommendedAction === 'issue_enrollment_token'
+    ? 'issue'
+    : model.recommendedAction === 'reissue_enrollment_token'
+      ? 'reissue'
+      : null;
   const errors: Array<{ key: string; error: unknown }> = [];
   if (diagnosticsError) errors.push({ key: 'diagnosticsUnavailable', error: diagnosticsError });
   if (enrollmentTokensError) errors.push({ key: 'enrollmentTokensUnavailable', error: enrollmentTokensError });
@@ -202,6 +219,62 @@ export function NodeOnboardingTab({
           </div>
         </CardBody>
       </Card>
+      {canBootstrap && actionMode ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <h3 className="card-title">
+                {actionMode === 'issue' ? t('nodes.onboarding.issueEnrollmentToken') : t('nodes.onboarding.reissueEnrollmentToken')}
+              </h3>
+              <p className="muted">
+                {actionMode === 'issue' ? t('nodes.onboarding.issueEnrollmentTokenHint') : t('nodes.onboarding.reissueEnrollmentTokenHint')}
+              </p>
+              <ul>
+                <li>{t('nodes.onboarding.tokenShownOnlyOnce')}</li>
+                <li>{t('nodes.onboarding.tokenIssueDoesNotProveConnectivity')}</li>
+                <li>{t('nodes.onboarding.guidedBootstrapRemainsNext')}</li>
+              </ul>
+              <FormGrid>
+                <FormField label={t('nodes.onboarding.enrollmentTokenTTL')}>
+                  <TextField
+                    type="number"
+                    min={ENROLLMENT_TOKEN_TTL_MIN_HOURS}
+                    max={ENROLLMENT_TOKEN_TTL_MAX_HOURS}
+                    step={1}
+                    value={ttlInput}
+                    onChange={(event) => setTTLInput(event.target.value)}
+                  />
+                </FormField>
+              </FormGrid>
+              {ttlValidation.errorKey ? (
+                <div role="alert" className="error-state-inline">
+                  {t(`nodes.onboarding.tokenTTLErrors.${ttlValidation.errorKey}`, {
+                    min: ENROLLMENT_TOKEN_TTL_MIN_HOURS,
+                    max: ENROLLMENT_TOKEN_TTL_MAX_HOURS,
+                  })}
+                </div>
+              ) : null}
+              <Toolbar>
+                <Button
+                  type="button"
+                  variant={actionMode === 'reissue' ? 'danger' : 'primary'}
+                  icon={actionMode === 'reissue' ? <RotateCcw size={16} /> : <KeyRound size={16} />}
+                  disabled={busy || Boolean(ttlValidation.errorKey)}
+                  onClick={() => onRequestEnrollmentToken({ mode: actionMode, ttlHours: ttlValidation.ttlHours })}
+                >
+                  {actionMode === 'issue' ? t('nodes.onboarding.issueEnrollmentToken') : t('nodes.onboarding.reissueEnrollmentToken')}
+                </Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : model.currentStep === 'registration' && !model.registered ? (
+        <Card>
+          <CardBody>
+            <p className="muted">{t('nodes.onboarding.waitingForAgentRegistration')}</p>
+          </CardBody>
+        </Card>
+      ) : null}
       <Card>
         <CardBody>
           <ol className="page-stack" aria-label={t('nodes.onboarding.agentOnboarding')}>

@@ -32,6 +32,11 @@ export type NodeOnboardingOverallStatus =
   | 'degraded'
   | 'blocked';
 
+export type NodeOnboardingActionKey =
+  | 'issue_enrollment_token'
+  | 'reissue_enrollment_token'
+  | 'none';
+
 export type NodeOnboardingEvidence = {
   key: string;
   value: string;
@@ -54,6 +59,7 @@ export type NodeOnboardingModel = {
   heartbeatState: string;
   tokenRotationStatus: string;
   targetTab?: NodeOnboardingTargetTab;
+  recommendedAction: NodeOnboardingActionKey;
   registered: boolean;
   heartbeatObserved: boolean;
   inventoryObserved: boolean;
@@ -201,6 +207,12 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
   const agentStatus = normalize(agent?.status) || normalize(node?.agent_status) || 'unknown';
   const agentRevoked = agentStatus === 'revoked' || Boolean(agent?.revoked_at) || tokenRotationStatus === 'revoked';
   const registered = Boolean(agent?.registered_at) && !agentRevoked;
+  const reissueRequired = !registered && (
+    communicationState === 'auth_failure'
+    || tokenRotationStatus === 'pending_reenroll'
+    || tokenRotationStatus === 'revoked'
+    || agentRevoked
+  );
   const heartbeatTimestamp = node?.last_heartbeat_at || agent?.last_seen_at || node?.agent_last_seen_at || undefined;
   const heartbeatObserved = Boolean(heartbeatTimestamp);
   const inventoryObserved = Boolean(diagnostics?.latest_inventory?.id || inventory?.id || agent?.last_inventory_sync_at);
@@ -359,6 +371,13 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
     : strongActionCommunicationStates.has(communicationState)
       ? 'diagnostics'
       : problem.targetTab;
+  const recommendedAction: NodeOnboardingActionKey = retired || registered
+    ? 'none'
+    : reissueRequired || (credentialStep.status === 'warning' && (authOrCredentialProblem || agentRevoked))
+      ? 'reissue_enrollment_token'
+      : node && !activeToken && !strongActionCommunicationStates.has(communicationState) && (credentialStep.status === 'current' || credentialStep.status === 'pending')
+        ? 'issue_enrollment_token'
+        : 'none';
 
   return {
     overallStatus,
@@ -368,6 +387,7 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
     heartbeatState,
     tokenRotationStatus,
     targetTab,
+    recommendedAction,
     registered,
     heartbeatObserved,
     inventoryObserved,

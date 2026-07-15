@@ -290,11 +290,13 @@ Evidence controls:
 The UI minimizes bundle lifetime and prevents application-level persistence;
 JavaScript runtime memory erasure is not guaranteed.
 
-## 12. Guided Agent Onboarding Status Review
+## 12. Guided Agent Onboarding Status and Token Action Review
 
-Nodes -> Onboarding now provides a guided read-only status model without
-`/legacy/`. The reviewed scope is status derivation and navigation to existing
-Nodes tabs, not onboarding mutation execution.
+Nodes -> Onboarding now provides a guided status model plus secure enrollment
+token issue/reissue actions without `/legacy/`. The reviewed mutation scope is
+limited to existing operator enrollment-token endpoints. It does not include
+agent registration, bootstrap execution, manual bundle reveal/download,
+inventory sync or connectivity proof.
 
 Backend/API controls used by the UI:
 
@@ -303,6 +305,8 @@ Backend/API controls used by the UI:
 - existing operator `GET /api/v1/nodes/{id}/enrollment-tokens`;
 - existing operator `GET /api/v1/nodes/{id}/bootstrap-runs`;
 - existing operator `GET /api/v1/nodes/{id}/inventory`;
+- existing operator `POST /api/v1/nodes/{id}/enrollment-token`;
+- existing operator `POST /api/v1/nodes/{id}/enrollment-token/rotate`;
 - redacted diagnostics projections for enrollment-token metadata and bootstrap
   run summaries;
 - backend-derived `heartbeat_state`, `communication_state` and
@@ -313,9 +317,23 @@ Frontend controls:
 - the onboarding model is a pure typed derivation module and does not accept
   `/agent/*` responses, registration responses, plaintext enrollment tokens,
   bootstrap bundle contents, private keys or secret references;
-- the Onboarding tab is read-only and has no buttons for token create/rotate,
-  token revoke, bootstrap start, manual bundle reveal/download or inventory
-  sync;
+- the Onboarding tab exposes only issue/reissue enrollment-token actions when
+  the typed status model recommends the action and the operator has
+  `node.bootstrap`;
+- the Onboarding tab has no buttons for token revoke, bootstrap start, manual
+  bundle reveal/download or inventory sync;
+- issue/reissue requires explicit confirmation, a valid TTL between 1 and 720
+  hours and an acknowledgement that the plaintext token is sensitive and shown
+  only once;
+- issue/reissue uses the shared create/rotate hook with `gcTime: 0`, a void
+  mutation result and a one-time consumer callback. The plaintext token is
+  extracted only from the immediate API response, then placed in the transient
+  `OneTimeSecretPanel`;
+- stale create/rotate responses are discarded if the drawer closes, selected
+  node changes, `node.bootstrap` permission disappears, another one-time secret
+  action starts or the component unmounts;
+- the existing Nodes -> Security token create/rotate controls use the same
+  one-time consumer path as Onboarding;
 - next-step buttons only change the selected existing Nodes tab;
 - ready status requires agent registration, heartbeat evidence, inventory
   evidence and a healthy backend communication state;
@@ -329,25 +347,32 @@ Frontend controls:
   tab changes or the drawer closes;
 - token plaintext, token hashes, `secret_ref_id`, request signatures, nonces,
   authorization headers, bootstrap bundle content and raw secret metadata are
-  not rendered by the onboarding panel;
-- onboarding state is not persisted to localStorage, sessionStorage, IndexedDB,
-  URL query parameters, router state or a global mutable store.
+  not rendered by the onboarding panel except for the intentional one-time
+  plaintext token reveal after a successful issue/reissue response;
+- plaintext tokens are not retained in query data, mutation data, mutation
+  variables, global state, Zustand, localStorage, sessionStorage, IndexedDB,
+  URL query parameters, router state, logs, errors, toasts, fixtures or
+  snapshots.
 
 Evidence controls:
 
 - pure-model tests cover not-started, active token, bootstrap queued/running,
   successful/failed bootstrap ordering, registration, revoked agent, heartbeat
   states, unhealthy communication states, inventory evidence, ready criteria,
-  unknown statuses, source-array immutability and plaintext token omission;
+  unknown statuses, source-array immutability, action recommendations for issue
+  and reissue, no destructive recommendation for unknown statuses and plaintext
+  token omission;
 - Nodes UI tests cover the Onboarding tab, existing tab preservation, six
-  ordered steps, safe evidence rendering, secret redaction, navigation-only
-  next-step buttons, no `/agent/*` browser calls, no onboarding mutations,
-  polling lifecycle, partial query failure display, read-only permission hint,
-  browser-storage safety and absence of production console logging.
+  ordered steps, safe evidence rendering, secret redaction, issue/reissue
+  confirmation, TTL validation, one-time reveal/copy/close behavior,
+  stale-response discard, permission-aware action hiding, no `/agent/*` browser
+  calls, no `/legacy/`, no bootstrap or inventory mutation from Onboarding,
+  polling lifecycle, partial query failure display, browser-storage safety and
+  absence of production console logging.
 
-Guided onboarding actions remain pending Step 4C.2. Final acceptance/debt
-closure remains pending Step 4D. Live external-node smoke remains release
-validation debt.
+Guided bootstrap/inventory actions remain pending Step 4C.2B. Final
+acceptance/debt closure remains pending Step 4D. Live external-node smoke
+remains release-validation debt.
 
 ## 13. RC1 Limitations
 
@@ -355,8 +380,8 @@ The new console remains incomplete for final write parity. The following are
 intentionally disabled, backend-missing or legacy-only after FE8-P0-09B:
 
 - non-VLESS access service materialization and access-group migration conflict UI;
-- guided node agent onboarding mutations, agent identity revoke, reboot,
-  emergency cleanup and stale rotation cleanup;
+- guided node agent onboarding actions beyond enrollment-token issue/reissue,
+  agent identity revoke, reboot, emergency cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance

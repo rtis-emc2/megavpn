@@ -293,11 +293,9 @@ export type NodeSSHAccessMethodCreateResult = NodeAccessMethod & {
   secret_configured: boolean;
 };
 
-export type EnrollmentToken = APIRecord & {
+export type EnrollmentToken = {
   id: string;
   node_id?: string;
-  token?: string;
-  enrollment_token?: string;
   token_hint?: string;
   status?: string;
   expires_at?: string;
@@ -309,7 +307,12 @@ export type EnrollmentTokenCreateInput = {
   ttl_hours?: number;
 };
 
-export type EnrollmentTokenCreateResult = EnrollmentToken;
+export type EnrollmentTokenIssueResult = EnrollmentToken & {
+  token?: string;
+  enrollment_token?: string;
+};
+
+export type EnrollmentTokenCreateResult = EnrollmentTokenIssueResult;
 
 export type EnrollmentTokenRevokeResult = EnrollmentToken;
 

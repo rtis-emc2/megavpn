@@ -70,6 +70,7 @@ import type {
   EnrollmentToken,
   EnrollmentTokenCreateInput,
   EnrollmentTokenCreateResult,
+  EnrollmentTokenIssueResult,
   EnrollmentTokenRevokeResult,
   FirewallAddressGroup,
   FirewallAddressGroupEntry,
@@ -509,6 +510,16 @@ export function createEnrollmentToken(nodeId: string, input: EnrollmentTokenCrea
 
 export function rotateEnrollmentToken(nodeId: string, input: EnrollmentTokenCreateInput = {}): Promise<EnrollmentTokenCreateResult> {
   return sendJSON<EnrollmentTokenCreateResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/enrollment-token/rotate${queryString({ ttl_hours: input.ttl_hours })}`, 'POST', {});
+}
+
+export function extractEnrollmentTokenSecret(result: EnrollmentTokenIssueResult): string {
+  const value = typeof result.token === 'string'
+    ? result.token.trim()
+    : typeof result.enrollment_token === 'string'
+      ? result.enrollment_token.trim()
+      : '';
+  if (!value) throw new Error('enrollment token value was not returned');
+  return value;
 }
 
 export function revokeEnrollmentToken(nodeId: string, tokenId: string): Promise<EnrollmentTokenRevokeResult> {

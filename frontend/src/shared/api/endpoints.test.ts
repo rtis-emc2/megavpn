@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from './client';
 import {
   downloadNodeBootstrapBundle,
+  createEnrollmentToken,
+  extractEnrollmentTokenSecret,
+  listEnrollmentTokens,
   parseContentDispositionFilename,
   revealNodeBootstrapBundle,
   sanitizeDownloadFilename,
@@ -139,5 +142,72 @@ describe('node bootstrap bundle endpoints', () => {
 
     downloadContentType = 'text/html';
     await expect(downloadNodeBootstrapBundle('node-1', 'run-1')).rejects.toBeInstanceOf(APIError);
+  });
+});
+
+describe('node enrollment token endpoints', () => {
+  const calls: FetchCall[] = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://megavpn.test');
+      const method = String(init?.method || 'GET').toUpperCase();
+      const path = `${url.pathname}${url.search}`;
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      calls.push({
+        method,
+        path,
+        body,
+        headers: trackedHeaders(init?.headers),
+        credentials: init?.credentials,
+        cache: init?.cache,
+      });
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/enrollment-tokens') {
+        return json([{ id: 'token-safe', node_id: 'node-1', token_hint: 'safe...hint', status: 'active', expires_at: '2026-07-10T08:00:00Z', created_at: '2026-07-09T08:00:00Z' }]);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/enrollment-token') {
+        return json({ id: 'token-new', node_id: 'node-1', token: 'test-secret-token', token_hint: 'test...token', status: 'active', expires_at: '2026-07-10T08:00:00Z', created_at: '2026-07-09T08:00:00Z' }, 201);
+      }
+      return json({ error: `unhandled ${method} ${url.pathname}` }, 404);
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps token list handling redacted and uses CSRF for issue requests', async () => {
+    const listed = await listEnrollmentTokens('node-1');
+    expect(listed[0]).toMatchObject({ id: 'token-safe', token_hint: 'safe...hint', status: 'active' });
+    expect(Object.prototype.hasOwnProperty.call(listed[0], 'token')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(listed[0], 'enrollment_token')).toBe(false);
+
+    const issued = await createEnrollmentToken('node-1', { ttl_hours: 12 });
+    expect(extractEnrollmentTokenSecret(issued)).toBe('test-secret-token');
+    expect(calls.find((call) => call.method === 'POST')).toMatchObject({
+      method: 'POST',
+      path: '/api/v1/nodes/node-1/enrollment-token?ttl_hours=12',
+      body: {},
+      credentials: 'include',
+    });
+    expect(calls.find((call) => call.method === 'POST')?.headers['x-megavpn-csrf']).toBe('1');
+  });
+
+  it('rejects empty issue responses without stringifying the response', () => {
+    expect(() => extractEnrollmentTokenSecret({ id: 'token-empty', node_id: 'node-1', token_hint: 'empty', status: 'active' })).toThrow('enrollment token value was not returned');
+  });
+
+  it('accepts the legacy secret-bearing response alias only in issue responses', () => {
+    expect(extractEnrollmentTokenSecret({
+      id: 'token-alias',
+      node_id: 'node-1',
+      enrollment_token: 'alias-secret-token',
+      token_hint: 'alias...token',
+      status: 'active',
+    })).toBe('alias-secret-token');
   });
 });

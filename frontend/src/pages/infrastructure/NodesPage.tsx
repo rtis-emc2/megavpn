@@ -1,9 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Activity, Boxes, CheckCircle2, Copy, DownloadCloud, FilePenLine, Fingerprint, KeyRound, PackageCheck, PlusCircle, Play, RefreshCw, RotateCcw, Search, ServerCog, ShieldAlert, ShieldCheck, TerminalSquare, Trash2, Wrench } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { APIError } from '../../shared/api/client';
+import { extractEnrollmentTokenSecret } from '../../shared/api/endpoints';
 import { useAuth } from '../../shared/auth/AuthProvider';
 import type {
   APIRecord,
@@ -69,6 +70,12 @@ import {
 import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
+import {
+  ENROLLMENT_TOKEN_TTL_DEFAULT_HOURS,
+  ENROLLMENT_TOKEN_TTL_MAX_HOURS,
+  ENROLLMENT_TOKEN_TTL_MIN_HOURS,
+  validateEnrollmentTokenTTL,
+} from './enrollmentTokenControls';
 import { NodeOnboardingTab } from './NodeOnboardingTab';
 import { deriveNodeOnboardingModel, shouldPollNodeOnboarding, type NodeOnboardingTargetTab } from './nodeOnboarding';
 
@@ -84,8 +91,8 @@ type ConfirmAction =
   | { type: 'service-discover'; node: NodeDetail }
   | { type: 'service-import'; node: NodeDetail; discovery: NodeServiceDiscovery }
   | { type: 'service-import-all'; node: NodeDetail }
-  | { type: 'enrollment-create'; node: NodeDetail; ttlHours: number }
-  | { type: 'enrollment-rotate'; node: NodeDetail; ttlHours: number }
+  | { type: 'enrollment-create'; node: NodeDetail; ttlHours: number; source: 'security' | 'onboarding' }
+  | { type: 'enrollment-rotate'; node: NodeDetail; ttlHours: number; source: 'security' | 'onboarding' }
   | { type: 'enrollment-revoke'; node: NodeDetail; token: EnrollmentToken }
   | { type: 'bootstrap'; node: NodeDetail; input: BootstrapRequest }
   | { type: 'agent-reinstall'; node: NodeDetail; input: BootstrapRequest }
@@ -96,6 +103,8 @@ type ConfirmAction =
   | { type: 'node-force-retire'; node: NodeDetail; confirmation: string; reason: string };
 
 type OneTimePanelState = {
+  nodeId: string;
+  requestId: string;
   label: string;
   value: string;
   expiresAt?: string;
@@ -173,6 +182,32 @@ function bundleErrorKey(error: unknown): string {
       return 'nodes.manualBundleErrors.secretStorageUnavailable';
     default:
       return 'nodes.manualBundleErrors.generic';
+  }
+}
+
+function enrollmentTokenActionErrorKey(error: unknown): string {
+  if (error instanceof Error && error.message === 'enrollment token value was not returned') {
+    return 'nodes.onboarding.tokenValueMissing';
+  }
+  if (!(error instanceof APIError)) return 'nodes.onboarding.tokenIssueErrors.generic';
+  switch (error.status) {
+    case 400:
+    case 422:
+      return 'nodes.onboarding.tokenIssueErrors.invalidTTL';
+    case 403:
+      return 'nodes.onboarding.tokenIssueErrors.forbidden';
+    case 404:
+      return 'nodes.onboarding.tokenIssueErrors.nodeMissing';
+    case 409:
+      return 'nodes.onboarding.tokenIssueErrors.conflict';
+    case 429:
+      return 'nodes.onboarding.tokenIssueErrors.rateLimited';
+    case 500:
+      return 'nodes.onboarding.tokenIssueErrors.server';
+    case 503:
+      return 'nodes.onboarding.tokenIssueErrors.unavailable';
+    default:
+      return 'nodes.onboarding.tokenIssueErrors.generic';
   }
 }
 
@@ -505,6 +540,9 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const [notice, setNotice] = useState('');
   const [jobIds, setJobIds] = useState<string[]>([]);
   const [oneTimePanel, setOneTimePanel] = useState<OneTimePanelState | null>(null);
+  const secretRequestRef = useRef(0);
+  const selectedNodeIdRef = useRef(nodeId);
+  const canBootstrapRef = useRef(canBootstrapNodes);
   const cachedOnboardingNode = queryClient.getQueryData<NodeDetail>(['node', nodeId]) || node;
   const cachedOnboardingModel = cachedOnboardingNode ? deriveNodeOnboardingModel({
     node: cachedOnboardingNode,
@@ -568,6 +606,69 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     || retire.isPending
     || forceRetire.isPending;
 
+  useEffect(() => {
+    selectedNodeIdRef.current = nodeId;
+    secretRequestRef.current += 1;
+    const timeout = window.setTimeout(() => setOneTimePanel(null), 0);
+    return () => window.clearTimeout(timeout);
+  }, [nodeId]);
+
+  useEffect(() => {
+    canBootstrapRef.current = canBootstrapNodes;
+    if (!canBootstrapNodes) {
+      secretRequestRef.current += 1;
+      const timeout = window.setTimeout(() => setOneTimePanel(null), 0);
+      return () => window.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [canBootstrapNodes]);
+
+  useEffect(() => {
+    if (!open) {
+      secretRequestRef.current += 1;
+      const timeout = window.setTimeout(() => setOneTimePanel(null), 0);
+      return () => window.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [open]);
+
+  useEffect(() => () => {
+    secretRequestRef.current += 1;
+  }, []);
+
+  useEffect(() => {
+    if (!oneTimePanel?.expiresAt) return undefined;
+    const expiresAt = Date.parse(oneTimePanel.expiresAt);
+    if (!Number.isFinite(expiresAt)) return undefined;
+    const delayMs = expiresAt - Date.now();
+    if (delayMs <= 0) {
+      const timeout = window.setTimeout(() => setOneTimePanel(null), 0);
+      return () => window.clearTimeout(timeout);
+    }
+    const delay = Math.min(delayMs, 2_147_483_647);
+    const timeout = window.setTimeout(() => setOneTimePanel(null), delay);
+    return () => window.clearTimeout(timeout);
+  }, [oneTimePanel?.expiresAt]);
+
+  const clearOneTimePanel = () => {
+    secretRequestRef.current += 1;
+    setOneTimePanel(null);
+  };
+
+  const beginOneTimeSecretRequest = (): number => {
+    secretRequestRef.current += 1;
+    setOneTimePanel(null);
+    return secretRequestRef.current;
+  };
+
+  const openConfirm = (action: ConfirmAction) => {
+    if (action.type === 'enrollment-create' || action.type === 'enrollment-rotate') {
+      clearOneTimePanel();
+    }
+    setConfirm(action);
+  };
+  const visibleOneTimePanel = open && canBootstrapNodes && oneTimePanel?.nodeId === current?.id ? oneTimePanel : null;
+
   const recordJobs = (result: unknown) => {
     const ids = recordJobsFrom(result).map((job) => job.id).filter(Boolean);
     if (ids.length) {
@@ -585,6 +686,15 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     ]);
     const failed = results.find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected') throw failed.reason;
+  };
+
+  const refreshAfterEnrollmentTokenAction = async () => {
+    await Promise.allSettled([
+      detail.refetch(),
+      diagnostics.refetch(),
+      enrollmentTokens.refetch(),
+      bootstrapRuns.refetch(),
+    ]);
   };
 
   const runConfirmed = async () => {
@@ -629,25 +739,53 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
         setNotice(t('nodes.importAccepted'));
         setActiveTab('discovery');
       } else if (confirm.type === 'enrollment-create') {
-        const tokenResult = await createEnrollment.mutateAsync({ nodeId: confirm.node.id, input: { ttl_hours: confirm.ttlHours } });
-        result = tokenResult;
-        setOneTimePanel({
-          label: t('nodes.enrollmentOneTimeToken'),
-          value: String(tokenResult.token || tokenResult.enrollment_token || ''),
-          expiresAt: tokenResult.expires_at,
+        const requestId = beginOneTimeSecretRequest();
+        await createEnrollment.mutateAsync({
+          nodeId: confirm.node.id,
+          input: { ttl_hours: confirm.ttlHours },
+          consume: (tokenResult) => {
+            const value = extractEnrollmentTokenSecret(tokenResult);
+            if (secretRequestRef.current !== requestId || selectedNodeIdRef.current !== confirm.node.id || !canBootstrapRef.current) return;
+            setOneTimePanel({
+              nodeId: confirm.node.id,
+              requestId: String(requestId),
+              label: t('nodes.enrollmentOneTimeToken'),
+              value,
+              expiresAt: tokenResult.expires_at,
+            });
+          },
         });
+        if (secretRequestRef.current !== requestId || selectedNodeIdRef.current !== confirm.node.id || !canBootstrapRef.current) {
+          setConfirm(null);
+          return;
+        }
         setNotice(t('nodes.tokenCreated'));
-        setActiveTab('security');
+        setActiveTab(confirm.source === 'onboarding' ? 'onboarding' : 'security');
+        await refreshAfterEnrollmentTokenAction();
       } else if (confirm.type === 'enrollment-rotate') {
-        const tokenResult = await rotateEnrollment.mutateAsync({ nodeId: confirm.node.id, input: { ttl_hours: confirm.ttlHours } });
-        result = tokenResult;
-        setOneTimePanel({
-          label: t('nodes.enrollmentOneTimeToken'),
-          value: String(tokenResult.token || tokenResult.enrollment_token || ''),
-          expiresAt: tokenResult.expires_at,
+        const requestId = beginOneTimeSecretRequest();
+        await rotateEnrollment.mutateAsync({
+          nodeId: confirm.node.id,
+          input: { ttl_hours: confirm.ttlHours },
+          consume: (tokenResult) => {
+            const value = extractEnrollmentTokenSecret(tokenResult);
+            if (secretRequestRef.current !== requestId || selectedNodeIdRef.current !== confirm.node.id || !canBootstrapRef.current) return;
+            setOneTimePanel({
+              nodeId: confirm.node.id,
+              requestId: String(requestId),
+              label: t('nodes.enrollmentOneTimeToken'),
+              value,
+              expiresAt: tokenResult.expires_at,
+            });
+          },
         });
+        if (secretRequestRef.current !== requestId || selectedNodeIdRef.current !== confirm.node.id || !canBootstrapRef.current) {
+          setConfirm(null);
+          return;
+        }
         setNotice(t('nodes.tokenRotated'));
-        setActiveTab('security');
+        setActiveTab(confirm.source === 'onboarding' ? 'onboarding' : 'security');
+        await refreshAfterEnrollmentTokenAction();
       } else if (confirm.type === 'enrollment-revoke') {
         result = await revokeEnrollment.mutateAsync({ nodeId: confirm.node.id, tokenId: confirm.token.id });
         setNotice(t('nodes.tokenRevoked'));
@@ -669,10 +807,13 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
         setNotice(t('nodes.actionAccepted'));
         setActiveTab('jobs');
       } else if (confirm.type === 'ssh-session-launch') {
+        const requestId = beginOneTimeSecretRequest();
         const sessionResult = await launchSSH.mutateAsync({ nodeId: confirm.node.id });
         result = sessionResult;
-        if (sessionResult.terminal_url) {
+        if (sessionResult.terminal_url && secretRequestRef.current === requestId && selectedNodeIdRef.current === confirm.node.id) {
           setOneTimePanel({
+            nodeId: confirm.node.id,
+            requestId: String(requestId),
             label: t('nodes.sshSessionOneTimeURL'),
             value: sessionResult.terminal_url,
             expiresAt: sessionResult.expires_at,
@@ -692,7 +833,16 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       recordJobs(result);
       setConfirm(null);
     } catch (error) {
-      setNotice(formatAPIError(error));
+      if (confirm.type === 'enrollment-create' || confirm.type === 'enrollment-rotate') {
+        setNotice(t(enrollmentTokenActionErrorKey(error)));
+        if (error instanceof APIError && (error.status === 403 || error.status === 404)) {
+          clearOneTimePanel();
+          setConfirm(null);
+          void detail.refetch();
+        }
+      } else {
+        setNotice(formatAPIError(error));
+      }
     }
   };
 
@@ -719,15 +869,15 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
               ))}
             </div>
             {notice ? <div role={notice.includes(':') ? 'alert' : 'status'}>{notice}</div> : null}
-            {oneTimePanel ? (
+            {visibleOneTimePanel ? (
               <OneTimeSecretPanel
-                label={oneTimePanel.label}
-                value={oneTimePanel.value}
-                expiresAt={oneTimePanel.expiresAt}
-                onClose={() => setOneTimePanel(null)}
+                label={visibleOneTimePanel.label}
+                value={visibleOneTimePanel.value}
+                expiresAt={visibleOneTimePanel.expiresAt}
+                onClose={clearOneTimePanel}
               />
             ) : null}
-            {activeTab === 'overview' ? <OverviewTab node={current} busy={busy} onConfirm={setConfirm} canWrite={canWriteNodes} onEdit={() => setEditOpen(true)} /> : null}
+            {activeTab === 'overview' ? <OverviewTab node={current} busy={busy} onConfirm={openConfirm} canWrite={canWriteNodes} onEdit={() => setEditOpen(true)} /> : null}
             {activeTab === 'runtime' ? <RuntimeTab node={current} diagnostics={diagnostics} /> : null}
             {activeTab === 'onboarding' ? (
               <NodeOnboardingTab
@@ -741,12 +891,19 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 inventory={inventory.data}
                 inventoryError={inventory.isError ? inventory.error : undefined}
                 canBootstrap={canBootstrapNodes}
+                busy={busy}
                 onOpenTab={(tab: NodeOnboardingTargetTab) => setActiveTab(tab)}
                 onRefresh={refreshOnboardingStatus}
+                onRequestEnrollmentToken={(input) => openConfirm({
+                  type: input.mode === 'issue' ? 'enrollment-create' : 'enrollment-rotate',
+                  node: current,
+                  ttlHours: input.ttlHours,
+                  source: 'onboarding',
+                })}
                 formatError={formatAPIError}
               />
             ) : null}
-            {activeTab === 'inventory' ? <InventoryTab node={current} inventory={inventory} busy={busy} onConfirm={setConfirm} /> : null}
+            {activeTab === 'inventory' ? <InventoryTab node={current} inventory={inventory} busy={busy} onConfirm={openConfirm} /> : null}
             {activeTab === 'capabilities' ? (
               <CapabilitiesTab
                 node={current}
@@ -756,11 +913,11 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 installers={installers.data || []}
                 installersError={installers.isError ? installers.error : null}
                 busy={busy}
-                onConfirm={setConfirm}
+                onConfirm={openConfirm}
               />
             ) : null}
-            {activeTab === 'diagnostics' ? <DiagnosticsTab node={current} diagnostics={diagnostics} busy={busy} onConfirm={setConfirm} /> : null}
-            {activeTab === 'discovery' ? <DiscoveryTab node={current} discoveries={discoveries} summary={discoverySummary} busy={busy} onConfirm={setConfirm} /> : null}
+            {activeTab === 'diagnostics' ? <DiagnosticsTab node={current} diagnostics={diagnostics} busy={busy} onConfirm={openConfirm} /> : null}
+            {activeTab === 'discovery' ? <DiscoveryTab node={current} discoveries={discoveries} summary={discoverySummary} busy={busy} onConfirm={openConfirm} /> : null}
             {activeTab === 'bootstrap' ? (
               <BootstrapTab
                 key={`${current.id}:${canBootstrapNodes ? 'bootstrap-allowed' : 'bootstrap-denied'}`}
@@ -769,7 +926,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 runs={bootstrapRuns}
                 busy={busy}
                 canBootstrap={canBootstrapNodes}
-                onConfirm={setConfirm}
+                onConfirm={openConfirm}
               />
             ) : null}
             {activeTab === 'security' ? (
@@ -786,11 +943,11 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                   setNotice(t('nodes.sshAccessMethodCreated'));
                   void accessMethods.refetch();
                 }}
-                onConfirm={setConfirm}
+                onConfirm={openConfirm}
               />
             ) : null}
-            {activeTab === 'terminal' ? <TerminalTab node={current} accessMethods={accessMethods} busy={busy} onConfirm={setConfirm} /> : null}
-            {activeTab === 'lifecycle' ? <LifecycleTab node={current} busy={busy} onConfirm={setConfirm} /> : null}
+            {activeTab === 'terminal' ? <TerminalTab node={current} accessMethods={accessMethods} busy={busy} onConfirm={openConfirm} /> : null}
+            {activeTab === 'lifecycle' ? <LifecycleTab node={current} busy={busy} onConfirm={openConfirm} /> : null}
             {activeTab === 'jobs' ? <NodeJobsTab jobIds={effectiveJobIds} diagnostics={diagnostics.data} /> : null}
             <NodeProfileModal
               mode="edit"
@@ -805,7 +962,13 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 if (updated.id) void detail.refetch();
               }}
             />
-            <NodeConfirmDialog action={confirm} busy={busy} onConfirm={() => void runConfirmed()} onClose={() => setConfirm(null)} />
+            <NodeConfirmDialog
+              key={confirm ? `${confirm.type}:${confirm.node.id}` : 'closed'}
+              action={confirm}
+              busy={busy}
+              onConfirm={() => void runConfirmed()}
+              onClose={() => setConfirm(null)}
+            />
           </div>
         ) : null}
       </QueryBoundary>
@@ -1444,13 +1607,13 @@ function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, cr
 }) {
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
-  const [ttlHours, setTTLHours] = useState(24);
+  const [ttlHours, setTTLHours] = useState(String(ENROLLMENT_TOKEN_TTL_DEFAULT_HOURS));
   const [methodId, setMethodId] = useState('');
   const [scanResult, setScanResult] = useState<HostKeyScanResult | null>(null);
   const [sshAccessOpen, setSSHAccessOpen] = useState(false);
+  const ttlValidation = validateEnrollmentTokenTTL(ttlHours);
   const methods = sshMethods(accessMethods.data);
   const selectedMethod = methods.find((method) => method.id === methodId) || defaultSSHMethod(accessMethods.data);
-  const ttl = Number.isFinite(ttlHours) && ttlHours > 0 ? ttlHours : 24;
   const runScan = async () => {
     if (!selectedMethod) return;
     const result = await scanHostKey.mutateAsync({
@@ -1473,12 +1636,27 @@ function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, cr
             <h3 className="card-title">{t('nodes.enrollmentTokens')}</h3>
             <FormGrid>
               <FormField label={t('nodes.tokenTTL')}>
-                <TextField type="number" min={1} max={720} value={ttlHours} onChange={(event) => setTTLHours(Number(event.target.value))} />
+                <TextField
+                  type="number"
+                  min={ENROLLMENT_TOKEN_TTL_MIN_HOURS}
+                  max={ENROLLMENT_TOKEN_TTL_MAX_HOURS}
+                  step={1}
+                  value={ttlHours}
+                  onChange={(event) => setTTLHours(event.target.value)}
+                />
               </FormField>
             </FormGrid>
+            {ttlValidation.errorKey ? (
+              <div role="alert" className="error-state-inline">
+                {t(`nodes.onboarding.tokenTTLErrors.${ttlValidation.errorKey}`, {
+                  min: ENROLLMENT_TOKEN_TTL_MIN_HOURS,
+                  max: ENROLLMENT_TOKEN_TTL_MAX_HOURS,
+                })}
+              </div>
+            ) : null}
             <Toolbar>
-              <Button variant="primary" icon={<KeyRound size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'enrollment-create', node, ttlHours: ttl })}>{t('nodes.createEnrollmentToken')}</Button>
-              <Button icon={<RotateCcw size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'enrollment-rotate', node, ttlHours: ttl })}>{t('nodes.rotateEnrollmentToken')}</Button>
+              <Button variant="primary" icon={<KeyRound size={16} />} disabled={busy || Boolean(ttlValidation.errorKey)} onClick={() => onConfirm({ type: 'enrollment-create', node, ttlHours: ttlValidation.ttlHours, source: 'security' })}>{t('nodes.createEnrollmentToken')}</Button>
+              <Button icon={<RotateCcw size={16} />} disabled={busy || Boolean(ttlValidation.errorKey)} onClick={() => onConfirm({ type: 'enrollment-rotate', node, ttlHours: ttlValidation.ttlHours, source: 'security' })}>{t('nodes.rotateEnrollmentToken')}</Button>
               <Button icon={<RefreshCw size={16} />} onClick={() => void tokens.refetch()}>{t('common.refresh')}</Button>
             </Toolbar>
             {tokens.isError ? <div role="alert" className="error-state-inline">{t('nodes.enrollmentTokensUnavailable')}: {formatAPIError(tokens.error)}</div> : null}
@@ -1947,8 +2125,12 @@ function NodeJobsTab({ jobIds, diagnostics }: { jobIds: string[]; diagnostics?: 
 
 function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: ConfirmAction | null; busy: boolean; onConfirm: () => void; onClose: () => void }) {
   const { t } = useTranslation();
+  const [acknowledged, setAcknowledged] = useState(false);
   if (!action) return null;
   const operation = t(`nodes.confirmOperations.${action.type}`);
+  const enrollmentCreate = action.type === 'enrollment-create';
+  const enrollmentRotate = action.type === 'enrollment-rotate';
+  const enrollmentIssueAction = enrollmentCreate || enrollmentRotate;
   const service = action.type === 'capability-install'
     ? action.input.service_code
     : action.type === 'capability-verify'
@@ -1958,6 +2140,7 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
         : undefined;
   const dangerous = [
     'maintenance-enable',
+    'enrollment-rotate',
     'enrollment-revoke',
     'agent-token-rotate',
     'node-retire',
@@ -1973,6 +2156,29 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
           service: service || 'n/a',
         })}</p>
         {action.type === 'diagnostics' && action.action === 'reconcile-runtime' ? <p>{t('nodes.reconcileRuntimeImpact')}</p> : null}
+        {enrollmentIssueAction ? (
+          <>
+            <div className="definition-grid">
+              <span>{t('common.name')}</span><strong>{nodeLabel(action.node)}</strong>
+              <span>{t('common.id')}</span><strong>{shortID(action.node.id)}</strong>
+              <span>{t('nodes.onboarding.enrollmentTokenTTL')}</span><strong>{t('nodes.onboarding.ttlHoursValue', { value: action.ttlHours })}</strong>
+              <span>{t('nodes.onboarding.tokenActionType')}</span><strong>{enrollmentCreate ? t('nodes.onboarding.issueEnrollmentToken') : t('nodes.onboarding.reissueEnrollmentToken')}</strong>
+            </div>
+            <ul>
+              <li>{t('nodes.onboarding.tokenShownOnlyOnce')}</li>
+              <li>{t('nodes.onboarding.tokenCannotBeRetrievedAgain')}</li>
+              {enrollmentRotate ? <li>{t('nodes.onboarding.existingCredentialMayBeReplaced')}</li> : null}
+              {enrollmentRotate ? <li>{t('nodes.onboarding.remoteNodeMustBeUpdatedManually')}</li> : null}
+              {enrollmentRotate ? <li>{t('nodes.onboarding.reissueDoesNotProveRecovery')}</li> : null}
+              <li>{t('nodes.onboarding.tokenIssueDoesNotProveConnectivity')}</li>
+            </ul>
+            <Checkbox
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+              label={enrollmentRotate ? t('nodes.onboarding.reissueAcknowledge') : t('nodes.onboarding.issueAcknowledge')}
+            />
+          </>
+        ) : null}
         {action.type === 'capability-install' ? <pre className="code-block">{safeJSON(action.input)}</pre> : null}
         {(action.type === 'bootstrap' || action.type === 'agent-reinstall') ? <pre className="code-block">{safeJSON(action.input)}</pre> : null}
         {action.type === 'enrollment-revoke' ? <pre className="code-block">{safeJSON({ token_id: action.token.id, token_hint: action.token.token_hint, status: action.token.status })}</pre> : null}
@@ -1980,7 +2186,7 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
         {action.type === 'node-force-retire' ? <pre className="code-block">{safeJSON({ confirmation: action.confirmation, reason: action.reason || 'operator force retire' })}</pre> : null}
         {action.type === 'service-import' ? <pre className="code-block">{safeJSON({ id: action.discovery.id, service_code: action.discovery.service_code, name: action.discovery.name, endpoint: [action.discovery.endpoint_host, action.discovery.endpoint_port].filter(Boolean).join(':') })}</pre> : null}
         <Toolbar>
-          <Button variant={dangerous ? 'danger' : 'primary'} disabled={busy} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
+          <Button variant={dangerous ? 'danger' : 'primary'} disabled={busy || (enrollmentIssueAction && !acknowledged)} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
           <Button onClick={onClose}>{t('common.cancel')}</Button>
         </Toolbar>
       </div>
