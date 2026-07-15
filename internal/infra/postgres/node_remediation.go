@@ -16,6 +16,8 @@ import (
 const (
 	stuckNodeJobAfter       = 2 * time.Minute
 	stalePendingRotateAfter = 2 * time.Minute
+	// Matches the heartbeatState offline threshold in node_diagnostics.go.
+	nodeRebootChannelEvidenceMaxAge = 5 * time.Minute
 )
 
 func (s *Store) CreateNodeChannelProbeJob(ctx context.Context, nodeID string) (domain.Job, error) {
@@ -425,38 +427,153 @@ select id from updated_jobs`, instanceID, finishedAt, resultJSON)
 	return out, rows.Err()
 }
 
-func (s *Store) CreateNodeRebootJob(ctx context.Context, nodeID, confirmation, reason string) (domain.Job, error) {
-	node, err := s.GetNode(ctx, nodeID)
+func (s *Store) CreateNodeRebootJob(ctx context.Context, nodeID string, input domain.NodeRebootJobCreateInput) (domain.Job, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return domain.Job{}, domain.ValidationError{Message: "node id is required"}
+	}
+	if err := input.NormalizeAndValidate(); err != nil {
+		return domain.Job{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return domain.Job{}, err
 	}
-	expectedConfirmation := strings.TrimSpace(node.Name)
+	defer tx.Rollback(ctx)
+
+	var nodeName string
+	var nodeStatus string
+	var lastHeartbeatAt *time.Time
+	if err := tx.QueryRow(ctx, `select name,status,last_heartbeat_at from nodes where id=$1 for update`, nodeID).Scan(&nodeName, &nodeStatus, &lastHeartbeatAt); err != nil {
+		return domain.Job{}, err
+	}
+	if isTerminalNodeRebootStatus(nodeStatus) {
+		return domain.Job{}, domain.ErrNodeRebootConflict
+	}
+
+	expectedConfirmation := strings.TrimSpace(nodeName)
 	if expectedConfirmation == "" {
-		expectedConfirmation = strings.TrimSpace(nodeID)
+		expectedConfirmation = nodeID
 	}
-	if strings.TrimSpace(confirmation) != expectedConfirmation {
-		return domain.Job{}, fmt.Errorf("confirmation must match node name %q", expectedConfirmation)
+	if input.Confirmation != expectedConfirmation {
+		return domain.Job{}, domain.ErrNodeRebootConfirmationMismatch
 	}
+
+	var agentStatus string
+	var revokedAt *time.Time
+	var tokenHash string
+	var lastSeenAt *time.Time
+	var lastAuthFailureAt *time.Time
+	var lastJobPollAt *time.Time
+	var lastJobResultAt *time.Time
+	var lastInventorySyncAt *time.Time
+	var lastDiscoverySyncAt *time.Time
+	var lastRuntimeSyncAt *time.Time
+	if err := tx.QueryRow(ctx, `select status,revoked_at,coalesce(agent_token_hash,''),last_seen_at,last_auth_failure_at,last_job_poll_at,last_job_result_at,last_inventory_sync_at,last_discovery_sync_at,last_runtime_sync_at
+		from node_agents
+		where node_id=$1
+		for update`, nodeID).Scan(&agentStatus, &revokedAt, &tokenHash, &lastSeenAt, &lastAuthFailureAt, &lastJobPollAt, &lastJobResultAt, &lastInventorySyncAt, &lastDiscoverySyncAt, &lastRuntimeSyncAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Job{}, domain.ErrNodeRebootAgentMissing
+		}
+		return domain.Job{}, err
+	}
+	if agentStatus != "active" || revokedAt != nil || strings.TrimSpace(tokenHash) == "" {
+		return domain.Job{}, domain.ErrNodeRebootAgentUnavailable
+	}
+	now := time.Now().UTC()
+	lastEvidence := latestTime(lastHeartbeatAt, lastSeenAt, lastJobPollAt, lastJobResultAt, lastInventorySyncAt, lastDiscoverySyncAt, lastRuntimeSyncAt)
+	if lastEvidence == nil || now.Sub(lastEvidence.UTC()) > nodeRebootChannelEvidenceMaxAge {
+		return domain.Job{}, domain.ErrNodeRebootAgentUnavailable
+	}
+	latestOK := latestTime(lastHeartbeatAt, lastSeenAt, lastJobResultAt, lastInventorySyncAt, lastDiscoverySyncAt, lastRuntimeSyncAt)
+	if lastAuthFailureAt != nil && (latestOK == nil || lastAuthFailureAt.After(latestOK.UTC())) {
+		return domain.Job{}, domain.ErrNodeRebootAgentUnavailable
+	}
+
+	conflict, err := nodeHasActiveRebootConflictTx(ctx, tx, nodeID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	if conflict {
+		return domain.Job{}, domain.ErrNodeRebootConflict
+	}
+
 	payload := map[string]any{
+		"schema":       "node.reboot.v1",
 		"node_id":      nodeID,
 		"node_name":    expectedConfirmation,
-		"confirmation": strings.TrimSpace(confirmation),
-		"reason":       strings.TrimSpace(reason),
-		"requested_at": time.Now().UTC().Format(time.RFC3339),
+		"confirmation": input.Confirmation,
+		"reason":       input.Reason,
+		"requested_at": now.Format(time.RFC3339),
 	}
-	job, err := s.CreateJob(ctx, domain.Job{
+	job, payloadJSON, err := normalizeJobForInsert(domain.Job{
 		Type:      "node.reboot",
 		ScopeType: "node",
 		ScopeID:   &nodeID,
 		NodeID:    &nodeID,
 		Priority:  1,
 		Payload:   payload,
+		CreatedAt: now,
 	})
 	if err != nil {
-		return job, err
+		return domain.Job{}, err
 	}
-	_, _ = s.CreateAudit(ctx, "system", "node.reboot", "node", &nodeID, "node reboot queued")
+	if err := insertJobRow(ctx, tx, job, payloadJSON); err != nil {
+		return domain.Job{}, err
+	}
+	if err := acquireJobResourceLockTx(ctx, tx, job); err != nil {
+		return domain.Job{}, domain.ErrNodeRebootConflict
+	}
+	auditSummary := fmt.Sprintf("node reboot job queued: node_id=%s node_name=%s job_id=%s reason=%s", nodeID, expectedConfirmation, job.ID, input.Reason)
+	if _, err := insertAuditForUser(ctx, tx, input.ActorUserID, "node.reboot.queue", "node", &nodeID, auditSummary); err != nil {
+		return domain.Job{}, fmt.Errorf("%w: %v", domain.ErrNodeRebootAuditFailed, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Job{}, err
+	}
 	return job, nil
+}
+
+func isTerminalNodeRebootStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "retired", "deleted", "deleting", "archived":
+		return true
+	default:
+		return false
+	}
+}
+
+func nodeHasActiveRebootConflictTx(ctx context.Context, tx pgx.Tx, nodeID string) (bool, error) {
+	var ok bool
+	err := tx.QueryRow(ctx, `select exists(
+		select 1
+		from jobs
+		where node_id=$1
+		  and status in ('queued','running','retrying')
+		  and type in (
+		    'node.reboot',
+		    'node.emergency_cleanup',
+		    'node.agent.rotate_token',
+		    'node.bootstrap',
+		    'node.capability.install',
+		    'node.backhaul.apply',
+		    'node.backhaul.cleanup',
+		    'node.route_policy.apply',
+		    'node.route_policy.cleanup',
+		    'node.firewall.apply',
+		    'node.firewall.disable',
+		    'instance.apply',
+		    'instance.restart',
+		    'instance.start',
+		    'instance.stop',
+		    'instance.enable',
+		    'instance.disable',
+		    'instance.delete'
+		  )
+	)`, nodeID).Scan(&ok)
+	return ok, err
 }
 
 func (s *Store) QueueNodeRuntimeReconcile(ctx context.Context, nodeID, source string) ([]domain.Job, []string, error) {

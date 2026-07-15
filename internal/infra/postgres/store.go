@@ -3268,8 +3268,20 @@ func acquireJobResourceLockTx(ctx context.Context, tx pgx.Tx, j domain.Job) erro
 	}
 	_, _ = tx.Exec(ctx, `delete from resource_locks where resource_type=$1 and resource_id=$2 and lock_kind=$3 and expires_at < now()`, resourceType, resourceID, lockKind)
 	expiresAt := time.Now().UTC().Add(jobLeaseDurationForType(j.Type))
-	_, err := tx.Exec(ctx, `insert into resource_locks(id,resource_type,resource_id,lock_kind,job_id,acquired_at,expires_at) values($1,$2,$3,$4,$5,now(),$6)`, id.New(), resourceType, resourceID, lockKind, j.ID, expiresAt)
-	return err
+	var lockedJobID string
+	err := tx.QueryRow(ctx, `insert into resource_locks(id,resource_type,resource_id,lock_kind,job_id,acquired_at,expires_at)
+		values($1,$2,$3,$4,$5,now(),$6)
+		on conflict(resource_type,resource_id,lock_kind) do update
+		set expires_at=excluded.expires_at
+		where resource_locks.job_id=$5
+		returning job_id::text`, id.New(), resourceType, resourceID, lockKind, j.ID, expiresAt).Scan(&lockedJobID)
+	if err != nil {
+		return err
+	}
+	if lockedJobID != j.ID {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 func jobLockTarget(j domain.Job) (resourceType string, resourceID string, lockKind string, ok bool) {

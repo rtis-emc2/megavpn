@@ -126,6 +126,14 @@ run_json_checked \
   TestPostgresIntegrationRevokeNodeAgentIdentityIdempotentAndConcurrent
 
 run_json_checked \
+  ./internal/infra/postgres \
+  'TestPostgresIntegrationCreateNodeRebootJob' \
+  'postgres-node-reboot-infra' \
+  TestPostgresIntegrationCreateNodeRebootJobAtomic \
+  TestPostgresIntegrationCreateNodeRebootJobAuditRollback \
+  TestPostgresIntegrationCreateNodeRebootJobConcurrentConflict
+
+run_json_checked \
   ./internal/api/http \
   'TestPostgresIntegrationCreateNodeSSHAccessMethodHTTP' \
   'postgres-ssh-http' \

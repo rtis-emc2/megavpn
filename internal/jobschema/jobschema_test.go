@@ -168,6 +168,19 @@ func TestNormalizeNodeRebootRejectsEmptyConfirmation(t *testing.T) {
 	}
 }
 
+func TestNormalizeNodeRebootRejectsMissingReason(t *testing.T) {
+	_, err := Normalize("node.reboot", map[string]any{
+		"node_id":      "node-1",
+		"confirmation": "node-1",
+	})
+	if err == nil {
+		t.Fatal("expected validation error for missing reason")
+	}
+	if !IsValidationError(err) {
+		t.Fatalf("expected validation error, got %T", err)
+	}
+}
+
 func TestNormalizeControlPlaneTLSApply(t *testing.T) {
 	payload, err := Normalize("platform.control_plane_tls.apply", map[string]any{
 		"public_base_url": "https://control.example.com:58765",

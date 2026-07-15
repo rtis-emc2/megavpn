@@ -151,11 +151,11 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else if nodeName != "" {
 			normalized["node_name"] = nodeName
 		}
-		if reason, err := optionalString(payload, "reason"); err != nil {
+		reason, err := requireString(payload, "reason")
+		if err != nil {
 			return nil, err
-		} else if reason != "" {
-			normalized["reason"] = reason
 		}
+		normalized["reason"] = reason
 	case "node.backhaul.apply":
 		nodeID, err := requireString(payload, "node_id")
 		if err != nil {

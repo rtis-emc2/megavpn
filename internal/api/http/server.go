@@ -64,7 +64,7 @@ type Store interface {
 	CreateNodeAgentTokenRotateJob(context.Context, string) (domain.Job, error)
 	CreateNodeChannelProbeJob(context.Context, string) (domain.Job, error)
 	CreateNodeEmergencyCleanupJob(context.Context, string, bool, string, string) (domain.Job, error)
-	CreateNodeRebootJob(context.Context, string, string, string) (domain.Job, error)
+	CreateNodeRebootJob(context.Context, string, domain.NodeRebootJobCreateInput) (domain.Job, error)
 	QueueNodeRuntimeReconcile(context.Context, string, string) ([]domain.Job, []string, error)
 	CreateNodeRoutePolicyApplyJob(context.Context, string) (domain.Job, error)
 	CreateNodeRoutePolicyCleanupJob(context.Context, string) (domain.Job, error)
@@ -1330,15 +1330,29 @@ func (s *Server) createNodeEmergencyCleanupJob(w nethttp.ResponseWriter, r *neth
 func (s *Server) createNodeRebootJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req nodeRebootRequest
 	if !decode(r, &req) {
-		writeErr(w, 400, "invalid reboot payload")
+		writeSensitiveCodeErr(w, nethttp.StatusBadRequest, nodeRebootRequestInvalid, "invalid reboot payload")
 		return
 	}
-	job, err := s.store.CreateNodeRebootJob(r.Context(), idParam(r), req.Confirmation, req.Reason)
+	authCtx, ok := authFromRequest(r)
+	if !ok {
+		writeSensitiveCodeErr(w, nethttp.StatusUnauthorized, nodeRebootRequestInvalid, "authentication required")
+		return
+	}
+	input := domain.NodeRebootJobCreateInput{
+		Confirmation: req.Confirmation,
+		Reason:       req.Reason,
+		ActorUserID:  &authCtx.User.ID,
+	}
+	if err := input.NormalizeAndValidate(); err != nil {
+		writeSensitiveCodeErr(w, nethttp.StatusBadRequest, nodeRebootRequestInvalid, err.Error())
+		return
+	}
+	job, err := s.store.CreateNodeRebootJob(r.Context(), idParam(r), input)
 	if err != nil {
-		writeErr(w, 409, err.Error())
+		writeNodeRebootError(w, err)
 		return
 	}
-	writeJSON(w, 202, redactedJob(job))
+	writeSensitiveJSON(w, nethttp.StatusAccepted, redactedJob(job))
 }
 
 func (s *Server) reconcileNodeRuntime(w nethttp.ResponseWriter, r *nethttp.Request) {
