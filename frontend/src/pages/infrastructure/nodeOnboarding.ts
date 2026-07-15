@@ -6,8 +6,13 @@ import type {
   NodeDiagnostics,
   NodeInventorySnapshot,
 } from '../../shared/api/types';
+import {
+  deriveNodeBootstrapReadiness,
+  type NodeBootstrapMode,
+  type NodeBootstrapModeAvailability,
+} from './nodeBootstrapReadiness';
 
-export type NodeOnboardingTargetTab = 'overview' | 'runtime' | 'inventory' | 'diagnostics' | 'bootstrap' | 'security';
+export type NodeOnboardingTargetTab = 'overview' | 'runtime' | 'inventory' | 'diagnostics' | 'bootstrap' | 'security' | 'jobs';
 
 export type NodeOnboardingStepKey =
   | 'profile'
@@ -35,6 +40,8 @@ export type NodeOnboardingOverallStatus =
 export type NodeOnboardingActionKey =
   | 'issue_enrollment_token'
   | 'reissue_enrollment_token'
+  | 'start_ssh_bootstrap'
+  | 'start_manual_bundle'
   | 'none';
 
 export type NodeOnboardingEvidence = {
@@ -60,6 +67,11 @@ export type NodeOnboardingModel = {
   tokenRotationStatus: string;
   targetTab?: NodeOnboardingTargetTab;
   recommendedAction: NodeOnboardingActionKey;
+  bootstrapSelectionRequired: boolean;
+  availableBootstrapModes: NodeBootstrapModeAvailability[];
+  recommendedBootstrapMode?: NodeBootstrapMode;
+  latestBootstrapRunID?: string;
+  latestBootstrapStatus?: string;
   registered: boolean;
   heartbeatObserved: boolean;
   inventoryObserved: boolean;
@@ -201,6 +213,12 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
   const latestRun = latestBootstrapRun(diagnostics, runs);
   const latestSuccess = latestSuccessfulBootstrapRun(diagnostics, runs);
   const latestFailed = latestFailedBootstrapRun(diagnostics, runs);
+  const bootstrapReadiness = deriveNodeBootstrapReadiness({
+    node,
+    diagnostics,
+    bootstrapRuns: runs,
+    accessMethods: input.accessMethods,
+  });
   const latestRunStatus = normalize(latestRun?.status);
   const latestFailureIsCurrent = Boolean(latestFailed) && (!latestSuccess || timestamp(latestFailed?.created_at) >= timestamp(latestSuccess?.created_at));
   const latestSuccessIsCurrent = Boolean(latestSuccess) && (!latestRun || timestamp(latestSuccess?.created_at) >= timestamp(latestRun?.created_at));
@@ -371,13 +389,33 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
     : strongActionCommunicationStates.has(communicationState)
       ? 'diagnostics'
       : problem.targetTab;
+  const bootstrapModeAction = bootstrapReadiness.defaultMode === 'ssh_bootstrap'
+    ? 'start_ssh_bootstrap'
+    : bootstrapReadiness.defaultMode === 'manual_bundle'
+      ? 'start_manual_bundle'
+      : 'none';
+  const bootstrapModeAvailable = bootstrapReadiness.modes.some((mode) => mode.available);
+  const bootstrapCanStart = Boolean(node)
+    && !bootstrapInProgress
+    && !bootstrapReadiness.hasUnknownBootstrap
+    && !registered
+    && (bootstrapStep.status === 'pending' || bootstrapStep.status === 'warning')
+    && bootstrapModeAction !== 'none';
+  const bootstrapSelectionCanStart = Boolean(node)
+    && !bootstrapInProgress
+    && !bootstrapReadiness.hasUnknownBootstrap
+    && !registered
+    && (bootstrapStep.status === 'pending' || bootstrapStep.status === 'warning')
+    && bootstrapReadiness.selectionRequired;
   const recommendedAction: NodeOnboardingActionKey = retired || registered
     ? 'none'
     : reissueRequired || (credentialStep.status === 'warning' && (authOrCredentialProblem || agentRevoked))
       ? 'reissue_enrollment_token'
-      : node && !activeToken && !strongActionCommunicationStates.has(communicationState) && (credentialStep.status === 'current' || credentialStep.status === 'pending')
-        ? 'issue_enrollment_token'
-        : 'none';
+      : bootstrapCanStart
+          ? bootstrapModeAction
+          : node && !activeToken && !bootstrapModeAvailable && !bootstrapInProgress && !bootstrapReadiness.hasUnknownBootstrap && !strongActionCommunicationStates.has(communicationState) && (credentialStep.status === 'current' || credentialStep.status === 'pending')
+            ? 'issue_enrollment_token'
+            : 'none';
 
   return {
     overallStatus,
@@ -388,6 +426,11 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
     tokenRotationStatus,
     targetTab,
     recommendedAction,
+    bootstrapSelectionRequired: !retired && bootstrapSelectionCanStart,
+    availableBootstrapModes: bootstrapReadiness.modes,
+    recommendedBootstrapMode: bootstrapReadiness.defaultMode,
+    latestBootstrapRunID: latestRun?.id,
+    latestBootstrapStatus: latestRun?.status,
     registered,
     heartbeatObserved,
     inventoryObserved,

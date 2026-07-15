@@ -532,7 +532,30 @@ describe('NodesPage', () => {
         return json(currentAccessMethods);
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/bootstrap') {
-        return json({ job: job('job-bootstrap', 'node.bootstrap'), bootstrap_run: { id: 'bootstrap-run-new', node_id: 'node-1', job_id: 'job-bootstrap', status: 'queued', bootstrap_mode: body?.bootstrap_mode || 'ssh_bootstrap', created_at: '2026-07-09T08:07:00Z' } }, 202);
+        const status = actionErrors.bootstrap;
+        if (status) {
+          const messages: Record<number, string> = {
+            400: 'invalid bootstrap mode',
+            403: 'node.bootstrap permission required',
+            404: 'node not found',
+            409: 'node firewall is enforced and does not include an active input accept rule for SSH bootstrap port(s) 22',
+            422: 'payload.bootstrap_mode must be ssh_bootstrap or manual_bundle',
+            429: 'bootstrap rate limited',
+            500: 'bootstrap worker queue failed',
+            503: 'bootstrap service unavailable',
+          };
+          return json({ error: messages[status] || 'bootstrap failed' }, status);
+        }
+        const run = {
+          id: 'bootstrap-run-new',
+          node_id: 'node-1',
+          job_id: 'job-bootstrap',
+          status: 'queued',
+          bootstrap_mode: String(body?.bootstrap_mode || 'ssh_bootstrap'),
+          created_at: '2026-07-09T08:07:00Z',
+        };
+        currentBootstrapRuns = [run as NodeBootstrapRun, ...currentBootstrapRuns];
+        return json({ job: job('job-bootstrap', 'node.bootstrap'), bootstrap_run: run }, 202);
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/agent-token/rotate') return json(job('job-agent-rotate', 'node.agent.rotate_token'), 202);
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/ssh/sessions') {
@@ -1137,24 +1160,24 @@ describe('NodesPage', () => {
       },
       active_enrollment_token: {
         ...currentEnrollmentTokens[0],
-        token: 'hidden-active-token',
-        enrollment_token: 'hidden-enrollment-token',
-        secret_ref_id: 'secret-ref-hidden',
+        token: 'opaque-value-a',
+        enrollment_token: 'opaque-value-b',
+        secret_ref_id: 'opaque-value-c',
       } as unknown as EnrollmentToken,
       last_bootstrap: {
         ...currentBootstrapRuns[1],
         result_payload: {
-          agent_bootstrapenv: 'MEGAVPN_AGENT_ENROLLMENT_TOKEN=hidden',
-          secret_ref_id: 'bootstrap-secret-ref',
+          agent_bootstrapenv: 'opaque-value-d',
+          secret_ref_id: 'opaque-value-e',
         },
       },
       latest_inventory: currentInventory || undefined,
     };
     currentEnrollmentTokens = [{
       ...currentEnrollmentTokens[0],
-      token: 'hidden-list-token',
-      enrollment_token: 'hidden-list-enrollment-token',
-      secret_ref_id: 'secret-list-ref',
+      token: 'opaque-value-f',
+      enrollment_token: 'opaque-value-g',
+      secret_ref_id: 'opaque-value-h',
     } as unknown as EnrollmentToken];
 
     await openNode();
@@ -1182,13 +1205,14 @@ describe('NodesPage', () => {
     expect(screen.getByText('Live external-node validation is not proven.')).toBeInTheDocument();
 
     const pageText = document.body.textContent || '';
-    expect(pageText).not.toContain('hidden-active-token');
-    expect(pageText).not.toContain('hidden-enrollment-token');
-    expect(pageText).not.toContain('hidden-list-token');
-    expect(pageText).not.toContain('hidden-list-enrollment-token');
-    expect(pageText).not.toContain('secret-ref-hidden');
-    expect(pageText).not.toContain('bootstrap-secret-ref');
-    expect(pageText).not.toContain('MEGAVPN_AGENT_ENROLLMENT_TOKEN');
+    expect(pageText).not.toContain('opaque-value-a');
+    expect(pageText).not.toContain('opaque-value-b');
+    expect(pageText).not.toContain('opaque-value-c');
+    expect(pageText).not.toContain('opaque-value-d');
+    expect(pageText).not.toContain('opaque-value-e');
+    expect(pageText).not.toContain('opaque-value-f');
+    expect(pageText).not.toContain('opaque-value-g');
+    expect(pageText).not.toContain('opaque-value-h');
     expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
     expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
     expect(storageSet).not.toHaveBeenCalled();
@@ -1261,6 +1285,7 @@ describe('NodesPage', () => {
   it('issues an enrollment token from onboarding with explicit confirmation and one-time display', async () => {
     const clipboardWrite = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: clipboardWrite } });
+    currentNode = { ...currentNode, execution_mode: 'local_managed' };
     currentDiagnostics = {
       ...currentDiagnostics,
       heartbeat_state: 'unknown',
@@ -1346,6 +1371,224 @@ describe('NodesPage', () => {
     expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/inventory/sync')).toBe(false);
   });
 
+  it('submits guided manual bootstrap only after explicit mode selection and acknowledgement', async () => {
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'missing_agent_identity',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+      },
+    };
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [];
+    currentInventory = null;
+
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+
+    expect(await screen.findByText('Choose bootstrap method')).toBeInTheDocument();
+    expect(screen.getByText('SSH bootstrap')).toBeInTheDocument();
+    expect(screen.getByText('Manual bootstrap bundle')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start bootstrap' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Reveal bundle' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download bundle' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText(/Manual bootstrap bundle/));
+    await userEvent.click(screen.getByRole('button', { name: 'Start bootstrap' }));
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toBe(false);
+
+    const dialog = activeDialog();
+    expect(within(dialog).getByText('Manual bootstrap bundle')).toBeInTheDocument();
+    expect(within(dialog).getByText('The job generates sensitive bootstrap material.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Bundle generation does not execute the bundle on the node.')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    await userEvent.click(within(dialog).getByLabelText(/this job generates sensitive bootstrap material/));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toBe(true));
+    const bootstrapCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap');
+    expect(bootstrapCall?.body).toEqual({ bootstrap_mode: 'manual_bundle' });
+    expect(Object.keys(bootstrapCall?.body || {}).sort()).toEqual(['bootstrap_mode']);
+    expect(screen.getByRole('tab', { name: 'Onboarding' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByText('Bootstrap job accepted')).toBeInTheDocument();
+    expect(await screen.findByText(/Bootstrap run tracked/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reveal bundle' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download bundle' })).not.toBeInTheDocument();
+
+    const bootstrapPosts = calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap').length;
+    await userEvent.click(screen.getByRole('button', { name: 'Open Jobs' }));
+    expect(screen.getByRole('tab', { name: 'Jobs / Activity' })).toHaveAttribute('aria-selected', 'true');
+    expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toHaveLength(bootstrapPosts);
+    expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/inventory/sync')).toBe(false);
+  });
+
+  it('submits guided SSH bootstrap with safe target confirmation and mode-only request body', async () => {
+    currentNode = { ...currentNode, execution_mode: 'ssh_bootstrap' };
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'missing_agent_identity',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+      },
+    };
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [];
+    currentInventory = null;
+    currentAccessMethods = [{
+      ...currentAccessMethods[0],
+      secret_ref_id: 'opaque-value-not-for-ui',
+    } as typeof currentAccessMethods[number]];
+
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+
+    expect(await screen.findByText('Choose bootstrap method')).toBeInTheDocument();
+    expect(screen.getByText('Recommended')).toBeInTheDocument();
+    expect(screen.getByText('edge-one.example.test')).toBeInTheDocument();
+    expect(document.body.textContent || '').not.toContain('opaque-value-not-for-ui');
+    await userEvent.click(screen.getByRole('button', { name: 'Start bootstrap' }));
+
+    const dialog = activeDialog();
+    expect(within(dialog).getByText('SSH bootstrap')).toBeInTheDocument();
+    expect(within(dialog).getByText('edge-one.example.test')).toBeInTheDocument();
+    expect(within(dialog).getByText('ubuntu')).toBeInTheDocument();
+    expect(within(dialog).getByText('The server will connect to the configured SSH target.')).toBeInTheDocument();
+    expect(within(dialog).getByText('The pinned host fingerprint and configured SSH credential will be used.')).toBeInTheDocument();
+    expect(within(dialog).queryByText('opaque-value-not-for-ui')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/reinstall_agent/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/force_reenroll/)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    await userEvent.click(within(dialog).getByLabelText(/SSH bootstrap uses the configured target/));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toBe(true));
+    const bootstrapCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap');
+    expect(bootstrapCall?.body).toEqual({ bootstrap_mode: 'ssh_bootstrap' });
+    expect(JSON.stringify(bootstrapCall?.body || {})).not.toContain('opaque-value-not-for-ui');
+    expect(JSON.stringify(bootstrapCall?.body || {})).not.toContain('enroll');
+    expect(JSON.stringify(bootstrapCall?.body || {})).not.toContain('private');
+    expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+  });
+
+  it('blocks duplicate guided bootstrap while a run is active or unknown', async () => {
+    currentNode = { ...currentNode, execution_mode: 'ssh_bootstrap' };
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'missing_agent_identity',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+      },
+    };
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [{
+      id: 'bootstrap-run-active',
+      node_id: 'node-1',
+      job_id: 'job-bootstrap-active',
+      status: 'queued',
+      bootstrap_mode: 'ssh_bootstrap',
+      created_at: '2026-07-09T08:10:00Z',
+    }];
+    currentInventory = null;
+
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    expect(await screen.findByText('A bootstrap run is already queued or running; duplicate guided submission is disabled.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start bootstrap' })).toBeDisabled();
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toBe(false);
+
+    currentBootstrapRuns = [{
+      ...currentBootstrapRuns[0],
+      id: 'bootstrap-run-unknown',
+      status: 'mystery',
+      created_at: '2026-07-09T08:11:00Z',
+    }];
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
+    expect((await screen.findAllByText('Bootstrap status is unknown.')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Latest bootstrap state is unknown. Refresh state or inspect Jobs before retrying.').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Start bootstrap' })).toBeDisabled();
+  });
+
+  it('shows successful manual bundle guidance without reveal or download in onboarding', async () => {
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'missing_agent_identity',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+      },
+    };
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [{
+      id: 'bootstrap-run-manual-ready',
+      node_id: 'node-1',
+      job_id: 'job-bootstrap-manual-ready',
+      status: 'succeeded',
+      bootstrap_mode: 'manual_bundle',
+      manual_bundle_available: true,
+      created_at: '2026-07-09T08:10:00Z',
+      finished_at: '2026-07-09T08:11:00Z',
+    }];
+    currentInventory = null;
+
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    expect(await screen.findByText('Manual bundle available')).toBeInTheDocument();
+    expect(screen.getByText('Open Bootstrap to reveal or download the generated bundle through the audited bundle controls.')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for agent registration.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reveal bundle' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download bundle' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open Bootstrap' })[0]);
+    expect(screen.getByRole('tab', { name: 'Bootstrap' })).toHaveAttribute('aria-selected', 'true');
+    expect(calls.some((call) => call.path.includes('/bundle/reveal'))).toBe(false);
+    expect(calls.some((call) => call.path.includes('/bundle/download'))).toBe(false);
+  });
+
+  it('keeps guided SSH selection safe after firewall prerequisite rejection', async () => {
+    actionErrors.bootstrap = 409;
+    currentNode = { ...currentNode, execution_mode: 'ssh_bootstrap' };
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'missing_agent_identity',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+      },
+    };
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [];
+    currentInventory = null;
+
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Start bootstrap' }));
+    const dialog = activeDialog();
+    await userEvent.click(within(dialog).getByLabelText(/SSH bootstrap uses the configured target/));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByText('Firewall policy blocks SSH bootstrap. Review firewall policy before retrying.')).toBeInTheDocument();
+    expect(activeDialog()).toBe(dialog);
+    expect(within(dialog).getByText('SSH bootstrap')).toBeInTheDocument();
+    expect(document.body.textContent || '').not.toContain('secret_ref_id');
+    expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+  });
+
   it('does not show onboarding token actions for healthy registered nodes', async () => {
     currentDiagnostics = {
       ...currentDiagnostics,
@@ -1372,6 +1615,7 @@ describe('NodesPage', () => {
 
   it('handles empty onboarding token responses safely without showing an empty secret panel', async () => {
     emptyEnrollmentIssueResponse = true;
+    currentNode = { ...currentNode, execution_mode: 'local_managed' };
     currentDiagnostics = {
       ...currentDiagnostics,
       heartbeat_state: 'unknown',
@@ -1398,6 +1642,7 @@ describe('NodesPage', () => {
 
   it('discards stale onboarding token responses after the drawer closes', async () => {
     delayEnrollmentCreateResponse = true;
+    currentNode = { ...currentNode, execution_mode: 'local_managed' };
     currentDiagnostics = {
       ...currentDiagnostics,
       heartbeat_state: 'unknown',
@@ -1426,15 +1671,33 @@ describe('NodesPage', () => {
   });
 
   it('keeps onboarding visible without node.bootstrap and shows the read-only permission hint', async () => {
+    currentNode = { ...currentNode, execution_mode: 'ssh_bootstrap' };
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'missing_agent_identity',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+      },
+    };
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [];
+    currentInventory = null;
     await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
     await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
 
     expect(await screen.findByText('Read-only onboarding status')).toBeInTheDocument();
-    expect(screen.getByText('node.bootstrap is required for onboarding actions. Status remains visible with read permissions.')).toBeInTheDocument();
+    expect(screen.getAllByText('node.bootstrap is required for onboarding actions. Status remains visible with read permissions.').length).toBeGreaterThan(0);
+    expect(screen.getByText('Choose bootstrap method')).toBeInTheDocument();
+    expect(screen.getByText('SSH bootstrap')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create token' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Issue enrollment token' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Reissue enrollment token' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Queue bootstrap' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start bootstrap' })).toBeDisabled();
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toBe(false);
   });
 
   it('polls safe onboarding queries only while active and stops when ready or closed', async () => {

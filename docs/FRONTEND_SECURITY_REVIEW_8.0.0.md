@@ -290,13 +290,14 @@ Evidence controls:
 The UI minimizes bundle lifetime and prevents application-level persistence;
 JavaScript runtime memory erasure is not guaranteed.
 
-## 12. Guided Agent Onboarding Status and Token Action Review
+## 12. Guided Agent Onboarding Status, Token and Bootstrap Action Review
 
 Nodes -> Onboarding now provides a guided status model plus secure enrollment
-token issue/reissue actions without `/legacy/`. The reviewed mutation scope is
-limited to existing operator enrollment-token endpoints. It does not include
-agent registration, bootstrap execution, manual bundle reveal/download,
-inventory sync or connectivity proof.
+token issue/reissue actions and guided bootstrap mode selection/job submission
+without `/legacy/`. The reviewed mutation scope is limited to existing
+operator enrollment-token endpoints and the existing operator bootstrap
+endpoint. It does not include agent registration, manual bundle
+reveal/download, inventory sync or connectivity proof.
 
 Backend/API controls used by the UI:
 
@@ -305,8 +306,10 @@ Backend/API controls used by the UI:
 - existing operator `GET /api/v1/nodes/{id}/enrollment-tokens`;
 - existing operator `GET /api/v1/nodes/{id}/bootstrap-runs`;
 - existing operator `GET /api/v1/nodes/{id}/inventory`;
+- existing operator `GET /api/v1/nodes/{id}/access-methods`;
 - existing operator `POST /api/v1/nodes/{id}/enrollment-token`;
 - existing operator `POST /api/v1/nodes/{id}/enrollment-token/rotate`;
+- existing operator `POST /api/v1/nodes/{id}/bootstrap`;
 - redacted diagnostics projections for enrollment-token metadata and bootstrap
   run summaries;
 - backend-derived `heartbeat_state`, `communication_state` and
@@ -317,11 +320,24 @@ Frontend controls:
 - the onboarding model is a pure typed derivation module and does not accept
   `/agent/*` responses, registration responses, plaintext enrollment tokens,
   bootstrap bundle contents, private keys or secret references;
-- the Onboarding tab exposes only issue/reissue enrollment-token actions when
-  the typed status model recommends the action and the operator has
+- the Onboarding tab exposes issue/reissue enrollment-token actions when the
+  typed status model recommends the action and the operator has
   `node.bootstrap`;
-- the Onboarding tab has no buttons for token revoke, bootstrap start, manual
-  bundle reveal/download or inventory sync;
+- the Onboarding tab derives conservative `ssh_bootstrap` and `manual_bundle`
+  readiness from safe node/access-method/bootstrap-run data and never displays
+  `secret_ref_id`;
+- guided bootstrap requires explicit mode selection when multiple backend
+  modes are available, requires confirmation/acknowledgement and submits only
+  `{ bootstrap_mode }`;
+- guided bootstrap does not set `reinstall_agent` or `force_reenroll`, does not
+  send plaintext enrollment tokens, token IDs, SSH private keys, secret
+  references, node profile fields or raw payloads, and does not instantiate a
+  separate bootstrap hook inside `NodeOnboardingTab`;
+- manual bundle reveal/download buttons remain only in the Bootstrap tab; the
+  Onboarding tab may navigate to Bootstrap when
+  `manual_bundle_available === true`;
+- the Onboarding tab has no buttons for token revoke, manual bundle
+  reveal/download or inventory sync;
 - issue/reissue requires explicit confirmation, a valid TTL between 1 and 720
   hours and an acknowledgement that the plaintext token is sensitive and shown
   only once;
@@ -335,10 +351,14 @@ Frontend controls:
 - the existing Nodes -> Security token create/rotate controls use the same
   one-time consumer path as Onboarding;
 - next-step buttons only change the selected existing Nodes tab;
+- guided bootstrap records returned job/run identifiers, keeps the selected
+  node drawer on Onboarding and lets the operator navigate to Jobs without
+  treating accepted jobs as success;
 - ready status requires agent registration, heartbeat evidence, inventory
   evidence and a healthy backend communication state;
 - queued bootstrap or queued inventory jobs are not treated as successful
   onboarding;
+- unknown bootstrap-run status fails closed for guided bootstrap submission;
 - retired/deleted nodes are blocked;
 - partial query failures are rendered as safe per-source alerts rather than
   collapsing to fake `not_started`;
@@ -359,20 +379,27 @@ Evidence controls:
 - pure-model tests cover not-started, active token, bootstrap queued/running,
   successful/failed bootstrap ordering, registration, revoked agent, heartbeat
   states, unhealthy communication states, inventory evidence, ready criteria,
-  unknown statuses, source-array immutability, action recommendations for issue
-  and reissue, no destructive recommendation for unknown statuses and plaintext
-  token omission;
+  unknown statuses, source-array immutability, action recommendations for
+  token issue/reissue and guided bootstrap, no destructive recommendation for
+  unknown statuses and plaintext token omission;
+- bootstrap-readiness tests cover exact supported modes, retired/deleted/local
+  blocks, SSH prerequisite checks, manual bundle without SSH, active/unknown
+  run fail-closed behavior, deterministic latest-run selection, conservative
+  recommendation and secret-reference omission;
 - Nodes UI tests cover the Onboarding tab, existing tab preservation, six
   ordered steps, safe evidence rendering, secret redaction, issue/reissue
   confirmation, TTL validation, one-time reveal/copy/close behavior,
-  stale-response discard, permission-aware action hiding, no `/agent/*` browser
-  calls, no `/legacy/`, no bootstrap or inventory mutation from Onboarding,
-  polling lifecycle, partial query failure display, browser-storage safety and
-  absence of production console logging.
+  stale-response discard, guided bootstrap mode selection, safe SSH/manual
+  confirmation, exact `{ bootstrap_mode }` request shape, returned job/run
+  tracking, manual-bundle-ready navigation without reveal/download,
+  firewall-prerequisite error handling, permission-aware action disabling,
+  no `/agent/*` browser calls, no `/legacy/`, no inventory mutation from
+  Onboarding, polling lifecycle, partial query failure display,
+  browser-storage safety and absence of production console logging.
 
-Guided bootstrap/inventory actions remain pending Step 4C.2B. Final
-acceptance/debt closure remains pending Step 4D. Live external-node smoke
-remains release-validation debt.
+Guided registration/heartbeat waiting and inventory sync remain pending Step
+4C.2B2. Final acceptance/debt closure remains pending Step 4D. Live
+external-node smoke remains release-validation debt.
 
 ## 13. RC1 Limitations
 
@@ -380,8 +407,9 @@ The new console remains incomplete for final write parity. The following are
 intentionally disabled, backend-missing or legacy-only after FE8-P0-09B:
 
 - non-VLESS access service materialization and access-group migration conflict UI;
-- guided node agent onboarding actions beyond enrollment-token issue/reissue,
-  agent identity revoke, reboot, emergency cleanup and stale rotation cleanup;
+- guided node agent onboarding actions beyond enrollment-token issue/reissue
+  and guided bootstrap mode selection/job submission;
+- agent identity revoke, reboot, emergency cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance

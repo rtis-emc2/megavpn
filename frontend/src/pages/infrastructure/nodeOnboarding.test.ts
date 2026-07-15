@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { EnrollmentToken, NodeBootstrapRun, NodeDetail, NodeDiagnostics, NodeInventorySnapshot } from '../../shared/api/types';
+import type { EnrollmentToken, NodeAccessMethod, NodeBootstrapRun, NodeDetail, NodeDiagnostics, NodeInventorySnapshot } from '../../shared/api/types';
 import { deriveNodeOnboardingModel } from './nodeOnboarding';
 
 const node: NodeDetail = {
@@ -19,6 +19,18 @@ const activeToken: EnrollmentToken = {
   status: 'active',
   expires_at: '2026-07-10T08:00:00Z',
   created_at: '2026-07-09T08:02:00Z',
+};
+
+const sshMethod: NodeAccessMethod = {
+  id: 'ssh-1',
+  node_id: 'node-1',
+  method: 'ssh',
+  is_enabled: true,
+  ssh_host: 'edge-one.example.test',
+  ssh_port: 22,
+  ssh_user: 'ubuntu',
+  ssh_host_key_sha256: 'SHA256:pinned',
+  secret_configured: true,
 };
 
 const queuedRun: NodeBootstrapRun = {
@@ -127,7 +139,7 @@ describe('node onboarding model', () => {
     expect(stepStatus(model, 'credential')).toBe('complete');
     expect(stepEvidence(model, 'credential')).toBe('credential_active_token');
     expect(model.overallStatus).toBe('in_progress');
-    expect(model.recommendedAction).toBe('none');
+    expect(model.recommendedAction).toBe('start_manual_bundle');
     expect(JSON.stringify(model)).not.toContain('plain-secret-token');
     expect(JSON.stringify(model)).not.toContain('enroll-secret-token');
   });
@@ -139,7 +151,7 @@ describe('node onboarding model', () => {
     expect(stepStatus(model, 'registration')).toBe('current');
     expect(model.currentStep).toBe('registration');
     expect(model.overallStatus).toBe('in_progress');
-    expect(model.recommendedAction).toBe('none');
+    expect(model.recommendedAction).toBe('start_manual_bundle');
   });
 
   it('maps queued and running bootstrap to the current bootstrap step', () => {
@@ -319,7 +331,7 @@ describe('node onboarding model', () => {
     expect(model.recommendedAction).toBe('none');
   });
 
-  it('recommends enrollment token issue only when no usable credential exists', () => {
+  it('does not invent enrollment token issue when bootstrap can create backend-managed enrollment material', () => {
     const model = deriveNodeOnboardingModel({
       node,
       diagnostics: diagnostics(),
@@ -328,7 +340,7 @@ describe('node onboarding model', () => {
     });
 
     expect(stepStatus(model, 'credential')).toBe('current');
-    expect(model.recommendedAction).toBe('issue_enrollment_token');
+    expect(model.recommendedAction).toBe('start_manual_bundle');
   });
 
   it('recommends enrollment token reissue only for source-defined recovery states', () => {
@@ -372,5 +384,86 @@ describe('node onboarding model', () => {
 
     const running = deriveNodeOnboardingModel({ node, enrollmentTokens: [activeToken], bootstrapRuns: [runningRun] });
     expect(running.recommendedAction).toBe('none');
+  });
+
+  it('recommends guided bootstrap from backend-supported readiness without requiring a browser-visible token', () => {
+    const missingCredential = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'manual_bundle' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      accessMethods: [],
+    });
+    expect(missingCredential.recommendedAction).toBe('start_manual_bundle');
+    expect(missingCredential.recommendedBootstrapMode).toBe('manual_bundle');
+
+    const ssh = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'ssh_bootstrap' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      accessMethods: [sshMethod],
+    });
+    expect(ssh.recommendedAction).toBe('start_ssh_bootstrap');
+    expect(ssh.recommendedBootstrapMode).toBe('ssh_bootstrap');
+
+    const manual = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'manual_bundle' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      accessMethods: [],
+    });
+    expect(manual.recommendedAction).toBe('start_manual_bundle');
+    expect(manual.recommendedBootstrapMode).toBe('manual_bundle');
+  });
+
+  it('requires explicit bootstrap selection for agent-managed nodes with multiple modes', () => {
+    const model = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'agent_managed' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      accessMethods: [sshMethod],
+    });
+
+    expect(model.recommendedAction).toBe('none');
+    expect(model.bootstrapSelectionRequired).toBe(true);
+    expect(model.availableBootstrapModes.filter((mode) => mode.available).map((mode) => mode.mode)).toEqual(['ssh_bootstrap', 'manual_bundle']);
+  });
+
+  it('does not recommend duplicate bootstrap after active or successful runs', () => {
+    const active = deriveNodeOnboardingModel({ node, enrollmentTokens: [], bootstrapRuns: [queuedRun], accessMethods: [sshMethod] });
+    expect(active.recommendedAction).toBe('none');
+    expect(active.latestBootstrapStatus).toBe('queued');
+
+    const succeeded = deriveNodeOnboardingModel({ node, enrollmentTokens: [], bootstrapRuns: [successRun], accessMethods: [sshMethod] });
+    expect(succeeded.recommendedAction).toBe('none');
+    expect(stepStatus(succeeded, 'registration')).toBe('current');
+  });
+
+  it('fails closed and does not recommend bootstrap for unknown run state', () => {
+    const model = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'ssh_bootstrap' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      bootstrapRuns: [{ ...queuedRun, id: 'run-unknown', status: 'mystery', created_at: '2026-07-09T08:10:00Z' }],
+      accessMethods: [sshMethod],
+    });
+
+    expect(stepStatus(model, 'bootstrap')).toBe('pending');
+    expect(stepEvidence(model, 'bootstrap')).toBe('bootstrap_unknown_status');
+    expect(model.recommendedAction).toBe('none');
+    expect(model.bootstrapSelectionRequired).toBe(false);
+  });
+
+  it('allows explicit bootstrap retry after latest failed run', () => {
+    const model = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'ssh_bootstrap' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      bootstrapRuns: [successRun, failedRun],
+      accessMethods: [sshMethod],
+    });
+
+    expect(stepStatus(model, 'bootstrap')).toBe('warning');
+    expect(model.recommendedAction).toBe('start_ssh_bootstrap');
+    expect(model.latestBootstrapRunID).toBe('run-failed');
   });
 });

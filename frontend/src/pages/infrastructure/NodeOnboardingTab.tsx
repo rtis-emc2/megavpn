@@ -1,8 +1,9 @@
-import { KeyRound, RefreshCw, RotateCcw } from 'lucide-react';
+import { KeyRound, Play, RefreshCw, RotateCcw } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   EnrollmentToken,
+  NodeAccessMethod,
   NodeBootstrapRun,
   NodeDetail,
   NodeDiagnostics,
@@ -21,6 +22,12 @@ import {
   type NodeOnboardingStep,
   type NodeOnboardingTargetTab,
 } from './nodeOnboarding';
+import {
+  isNodeBootstrapRunningStatus,
+  nodeBootstrapRunStatusGroup,
+  type NodeBootstrapMode,
+  type NodeBootstrapModeAvailability,
+} from './nodeBootstrapReadiness';
 
 type NodeOnboardingTabProps = {
   node: NodeDetail;
@@ -30,13 +37,19 @@ type NodeOnboardingTabProps = {
   enrollmentTokensError?: unknown;
   bootstrapRuns?: NodeBootstrapRun[];
   bootstrapRunsError?: unknown;
+  accessMethods?: NodeAccessMethod[];
+  accessMethodsError?: unknown;
   inventory?: NodeInventorySnapshot;
   inventoryError?: unknown;
   canBootstrap: boolean;
   busy: boolean;
+  bootstrapBusy: boolean;
+  trackedBootstrapJobIDs?: string[];
+  trackedBootstrapRunIDs?: string[];
   onOpenTab: (tab: NodeOnboardingTargetTab) => void;
   onRefresh: () => Promise<void>;
   onRequestEnrollmentToken: (input: { mode: 'issue' | 'reissue'; ttlHours: number }) => void;
+  onRequestBootstrap: (input: { bootstrapMode: NodeBootstrapMode }) => void;
   formatError: (error: unknown) => string;
 };
 
@@ -60,6 +73,8 @@ function targetLabelKey(tab?: NodeOnboardingTargetTab): string {
       return 'nodes.onboarding.openInventory';
     case 'diagnostics':
       return 'nodes.onboarding.openDiagnostics';
+    case 'jobs':
+      return 'nodes.onboarding.openJobs';
     default:
       return 'nodes.onboarding.openOverview';
   }
@@ -70,6 +85,37 @@ function evidenceValue(key: string, value: string, fmt: ReturnType<typeof useLoc
   if (key.endsWith('_at')) return fmt.date(value);
   if (key === 'inventory_id') return shortID(value);
   return text(value);
+}
+
+function bootstrapModeLabelKey(mode: NodeBootstrapMode): string {
+  return mode === 'ssh_bootstrap' ? 'nodes.onboarding.sshBootstrap' : 'nodes.onboarding.manualBootstrapBundle';
+}
+
+function bootstrapReasonKey(reasonCode: string): string {
+  return `nodes.onboarding.bootstrapReasons.${reasonCode}`;
+}
+
+function bootstrapWarningKey(warning: string): string {
+  return `nodes.onboarding.bootstrapWarnings.${warning}`;
+}
+
+function latestRunTimestamp(run?: NodeBootstrapRun): string | undefined {
+  return run?.finished_at || run?.started_at || run?.created_at || undefined;
+}
+
+function statusKey(status?: string): string {
+  const group = nodeBootstrapRunStatusGroup(status);
+  if (group === 'running') return isNodeBootstrapRunningStatus(status) && String(status || '').toLowerCase() === 'running'
+    ? 'nodes.onboarding.bootstrapRunning'
+    : 'nodes.onboarding.bootstrapQueued';
+  if (group === 'succeeded') return 'nodes.onboarding.bootstrapSucceeded';
+  if (group === 'failed') {
+    const normalized = String(status || '').toLowerCase();
+    return normalized === 'cancelled' || normalized === 'canceled'
+      ? 'nodes.onboarding.bootstrapCancelled'
+      : 'nodes.onboarding.bootstrapFailed';
+  }
+  return 'nodes.onboarding.bootstrapUnknown';
 }
 
 function StepStatusBadge({ status }: { status: string }) {
@@ -137,36 +183,67 @@ export function NodeOnboardingTab({
   enrollmentTokensError,
   bootstrapRuns,
   bootstrapRunsError,
+  accessMethods,
+  accessMethodsError,
   inventory,
   inventoryError,
   canBootstrap,
   busy,
+  bootstrapBusy,
+  trackedBootstrapJobIDs = [],
+  trackedBootstrapRunIDs = [],
   onOpenTab,
   onRefresh,
   onRequestEnrollmentToken,
+  onRequestBootstrap,
   formatError,
 }: NodeOnboardingTabProps) {
   const { t } = useTranslation();
+  const fmt = useLocaleFormat();
   const [refreshStatus, setRefreshStatus] = useState('');
   const [refreshError, setRefreshError] = useState('');
   const [ttlInput, setTTLInput] = useState(String(ENROLLMENT_TOKEN_TTL_DEFAULT_HOURS));
+  const [selectedBootstrapMode, setSelectedBootstrapMode] = useState<NodeBootstrapMode | ''>('');
   const model = useMemo(() => deriveNodeOnboardingModel({
     node,
     diagnostics,
     enrollmentTokens,
     bootstrapRuns,
+    accessMethods,
     inventory,
-  }), [node, diagnostics, enrollmentTokens, bootstrapRuns, inventory]);
+  }), [node, diagnostics, enrollmentTokens, bootstrapRuns, accessMethods, inventory]);
   const ttlValidation = validateEnrollmentTokenTTL(ttlInput);
   const actionMode = model.recommendedAction === 'issue_enrollment_token'
     ? 'issue'
     : model.recommendedAction === 'reissue_enrollment_token'
       ? 'reissue'
       : null;
+  const bootstrapModes = model.availableBootstrapModes;
+  const availableBootstrapModes = bootstrapModes.filter((mode) => mode.available);
+  const recommendedBootstrapAction = model.recommendedAction === 'start_ssh_bootstrap'
+    ? 'ssh_bootstrap'
+    : model.recommendedAction === 'start_manual_bundle'
+      ? 'manual_bundle'
+      : undefined;
+  const defaultBootstrapMode = model.bootstrapSelectionRequired ? undefined : (recommendedBootstrapAction || model.recommendedBootstrapMode || availableBootstrapModes[0]?.mode);
+  const effectiveBootstrapMode = selectedBootstrapMode && availableBootstrapModes.some((mode) => mode.mode === selectedBootstrapMode)
+    ? selectedBootstrapMode
+    : defaultBootstrapMode;
+  const selectedBootstrapAvailability = bootstrapModes.find((mode) => mode.mode === effectiveBootstrapMode);
+  const latestBootstrapRun = (bootstrapRuns || []).find((run) => run.id === model.latestBootstrapRunID);
+  const latestBootstrapStatusGroup = nodeBootstrapRunStatusGroup(model.latestBootstrapStatus);
+  const showBootstrapSection = !actionMode && (
+    model.currentStep === 'bootstrap'
+    || model.bootstrapSelectionRequired
+    || Boolean(recommendedBootstrapAction)
+    || Boolean(model.latestBootstrapRunID)
+    || (model.currentStep === 'registration' && !model.registered)
+  );
   const errors: Array<{ key: string; error: unknown }> = [];
   if (diagnosticsError) errors.push({ key: 'diagnosticsUnavailable', error: diagnosticsError });
   if (enrollmentTokensError) errors.push({ key: 'enrollmentTokensUnavailable', error: enrollmentTokensError });
   if (bootstrapRunsError) errors.push({ key: 'bootstrapRunsUnavailable', error: bootstrapRunsError });
+  if (accessMethodsError) errors.push({ key: 'accessMethodsUnavailable', error: accessMethodsError });
   if (inventoryError) errors.push({ key: 'inventoryUnavailable', error: inventoryError });
 
   const refresh = async () => {
@@ -265,6 +342,101 @@ export function NodeOnboardingTab({
                   {actionMode === 'issue' ? t('nodes.onboarding.issueEnrollmentToken') : t('nodes.onboarding.reissueEnrollmentToken')}
                 </Button>
               </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : showBootstrapSection ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <h3 className="card-title">{t('nodes.onboarding.chooseBootstrapMethod')}</h3>
+              {latestBootstrapRun ? (
+                <div className="definition-grid">
+                  <span>{t('nodes.bootstrapRun')}</span><strong><code>{shortID(latestBootstrapRun.id)}</code></strong>
+                  <span>{t('nodes.job')}</span><strong><code>{shortID(latestBootstrapRun.job_id || undefined)}</code></strong>
+                  <span>{t('common.status')}</span><strong>{t(statusKey(latestBootstrapRun.status))}</strong>
+                  <span>{t('nodes.bootstrapMode')}</span><strong>{text(latestBootstrapRun.bootstrap_mode)}</strong>
+                  {latestRunTimestamp(latestBootstrapRun) ? (
+                    <>
+                      <span>{t('nodes.onboarding.evidenceTime')}</span>
+                      <strong>{fmt.date(latestRunTimestamp(latestBootstrapRun))}</strong>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+              {latestBootstrapStatusGroup === 'running' ? <p className="muted">{t('nodes.onboarding.concurrentBootstrapActive')}</p> : null}
+              {latestBootstrapStatusGroup === 'succeeded' ? <p className="muted">{t('nodes.onboarding.waitingForAgentRegistration')}</p> : null}
+              {latestBootstrapStatusGroup === 'failed' ? <p className="muted">{t('nodes.onboarding.bootstrapFailureRetryHint')}</p> : null}
+              {latestBootstrapStatusGroup === 'unknown' && latestBootstrapRun ? <p className="muted">{t('nodes.onboarding.bootstrapUnknown')}</p> : null}
+              {latestBootstrapRun?.manual_bundle_available === true ? (
+                <div className="inline-panel">
+                  <strong>{t('nodes.onboarding.manualBundleAvailable')}</strong>
+                  <p className="muted">{t('nodes.onboarding.manualBundleOpenBootstrapHint')}</p>
+                </div>
+              ) : null}
+              <div className="page-stack">
+                <strong>{t('nodes.onboarding.bootstrapPrerequisites')}</strong>
+                {bootstrapModes.map((mode: NodeBootstrapModeAvailability) => (
+                  <label key={mode.mode} className="inline-panel">
+                    <div className="toolbar">
+                      <input
+                        type="radio"
+                        name={`bootstrap-mode-${node.id}`}
+                        value={mode.mode}
+                        checked={effectiveBootstrapMode === mode.mode}
+                        disabled={!mode.available || bootstrapBusy || latestBootstrapStatusGroup === 'running'}
+                        onChange={() => setSelectedBootstrapMode(mode.mode)}
+                      />
+                      <strong>{t(bootstrapModeLabelKey(mode.mode))}</strong>
+                      {mode.recommended ? <Badge>{t('nodes.onboarding.recommended')}</Badge> : null}
+                      <Badge>{mode.available ? t('nodes.onboarding.available') : t('nodes.onboarding.unavailable')}</Badge>
+                    </div>
+                    <p className="muted">{t(bootstrapReasonKey(mode.reasonCode))}</p>
+                    {mode.mode === 'ssh_bootstrap' ? (
+                      <div className="definition-grid">
+                        <span>{t('nodes.sshHost')}</span><strong>{text(mode.sshTarget?.host)}</strong>
+                        <span>{t('nodes.sshPort')}</span><strong>{mode.sshTarget?.port || 'n/a'}</strong>
+                        <span>{t('nodes.sshUser')}</span><strong>{text(mode.sshTarget?.user)}</strong>
+                        <span>{t('nodes.onboarding.sshAccessMethodReady')}</span><strong>{mode.available ? t('common.yes') : t('common.no')}</strong>
+                        <span>{t('nodes.onboarding.sshHostKeyConfirmed')}</span><strong>{mode.sshTarget?.hostKeyConfigured ? t('common.yes') : t('common.no')}</strong>
+                        <span>{t('nodes.onboarding.sshCredentialConfigured')}</span><strong>{mode.sshTarget?.secretConfigured ? t('common.yes') : t('common.no')}</strong>
+                      </div>
+                    ) : (
+                      <p className="muted">{t('nodes.onboarding.manualExecutionRequired')}</p>
+                    )}
+                    {mode.warnings.length ? (
+                      <ul>
+                        {mode.warnings.map((warning) => <li key={warning}>{t(bootstrapWarningKey(warning))}</li>)}
+                      </ul>
+                    ) : null}
+                  </label>
+                ))}
+              </div>
+              {trackedBootstrapJobIDs.length ? (
+                <p className="muted">
+                  {t('nodes.onboarding.bootstrapJobAccepted')}: {trackedBootstrapJobIDs.map((jobId) => shortID(jobId)).join(', ')}
+                </p>
+              ) : null}
+              {trackedBootstrapRunIDs.length ? (
+                <p className="muted">
+                  {t('nodes.onboarding.bootstrapRunTracked')}: {trackedBootstrapRunIDs.map((runId) => shortID(runId)).join(', ')}
+                </p>
+              ) : null}
+              <Toolbar>
+                <Button
+                  type="button"
+                  variant={latestBootstrapStatusGroup === 'failed' ? 'danger' : 'primary'}
+                  icon={<Play size={16} />}
+                  disabled={!canBootstrap || bootstrapBusy || busy || !effectiveBootstrapMode || !selectedBootstrapAvailability?.available || latestBootstrapStatusGroup === 'running'}
+                  onClick={() => effectiveBootstrapMode && onRequestBootstrap({ bootstrapMode: effectiveBootstrapMode })}
+                >
+                  {latestBootstrapStatusGroup === 'failed' ? t('nodes.onboarding.retryBootstrap') : t('nodes.onboarding.startBootstrap')}
+                </Button>
+                <Button type="button" onClick={() => onOpenTab('bootstrap')}>{t('nodes.onboarding.openBootstrap')}</Button>
+                {trackedBootstrapJobIDs.length ? <Button type="button" onClick={() => onOpenTab('jobs')}>{t('nodes.onboarding.openJobs')}</Button> : null}
+              </Toolbar>
+              {!canBootstrap ? <p className="muted">{t('nodes.onboarding.bootstrapPermissionHint')}</p> : null}
+              <p className="muted">{t('nodes.onboarding.guidedInventoryRemainsNext')}</p>
             </div>
           </CardBody>
         </Card>

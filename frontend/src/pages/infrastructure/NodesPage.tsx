@@ -78,6 +78,14 @@ import {
 } from './enrollmentTokenControls';
 import { NodeOnboardingTab } from './NodeOnboardingTab';
 import { deriveNodeOnboardingModel, shouldPollNodeOnboarding, type NodeOnboardingTargetTab } from './nodeOnboarding';
+import {
+  defaultSSHAccessMethod,
+  deriveNodeBootstrapReadiness,
+  nodeAccessMethodHasConfiguredSecret,
+  safeSSHAccessMethods,
+  type NodeBootstrapMode,
+  type NodeBootstrapModeAvailability,
+} from './nodeBootstrapReadiness';
 
 type NodeTab = 'overview' | 'runtime' | 'onboarding' | 'inventory' | 'capabilities' | 'diagnostics' | 'discovery' | 'bootstrap' | 'security' | 'terminal' | 'lifecycle' | 'jobs';
 
@@ -94,7 +102,7 @@ type ConfirmAction =
   | { type: 'enrollment-create'; node: NodeDetail; ttlHours: number; source: 'security' | 'onboarding' }
   | { type: 'enrollment-rotate'; node: NodeDetail; ttlHours: number; source: 'security' | 'onboarding' }
   | { type: 'enrollment-revoke'; node: NodeDetail; token: EnrollmentToken }
-  | { type: 'bootstrap'; node: NodeDetail; input: BootstrapRequest }
+  | { type: 'bootstrap'; node: NodeDetail; input: BootstrapRequest; source: 'bootstrap' | 'onboarding'; modeAvailability?: NodeBootstrapModeAvailability; retry?: boolean }
   | { type: 'agent-reinstall'; node: NodeDetail; input: BootstrapRequest }
   | { type: 'host-key-pin'; node: NodeDetail; method: NodeAccessMethod; fingerprint: string }
   | { type: 'agent-token-rotate'; node: NodeDetail }
@@ -121,6 +129,10 @@ type RevealedBootstrapBundle = {
   filename: string;
   agentBootstrapEnv: string;
   revealedAt: string;
+};
+
+type InitialNodeBootstrapRequest = {
+  bootstrap_mode: NodeBootstrapMode;
 };
 
 type NodeProfileFormState = {
@@ -208,6 +220,32 @@ function enrollmentTokenActionErrorKey(error: unknown): string {
       return 'nodes.onboarding.tokenIssueErrors.unavailable';
     default:
       return 'nodes.onboarding.tokenIssueErrors.generic';
+  }
+}
+
+function bootstrapActionErrorKey(error: unknown): string {
+  if (!(error instanceof APIError)) return 'nodes.onboarding.bootstrapErrors.generic';
+  const message = String(error.message || '').toLowerCase();
+  if (message.includes('firewall')) return 'nodes.onboarding.bootstrapErrors.firewall';
+  if (message.includes('ssh')) return 'nodes.onboarding.bootstrapErrors.sshPrerequisite';
+  switch (error.status) {
+    case 400:
+    case 422:
+      return 'nodes.onboarding.bootstrapErrors.invalid';
+    case 403:
+      return 'nodes.onboarding.bootstrapErrors.forbidden';
+    case 404:
+      return 'nodes.onboarding.bootstrapErrors.notFound';
+    case 409:
+      return 'nodes.onboarding.bootstrapErrors.conflict';
+    case 429:
+      return 'nodes.onboarding.bootstrapErrors.rateLimited';
+    case 500:
+      return 'nodes.onboarding.bootstrapErrors.server';
+    case 503:
+      return 'nodes.onboarding.bootstrapErrors.unavailable';
+    default:
+      return 'nodes.onboarding.bootstrapErrors.generic';
   }
 }
 
@@ -539,6 +577,8 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
   const [notice, setNotice] = useState('');
   const [jobIds, setJobIds] = useState<string[]>([]);
+  const [guidedBootstrapJobIds, setGuidedBootstrapJobIds] = useState<string[]>([]);
+  const [guidedBootstrapRunIds, setGuidedBootstrapRunIds] = useState<string[]>([]);
   const [oneTimePanel, setOneTimePanel] = useState<OneTimePanelState | null>(null);
   const secretRequestRef = useRef(0);
   const selectedNodeIdRef = useRef(nodeId);
@@ -549,6 +589,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     diagnostics: queryClient.getQueryData<NodeDiagnostics>(['node-diagnostics', nodeId]),
     enrollmentTokens: queryClient.getQueryData<EnrollmentToken[]>(['node-enrollment-tokens', nodeId]),
     bootstrapRuns: queryClient.getQueryData<NodeBootstrapRun[]>(['node-bootstrap-runs', nodeId]),
+    accessMethods: queryClient.getQueryData<NodeAccessMethod[]>(['node-access-methods', nodeId]),
     inventory: queryClient.getQueryData<NodeInventorySnapshot>(['node-inventory', nodeId]),
   }) : null;
   const onboardingPollInterval: number | false = open && activeTab === 'onboarding' && cachedOnboardingModel && shouldPollNodeOnboarding(cachedOnboardingModel) ? 10_000 : false;
@@ -609,7 +650,11 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   useEffect(() => {
     selectedNodeIdRef.current = nodeId;
     secretRequestRef.current += 1;
-    const timeout = window.setTimeout(() => setOneTimePanel(null), 0);
+    const timeout = window.setTimeout(() => {
+      setOneTimePanel(null);
+      setGuidedBootstrapJobIds([]);
+      setGuidedBootstrapRunIds([]);
+    }, 0);
     return () => window.clearTimeout(timeout);
   }, [nodeId]);
 
@@ -626,7 +671,11 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   useEffect(() => {
     if (!open) {
       secretRequestRef.current += 1;
-      const timeout = window.setTimeout(() => setOneTimePanel(null), 0);
+      const timeout = window.setTimeout(() => {
+        setOneTimePanel(null);
+        setGuidedBootstrapJobIds([]);
+        setGuidedBootstrapRunIds([]);
+      }, 0);
       return () => window.clearTimeout(timeout);
     }
     return undefined;
@@ -694,6 +743,15 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       diagnostics.refetch(),
       enrollmentTokens.refetch(),
       bootstrapRuns.refetch(),
+    ]);
+  };
+
+  const refreshAfterGuidedBootstrapAction = async () => {
+    await Promise.allSettled([
+      detail.refetch(),
+      diagnostics.refetch(),
+      bootstrapRuns.refetch(),
+      enrollmentTokens.refetch(),
     ]);
   };
 
@@ -791,9 +849,20 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
         setNotice(t('nodes.tokenRevoked'));
         setActiveTab('security');
       } else if (confirm.type === 'bootstrap') {
-        result = await bootstrap.mutateAsync({ nodeId: confirm.node.id, input: confirm.input });
-        setNotice(t('nodes.bootstrapQueued'));
-        setActiveTab('jobs');
+        const bootstrapResult = await bootstrap.mutateAsync({ nodeId: confirm.node.id, input: confirm.input });
+        result = bootstrapResult;
+        if (confirm.source === 'onboarding') {
+          const jobs = recordJobsFrom(bootstrapResult).map((job) => job.id).filter(Boolean);
+          const runId = bootstrapResult.bootstrap_run?.id;
+          setGuidedBootstrapJobIds((existing) => Array.from(new Set([...jobs, ...existing])).slice(0, 5));
+          if (runId) setGuidedBootstrapRunIds((existing) => Array.from(new Set([runId, ...existing])).slice(0, 5));
+          setNotice(t('nodes.onboarding.bootstrapJobAccepted'));
+          setActiveTab('onboarding');
+          await refreshAfterGuidedBootstrapAction();
+        } else {
+          setNotice(t('nodes.bootstrapQueued'));
+          setActiveTab('jobs');
+        }
       } else if (confirm.type === 'agent-reinstall') {
         result = await reinstallAgent.mutateAsync({ nodeId: confirm.node.id, input: confirm.input });
         setNotice(t('nodes.bootstrapQueued'));
@@ -839,6 +908,13 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
           clearOneTimePanel();
           setConfirm(null);
           void detail.refetch();
+        }
+      } else if (confirm.type === 'bootstrap' && confirm.source === 'onboarding') {
+        setNotice(t(bootstrapActionErrorKey(error)));
+        if (error instanceof APIError && (error.status === 403 || error.status === 404)) {
+          setConfirm(null);
+          void detail.refetch();
+          void bootstrapRuns.refetch();
         }
       } else {
         setNotice(formatAPIError(error));
@@ -888,10 +964,15 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 enrollmentTokensError={enrollmentTokens.isError ? enrollmentTokens.error : undefined}
                 bootstrapRuns={bootstrapRuns.data}
                 bootstrapRunsError={bootstrapRuns.isError ? bootstrapRuns.error : undefined}
+                accessMethods={accessMethods.data}
+                accessMethodsError={accessMethods.isError ? accessMethods.error : undefined}
                 inventory={inventory.data}
                 inventoryError={inventory.isError ? inventory.error : undefined}
                 canBootstrap={canBootstrapNodes}
                 busy={busy}
+                bootstrapBusy={bootstrap.isPending}
+                trackedBootstrapJobIDs={guidedBootstrapJobIds}
+                trackedBootstrapRunIDs={guidedBootstrapRunIds}
                 onOpenTab={(tab: NodeOnboardingTargetTab) => setActiveTab(tab)}
                 onRefresh={refreshOnboardingStatus}
                 onRequestEnrollmentToken={(input) => openConfirm({
@@ -900,6 +981,24 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                   ttlHours: input.ttlHours,
                   source: 'onboarding',
                 })}
+                onRequestBootstrap={(input) => {
+                  const readiness = deriveNodeBootstrapReadiness({
+                    node: current,
+                    diagnostics: diagnostics.data,
+                    bootstrapRuns: bootstrapRuns.data,
+                    accessMethods: accessMethods.data,
+                  });
+                  const modeAvailability = readiness.modes.find((mode) => mode.mode === input.bootstrapMode);
+                  const request: InitialNodeBootstrapRequest = { bootstrap_mode: input.bootstrapMode };
+                  openConfirm({
+                    type: 'bootstrap',
+                    node: current,
+                    input: request,
+                    source: 'onboarding',
+                    modeAvailability,
+                    retry: readiness.latestFailedRun?.id === readiness.latestRun?.id,
+                  });
+                }}
                 formatError={formatAPIError}
               />
             ) : null}
@@ -963,7 +1062,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
               }}
             />
             <NodeConfirmDialog
-              key={confirm ? `${confirm.type}:${confirm.node.id}` : 'closed'}
+              key={confirm ? `${confirm.type}:${confirm.node.id}:${confirm.type === 'bootstrap' ? `${confirm.source}:${confirm.input.bootstrap_mode || ''}` : ''}` : 'closed'}
               action={confirm}
               busy={busy}
               onConfirm={() => void runConfirmed()}
@@ -1275,14 +1374,6 @@ function DiscoveryTab({ node, discoveries, summary, busy, onConfirm }: {
   );
 }
 
-function sshMethods(methods: NodeAccessMethod[] | undefined): NodeAccessMethod[] {
-  return (methods || []).filter((method) => method.method === 'ssh');
-}
-
-function defaultSSHMethod(methods: NodeAccessMethod[] | undefined): NodeAccessMethod | undefined {
-  return sshMethods(methods).find((method) => method.is_enabled) || sshMethods(methods)[0];
-}
-
 function BootstrapTab({ node, accessMethods, runs, busy, canBootstrap, onConfirm }: {
   node: NodeDetail;
   accessMethods: ReturnType<typeof useNodeAccessMethods>;
@@ -1304,7 +1395,7 @@ function BootstrapTab({ node, accessMethods, runs, busy, canBootstrap, onConfirm
   const [copyError, setCopyError] = useState('');
   const revealBundle = useRevealNodeBootstrapBundle();
   const downloadBundle = useDownloadNodeBootstrapBundle();
-  const hasEnabledSSH = Boolean(defaultSSHMethod(accessMethods.data)?.is_enabled);
+  const hasEnabledSSH = Boolean(defaultSSHAccessMethod(accessMethods.data)?.is_enabled);
   const input: BootstrapRequest = { bootstrap_mode: mode, force_reenroll: forceReenroll };
   const bundleBusy = revealBundle.isPending || downloadBundle.isPending;
   const clearBundle = () => {
@@ -1450,7 +1541,7 @@ function BootstrapTab({ node, accessMethods, runs, busy, canBootstrap, onConfirm
             <p className="muted">{t('nodes.bootstrapImpact')}</p>
             {mode === 'ssh_bootstrap' && !hasEnabledSSH ? <div role="alert" className="error-state-inline">{t('nodes.sshAccessMissing')}</div> : null}
             <Toolbar>
-              <Button variant="primary" icon={<Play size={16} />} disabled={busy || (mode === 'ssh_bootstrap' && !hasEnabledSSH)} onClick={() => onConfirm({ type: 'bootstrap', node, input })}>
+              <Button variant="primary" icon={<Play size={16} />} disabled={busy || (mode === 'ssh_bootstrap' && !hasEnabledSSH)} onClick={() => onConfirm({ type: 'bootstrap', node, input, source: 'bootstrap' })}>
                 {t('nodes.queueBootstrap')}
               </Button>
               <Button icon={<RotateCcw size={16} />} disabled={busy || !hasEnabledSSH} onClick={() => onConfirm({ type: 'agent-reinstall', node, input: { ...input, bootstrap_mode: 'ssh_bootstrap', reinstall_agent: true } })}>
@@ -1612,8 +1703,8 @@ function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, cr
   const [scanResult, setScanResult] = useState<HostKeyScanResult | null>(null);
   const [sshAccessOpen, setSSHAccessOpen] = useState(false);
   const ttlValidation = validateEnrollmentTokenTTL(ttlHours);
-  const methods = sshMethods(accessMethods.data);
-  const selectedMethod = methods.find((method) => method.id === methodId) || defaultSSHMethod(accessMethods.data);
+  const methods = safeSSHAccessMethods(accessMethods.data);
+  const selectedMethod = methods.find((method) => method.id === methodId) || defaultSSHAccessMethod(accessMethods.data);
   const runScan = async () => {
     if (!selectedMethod) return;
     const result = await scanHostKey.mutateAsync({
@@ -2009,10 +2100,6 @@ function NodeSSHAccessMethodModal({ node, open, canBootstrap, busy, scanHostKey,
   );
 }
 
-function accessSecretConfigured(method: NodeAccessMethod): boolean {
-  return method.secret_configured === true || Boolean(method.secret_ref_id);
-}
-
 function AccessMethodsTable({ methods }: { methods: NodeAccessMethod[] }) {
   const { t } = useTranslation();
   return (
@@ -2027,7 +2114,7 @@ function AccessMethodsTable({ methods }: { methods: NodeAccessMethod[] }) {
         { key: 'user', header: t('nodes.sshUser'), render: (row) => text(row.ssh_user) },
         { key: 'auth', header: t('nodes.authType'), render: (row) => text(row.auth_type) },
         { key: 'pin', header: t('nodes.currentPin'), render: (row) => <code>{text(row.ssh_host_key_sha256)}</code> },
-        { key: 'secret', header: t('nodes.secretAvailable'), render: (row) => accessSecretConfigured(row) ? t('common.yes') : t('common.no') },
+        { key: 'secret', header: t('nodes.secretAvailable'), render: (row) => nodeAccessMethodHasConfiguredSecret(row) ? t('common.yes') : t('common.no') },
       ]}
     />
   );
@@ -2040,8 +2127,8 @@ function TerminalTab({ node, accessMethods, busy, onConfirm }: {
   onConfirm: (action: ConfirmAction) => void;
 }) {
   const { t } = useTranslation();
-  const method = defaultSSHMethod(accessMethods.data);
-  const canLaunch = Boolean(method?.is_enabled && accessSecretConfigured(method) && method.ssh_host_key_sha256);
+  const method = defaultSSHAccessMethod(accessMethods.data);
+  const canLaunch = Boolean(method?.is_enabled && nodeAccessMethodHasConfiguredSecret(method) && method.ssh_host_key_sha256);
   return (
     <div className="page-stack">
       <Card>
@@ -2131,6 +2218,7 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
   const enrollmentCreate = action.type === 'enrollment-create';
   const enrollmentRotate = action.type === 'enrollment-rotate';
   const enrollmentIssueAction = enrollmentCreate || enrollmentRotate;
+  const guidedBootstrapAction = action.type === 'bootstrap' && action.source === 'onboarding';
   const service = action.type === 'capability-install'
     ? action.input.service_code
     : action.type === 'capability-verify'
@@ -2156,6 +2244,47 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
           service: service || 'n/a',
         })}</p>
         {action.type === 'diagnostics' && action.action === 'reconcile-runtime' ? <p>{t('nodes.reconcileRuntimeImpact')}</p> : null}
+        {guidedBootstrapAction ? (
+          <>
+            <div className="definition-grid">
+              <span>{t('common.name')}</span><strong>{nodeLabel(action.node)}</strong>
+              <span>{t('common.id')}</span><strong>{shortID(action.node.id)}</strong>
+              <span>{t('nodes.bootstrapMode')}</span><strong>{action.input.bootstrap_mode === 'manual_bundle' ? t('nodes.onboarding.manualBootstrapBundle') : t('nodes.onboarding.sshBootstrap')}</strong>
+              <span>{t('nodes.onboarding.bootstrapActionType')}</span><strong>{action.retry ? t('nodes.onboarding.retryBootstrap') : t('nodes.onboarding.startBootstrap')}</strong>
+              {action.input.bootstrap_mode === 'ssh_bootstrap' ? (
+                <>
+                  <span>{t('nodes.sshHost')}</span><strong>{text(action.modeAvailability?.sshTarget?.host)}</strong>
+                  <span>{t('nodes.sshPort')}</span><strong>{action.modeAvailability?.sshTarget?.port || 'n/a'}</strong>
+                  <span>{t('nodes.sshUser')}</span><strong>{text(action.modeAvailability?.sshTarget?.user)}</strong>
+                  <span>{t('nodes.onboarding.sshHostKeyConfirmed')}</span><strong>{action.modeAvailability?.sshTarget?.hostKeyConfigured ? t('common.yes') : t('common.no')}</strong>
+                  <span>{t('nodes.onboarding.sshCredentialConfigured')}</span><strong>{action.modeAvailability?.sshTarget?.secretConfigured ? t('common.yes') : t('common.no')}</strong>
+                </>
+              ) : null}
+            </div>
+            <ul>
+              {action.input.bootstrap_mode === 'ssh_bootstrap' ? (
+                <>
+                  <li>{t('nodes.onboarding.sshBootstrapConfirmServerConnect')}</li>
+                  <li>{t('nodes.onboarding.sshBootstrapConfirmCredentialUse')}</li>
+                  <li>{t('nodes.onboarding.serverFirewallValidationWillRun')}</li>
+                  <li>{t('nodes.onboarding.bootstrapAcceptanceDoesNotProveInstallation')}</li>
+                </>
+              ) : (
+                <>
+                  <li>{t('nodes.onboarding.manualBundleGeneratesSensitiveMaterial')}</li>
+                  <li>{t('nodes.onboarding.bundleGenerationDoesNotExecute')}</li>
+                  <li>{t('nodes.onboarding.manualBundleSeparateAuditedReveal')}</li>
+                  <li>{t('nodes.onboarding.bootstrapAcceptanceDoesNotProveOnboarding')}</li>
+                </>
+              )}
+            </ul>
+            <Checkbox
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+              label={action.input.bootstrap_mode === 'manual_bundle' ? t('nodes.onboarding.manualBundleAcknowledge') : t('nodes.onboarding.sshBootstrapAcknowledge')}
+            />
+          </>
+        ) : null}
         {enrollmentIssueAction ? (
           <>
             <div className="definition-grid">
@@ -2180,13 +2309,13 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
           </>
         ) : null}
         {action.type === 'capability-install' ? <pre className="code-block">{safeJSON(action.input)}</pre> : null}
-        {(action.type === 'bootstrap' || action.type === 'agent-reinstall') ? <pre className="code-block">{safeJSON(action.input)}</pre> : null}
+        {((action.type === 'bootstrap' && action.source !== 'onboarding') || action.type === 'agent-reinstall') ? <pre className="code-block">{safeJSON(action.input)}</pre> : null}
         {action.type === 'enrollment-revoke' ? <pre className="code-block">{safeJSON({ token_id: action.token.id, token_hint: action.token.token_hint, status: action.token.status })}</pre> : null}
         {action.type === 'host-key-pin' ? <pre className="code-block">{safeJSON({ method_id: action.method.id, ssh_host: action.method.ssh_host, ssh_port: action.method.ssh_port, fingerprint: action.fingerprint })}</pre> : null}
         {action.type === 'node-force-retire' ? <pre className="code-block">{safeJSON({ confirmation: action.confirmation, reason: action.reason || 'operator force retire' })}</pre> : null}
         {action.type === 'service-import' ? <pre className="code-block">{safeJSON({ id: action.discovery.id, service_code: action.discovery.service_code, name: action.discovery.name, endpoint: [action.discovery.endpoint_host, action.discovery.endpoint_port].filter(Boolean).join(':') })}</pre> : null}
         <Toolbar>
-          <Button variant={dangerous ? 'danger' : 'primary'} disabled={busy || (enrollmentIssueAction && !acknowledged)} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
+          <Button variant={dangerous ? 'danger' : 'primary'} disabled={busy || ((enrollmentIssueAction || guidedBootstrapAction) && !acknowledged)} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
           <Button onClick={onClose}>{t('common.cancel')}</Button>
         </Toolbar>
       </div>
