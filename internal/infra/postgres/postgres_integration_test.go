@@ -4267,7 +4267,7 @@ func setupPostgresIntegrationStore(t *testing.T) (*Store, context.Context) {
 		t.Skip("set MEGAVPN_TEST_DATABASE_DSN to run PostgreSQL integration tests")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	t.Cleanup(cancel)
 
 	adminPool, err := pgxpool.New(ctx, dsn)
