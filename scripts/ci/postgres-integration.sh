@@ -103,7 +103,19 @@ run_json_checked \
   TestPostgresIntegrationCreateNodeSSHAccessMethodConcurrentDuplicate
 
 run_json_checked \
+  ./internal/infra/postgres \
+  'TestPostgresIntegrationGetNodeBootstrapRunScopedAndResolvesManualBundleSecret' \
+  'postgres-bootstrap-bundle-infra' \
+  TestPostgresIntegrationGetNodeBootstrapRunScopedAndResolvesManualBundleSecret
+
+run_json_checked \
   ./internal/api/http \
   'TestPostgresIntegrationCreateNodeSSHAccessMethodHTTP' \
   'postgres-ssh-http' \
   TestPostgresIntegrationCreateNodeSSHAccessMethodHTTP
+
+run_json_checked \
+  ./internal/api/http \
+  'TestPostgresIntegrationNodeBootstrapBundleRevealDownloadHTTP' \
+  'postgres-bootstrap-bundle-http' \
+  TestPostgresIntegrationNodeBootstrapBundleRevealDownloadHTTP

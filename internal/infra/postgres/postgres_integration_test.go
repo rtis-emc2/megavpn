@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -2165,6 +2166,19 @@ func TestPostgresIntegrationGetNodeBootstrapRunScopedAndResolvesManualBundleSecr
 	if got := strings.TrimSpace(fmt.Sprint(run.ResultPayload["agent_bootstrapenv_secret_ref_id"])); got != secret.ID {
 		t.Fatalf("secret ref in internal result = %q, want %q", got, secret.ID)
 	}
+	var storedSecretType, storedKeyVersion string
+	var storedCiphertext, storedNonce []byte
+	if err := store.db.QueryRow(ctx, `select secret_type,ciphertext,key_version,nonce from secret_refs where id=$1`, secret.ID).
+		Scan(&storedSecretType, &storedCiphertext, &storedKeyVersion, &storedNonce); err != nil {
+		t.Fatalf("load stored manual bundle secret ref: %v", err)
+	}
+	if storedSecretType != "opaque" || strings.TrimSpace(storedKeyVersion) == "" || len(storedCiphertext) == 0 || len(storedNonce) == 0 {
+		t.Fatalf("stored manual bundle secret metadata invalid: type=%q key_version_present=%t ciphertext_len=%d nonce_len=%d",
+			storedSecretType, strings.TrimSpace(storedKeyVersion) != "", len(storedCiphertext), len(storedNonce))
+	}
+	if bytes.Equal(storedCiphertext, []byte(bundle)) || bytes.Contains(storedCiphertext, []byte("synthetic-integration-token")) {
+		t.Fatal("stored manual bundle secret ciphertext contains plaintext fixture content")
+	}
 	if _, err := store.GetNodeBootstrapRun(ctx, nodeB.ID, runID); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-node bootstrap run error = %v, want pgx.ErrNoRows", err)
 	}
@@ -2172,8 +2186,11 @@ func TestPostgresIntegrationGetNodeBootstrapRunScopedAndResolvesManualBundleSecr
 	if err != nil {
 		t.Fatalf("resolve manual bundle secret: %v", err)
 	}
-	if ref.SecretType != "opaque" || ref.Meta["node_id"] != nodeA.ID || ref.Meta["material"] != "agent_bootstrap_env" || string(plaintext) != bundle {
-		t.Fatalf("resolved manual bundle secret mismatch: ref=%#v plaintext=%q", ref, string(plaintext))
+	if ref.SecretType != "opaque" || ref.Meta["node_id"] != nodeA.ID || ref.Meta["material"] != "agent_bootstrap_env" {
+		t.Fatalf("resolved manual bundle secret metadata mismatch: ref=%#v", ref)
+	}
+	if string(plaintext) != bundle {
+		t.Fatalf("resolved manual bundle plaintext mismatch: got len %d want len %d", len(plaintext), len(bundle))
 	}
 }
 
