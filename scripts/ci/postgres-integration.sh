@@ -143,6 +143,17 @@ run_json_checked \
   TestPostgresIntegrationCreateNodeEmergencyCleanupJobPlanFailureRollback
 
 run_json_checked \
+  ./internal/infra/postgres \
+  'TestPostgresIntegrationClearNodeStaleRotation' \
+  'postgres-node-stale-rotation-infra' \
+  TestPostgresIntegrationClearNodeStaleRotationAtomic \
+  TestPostgresIntegrationClearNodeStaleRotationAuditRollback \
+  TestPostgresIntegrationClearNodeStaleRotationPreviewChanged \
+  TestPostgresIntegrationClearNodeStaleRotationPendingStateAmbiguousRollback \
+  TestPostgresIntegrationClearNodeStaleRotationConcurrent \
+  TestPostgresIntegrationClearNodeStaleRotationPreservesActiveToken
+
+run_json_checked \
   ./internal/api/http \
   'TestPostgresIntegrationCreateNodeSSHAccessMethodHTTP' \
   'postgres-ssh-http' \

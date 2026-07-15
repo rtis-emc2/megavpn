@@ -1051,98 +1051,6 @@ func (s *Store) RequeueNodeStuckJob(ctx context.Context, nodeID string) (domain.
 	return s.GetJob(ctx, requeued.ID)
 }
 
-func (s *Store) ClearNodeStalePendingRotation(ctx context.Context, nodeID string) ([]domain.Job, error) {
-	if _, err := s.GetNode(ctx, nodeID); err != nil {
-		return nil, err
-	}
-
-	rows, err := s.db.Query(ctx, `select
-		j.id,j.type,j.scope_type,j.scope_id,j.node_id,j.instance_id,j.status,j.priority,j.payload_json,coalesce(j.result_json,'{}'::jsonb),j.locked_by,j.locked_until,j.created_at,j.started_at,j.finished_at,
-		na.last_seen_at
-	from jobs j
-	left join node_agents na on na.node_id=j.node_id
-	where j.node_id=$1
-	  and j.type='node.agent.rotate_token'
-	  and j.status in ('queued','running','retrying')
-	order by j.created_at asc`, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	now := time.Now().UTC()
-	staleJobs := make([]domain.Job, 0)
-	for rows.Next() {
-		var job domain.Job
-		var payloadRaw, resultRaw []byte
-		var lastSeenAt *time.Time
-		if err := rows.Scan(&job.ID, &job.Type, &job.ScopeType, &job.ScopeID, &job.NodeID, &job.InstanceID, &job.Status, &job.Priority, &payloadRaw, &resultRaw, &job.LockedBy, &job.LockedUntil, &job.CreatedAt, &job.StartedAt, &job.FinishedAt, &lastSeenAt); err != nil {
-			return nil, err
-		}
-		if err := decodeJSONField(payloadRaw, &job.Payload, "jobs.payload_json"); err != nil {
-			return nil, err
-		}
-		if err := decodeJSONField(resultRaw, &job.Result, "jobs.result_json"); err != nil {
-			return nil, err
-		}
-		if job.Payload == nil {
-			job.Payload = map[string]any{}
-		}
-		if job.Result == nil {
-			job.Result = map[string]any{}
-		}
-		if !isStalePendingRotationJob(job.CreatedAt, lastSeenAt, now) {
-			continue
-		}
-		staleJobs = append(staleJobs, job)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(staleJobs) == 0 {
-		return nil, errors.New("no stale pending rotation jobs found for this node")
-	}
-
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	for idx := range staleJobs {
-		job := &staleJobs[idx]
-		job.Status = "cancelled"
-		job.FinishedAt = &now
-		job.LockedBy = nil
-		job.LockedUntil = nil
-		resultJSON := mustJSON(map[string]any{
-			"message": "stale pending token rotation was cleared",
-		})
-		if _, err := tx.Exec(ctx, `update jobs
-			set status='cancelled',
-			    finished_at=$2,
-			    locked_by=null,
-			    locked_until=null,
-			    result_json=$3
-			where id=$1 and status in ('queued','running','retrying')`,
-			job.ID, now, resultJSON); err != nil {
-			return nil, err
-		}
-		if _, err := tx.Exec(ctx, `delete from resource_locks where job_id=$1`, job.ID); err != nil {
-			return nil, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-
-	for _, job := range staleJobs {
-		_ = s.AddJobLog(ctx, job.ID, "warn", "stale token rotation was cleared", map[string]any{"node_id": nodeID})
-	}
-	_, _ = s.CreateAudit(ctx, "system", "node.agent_token.clear_stale", "node", &nodeID, fmt.Sprintf("%d stale token rotation jobs cleared", len(staleJobs)))
-	return staleJobs, nil
-}
-
 func (s *Store) loadNodeStaleClaim(ctx context.Context, nodeID string) (*struct {
 	job         domain.Job
 	lastClaimAt time.Time
@@ -1195,16 +1103,6 @@ func (s *Store) loadNodeStaleClaim(ctx context.Context, nodeID string) (*struct 
 		return nil, nil
 	}
 	return &x, nil
-}
-
-func isStalePendingRotationJob(createdAt time.Time, lastSeenAt *time.Time, now time.Time) bool {
-	if now.Sub(createdAt) < stalePendingRotateAfter {
-		return false
-	}
-	if lastSeenAt == nil {
-		return true
-	}
-	return lastSeenAt.Before(createdAt)
 }
 
 func isAgentHandledJobType(jobType string) bool {
