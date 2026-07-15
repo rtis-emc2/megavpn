@@ -322,6 +322,7 @@ export type NodeBootstrapRun = APIRecord & {
   bootstrap_mode?: string;
   request_payload?: APIRecord;
   result_payload?: APIRecord;
+  manual_bundle_available?: boolean;
   started_at?: string | null;
   finished_at?: string | null;
   created_by?: string | null;
@@ -331,6 +332,20 @@ export type NodeBootstrapRun = APIRecord & {
 export type BootstrapResult = APIRecord & {
   job?: Job;
   bootstrap_run?: NodeBootstrapRun;
+};
+
+export type NodeBootstrapBundleRevealResult = {
+  node_id: string;
+  bootstrap_run_id: string;
+  filename: string;
+  agent_bootstrapenv: string;
+  revealed_at: string;
+};
+
+export type NodeBootstrapBundleDownloadResult = {
+  blob: Blob;
+  filename: string;
+  contentType: string;
 };
 
 export type HostKeyScanEntry = APIRecord & {

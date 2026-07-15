@@ -1,4 +1,4 @@
-import { apiRequest, apiURL, isUnauthorized, sendJSON } from './client';
+import { apiBlobRequest, apiRequest, apiURL, isUnauthorized, sendJSON } from './client';
 import type {
   AddressPools,
   APIRecord,
@@ -65,6 +65,8 @@ import type {
   AgentTokenRotateResult,
   BootstrapRequest,
   BootstrapResult,
+  NodeBootstrapBundleDownloadResult,
+  NodeBootstrapBundleRevealResult,
   EnrollmentToken,
   EnrollmentTokenCreateInput,
   EnrollmentTokenCreateResult,
@@ -552,6 +554,89 @@ export function reinstallOrUpdateNodeAgent(nodeId: string, input: BootstrapReque
 
 export function listNodeBootstrapRuns(nodeId: string, limit = 25): Promise<NodeBootstrapRun[]> {
   return apiRequest<NodeBootstrapRun[]>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/bootstrap-runs${queryString({ limit })}`);
+}
+
+export function revealNodeBootstrapBundle(nodeId: string, runId: string): Promise<NodeBootstrapBundleRevealResult> {
+  return sendJSON<NodeBootstrapBundleRevealResult>(
+    `/api/v1/nodes/${encodeURIComponent(nodeId)}/bootstrap-runs/${encodeURIComponent(runId)}/bundle/reveal`,
+    'POST',
+    {},
+  );
+}
+
+export async function downloadNodeBootstrapBundle(nodeId: string, runId: string): Promise<NodeBootstrapBundleDownloadResult> {
+  const fallback = safeBootstrapBundleFilename(nodeId);
+  const result = await apiBlobRequest(
+    `/api/v1/nodes/${encodeURIComponent(nodeId)}/bootstrap-runs/${encodeURIComponent(runId)}/bundle/download`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      cache: 'no-store',
+    },
+  );
+  return {
+    blob: result.blob,
+    contentType: result.contentType,
+    filename: sanitizeDownloadFilename(parseContentDispositionFilename(result.contentDisposition), fallback),
+  };
+}
+
+export function parseContentDispositionFilename(header: string | undefined): string {
+  if (!header) return '';
+  const parts = header.split(';').map((part) => part.trim());
+  const encoded = parts.find((part) => part.toLowerCase().startsWith('filename*='));
+  if (encoded) {
+    const raw = encoded.slice(encoded.indexOf('=') + 1).trim();
+    const match = /^utf-8''(.+)$/i.exec(raw);
+    try {
+      return decodeURIComponent(match ? match[1] : raw);
+    } catch {
+      return match ? match[1] : raw;
+    }
+  }
+  const plain = parts.find((part) => part.toLowerCase().startsWith('filename='));
+  if (!plain) return '';
+  const raw = plain.slice(plain.indexOf('=') + 1).trim();
+  if (raw.startsWith('"') && raw.endsWith('"')) {
+    return raw.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+  }
+  return raw;
+}
+
+export function sanitizeDownloadFilename(value: string | undefined, fallback = 'megavpn-agent-bootstrap.env'): string {
+  const raw = String(value || '').trim();
+  let output = '';
+  let lastDash = false;
+  for (const char of raw) {
+    let next = '';
+    if (/[A-Za-z0-9]/.test(char) || char === '.' || char === '_') {
+      next = char;
+    } else if (char === '-' || char === ' ' || char === '\t') {
+      next = '-';
+    }
+    if (!next) continue;
+    if (next === '-') {
+      if (lastDash) continue;
+      lastDash = true;
+    } else {
+      lastDash = false;
+    }
+    output += next;
+    if (output.length >= 96) break;
+  }
+  output = output.replace(/^\.+/, '').replace(/[._-]+$/g, '');
+  if (!output || output === '..' || output.includes('..')) {
+    output = fallback;
+  }
+  if (!output.toLowerCase().endsWith('.env')) {
+    output += '.env';
+  }
+  return output;
+}
+
+function safeBootstrapBundleFilename(nodeId: string): string {
+  return sanitizeDownloadFilename(`megavpn-agent-${nodeId || 'node'}-bootstrap.env`);
 }
 
 export function rotateNodeAgentToken(nodeId: string): Promise<AgentTokenRotateResult> {

@@ -1,5 +1,5 @@
-import { Activity, Boxes, CheckCircle2, DownloadCloud, FilePenLine, Fingerprint, KeyRound, PackageCheck, PlusCircle, Play, RefreshCw, RotateCcw, Search, ServerCog, ShieldAlert, ShieldCheck, TerminalSquare, Trash2, Wrench } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Activity, Boxes, CheckCircle2, Copy, DownloadCloud, FilePenLine, Fingerprint, KeyRound, PackageCheck, PlusCircle, Play, RefreshCw, RotateCcw, Search, ServerCog, ShieldAlert, ShieldCheck, TerminalSquare, Trash2, Wrench } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { APIError } from '../../shared/api/client';
@@ -19,6 +19,8 @@ import type {
   NodeDiagnostics,
   NodeDiagnosticsAction,
   NodeMutationResult,
+  NodeBootstrapBundleRevealResult,
+  NodeBootstrapRun,
   NodeServiceDiscovery,
   NodeServiceInstaller,
 } from '../../shared/api/types';
@@ -49,6 +51,7 @@ import {
   useNodeServiceInstallers,
   useNodes,
   useReinstallOrUpdateNodeAgent,
+  useRevealNodeBootstrapBundle,
   useRetireNode,
   useRevokeEnrollmentToken,
   useRotateEnrollmentToken,
@@ -58,6 +61,7 @@ import {
   useSetNodeMaintenance,
   useSyncNodeInventory,
   useUpdateNode,
+  useDownloadNodeBootstrapBundle,
   useVerifyNodeCapability,
 } from '../../shared/query/hooks';
 import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
@@ -91,6 +95,19 @@ type OneTimePanelState = {
   label: string;
   value: string;
   expiresAt?: string;
+};
+
+type BootstrapBundleConfirmAction = {
+  type: 'reveal' | 'download';
+  run: NodeBootstrapRun;
+};
+
+type RevealedBootstrapBundle = {
+  nodeId: string;
+  runId: string;
+  filename: string;
+  agentBootstrapEnv: string;
+  revealedAt: string;
 };
 
 type NodeProfileFormState = {
@@ -129,6 +146,30 @@ function formatAPIError(error: unknown): string {
         ? 'Validation failed'
         : `HTTP ${error.status}`;
   return `${prefix}: ${error.message}`;
+}
+
+function bundleErrorKey(error: unknown): string {
+  if (!(error instanceof APIError)) return 'nodes.manualBundleErrors.generic';
+  switch (error.status) {
+    case 400:
+      return 'nodes.manualBundleErrors.badRequest';
+    case 403:
+      return 'nodes.manualBundleErrors.forbidden';
+    case 404:
+      return 'nodes.manualBundleErrors.notAvailable';
+    case 409:
+      return 'nodes.manualBundleErrors.unresolved';
+    case 413:
+      return 'nodes.manualBundleErrors.tooLarge';
+    case 500:
+      return String(error.message || '').toLowerCase().includes('audit')
+        ? 'nodes.manualBundleErrors.auditFailed'
+        : 'nodes.manualBundleErrors.server';
+    case 503:
+      return 'nodes.manualBundleErrors.secretStorageUnavailable';
+    default:
+      return 'nodes.manualBundleErrors.generic';
+  }
 }
 
 function fieldErrors(error: unknown): Record<string, string> {
@@ -677,7 +718,17 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
             ) : null}
             {activeTab === 'diagnostics' ? <DiagnosticsTab node={current} diagnostics={diagnostics} busy={busy} onConfirm={setConfirm} /> : null}
             {activeTab === 'discovery' ? <DiscoveryTab node={current} discoveries={discoveries} summary={discoverySummary} busy={busy} onConfirm={setConfirm} /> : null}
-            {activeTab === 'bootstrap' ? <BootstrapTab node={current} accessMethods={accessMethods} runs={bootstrapRuns} busy={busy} onConfirm={setConfirm} /> : null}
+            {activeTab === 'bootstrap' ? (
+              <BootstrapTab
+                key={`${current.id}:${canBootstrapNodes ? 'bootstrap-allowed' : 'bootstrap-denied'}`}
+                node={current}
+                accessMethods={accessMethods}
+                runs={bootstrapRuns}
+                busy={busy}
+                canBootstrap={canBootstrapNodes}
+                onConfirm={setConfirm}
+              />
+            ) : null}
             {activeTab === 'security' ? (
               <SecurityTab
                 node={current}
@@ -1026,19 +1077,154 @@ function defaultSSHMethod(methods: NodeAccessMethod[] | undefined): NodeAccessMe
   return sshMethods(methods).find((method) => method.is_enabled) || sshMethods(methods)[0];
 }
 
-function BootstrapTab({ node, accessMethods, runs, busy, onConfirm }: {
+function BootstrapTab({ node, accessMethods, runs, busy, canBootstrap, onConfirm }: {
   node: NodeDetail;
   accessMethods: ReturnType<typeof useNodeAccessMethods>;
   runs: ReturnType<typeof useNodeBootstrapRuns>;
   busy: boolean;
+  canBootstrap: boolean;
   onConfirm: (action: ConfirmAction) => void;
 }) {
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
   const [mode, setMode] = useState<BootstrapRequest['bootstrap_mode']>('ssh_bootstrap');
   const [forceReenroll, setForceReenroll] = useState(false);
+  const [bundleConfirm, setBundleConfirm] = useState<BootstrapBundleConfirmAction | null>(null);
+  const [bundleAcknowledged, setBundleAcknowledged] = useState(false);
+  const [revealedBundle, setRevealedBundle] = useState<RevealedBootstrapBundle | null>(null);
+  const [bundleStatus, setBundleStatus] = useState('');
+  const [bundleError, setBundleError] = useState('');
+  const [copyStatus, setCopyStatus] = useState('');
+  const [copyError, setCopyError] = useState('');
+  const revealBundle = useRevealNodeBootstrapBundle();
+  const downloadBundle = useDownloadNodeBootstrapBundle();
   const hasEnabledSSH = Boolean(defaultSSHMethod(accessMethods.data)?.is_enabled);
   const input: BootstrapRequest = { bootstrap_mode: mode, force_reenroll: forceReenroll };
+  const bundleBusy = revealBundle.isPending || downloadBundle.isPending;
+  const clearBundle = () => {
+    setRevealedBundle(null);
+    setBundleStatus('');
+    setBundleError('');
+    setCopyStatus('');
+    setCopyError('');
+  };
+  useEffect(() => {
+    if (!revealedBundle || !runs.data) return;
+    const current = runs.data.find((run) => run.id === revealedBundle.runId);
+    if (!current || current.manual_bundle_available !== true || (current.node_id && current.node_id !== node.id)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRevealedBundle(null);
+      setBundleStatus('');
+      setBundleError('');
+      setCopyStatus('');
+      setCopyError('');
+    }
+  }, [node.id, revealedBundle, runs.data]);
+
+  const closeBundleConfirm = () => {
+    setBundleConfirm(null);
+    setBundleAcknowledged(false);
+  };
+  const openBundleConfirm = (type: BootstrapBundleConfirmAction['type'], run: NodeBootstrapRun) => {
+    setBundleError('');
+    setBundleStatus('');
+    setCopyStatus('');
+    setCopyError('');
+    setBundleAcknowledged(false);
+    setBundleConfirm({ type, run });
+  };
+  const handleBundleError = (error: unknown, runId: string) => {
+    const key = bundleErrorKey(error);
+    setBundleError(t(key));
+    if (error instanceof APIError) {
+      if (error.status === 403) {
+        setRevealedBundle(null);
+      }
+      if (error.status === 404) {
+        setRevealedBundle((current) => (current?.runId === runId ? null : current));
+        void runs.refetch();
+      }
+    }
+    revealBundle.reset();
+    downloadBundle.reset();
+  };
+  const triggerDownload = (result: { blob: Blob; filename: string }) => {
+    const objectURL = URL.createObjectURL(result.blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectURL;
+    anchor.download = result.filename;
+    anchor.rel = 'noopener noreferrer';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    try {
+      anchor.click();
+      setBundleStatus(t('nodes.manualBundleDownloadStarted'));
+    } finally {
+      anchor.remove();
+      URL.revokeObjectURL(objectURL);
+    }
+  };
+  const runBundleAction = async () => {
+    if (!bundleConfirm || !canBootstrap || !bundleAcknowledged) return;
+    const runId = bundleConfirm.run.id;
+    setBundleError('');
+    setBundleStatus('');
+    setCopyStatus('');
+    setCopyError('');
+    try {
+      if (bundleConfirm.type === 'reveal') {
+        setRevealedBundle(null);
+        await revealBundle.mutateAsync({
+          nodeId: node.id,
+          runId,
+          consume: (result: NodeBootstrapBundleRevealResult) => {
+            setRevealedBundle({
+              nodeId: result.node_id,
+              runId: result.bootstrap_run_id,
+              filename: result.filename,
+              agentBootstrapEnv: result.agent_bootstrapenv,
+              revealedAt: result.revealed_at,
+            });
+          },
+        });
+      } else {
+        await downloadBundle.mutateAsync({
+          nodeId: node.id,
+          runId,
+          consume: triggerDownload,
+        });
+      }
+      closeBundleConfirm();
+    } catch (error) {
+      closeBundleConfirm();
+      handleBundleError(error, runId);
+    } finally {
+      revealBundle.reset();
+      downloadBundle.reset();
+    }
+  };
+  const copyRevealedBundle = async () => {
+    if (!revealedBundle) return;
+    setCopyStatus('');
+    setCopyError('');
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('clipboard unavailable');
+      }
+      await navigator.clipboard.writeText(revealedBundle.agentBootstrapEnv);
+      setCopyStatus(t('nodes.manualBundleCopied'));
+    } catch {
+      setCopyError(t('nodes.manualBundleCopyFailed'));
+    }
+  };
+  const downloadableRunFromPanel = (): NodeBootstrapRun | null => {
+    if (!revealedBundle) return null;
+    return (runs.data || []).find((run) => run.id === revealedBundle.runId) || {
+      id: revealedBundle.runId,
+      node_id: node.id,
+      manual_bundle_available: true,
+    };
+  };
   return (
     <div className="page-stack">
       <Card>
@@ -1072,6 +1258,45 @@ function BootstrapTab({ node, accessMethods, runs, busy, onConfirm }: {
       {accessMethods.isError ? <div role="alert" className="error-state-inline">{t('nodes.accessMethodsUnavailable')}: {formatAPIError(accessMethods.error)}</div> : null}
       <AccessMethodsTable methods={accessMethods.data || []} />
       {runs.isError ? <div role="alert" className="error-state-inline">{t('nodes.bootstrapRunsUnavailable')}: {formatAPIError(runs.error)}</div> : null}
+      {!canBootstrap && (runs.data || []).some((run) => run.manual_bundle_available === true) ? <p className="muted">{t('nodes.manualBundlePermissionHint')}</p> : null}
+      {bundleStatus ? <div role="status">{bundleStatus}</div> : null}
+      {bundleError ? <div role="alert" className="error-state-inline">{bundleError}</div> : null}
+      {revealedBundle ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <h3 className="card-title">{t('nodes.manualBundleSensitiveTitle')}</h3>
+              <p className="muted">{t('nodes.manualBundlePanelWarning')}</p>
+              <div className="definition-grid">
+                <span>{t('nodes.manualBundleFilename')}</span><strong>{revealedBundle.filename}</strong>
+                <span>{t('nodes.manualBundleRevealedAt')}</span><strong>{fmt.date(revealedBundle.revealedAt)}</strong>
+                <span>{t('nodes.bootstrapRun')}</span><strong><code>{shortID(revealedBundle.runId)}</code></strong>
+              </div>
+              <FormField label={t('nodes.manualBundleContentLabel')}>
+                <Textarea readOnly rows={10} value={revealedBundle.agentBootstrapEnv} aria-label={t('nodes.manualBundleContentLabel')} />
+              </FormField>
+              {copyStatus ? <div role="status">{copyStatus}</div> : null}
+              {copyError ? <div role="alert" className="error-state-inline">{copyError}</div> : null}
+              <Toolbar>
+                <Button icon={<Copy size={16} />} onClick={() => void copyRevealedBundle()}>
+                  {t('nodes.manualBundleCopy')}
+                </Button>
+                <Button
+                  icon={<DownloadCloud size={16} />}
+                  disabled={bundleBusy}
+                  onClick={() => {
+                    const run = downloadableRunFromPanel();
+                    if (run) openBundleConfirm('download', run);
+                  }}
+                >
+                  {t('nodes.manualBundleDownload')}
+                </Button>
+                <Button onClick={clearBundle}>{t('nodes.manualBundleCloseClear')}</Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
       <DataTable
         rows={runs.data || []}
         title={t('nodes.bootstrapRuns')}
@@ -1080,10 +1305,85 @@ function BootstrapTab({ node, accessMethods, runs, busy, onConfirm }: {
           { key: 'job', header: t('nodes.job'), render: (row) => <code>{shortID(row.job_id || undefined)}</code> },
           { key: 'mode', header: t('nodes.bootstrapMode'), render: (row) => text(row.bootstrap_mode) },
           { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+          { key: 'bundle', header: t('nodes.manualBundleAvailability'), render: (row) => row.manual_bundle_available === true ? <Badge>{t('nodes.manualBundleAvailable')}</Badge> : <span className="muted">{t('nodes.manualBundleUnavailable')}</span> },
           { key: 'created', header: t('common.created'), render: (row) => fmt.date(row.created_at) },
+          { key: 'started', header: t('nodes.started'), render: (row) => fmt.date(row.started_at || undefined), priority: 'low' },
+          { key: 'finished', header: t('nodes.finished'), render: (row) => fmt.date(row.finished_at || undefined), priority: 'low' },
+          { key: 'actions', header: t('common.actions'), render: (row) => (
+            row.manual_bundle_available === true && canBootstrap && (!row.node_id || row.node_id === node.id) ? (
+              <Toolbar>
+                <Button icon={<ShieldAlert size={16} />} disabled={bundleBusy} onClick={() => openBundleConfirm('reveal', row)}>
+                  {t('nodes.manualBundleReveal')}
+                </Button>
+                <Button icon={<DownloadCloud size={16} />} disabled={bundleBusy} onClick={() => openBundleConfirm('download', row)}>
+                  {t('nodes.manualBundleDownload')}
+                </Button>
+              </Toolbar>
+            ) : row.manual_bundle_available === true && !canBootstrap ? (
+              <span className="muted">{t('common.permissionRequired', { permission: 'node.bootstrap' })}</span>
+            ) : null
+          ) },
         ]}
       />
+      <BootstrapBundleConfirmDialog
+        action={bundleConfirm}
+        node={node}
+        busy={bundleBusy}
+        acknowledged={bundleAcknowledged}
+        onAcknowledged={setBundleAcknowledged}
+        onConfirm={() => void runBundleAction()}
+        onClose={closeBundleConfirm}
+      />
     </div>
+  );
+}
+
+function BootstrapBundleConfirmDialog({
+  action,
+  node,
+  busy,
+  acknowledged,
+  onAcknowledged,
+  onConfirm,
+  onClose,
+}: {
+  action: BootstrapBundleConfirmAction | null;
+  node: NodeDetail;
+  busy: boolean;
+  acknowledged: boolean;
+  onAcknowledged: (value: boolean) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  if (!action) return null;
+  const operation = action.type === 'reveal' ? t('nodes.manualBundleReveal') : t('nodes.manualBundleDownload');
+  return (
+    <ConfirmDialog title={t('nodes.manualBundleConfirmTitle', { operation })} open={Boolean(action)} onClose={onClose}>
+      <div className="page-stack">
+        <p>{t('nodes.manualBundleConfirmIntro')}</p>
+        <div className="definition-grid">
+          <span>{t('nodes.node')}</span><strong>{nodeLabel(node)}</strong>
+          <span>{t('nodes.bootstrapRun')}</span><strong><code>{shortID(action.run.id)}</code></strong>
+          <span>{t('nodes.manualBundleAction')}</span><strong>{operation}</strong>
+        </div>
+        <ul className="muted">
+          <li>{t('nodes.manualBundleContainsSensitive')}</li>
+          <li>{t('nodes.manualBundleActionAudited')}</li>
+          <li>{t('nodes.manualBundleRepeatedAudited')}</li>
+          <li>{t('nodes.manualBundleLiveOnboardingNotVerified')}</li>
+        </ul>
+        <Checkbox
+          checked={acknowledged}
+          onChange={(event) => onAcknowledged(event.target.checked)}
+          label={t('nodes.manualBundleAcknowledge')}
+        />
+        <Toolbar>
+          <Button variant="danger" disabled={busy || !acknowledged} onClick={onConfirm}>{operation}</Button>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </div>
+    </ConfirmDialog>
   );
 }
 

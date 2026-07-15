@@ -11,6 +11,9 @@ type FetchCall = {
   method: string;
   path: string;
   body?: Record<string, unknown>;
+  headers: Record<string, string>;
+  credentials?: RequestCredentials;
+  cache?: RequestCache;
 };
 
 const node = {
@@ -167,6 +170,19 @@ const bootstrapRuns = [
     request_payload: { bootstrap_mode: 'ssh_bootstrap' },
     created_at: '2026-07-09T08:00:00Z',
   },
+  {
+    id: 'bootstrap-run-manual',
+    node_id: 'node-1',
+    job_id: 'job-bootstrap-manual',
+    status: 'succeeded',
+    bootstrap_mode: 'manual_bundle',
+    request_payload: { bootstrap_mode: 'manual_bundle' },
+    result_payload: { manual_bundle_available: true },
+    manual_bundle_available: true,
+    started_at: '2026-07-09T08:01:00Z',
+    finished_at: '2026-07-09T08:02:00Z',
+    created_at: '2026-07-09T08:00:30Z',
+  },
 ];
 
 function json(payload: unknown, status = 200) {
@@ -201,6 +217,14 @@ function trackedBody(method: string, path: string, body?: Record<string, unknown
     };
   }
   return body;
+}
+
+function trackedHeaders(headers: HeadersInit | undefined): Record<string, string> {
+  const output: Record<string, string> = {};
+  new Headers(headers || {}).forEach((value, key) => {
+    output[key] = value;
+  });
+  return output;
 }
 
 function renderPage(auth: typeof authPayload = authPayload) {
@@ -244,6 +268,8 @@ describe('NodesPage', () => {
   let createdNode: typeof node | null;
   let currentNode: typeof node;
   let currentAccessMethods: typeof accessMethods;
+  let manualBundleRevealContent: string;
+  let manualBundleDownloadContent: string;
 
   beforeEach(async () => {
     calls.length = 0;
@@ -252,6 +278,8 @@ describe('NodesPage', () => {
     createdNode = null;
     nodeList = [currentNode];
     currentAccessMethods = accessMethods.map((method) => ({ ...method }));
+    manualBundleRevealContent = '';
+    manualBundleDownloadContent = '';
     window.localStorage.clear();
     window.sessionStorage.clear();
     await i18n.changeLanguage('en');
@@ -260,7 +288,14 @@ describe('NodesPage', () => {
       const method = String(init?.method || 'GET').toUpperCase();
       const path = `${url.pathname}${url.search}`;
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
-      calls.push({ method, path, body: trackedBody(method, path, body) });
+      calls.push({
+        method,
+        path,
+        body: trackedBody(method, path, body),
+        headers: trackedHeaders(init?.headers),
+        credentials: init?.credentials,
+        cache: init?.cache,
+      });
 
       if (method === 'GET' && url.pathname === '/api/v1/auth/me') return json(authPayload);
       if (method === 'GET' && url.pathname === '/api/v1/nodes') return json(nodeList);
@@ -333,6 +368,39 @@ describe('NodesPage', () => {
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/enrollment-tokens') return json(enrollmentTokens);
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/access-methods') return json(currentAccessMethods);
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/bootstrap-runs') return json(bootstrapRuns);
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/bootstrap-runs/bootstrap-run-manual/bundle/reveal') {
+        const status = actionErrors.bundleReveal;
+        if (status) {
+          const messages: Record<number, string> = {
+            400: 'invalid bootstrap bundle request',
+            403: 'node.bootstrap permission required',
+            404: 'manual bundle no longer available',
+            409: 'manual bundle is unresolved',
+            413: 'manual bundle is too large',
+            500: 'audit sink unavailable',
+            503: 'secret storage is unavailable',
+          };
+          return json({ error: messages[status] || 'manual bundle reveal failed' }, status);
+        }
+        return json({
+          node_id: 'node-1',
+          bootstrap_run_id: 'bootstrap-run-manual',
+          filename: 'megavpn-agent-edge-one-bootstrap.env',
+          agent_bootstrapenv: manualBundleRevealContent,
+          revealed_at: '2026-07-09T08:03:00Z',
+        });
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/bootstrap-runs/bootstrap-run-manual/bundle/download') {
+        const status = actionErrors.bundleDownload;
+        if (status) return json({ error: 'manual bundle download failed' }, status);
+        return new Response(manualBundleDownloadContent, {
+          status: 200,
+          headers: {
+            'content-type': 'text/plain',
+            'content-disposition': 'attachment; filename="megavpn-agent-edge-one-bootstrap.env"',
+          },
+        });
+      }
       if (method === 'GET' && url.pathname.startsWith('/api/v1/jobs/')) return json(job(url.pathname.split('/')[4]));
       if (method === 'GET' && url.pathname.endsWith('/logs')) return json([{ level: 'info', message: 'queued' }]);
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/maintenance/enable') {
@@ -709,6 +777,119 @@ describe('NodesPage', () => {
     expect(storageSet.mock.calls.some(([key, value]) => String(key).toLowerCase().includes('token') || String(value).includes('enroll-secret-token') || String(value).includes('ssh-session-ticket'))).toBe(false);
     expect(window.localStorage.getItem('enrollment_token')).toBeNull();
     expect(window.sessionStorage.getItem('enrollment_token')).toBeNull();
+  });
+
+  it('reveals, copies and downloads manual bootstrap bundles only after explicit acknowledgement', async () => {
+    manualBundleRevealContent = 'MEGAVPN_BOOTSTRAP_MODE=manual\nMEGAVPN_NODE=edge-one\n';
+    manualBundleDownloadContent = 'MEGAVPN_DOWNLOAD_BUNDLE=manual\n';
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    const createObjectURL = vi.fn(() => 'blob:manual-bootstrap-bundle');
+    const revokeObjectURL = vi.fn();
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: clipboardWrite } });
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Bootstrap' }));
+    expect((await screen.findAllByText('Available')).length).toBeGreaterThan(0);
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Reveal bundle' })[0]);
+    let dialog = activeDialog();
+    expect(within(dialog).getByText('Edge One')).toBeInTheDocument();
+    expect(within(dialog).getByText('bootstra...')).toBeInTheDocument();
+    expect(within(dialog).getByText('Action')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/MEGAVPN_BOOTSTRAP_MODE/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/secret_ref/i)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Reveal bundle' })).toBeDisabled();
+    expect(calls.some((call) => call.method === 'POST' && call.path.includes('/bundle/reveal'))).toBe(false);
+
+    await userEvent.click(within(dialog).getByLabelText(/I understand this is sensitive one-time bootstrap material/));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Reveal bundle' }));
+    const revealPath = '/api/v1/nodes/node-1/bootstrap-runs/bootstrap-run-manual/bundle/reveal';
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === revealPath)).toBe(true));
+    const revealCall = calls.find((call) => call.method === 'POST' && call.path === revealPath);
+    expect(revealCall?.body).toEqual({});
+    expect(revealCall?.headers['x-megavpn-csrf']).toBe('1');
+    expect(revealCall?.headers.accept).toBe('application/json');
+    expect(revealCall?.credentials).toBe('include');
+    expect(screen.getByLabelText('Manual bootstrap bundle content')).toHaveValue('MEGAVPN_BOOTSTRAP_MODE=manual\nMEGAVPN_NODE=edge-one\n');
+    expect(screen.queryByText(/secret_ref_id/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Copy bundle' }));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith('MEGAVPN_BOOTSTRAP_MODE=manual\nMEGAVPN_NODE=edge-one\n'));
+    expect(await screen.findByText('Manual bootstrap bundle copied to clipboard.')).toBeInTheDocument();
+
+    const downloadButtons = screen.getAllByRole('button', { name: 'Download bundle' });
+    await userEvent.click(downloadButtons[0]);
+    dialog = activeDialog();
+    expect(within(dialog).queryByText(/MEGAVPN_BOOTSTRAP_MODE/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/secret_ref/i)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Download bundle' })).toBeDisabled();
+    await userEvent.click(within(dialog).getByLabelText(/I understand this is sensitive one-time bootstrap material/));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Download bundle' }));
+
+    const downloadPath = '/api/v1/nodes/node-1/bootstrap-runs/bootstrap-run-manual/bundle/download';
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === downloadPath)).toBe(true));
+    const downloadCall = calls.find((call) => call.method === 'POST' && call.path === downloadPath);
+    expect(downloadCall?.body).toEqual({});
+    expect(downloadCall?.headers['x-megavpn-csrf']).toBe('1');
+    expect(downloadCall?.headers.accept).toBe('text/plain, application/octet-stream');
+    expect(downloadCall?.credentials).toBe('include');
+    expect(downloadCall?.cache).toBe('no-store');
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(anchorClick).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:manual-bootstrap-bundle');
+    expect(await screen.findByText('Manual bootstrap bundle download was started.')).toBeInTheDocument();
+
+    expect(calls.some((call) => call.method === 'GET' && /\/bundle(?:$|\?)/.test(call.path))).toBe(false);
+    expect(calls.some((call) => call.path === '/api/v1/secret-refs')).toBe(false);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+    expect(JSON.stringify(calls)).not.toContain('MEGAVPN_BOOTSTRAP_MODE');
+    expect(window.localStorage.getItem('manual_bundle')).toBeNull();
+    expect(window.sessionStorage.getItem('manual_bundle')).toBeNull();
+    expect(storageSet.mock.calls.some(([key, value]) => `${key} ${value}`.includes('MEGAVPN_BOOTSTRAP_MODE'))).toBe(false);
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleDebug).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close and clear' }));
+    expect(screen.queryByLabelText('Manual bootstrap bundle content')).not.toBeInTheDocument();
+    expect(screen.queryByText(/MEGAVPN_BOOTSTRAP_MODE/)).not.toBeInTheDocument();
+  });
+
+  it('keeps manual bootstrap bundle reveal and download disabled without node.bootstrap permission', async () => {
+    await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
+    await userEvent.click(screen.getByRole('tab', { name: 'Bootstrap' }));
+
+    expect(await screen.findByText('Permission required: node.bootstrap to reveal or download manual bootstrap bundles.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reveal bundle' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download bundle' })).not.toBeInTheDocument();
+    expect(calls.some((call) => call.path.includes('/bundle/reveal') || call.path.includes('/bundle/download'))).toBe(false);
+  });
+
+  it('clears stale revealed bundle content and refetches runs on manual bundle 404', async () => {
+    manualBundleRevealContent = 'MEGAVPN_BOOTSTRAP_MODE=manual\nMEGAVPN_NODE=edge-one\n';
+
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Bootstrap' }));
+    await userEvent.click(screen.getAllByRole('button', { name: 'Reveal bundle' })[0]);
+    let dialog = activeDialog();
+    await userEvent.click(within(dialog).getByLabelText(/I understand this is sensitive one-time bootstrap material/));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Reveal bundle' }));
+    await screen.findByLabelText('Manual bootstrap bundle content');
+
+    actionErrors.bundleReveal = 404;
+    await userEvent.click(screen.getAllByRole('button', { name: 'Reveal bundle' })[0]);
+    dialog = activeDialog();
+    await userEvent.click(within(dialog).getByLabelText(/I understand this is sensitive one-time bootstrap material/));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Reveal bundle' }));
+
+    await screen.findByText('Manual bootstrap bundle is no longer available. The bootstrap runs list was refreshed.');
+    expect(screen.queryByLabelText('Manual bootstrap bundle content')).not.toBeInTheDocument();
+    expect(calls.filter((call) => call.method === 'GET' && call.path === '/api/v1/nodes/node-1/bootstrap-runs?limit=25').length).toBeGreaterThan(1);
   });
 
   it('keeps SSH access method creation gated by node.bootstrap permission', async () => {

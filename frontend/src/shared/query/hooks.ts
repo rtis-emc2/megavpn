@@ -44,6 +44,7 @@ import {
   deleteInstance,
   deleteRuntimeArtifact,
   deleteServicePack,
+  downloadNodeBootstrapBundle,
   discoverNodeServices,
   disableNodeFirewall,
   endpoints,
@@ -115,6 +116,7 @@ import {
   removeClientAccessGroupMember,
   removeClientAccessGroupMembership,
   retireNode,
+  revealNodeBootstrapBundle,
   revokeEnrollmentToken,
   revokeClientShareLink,
   revokeClientSubscription,
@@ -269,6 +271,8 @@ import type {
   HostKeyScanResult,
   NodeAgentState,
   NodeAccessMethod,
+  NodeBootstrapBundleDownloadResult,
+  NodeBootstrapBundleRevealResult,
   NodeBootstrapRun,
   NodeCapability,
   NodeCapabilityDrift,
@@ -333,6 +337,18 @@ type QueryOptions<T> = Omit<UseQueryOptions<T, Error>, 'queryKey' | 'queryFn'>;
 export type NodeSSHAccessMethodCreateVariables = Omit<NodeSSHAccessMethodCreateInput, 'private_key'> & {
   nodeId: string;
   readPrivateKey: () => string;
+};
+
+export type NodeBootstrapBundleRevealVariables = {
+  nodeId: string;
+  runId: string;
+  consume: (result: NodeBootstrapBundleRevealResult) => void;
+};
+
+export type NodeBootstrapBundleDownloadVariables = {
+  nodeId: string;
+  runId: string;
+  consume: (result: NodeBootstrapBundleDownloadResult) => void;
 };
 
 const stale = {
@@ -590,6 +606,26 @@ export function useBootstrapNode() {
     onSuccess: (result, input) => {
       invalidateNodeQueries(queryClient, input.nodeId);
       invalidateJobsFromResult(queryClient, result);
+    },
+  });
+}
+
+export function useRevealNodeBootstrapBundle() {
+  return useMutation<void, Error, NodeBootstrapBundleRevealVariables>({
+    gcTime: 0,
+    mutationFn: async ({ nodeId, runId, consume }) => {
+      const result = await revealNodeBootstrapBundle(nodeId, runId);
+      consume(result);
+    },
+  });
+}
+
+export function useDownloadNodeBootstrapBundle() {
+  return useMutation<void, Error, NodeBootstrapBundleDownloadVariables>({
+    gcTime: 0,
+    mutationFn: async ({ nodeId, runId, consume }) => {
+      const result = await downloadNodeBootstrapBundle(nodeId, runId);
+      consume(result);
     },
   });
 }

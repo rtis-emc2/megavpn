@@ -164,6 +164,7 @@ Affected operation classes:
 - settings apply;
 - rollback;
 - node retire/force-retire.
+- manual bootstrap bundle reveal/download.
 
 ## 10. Secure SSH Access Method Creation Review
 
@@ -212,14 +213,63 @@ Evidence controls:
 The UI minimizes secret lifetime and prevents application-level persistence;
 JavaScript runtime memory erasure is not guaranteed.
 
-## 11. RC1 Limitations
+## 11. Manual Bootstrap Bundle Reveal/Download Review
+
+Nodes -> Bootstrap now supports manual bootstrap bundle reveal and download
+without `/legacy/`. The reviewed scope is secure operator retrieval from an
+already completed manual bootstrap run; live operator onboarding validation
+remains release-validation debt.
+
+Backend/API controls used by the UI:
+
+- purpose-specific `POST /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle/reveal`;
+- purpose-specific `POST /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle/download`;
+- `node.bootstrap` authorization and existing CSRF/session handling;
+- scoped node/run lookup with `manual_bundle_available` status from the
+  bootstrap run metadata;
+- backend-owned secret resolution; the UI does not inspect secret refs or
+  `result_payload` to discover bundle contents;
+- backend audit/fail-closed behavior remains authoritative.
+
+Frontend controls:
+
+- the new UI does not call deprecated compatibility `GET /bundle`;
+- the new UI does not call `/api/v1/secret-refs`;
+- reveal and download both require explicit confirmation plus an
+  acknowledgement checkbox;
+- confirmation dialogs show only safe metadata: node label, short bootstrap run
+  ID and action type;
+- revealed bundle content is held only in local component state and is cleared
+  on close, target/permission changes, new reveal and unmount;
+- reveal mutation variables contain node ID, run ID and a one-time consumer, not
+  the bundle content;
+- download always calls the dedicated POST download endpoint, even when a reveal
+  panel is already open;
+- download uses an object URL and temporary anchor, then removes the anchor and
+  revokes the object URL;
+- copy uses `navigator.clipboard.writeText` only on explicit operator click;
+- stale 404 clears matching revealed content and refetches bootstrap runs;
+- 403 clears matching revealed content and reports a safe permission error.
+
+Evidence controls:
+
+- API tests cover POST reveal/download, CSRF, credentials, no-store blob
+  download, filename parsing/sanitization and HTML-response rejection;
+- page tests cover confirmation gating, acknowledgement gating, copy/download,
+  404 stale clearing/refetch, permission gating, no `/legacy/`, no
+  `/api/v1/secret-refs` and no browser-storage persistence for bundle content.
+
+The UI minimizes bundle lifetime and prevents application-level persistence;
+JavaScript runtime memory erasure is not guaranteed.
+
+## 12. RC1 Limitations
 
 The new console remains incomplete for final write parity. The following are
 intentionally disabled, backend-missing or legacy-only after FE8-P0-09B:
 
 - non-VLESS access service materialization and access-group migration conflict UI;
-- node agent registration/onboarding, manual bootstrap bundle reveal, agent
-  identity revoke, reboot, emergency cleanup and stale rotation cleanup;
+- node agent registration/onboarding, agent identity revoke, reboot, emergency
+  cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance

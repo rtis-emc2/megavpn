@@ -33,6 +33,12 @@ type RequestOptions = RequestInit & {
   parseAs?: 'json' | 'text' | 'empty';
 };
 
+type BlobRequestResult = {
+  blob: Blob;
+  contentType: string;
+  contentDisposition?: string;
+};
+
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = String(options.method || 'GET').toUpperCase();
   const headers = new Headers(options.headers || {});
@@ -66,6 +72,44 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
 
   return payload as T;
+}
+
+export async function apiBlobRequest(path: string, options: RequestInit = {}): Promise<BlobRequestResult> {
+  const method = String(options.method || 'GET').toUpperCase();
+  const headers = new Headers(options.headers || {});
+  headers.set('Accept', headers.get('Accept') || 'text/plain, application/octet-stream');
+  if (!safeMethods.has(method)) {
+    headers.set('X-MegaVPN-CSRF', '1');
+  }
+
+  const response = await fetch(apiURL(path), {
+    credentials: 'include',
+    cache: 'no-store',
+    ...options,
+    method,
+    headers,
+  });
+
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok) {
+    if (contentType.includes('application/json')) {
+      const payload = await response.json().catch(() => null);
+      const message = typeof payload === 'object' && payload && 'error' in payload
+        ? String((payload as { error?: unknown }).error || '')
+        : `${path}: HTTP ${response.status}`;
+      throw new APIError(message, response.status, payload);
+    }
+    throw new APIError(`${path}: HTTP ${response.status}`, response.status, null);
+  }
+  if (contentType.toLowerCase().includes('text/html')) {
+    throw new APIError('download response was not a file', response.status, null);
+  }
+
+  return {
+    blob: await response.blob(),
+    contentType,
+    contentDisposition: response.headers.get('content-disposition') || undefined,
+  };
 }
 
 export function sendJSON<T>(path: string, method: string, payload?: unknown): Promise<T> {
