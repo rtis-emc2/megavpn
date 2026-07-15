@@ -794,6 +794,10 @@ func writeSensitiveErr(w nethttp.ResponseWriter, code int, msg string) {
 	writeSensitiveJSON(w, code, response{"status": "error", "error": msg})
 }
 
+func writeSensitiveCodeErr(w nethttp.ResponseWriter, code int, errCode, msg string) {
+	writeSensitiveJSON(w, code, response{"status": "error", "code": errCode, "error": msg})
+}
+
 func decode(r *nethttp.Request, v any) bool {
 	return decodeJSONBody(r, v, false)
 }
@@ -2343,6 +2347,13 @@ const (
 	maxAgentRegisterAddressLength  = 512
 	maxAgentRegisterVersionLength  = 128
 	maxAgentRegisterProtocolLength = 64
+
+	agentRegistrationRequestInvalid         = "agent_registration_request_invalid"
+	agentEnrollmentReissueRequired          = "agent_enrollment_reissue_required"
+	agentEnrollmentNodeRetired              = "agent_enrollment_node_retired"
+	agentRegistrationRateLimited            = "agent_registration_rate_limited"
+	agentRegistrationTemporarilyUnavailable = "agent_registration_temporarily_unavailable"
+	agentRegistrationInternalError          = "agent_registration_internal_error"
 )
 
 var agentRegisterNodeIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -2470,15 +2481,15 @@ func validateAgentRegisterMetadata(req *agentRegisterReq) string {
 func writeAgentRegisterStoreError(w nethttp.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrAgentRegistrationInvalidCredential):
-		writeSensitiveErr(w, nethttp.StatusUnauthorized, "agent registration credential invalid")
+		writeSensitiveCodeErr(w, nethttp.StatusUnauthorized, agentEnrollmentReissueRequired, "agent enrollment requires a new enrollment token")
 	case errors.Is(err, domain.ErrAgentRegistrationNodeNotFound):
-		writeSensitiveErr(w, nethttp.StatusNotFound, "agent registration target node not found")
+		writeSensitiveCodeErr(w, nethttp.StatusNotFound, agentRegistrationRequestInvalid, "agent registration target node not found")
 	case errors.Is(err, domain.ErrAgentRegistrationNodeRetired):
-		writeSensitiveErr(w, nethttp.StatusConflict, "agent registration target node is retired")
+		writeSensitiveCodeErr(w, nethttp.StatusConflict, agentEnrollmentNodeRetired, "agent registration target node is retired")
 	case errors.Is(err, domain.ErrAgentRegistrationAuditFailed):
-		writeSensitiveErr(w, nethttp.StatusInternalServerError, "agent registration failed")
+		writeSensitiveCodeErr(w, nethttp.StatusInternalServerError, agentRegistrationInternalError, "agent registration failed")
 	default:
-		writeSensitiveErr(w, nethttp.StatusInternalServerError, "agent registration failed")
+		writeSensitiveCodeErr(w, nethttp.StatusServiceUnavailable, agentRegistrationTemporarilyUnavailable, "agent registration temporarily unavailable")
 	}
 }
 
@@ -2512,7 +2523,7 @@ func (s *Server) agentRegister(w nethttp.ResponseWriter, r *nethttp.Request) {
 	setSensitiveResponseHeaders(w)
 	var req agentRegisterReq
 	if !decode(r, &req) {
-		writeSensitiveErr(w, 400, "invalid agent register payload")
+		writeSensitiveCodeErr(w, 400, agentRegistrationRequestInvalid, "invalid agent register payload")
 		return
 	}
 	defer req.clearCredentials()
@@ -2525,25 +2536,25 @@ func (s *Server) agentRegister(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var err error
 	if hasNodeID || hasEnrollmentToken {
 		if !hasNodeID || !hasEnrollmentToken {
-			writeSensitiveErr(w, 400, "agent enrollment requires node_id and enrollment_token")
+			writeSensitiveCodeErr(w, 400, agentRegistrationRequestInvalid, "agent enrollment requires node_id and enrollment_token")
 			return
 		}
 		if hasLegacyCredential {
-			writeSensitiveErr(w, 400, "agent registration credentials are ambiguous")
+			writeSensitiveCodeErr(w, 400, agentRegistrationRequestInvalid, "agent registration credentials are ambiguous")
 			return
 		}
 		if msg := validateAgentRegisterEnrollment(&req); msg != "" {
-			writeSensitiveErr(w, 400, msg)
+			writeSensitiveCodeErr(w, 400, agentRegistrationRequestInvalid, msg)
 			return
 		}
 		n, agentToken, err = s.store.RegisterAgentWithEnrollmentVersion(r.Context(), req.NodeID, req.EnrollmentToken, req.Name, req.Address, req.AgentVersion, req.ProtocolVersion)
 	} else if hasLegacyCredential {
 		if msg := validateAgentRegisterLegacy(&req, bearer); msg != "" {
-			writeSensitiveErr(w, 400, msg)
+			writeSensitiveCodeErr(w, 400, agentRegistrationRequestInvalid, msg)
 			return
 		}
 		if !s.allowAutoRegister || !s.authorizeAgentBootstrap(r, req.Token) {
-			writeSensitiveErr(w, 401, "agent registration credential invalid")
+			writeSensitiveCodeErr(w, 401, agentEnrollmentReissueRequired, "agent enrollment requires a new enrollment token")
 			return
 		}
 		n, err = s.store.UpsertAgentNodeWithVersion(r.Context(), req.Name, req.Address, req.Token, req.AgentVersion, req.ProtocolVersion)
@@ -2552,7 +2563,7 @@ func (s *Server) agentRegister(w nethttp.ResponseWriter, r *nethttp.Request) {
 			agentToken = bearer
 		}
 	} else {
-		writeSensitiveErr(w, 401, "agent enrollment required: set MEGAVPN_AGENT_NODE_ID and MEGAVPN_AGENT_ENROLLMENT_TOKEN")
+		writeSensitiveCodeErr(w, 401, agentEnrollmentReissueRequired, "agent enrollment required: set MEGAVPN_AGENT_NODE_ID and MEGAVPN_AGENT_ENROLLMENT_TOKEN")
 		return
 	}
 	if err != nil {

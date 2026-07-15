@@ -16,6 +16,99 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/agentauth"
 )
 
+const (
+	maxAgentAPIErrorBodyBytes          = 4096
+	maxAgentAPIErrorMessageLength      = 240
+	agentCodeEnrollmentReissueRequired = "agent_enrollment_reissue_required"
+	agentCodeRegistrationRateLimited   = "agent_registration_rate_limited"
+	agentCodeEnrollmentNodeRetired     = "agent_enrollment_node_retired"
+)
+
+type agentAPIError struct {
+	StatusCode int
+	Code       string
+	Message    string
+	RetryAfter time.Duration
+}
+
+func (e *agentAPIError) Error() string {
+	if e == nil {
+		return "agent api request failed"
+	}
+	msg := strings.TrimSpace(e.Message)
+	if msg == "" {
+		msg = "request failed"
+	}
+	code := strings.TrimSpace(e.Code)
+	if code == "" {
+		code = "unknown"
+	}
+	return fmt.Sprintf("agent api request failed: status=%d code=%s message=%s", e.StatusCode, code, msg)
+}
+
+func readAgentAPIErrorBody(resp *http.Response) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, nil
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, maxAgentAPIErrorBodyBytes+1))
+}
+
+func parseAgentAPIError(resp *http.Response, body []byte) error {
+	apiErr := &agentAPIError{Message: "control plane request failed"}
+	if resp != nil {
+		apiErr.StatusCode = resp.StatusCode
+		apiErr.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now)
+	}
+	if len(body) > maxAgentAPIErrorBodyBytes {
+		body = body[:maxAgentAPIErrorBodyBytes]
+	}
+	var payload struct {
+		Code    string `json:"code"`
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if len(bytes.TrimSpace(body)) == 0 || json.Unmarshal(body, &payload) != nil {
+		apiErr.Message = "control plane returned a non-json error"
+		return apiErr
+	}
+	apiErr.Code = strings.TrimSpace(payload.Code)
+	apiErr.Message = truncateAgentAPIErrorMessage(first(payload.Error, payload.Message, "control plane request failed"))
+	return apiErr
+}
+
+func truncateAgentAPIErrorMessage(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if len(msg) <= maxAgentAPIErrorMessageLength {
+		return msg
+	}
+	return strings.TrimSpace(msg[:maxAgentAPIErrorMessageLength])
+}
+
+func parseRetryAfter(value string, now func() time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	parsed, err := http.ParseTime(value)
+	if err != nil {
+		return 0
+	}
+	if now == nil {
+		now = time.Now
+	}
+	delay := parsed.Sub(now().UTC())
+	if delay < 0 {
+		return 0
+	}
+	return delay
+}
+
 func newClient(baseURL, token, statePath string) *client {
 	return &client{
 		baseURL:                      strings.TrimRight(baseURL, "/"),
@@ -170,12 +263,19 @@ func (c client) post(ctx context.Context, path string, payload any, out any) err
 		return err
 	}
 	defer resp.Body.Close()
+	if path == "/agent/register" && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+		body, readErr := readAgentAPIErrorBody(resp)
+		if readErr != nil {
+			return readErr
+		}
+		return parseAgentAPIError(resp, body)
+	}
 	body, readErr := c.readSignedResponseBody(req, resp, path != "/agent/register")
 	if readErr != nil {
 		return readErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+		return parseAgentAPIError(resp, body)
 	}
 	if out != nil {
 		return json.Unmarshal(body, out)

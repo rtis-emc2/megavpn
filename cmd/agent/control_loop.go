@@ -2,11 +2,28 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/rtis-emc2/megavpn/internal/platform/config"
 )
+
+var ErrEnrollmentReissueRequired = errors.New("agent enrollment requires a new enrollment token")
+var ErrEnrollmentTerminal = errors.New("agent enrollment stopped by terminal registration error")
+
+type enrollmentErrorClass string
+
+const (
+	enrollmentErrorTransient             enrollmentErrorClass = "transient"
+	enrollmentErrorReissueRequired       enrollmentErrorClass = "reissue_required"
+	enrollmentErrorTerminalConfiguration enrollmentErrorClass = "terminal_configuration"
+	enrollmentErrorContextCancelled      enrollmentErrorClass = "context_cancelled"
+	maxEnrollmentRetryAfter                                   = 2 * time.Minute
+)
+
+var agentSleepContext = sleepContext
 
 func enrollWithRetry(ctx context.Context, log agentLogger, cfg config.Config, bootstrap bootstrapConfig) (*agentState, error) {
 	c := newClient(bootstrap.ControlPlaneURL, "", cfg.Agent.StatePath)
@@ -26,13 +43,97 @@ func enrollWithRetry(ctx context.Context, log agentLogger, cfg config.Config, bo
 			log.Info("agent enrolled", "node", st.NodeName, "node_id", st.NodeID, "state_path", cfg.Agent.StatePath)
 			return st, nil
 		}
+		class := classifyEnrollmentError(ctx, err)
+		switch class {
+		case enrollmentErrorContextCancelled:
+			return nil, err
+		case enrollmentErrorReissueRequired:
+			log.Error("agent enrollment requires a new enrollment token", "node_id", bootstrap.NodeID, "status", agentAPIErrorStatus(err), "code", agentAPIErrorCode(err))
+			return nil, fmt.Errorf("%w: %v", ErrEnrollmentReissueRequired, err)
+		case enrollmentErrorTerminalConfiguration:
+			log.Error("agent enrollment stopped by terminal registration error", "node_id", bootstrap.NodeID, "status", agentAPIErrorStatus(err), "code", agentAPIErrorCode(err))
+			return nil, fmt.Errorf("%w: %v", ErrEnrollmentTerminal, err)
+		}
 		wait := retryDelay(attempt, 3*time.Second, 45*time.Second)
-		log.Error("agent register failed; retry scheduled", "error", err, "retry_in", wait.String())
-		if err := sleepContext(ctx, wait); err != nil {
+		if retryAfter := agentRetryAfter(err); retryAfter > 0 {
+			wait = boundedEnrollmentRetryAfter(retryAfter)
+		}
+		log.Error("agent register failed; retry scheduled", "status", agentAPIErrorStatus(err), "code", agentAPIErrorCode(err), "retry_in", wait.String())
+		if err := agentSleepContext(ctx, wait); err != nil {
 			return nil, err
 		}
 		attempt++
 	}
+}
+
+func classifyEnrollmentError(ctx context.Context, err error) enrollmentErrorClass {
+	if err == nil {
+		return enrollmentErrorTransient
+	}
+	if errors.Is(err, context.Canceled) {
+		return enrollmentErrorContextCancelled
+	}
+	if ctx != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+		return enrollmentErrorContextCancelled
+	}
+	var apiErr *agentAPIError
+	if errors.As(err, &apiErr) {
+		switch {
+		case apiErr.StatusCode == 401 && apiErr.Code == agentCodeEnrollmentReissueRequired:
+			return enrollmentErrorReissueRequired
+		case apiErr.StatusCode == 408 || apiErr.StatusCode == 429 || apiErr.StatusCode == 500 || apiErr.StatusCode == 502 || apiErr.StatusCode == 503 || apiErr.StatusCode == 504:
+			return enrollmentErrorTransient
+		case apiErr.StatusCode >= 400 && apiErr.StatusCode < 500:
+			return enrollmentErrorTerminalConfiguration
+		default:
+			return enrollmentErrorTransient
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		if ctx != nil && ctx.Err() != nil {
+			return enrollmentErrorContextCancelled
+		}
+		return enrollmentErrorTransient
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return enrollmentErrorTransient
+	}
+	return enrollmentErrorTerminalConfiguration
+}
+
+func agentRetryAfter(err error) time.Duration {
+	var apiErr *agentAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.RetryAfter
+	}
+	return 0
+}
+
+func boundedEnrollmentRetryAfter(delay time.Duration) time.Duration {
+	if delay <= 0 {
+		return 0
+	}
+	if delay > maxEnrollmentRetryAfter {
+		return maxEnrollmentRetryAfter
+	}
+	return delay
+}
+
+func agentAPIErrorStatus(err error) int {
+	var apiErr *agentAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode
+	}
+	return 0
+}
+
+func agentAPIErrorCode(err error) string {
+	var apiErr *agentAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Code
+	}
+	return ""
 }
 
 func runControlLoop(ctx context.Context, log agentLogger, pollInterval time.Duration, c *client, st *agentState) {

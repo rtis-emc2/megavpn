@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -17,6 +18,55 @@ type httpDoerFunc func(*http.Request) (*http.Response, error)
 
 func (f httpDoerFunc) Do(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func TestAgentAPIErrorParsesStatusCodeMessageAndRetryAfterSeconds(t *testing.T) {
+	t.Parallel()
+
+	err := parseAgentAPIError(&http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Retry-After": []string{"7"}},
+	}, []byte(`{"status":"error","code":"agent_registration_rate_limited","error":"rate limit exceeded"}`))
+	var apiErr *agentAPIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T, want *agentAPIError", err)
+	}
+	if apiErr.StatusCode != http.StatusTooManyRequests || apiErr.Code != agentCodeRegistrationRateLimited || apiErr.Message != "rate limit exceeded" || apiErr.RetryAfter != 7*time.Second {
+		t.Fatalf("api error = %#v", apiErr)
+	}
+	if strings.Contains(apiErr.Error(), `{"status"`) {
+		t.Fatalf("Error() echoed full response body: %s", apiErr.Error())
+	}
+}
+
+func TestAgentAPIErrorParsesRetryAfterHTTPDate(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 15, 6, 0, 0, 0, time.UTC)
+	header := now.Add(11 * time.Second).Format(http.TimeFormat)
+	if got := parseRetryAfter(header, func() time.Time { return now }); got != 11*time.Second {
+		t.Fatalf("Retry-After date parsed as %s, want 11s", got)
+	}
+	if got := parseRetryAfter("not-a-date", func() time.Time { return now }); got != 0 {
+		t.Fatalf("invalid Retry-After parsed as %s, want 0", got)
+	}
+}
+
+func TestAgentAPIErrorDoesNotEchoNonJSONOrOversizedBody(t *testing.T) {
+	t.Parallel()
+
+	secretBody := strings.Repeat("secret-response-body-", 600)
+	err := parseAgentAPIError(&http.Response{StatusCode: http.StatusInternalServerError, Header: http.Header{}}, []byte(secretBody))
+	var apiErr *agentAPIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T, want *agentAPIError", err)
+	}
+	if apiErr.Message != "control plane returned a non-json error" {
+		t.Fatalf("message = %q", apiErr.Message)
+	}
+	if strings.Contains(apiErr.Error(), "secret-response-body") {
+		t.Fatalf("Error() echoed non-json body: %s", apiErr.Error())
+	}
 }
 
 func TestRegisterAcceptsUnsignedHardenedResponse(t *testing.T) {

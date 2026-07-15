@@ -127,6 +127,7 @@ func TestAgentRegisterRejectsPartialMixedAndUnknownCredentials(t *testing.T) {
 			if rec.Code != nethttp.StatusBadRequest {
 				t.Fatalf("status = %d body=%s, want 400", rec.Code, rec.Body.String())
 			}
+			assertAgentRegisterErrorCode(t, rec, agentRegistrationRequestInvalid)
 			if store.enrollmentCalls != 0 || store.legacyCalls != 0 {
 				t.Fatalf("store was called for invalid credentials: enrollment=%d legacy=%d", store.enrollmentCalls, store.legacyCalls)
 			}
@@ -147,6 +148,7 @@ func TestAgentRegisterRejectsEnrollmentPlusLegacyBearer(t *testing.T) {
 	if rec.Code != nethttp.StatusBadRequest {
 		t.Fatalf("status = %d body=%s, want 400", rec.Code, rec.Body.String())
 	}
+	assertAgentRegisterErrorCode(t, rec, agentRegistrationRequestInvalid)
 	if store.enrollmentCalls != 0 {
 		t.Fatalf("enrollment store called for mixed bearer credential")
 	}
@@ -163,6 +165,7 @@ func TestAgentRegisterLegacyModeRemainsExplicitlyGated(t *testing.T) {
 	if rec.Code != nethttp.StatusUnauthorized {
 		t.Fatalf("status = %d body=%s, want 401 when allowAutoRegister is disabled", rec.Code, rec.Body.String())
 	}
+	assertAgentRegisterErrorCode(t, rec, agentEnrollmentReissueRequired)
 	if store.legacyCalls != 0 {
 		t.Fatalf("legacy store called while auto-register disabled")
 	}
@@ -191,6 +194,12 @@ func TestAgentRegisterSafeErrorMappingAndNoTokenLeak(t *testing.T) {
 	if rec.Code != nethttp.StatusUnauthorized {
 		t.Fatalf("status = %d body=%s, want 401", rec.Code, rec.Body.String())
 	}
+	assertAgentRegisterErrorCode(t, rec, agentEnrollmentReissueRequired)
+	for _, state := range []string{"invalid", "expired", "revoked", "used", "consumed"} {
+		if strings.Contains(strings.ToLower(rec.Body.String()), state) {
+			t.Fatalf("credential state %q leaked in generic reissue-required response", state)
+		}
+	}
 	if strings.Contains(rec.Body.String(), "super-secret-enrollment-token") {
 		t.Fatal("error response leaked enrollment token")
 	}
@@ -198,6 +207,29 @@ func TestAgentRegisterSafeErrorMappingAndNoTokenLeak(t *testing.T) {
 		t.Fatal("request logs leaked enrollment token")
 	}
 	assertAgentRegisterNoStoreHeaders(t, rec)
+}
+
+func TestAgentRegisterCredentialStatesShareGenericReissueCode(t *testing.T) {
+	t.Parallel()
+
+	for _, state := range []string{"invalid", "expired", "revoked", "used"} {
+		state := state
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			store := &agentRegisterHTTPTestStore{enrollmentErr: domain.ErrAgentRegistrationInvalidCredential}
+			handler := New(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), store, Options{})
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(nethttp.MethodPost, "/agent/register", strings.NewReader(`{"node_id":"11111111-1111-4111-8111-111111111111","enrollment_token":"test-enrollment-token"}`))
+			handler.ServeHTTP(rec, req)
+			if rec.Code != nethttp.StatusUnauthorized {
+				t.Fatalf("status = %d body=%s, want 401", rec.Code, rec.Body.String())
+			}
+			assertAgentRegisterErrorCode(t, rec, agentEnrollmentReissueRequired)
+			if strings.Contains(strings.ToLower(rec.Body.String()), state) {
+				t.Fatalf("credential state %q leaked in response", state)
+			}
+		})
+	}
 }
 
 func TestAgentRegisterRateLimitUsesSensitiveErrorHeaders(t *testing.T) {
@@ -217,7 +249,51 @@ func TestAgentRegisterRateLimitUsesSensitiveErrorHeaders(t *testing.T) {
 	if rec.Code != nethttp.StatusTooManyRequests {
 		t.Fatalf("second status = %d, want 429", rec.Code)
 	}
+	assertAgentRegisterErrorCode(t, rec, agentRegistrationRateLimited)
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("Retry-After header should be preserved for agent registration rate limit")
+	}
 	assertAgentRegisterNoStoreHeaders(t, rec)
+}
+
+func TestAgentRegisterTerminalAndInternalErrorCodes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		err      error
+		wantHTTP int
+		wantCode string
+	}{
+		{name: "retired", err: domain.ErrAgentRegistrationNodeRetired, wantHTTP: nethttp.StatusConflict, wantCode: agentEnrollmentNodeRetired},
+		{name: "audit", err: domain.ErrAgentRegistrationAuditFailed, wantHTTP: nethttp.StatusInternalServerError, wantCode: agentRegistrationInternalError},
+		{name: "unexpected", err: errAgentRegisterTestStoreFailure{}, wantHTTP: nethttp.StatusServiceUnavailable, wantCode: agentRegistrationTemporarilyUnavailable},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := &agentRegisterHTTPTestStore{enrollmentErr: tc.err}
+			handler := New(slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), store, Options{})
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(nethttp.MethodPost, "/agent/register", strings.NewReader(`{"node_id":"11111111-1111-4111-8111-111111111111","enrollment_token":"test-enrollment-token"}`))
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.wantHTTP {
+				t.Fatalf("status = %d body=%s, want %d", rec.Code, rec.Body.String(), tc.wantHTTP)
+			}
+			assertAgentRegisterErrorCode(t, rec, tc.wantCode)
+			if strings.Contains(rec.Body.String(), "database is down") {
+				t.Fatalf("raw store error leaked: %s", rec.Body.String())
+			}
+			assertAgentRegisterNoStoreHeaders(t, rec)
+		})
+	}
+}
+
+type errAgentRegisterTestStoreFailure struct{}
+
+func (errAgentRegisterTestStoreFailure) Error() string {
+	return "database is down with internal detail"
 }
 
 func assertAgentRegisterNoStoreHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
@@ -242,5 +318,22 @@ func assertAgentRegisterNoStoreHeaders(t *testing.T, rec *httptest.ResponseRecor
 	}
 	if got := rec.Header().Get("Last-Modified"); got != "" {
 		t.Fatalf("Last-Modified = %q, want absent", got)
+	}
+}
+
+func assertAgentRegisterErrorCode(t *testing.T, rec *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if payload["status"] != "error" {
+		t.Fatalf("error status field = %#v, want error", payload["status"])
+	}
+	if payload["code"] != want {
+		t.Fatalf("error code = %#v, want %q; payload=%#v", payload["code"], want, payload)
+	}
+	if _, ok := payload["agent_token"]; ok {
+		t.Fatalf("error response must not include agent_token: %#v", payload)
 	}
 }
