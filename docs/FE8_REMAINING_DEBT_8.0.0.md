@@ -2,7 +2,7 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-15T05:31:52Z`
+Generated UTC: `2026-07-15T13:18:28Z`
 
 Final cutover status: **NO-GO** until every required item below is completed or explicitly waived by release owners with a dated rationale.
 
@@ -34,16 +34,20 @@ Release-blocking details:
   metadata is `8.0.0`; HEAD is not tagged. Do not partially update version
   metadata without release owner approval, tag/version policy, install metadata
   review, live smoke and a full final gate.
-- Live disposable smoke: no disposable API, DB, node, endpoint domain or
-  certificate id was available in this workstation session. Use
-  `docs/FE8_LIVE_SMOKE_PLAN_8.0.0.md` before final cutover.
+- Live disposable smoke: no disposable API, DB, live external node, endpoint
+  domain or certificate id was available in this workstation session. Guided
+  Agent Registration/Onboarding has implementation and disposable
+  HTTP/PostgreSQL protocol evidence, but live/staging validation of actual
+  node-side bootstrap execution, registration, heartbeat and inventory remains
+  a release blocker. Use `docs/FE8_LIVE_SMOKE_PLAN_8.0.0.md` before final
+  cutover.
 - Full release gate: local diagnostic gate can run with explicit skips, but it
   is not production release evidence while clean npm install, backup/restore,
   API smoke and service matrix inputs are missing. Disposable PostgreSQL
   integration evidence now exists for the tested backend suites, including
-  secure SSH access-method creation and manual bootstrap bundle
-  reveal/download; local workstation PostgreSQL availability is not equivalent
-  to that GitHub CI service evidence.
+  secure SSH access-method creation, manual bootstrap bundle reveal/download
+  and guided agent onboarding protocol flows; local workstation PostgreSQL
+  availability is not equivalent to that GitHub CI service evidence.
 - Legacy rollback: keep `/legacy/` until cutover is signed off and tested.
 - GitHub Actions Node.js 20 deprecation: closed by moving pinned Actions to
   upstream node24 major pins while preserving commit-SHA pinning.
@@ -80,12 +84,15 @@ Release-blocking details:
 | Text LF guards | PASS | `scripts/ci/text-lf-guard.sh`, `scripts/ci/docs-markdown-shape.sh` and `scripts/ci/docs-consistency.sh` passed locally and in CI. |
 | SSH access-method PostgreSQL evidence | PASS | Evidence HEAD `1ffda5b00efb98fa9f60d22a998f1e9e2c52daf2`; GitHub Actions run `29361072970`, job `PostgreSQL integration tests`. |
 | Manual bootstrap bundle PostgreSQL/HTTP evidence | PASS | Evidence HEAD `3abc200c3d7c5525eaded994244af488d0728b41`; CI run `29391281058` required bundle infra/http groups without skips. |
+| Agent onboarding protocol and React workflow evidence | PASS | Disposable HTTP/PostgreSQL protocol evidence; guided React operator workflow; live external-node smoke OPEN. |
 | Release gate | PARTIAL | Diagnostic run with `MEGAVPN_RELEASE_ALLOW_SKIPS=1` passed 19 gates and skipped 7 workstation/live-env gates. |
 | Live disposable smoke | OPEN | Required API/DB/node inputs are unavailable. |
 | Responsive evidence | OPEN | Real workflow screenshots are not captured. |
 | i18n wording review | PARTIAL | Key parity passed; human wording review remains open. |
 
 ## Backend-Missing Sub-Actions
+
+Backend-Missing count: **6**.
 
 | Domain | Sub-action |
 | --- | --- |
@@ -107,14 +114,13 @@ Backend-missing reasons:
 
 ## Future-Scope Sub-Actions
 
-Future-Scope count: **7**. Previous count was 8; removed completed item:
-`Nodes | Manual bootstrap bundle reveal`.
+Future-Scope count: **6**. Previous count was 7; removed completed item:
+`Nodes | Agent registration/onboarding`.
 
 | Domain | Sub-action |
 | --- | --- |
 | Clients -> Groups | Non-VLESS materialization |
 | Clients -> Groups | Migration conflict UI |
-| Nodes | Agent registration/onboarding |
 | Nodes | Agent identity revoke/reboot/cleanup |
 | Nodes | Service discovery ignore/unignore |
 | Platform Access | User lifecycle mutations |
@@ -125,9 +131,32 @@ Future-scope decisions:
 - Non-VLESS materialization stays catalog-only in this frontend cutover.
 - Migration conflict UI remains future scope.
 - Nodes create/edit safe control-plane profile metadata is migrated in
-  FE8-P0-09B step 1. Agent registration/onboarding remains future scope or
-  approved legacy/dedicated workflow because it can involve bootstrap and
-  secret-bearing setup.
+  FE8-P0-09B step 1.
+- Agent Registration/Onboarding is completed for the guided React operator
+  workflow and removed from Future-Scope. Completed scope includes hardened
+  agent registration, explicit enrollment and legacy modes, atomic
+  enrollment-token consumption, hash-only agent-token persistence,
+  transactional registration audit, deterministic retry and reissue-required
+  handling, explicit operator replacement-token recovery, real signed
+  heartbeat, request-signature and replay protection, real inventory job
+  polling/result submission/persistence, backend-derived diagnostics, guided
+  onboarding status, secure token issue/reissue, guided SSH/manual-bundle
+  bootstrap, registration and first-heartbeat waiting, guided inventory
+  synchronization, backend-derived ready state, no browser `/agent/*` calls
+  and no `/legacy/` dependency for the guided operator workflow.
+- Agent Registration/Onboarding evidence: backend hardening commit
+  `2a8784b36f47d35f758968a382b33c785ee534af`, retry/reissue commit
+  `54dfcb83c2fdd2444d8b868289b5c995a14dfbdf`, real HTTP/PostgreSQL evidence
+  commit `8206a42cfab7a6218fdcc7caf2222050b694fdca` with GitHub Actions run
+  `29401792602`, final functional onboarding commit
+  `42065d6ac765a66ac983c611c0f0fdfaf8cb67a2` with GitHub Actions run
+  `29415883087`, and acceptance/operator documentation commit
+  `51bc714728baec8fcd2355ba87146fdb19a9dcd1` with GitHub Actions run
+  `29417560392`.
+- Live external-node onboarding smoke remains OPEN. The remaining release
+  blocker is live/staging validation of actual enrollment-material delivery,
+  node-side bootstrap execution, registration, heartbeat, inventory and
+  rollback, not missing browser implementation.
 - New SSH access method creation was completed through a dedicated atomic
   backend endpoint, explicit host-key verification workflow, transient
   private-key form handling, encrypted PostgreSQL secret storage and
@@ -147,7 +176,7 @@ Future-scope decisions:
   `27fcaf4a0e7fe90e3cb6ee80a0f2b22de05722cb`, PostgreSQL/HTTP evidence HEAD
   `3abc200c3d7c5525eaded994244af488d0728b41`, CI run `29391281058`.
   Disposable PostgreSQL and real HTTP/router evidence exists for this isolated
-  workflow; live node/bootstrap smoke and agent onboarding remain open.
+  workflow; live external-node bootstrap and onboarding smoke remains open.
 - Agent identity revoke, reboot and cleanup remain future scope or legacy-only.
 - Service discovery ignore/unignore is not migrated in FE8-P0-05A.
 - Platform user lifecycle mutations remain future scope.
@@ -172,14 +201,15 @@ Minimum disposable smoke coverage before final release decision:
 13. Runtime artifact URL import.
 14. Nodes create/edit, diagnostics, inventory, capabilities and discovery.
 15. Nodes bootstrap, security and control for disposable nodes.
-16. Certificates/PKI import preview/apply.
-17. Certificates/PKI self-signed, managed CA and issue-from-CA.
-18. Certificates/PKI default, revoke, delete and PKI root create.
-19. Platform settings save/apply.
-20. Mail settings/test.
-21. Users, invites and sessions.
-22. Backhaul apply, probe, promote and route projection.
-23. Route Policy preview, apply and cleanup on disposable topology.
+16. Guided Agent Registration/Onboarding on a disposable external node.
+17. Certificates/PKI import preview/apply.
+18. Certificates/PKI self-signed, managed CA and issue-from-CA.
+19. Certificates/PKI default, revoke, delete and PKI root create.
+20. Platform settings save/apply.
+21. Mail settings/test.
+22. Users, invites and sessions.
+23. Backhaul apply, probe, promote and route projection.
+24. Route Policy preview, apply and cleanup on disposable topology.
 
 ## Release-Gate Plan
 
@@ -252,7 +282,8 @@ Current diagnostic release-gate evidence:
 ## Final Cutover Decision
 
 NO-GO because version metadata still reports `7.1.1.0`, live disposable
-API/DB smoke and staging operator validation are not complete, the full final
-release gate has not been run on a version-synchronized final SHA, responsive
-evidence and i18n wording review are still open, and multiple backend-missing
-or future-scope sub-actions remain outside the 8.0.0 frontend cutover.
+API/DB/node smoke and staging operator validation are not complete, the full
+final release gate has not been run on a version-synchronized final SHA,
+responsive evidence and i18n wording review are still open, and multiple
+backend-missing or future-scope sub-actions remain outside the 8.0.0 frontend
+cutover.

@@ -2,13 +2,13 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-15T05:31:52Z`
+Generated UTC: `2026-07-15T13:18:28Z`
 
 Current FE8 evidence HEAD:
-`3abc200c3d7c5525eaded994244af488d0728b41`
+`51bc714728baec8fcd2355ba87146fdb19a9dcd1`
 
 Current FE8 evidence CI:
-GitHub Actions run `29391281058` PASS.
+GitHub Actions run `29417560392` PASS.
 
 ## Status
 
@@ -58,8 +58,11 @@ the new React console serves the root UI and migrated workflows.
 - `Nodes`: create/edit, observability, diagnostics, inventory, secure SSH
   access-method creation, secure manual bootstrap bundle reveal/download,
   bootstrap, enrollment tokens, SSH session ticket launch, host-key scan/pin,
-  agent token rotation and retire workflows where backend endpoints exist.
-  Agent onboarding and live bootstrap validation are not complete.
+  agent token rotation, retire workflows and guided Agent
+  Registration/Onboarding where backend endpoints exist. Guided onboarding
+  includes secure enrollment-token issue/reissue, SSH/manual-bundle bootstrap
+  guidance and submission, registration/heartbeat progression, guided inventory
+  synchronization, backend-derived ready state and no browser `/agent/*` calls.
 - `Platform -> Certificates`: certificate list/detail, import preview/apply,
   self-signed create, managed CA create, issue, set default, revoke/delete and
   managed PKI root creation where backend endpoints exist.
@@ -87,18 +90,41 @@ the new React console serves the root UI and migrated workflows.
   acknowledgement, uses transient local reveal state, audits backend
   reveal/download actions, uses no-store download responses and does not expose
   public secret references.
+- Agent registration is atomic and audited; plaintext agent tokens are stored
+  server-side only as hashes, and enrollment tokens remain non-reusable after
+  consumption.
+- Response-loss recovery requires explicit operator reissue.
+- Signed post-registration requests use timestamp, nonce, body hash and
+  signature verification; replay protection is covered by integration tests.
+- One-time enrollment-token values are not retained in query data or mutation
+  data.
+- Guided bootstrap sends only `bootstrap_mode`.
+- Accepted jobs are not treated as successful registration, heartbeat or
+  inventory milestones.
+- Permissions remain split between `node.bootstrap` and `node.write`.
 - Frontend static guards block page-level raw API calls, production console
   logging, unreviewed HTML sinks and unsafe browser token storage.
 - RBAC, CSRF, audit and backend validation remain backend-owned controls.
 
 ## CI Evidence
 
-- Current evidence HEAD: `3abc200c3d7c5525eaded994244af488d0728b41`.
-- GitHub Actions CI: `29391281058` PASS.
+- Current evidence HEAD: `51bc714728baec8fcd2355ba87146fdb19a9dcd1`.
+- GitHub Actions CI: `29417560392` PASS.
+- Protocol evidence HEAD:
+  `8206a42cfab7a6218fdcc7caf2222050b694fdca`.
+- Protocol CI: `29401792602` PASS.
+- Final functional onboarding HEAD:
+  `42065d6ac765a66ac983c611c0f0fdfaf8cb67a2`.
+- Final functional onboarding CI: `29415883087` PASS.
+- Acceptance/operator evidence HEAD:
+  `51bc714728baec8fcd2355ba87146fdb19a9dcd1`.
+- Acceptance/operator evidence CI: `29417560392` PASS.
 - PostgreSQL integration job: `PostgreSQL integration tests` PASS against
-  PostgreSQL 16, including non-skipping SSH access-method store/HTTP tests,
-  manual bootstrap bundle store test and manual bootstrap bundle real
-  HTTP/router/PostgreSQL test. Required focused groups executed without skips.
+  PostgreSQL 16, including registration, token reissue recovery, signed
+  heartbeat, replay rejection, inventory job, job polling/result, inventory
+  persistence, diagnostics, SSH access-method store/HTTP tests and manual
+  bootstrap bundle real HTTP/router/PostgreSQL tests. Required focused groups
+  executed without skips.
 - Local Go checks passed: `gofmt -l cmd internal`, `go vet ./...`,
   `go test ./...`, `go test -race ./...` and
   `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin`.
@@ -133,16 +159,17 @@ any final production cutover decision.
 - Version tag and release metadata are not synchronized to final `8.0.0`.
 - Full production release gate has not passed without skips.
 - Live disposable API/DB/node smoke has not run.
-- Live node/bootstrap and agent onboarding validation has not run.
+- Live external-node onboarding smoke has not run.
 - Disposable PostgreSQL integration evidence exists for the tested backend
-  suites, including SSH access-method creation and manual bootstrap bundle
-  reveal/download.
+  suites, including SSH access-method creation, manual bootstrap bundle
+  reveal/download and guided Agent Registration/Onboarding.
 - Backup/restore evidence remains missing.
 - Full live disposable API/DB/node smoke remains missing.
 - Responsive desktop/tablet/phone workflow evidence is missing.
 - Human English/Russian i18n wording review remains open.
-- Backend-missing and future-scope sub-actions remain documented in
+- Six backend-missing rows and six future-scope rows remain documented in
   `docs/FE8_REMAINING_DEBT_8.0.0.md`.
+- `/legacy/` rollback remains required.
 
 ## Rollback
 
