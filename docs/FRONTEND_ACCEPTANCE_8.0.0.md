@@ -56,7 +56,54 @@ Final release debt readiness assessment:
   the new UI is limited to API base and locale, and text LF shape is protected
   by `scripts/ci/text-lf-guard.sh`.
 
-Current FE8-P0-09B evidence date UTC: `2026-07-15T05:31:52Z`
+Current FE8-P0-09B evidence date UTC: `2026-07-15T12:54:06Z`
+
+FE8-P0-09B agent registration hardening commit:
+`2a8784b36f47d35f758968a382b33c785ee534af`
+
+FE8-P0-09B agent registration hardening CI:
+GitHub Actions run `29393548655` PASS.
+
+FE8-P0-09B enrollment retry/reissue recovery commit:
+`54dfcb83c2fdd2444d8b868289b5c995a14dfbdf`
+
+FE8-P0-09B enrollment retry/reissue recovery CI:
+GitHub Actions run `29398570940` PASS.
+
+FE8-P0-09B real HTTP/PostgreSQL onboarding evidence commit:
+`8206a42cfab7a6218fdcc7caf2222050b694fdca`
+
+FE8-P0-09B real HTTP/PostgreSQL onboarding evidence CI:
+GitHub Actions run `29401792602` PASS, including the PostgreSQL integration
+job.
+
+FE8-P0-09B read-only onboarding UI commit:
+`40c769278e7098c9662d2129d4f7b568012374cb`
+
+FE8-P0-09B read-only onboarding UI CI:
+GitHub Actions run `29404400407` PASS.
+
+FE8-P0-09B secure token actions commit:
+`dfeb94276c9d996003e6a3785bd41afdf625df16`
+
+FE8-P0-09B secure token actions CI:
+GitHub Actions run `29407238972` PASS.
+
+FE8-P0-09B guided bootstrap commit:
+`5d5532b26bc8bda228dc51d079b823f1ea2b232f`
+
+FE8-P0-09B guided bootstrap CI:
+GitHub Actions run `29411127362` PASS.
+
+FE8-P0-09B guided registration/heartbeat/inventory progression commit:
+`42065d6ac765a66ac983c611c0f0fdfaf8cb67a2`
+
+FE8-P0-09B guided registration/heartbeat/inventory progression CI:
+GitHub Actions run `29415883087` PASS, including PostgreSQL integration.
+
+FE8-P0-09B Step 4D.1 agent onboarding evidence commit:
+recorded in the final task response after commit and push. This file does not
+self-embed the commit SHA because doing so would change the commit hash.
 
 FE8-P0-09B Nodes create/edit feature commit:
 recorded in the final task response after commit and push.
@@ -187,8 +234,14 @@ workflows are connected in the new UI without `/legacy/` for configured nodes:
 enrollment token create/rotate/revoke, bootstrap/reinstall job queueing,
 host-key scan/pin, SSH session ticket launch, agent token rotation and
 retire/force-retire. Nodes create and edit safe profile metadata are connected
-in the new UI without `/legacy/` for control-plane node records. Client generic
-edit, routes list/create/update/delete,
+in the new UI without `/legacy/` for control-plane node records. Nodes guided
+agent onboarding is accepted for PR-review evidence without `/legacy/` for
+control-plane guidance, enrollment-token issue/reissue, response-loss recovery
+guidance, SSH/manual-bundle bootstrap selection, bootstrap job submission,
+registration waiting, first-heartbeat waiting, guided inventory-sync
+submission, inventory job progression and backend-derived ready-state
+derivation. Live external-node onboarding smoke and final release debt closure
+remain open. Client generic edit, routes list/create/update/delete,
 service access list/rotation/revoke/delete, generated config cleanup and
 client delivery history are connected in the new UI without `/legacy/` where
 the backend supports the operation.
@@ -206,7 +259,8 @@ or future scope. Remaining workflows listed below are still not migrated.
 
 ## 1. Summary
 
-This evidence records the current 8.0.0 frontend branch after FE8-P0-08A:
+This evidence records the current 8.0.0 frontend branch after FE8-P0-09B
+Step 4D.1 agent onboarding evidence sync:
 
 - CI push coverage includes `release/8.0.0-frontend-console` and `release/**`;
   pull request coverage remains enabled.
@@ -435,10 +489,76 @@ safe metadata edit workflows against mocked backend API responses:
 
 Nodes create/edit safe profile workflows work in the new UI without `/legacy/`
 for control-plane node records. Generic create/edit does not create SSH secrets
-or claim enrollment/online state. Agent registration/onboarding, live manual
-bundle execution, agent identity revoke, reboot, emergency cleanup, stale
-rotation cleanup and service discovery ignore/unignore remain separate/open
-workflows.
+or claim enrollment/online state. Guided agent onboarding is recorded in the
+next section. Live external-node onboarding smoke, live manual bundle
+execution, agent identity revoke, reboot, emergency cleanup, stale rotation
+cleanup and service discovery ignore/unignore remain separate/open workflows.
+
+## FE8-P0-09B Agent Registration and Onboarding Acceptance Evidence
+
+FE8-P0-09B Step 4D.1 accepts the guided Agent Onboarding operator workflow for
+PR-review and controlled-staging evidence. The accepted scope is the
+control-plane workflow only: onboarding guidance, enrollment-token
+issue/reissue, response-loss recovery guidance, SSH/manual-bundle bootstrap
+selection, bootstrap job submission, registration waiting, first-heartbeat
+waiting, guided inventory-sync submission, inventory job progression and
+ready-state derivation. The workflow stays in the new UI and does not require
+`/legacy/`.
+
+Implementation and evidence chain:
+
+| Evidence item | Commit / run | Status |
+| --- | --- | --- |
+| Backend registration hardening | `2a8784b36f47d35f758968a382b33c785ee534af`; GitHub Actions run `29393548655` | PASS |
+| Retry/reissue and response-loss recovery | `54dfcb83c2fdd2444d8b868289b5c995a14dfbdf`; GitHub Actions run `29398570940` | PASS |
+| Real HTTP/router/PostgreSQL onboarding evidence | `8206a42cfab7a6218fdcc7caf2222050b694fdca`; GitHub Actions run `29401792602` | PASS |
+| Read-only onboarding UI | `40c769278e7098c9662d2129d4f7b568012374cb`; GitHub Actions run `29404400407` | PASS |
+| Secure token actions | `dfeb94276c9d996003e6a3785bd41afdf625df16`; GitHub Actions run `29407238972` | PASS |
+| Guided bootstrap action | `5d5532b26bc8bda228dc51d079b823f1ea2b232f`; GitHub Actions run `29411127362` | PASS |
+| Guided registration, heartbeat and inventory progression | `42065d6ac765a66ac983c611c0f0fdfaf8cb67a2`; GitHub Actions run `29415883087` | PASS |
+
+Accepted integration scope:
+
+- disposable PostgreSQL;
+- real router, session/RBAC and CSRF;
+- real agent registration endpoint;
+- real agent request signatures, body hashes, timestamp windows, nonces and
+  replay protection;
+- signed heartbeat;
+- real job queue, job claim, polling and result submission;
+- real inventory submission and inventory persistence;
+- real diagnostics;
+- replacement-token recovery after response loss;
+- backend-derived `communication_state = inventory_ok`.
+
+Frontend/operator evidence:
+
+- guided onboarding derives state only from backend operator read APIs;
+- enrollment-token plaintext values are handled through the one-time secret
+  panel path and are not retained in query data, mutation data, storage, URLs,
+  logs, toasts or snapshots;
+- guided bootstrap sends only `{ bootstrap_mode }` and does not set
+  `reinstall_agent` or `force_reenroll`;
+- guided inventory sync uses the existing operator
+  `POST /api/v1/nodes/{id}/inventory/sync` wrapper/hook from `NodeDrawer`;
+- `node.write` is required separately from `node.bootstrap` for guided
+  inventory sync;
+- accepted jobs are tracked as asynchronous jobs and are not treated as
+  registration, heartbeat, inventory evidence or success;
+- ready state requires registration, heartbeat, inventory evidence and a
+  healthy backend communication state;
+- the browser does not call `/agent/*` and implemented onboarding workflows do
+  not call `/legacy/`.
+
+Explicitly unverified scope remains:
+
+- no live external node was installed/onboarded;
+- no live SSH target final release evidence was produced;
+- no production heartbeat was claimed;
+- no production inventory was claimed;
+- no live external-node smoke was run;
+- release gate on the final functional commit remains SKIPPED / OPEN, not PASS;
+- final 8.0.0 cutover remains NO-GO.
 
 ## FE8-P0-09B Secure SSH Access Method Evidence
 
@@ -871,6 +991,11 @@ Fully connected in the new console:
   create/rotate/revoke, bootstrap/reinstall job queueing, manual bootstrap
   bundle reveal/download, host-key scan/pin, SSH access-method creation, SSH
   session ticket launch, agent token rotation and retire/force-retire.
+- `Nodes` guided agent onboarding: control-plane guidance, enrollment-token
+  issue/reissue, response-loss recovery guidance, SSH/manual-bundle bootstrap
+  selection, bootstrap job submission, registration waiting, first-heartbeat
+  waiting, guided inventory-sync submission, inventory job progression and
+  backend-derived ready-state derivation.
 - `Clients -> Routes/Maintenance` generic client edit, route
   list/create/update/delete, service access list/rotation/revoke/delete,
   delivery history and generated config cleanup.
@@ -890,8 +1015,8 @@ Still disabled, read-only or legacy-only:
 
 - non-VLESS access group materialization workflows;
 - migration conflict UI for access groups;
-- node agent registration/onboarding, agent identity revoke, reboot, emergency
-  cleanup and stale rotation cleanup;
+- live external node onboarding smoke, Step 4D.2 release debt closure, agent
+  identity revoke, reboot, emergency cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance draft-save
@@ -939,11 +1064,11 @@ Still disabled, read-only or legacy-only:
   runtime artifact delete endpoint in this release.
 - No browser screenshot/responsive Playwright evidence was produced in this
   pass.
-- Integrated live API smoke was not run against a disposable DB/API in this
-  session; current evidence is frontend/API-contract test coverage against
+- Integrated live API smoke was not run against a disposable DB/API/node in
+  this session; current evidence is frontend/API-contract test coverage against
   mocked backend responses, local commands and GitHub disposable PostgreSQL
-  integration evidence for the secure SSH access-method and manual bootstrap
-  bundle reveal/download workflows.
+  integration evidence for the secure SSH access-method, manual bootstrap
+  bundle reveal/download and guided agent onboarding workflows.
 
 ## 14. Go / No-Go
 
@@ -955,10 +1080,11 @@ Recommendation:
   backend supports the exact sub-action, Firewall preview/apply/disable,
   existing Instances runtime control, service pack instance creation, manual
   instance creation, runtime artifact list/import, existing Nodes
-  observability/diagnostics/inventory and Nodes bootstrap/security/control
-  workflows, Certificates/PKI workflows and Platform settings/mail/access
-  workflows, Backhaul link actions and Route Policy preview/apply/cleanup where
-  backend endpoints exist in controlled staging after operator review.
+  observability/diagnostics/inventory, Nodes bootstrap/security/control and
+  Nodes guided agent onboarding workflows, Certificates/PKI workflows and
+  Platform settings/mail/access workflows, Backhaul link actions and Route
+  Policy preview/apply/cleanup where backend endpoints exist in controlled
+  staging after operator review.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
@@ -966,9 +1092,11 @@ Remaining blockers for final cutover:
 1. run integrated smoke/e2e against disposable DB/API data for VLESS, Clients
    core/artifacts/delivery/routes/access maintenance/config cleanup, Firewall
    Instances/Service Packs, Backhaul and Route Policy runtime operator flows;
-2. migrate remaining Nodes onboarding/registration and destructive remediation
-   workflows not included in FE8-P0-05B/FE8-P0-09B, including agent identity
-   revoke, reboot, emergency cleanup and stale rotation cleanup;
+2. complete Step 4D.2 debt/release/PR-package closure for Nodes
+   onboarding/registration, keep live external-node onboarding smoke open until
+   a real disposable node is validated, and migrate or explicitly defer the
+   remaining destructive remediation workflows: agent identity revoke, reboot,
+   emergency cleanup and stale rotation cleanup;
 3. add backend/browser support for runtime artifact delete if it is required for
    final operator parity;
 4. decide whether Backhaul create/delete, direct Platform user lifecycle

@@ -351,8 +351,70 @@ scan/pin, SSH session ticket launch, agent token rotation, retire/force-retire
    enrolled, пока это не вернет backend/agent.
 
 Ограничение FE8-P0-09B: generic create/edit форма создает только control-plane
-node record. Agent registration/onboarding и live bootstrap остаются отдельными
-операционными шагами.
+node record. Agent registration/onboarding выполняется через отдельную вкладку
+`Onboarding`; live external-node smoke остается release-validation debt до
+проверки на disposable API/DB/node стенде.
+
+## 8.1 Guided agent onboarding
+
+Guided onboarding в новой React UI предназначен для control-plane процедуры
+подключения агента без перехода в `/legacy/`. Browser не вызывает `/agent/*`:
+registration, heartbeat, job claim/result и inventory отправляет только сам
+agent через backend agent protocol.
+
+Операторский workflow:
+
+1. Откройте `Nodes`.
+2. Выберите node.
+3. Откройте вкладку `Onboarding`.
+4. Проверьте six-step status model:
+   - control-plane record;
+   - enrollment token;
+   - bootstrap method;
+   - registration;
+   - heartbeat;
+   - inventory readiness.
+5. Если UI рекомендует issue или reissue enrollment token, нажмите
+   соответствующее действие.
+6. Укажите TTL от 1 до 720 часов и подтвердите, что plaintext token является
+   sensitive material и показывается только один раз.
+7. Скопируйте token только в approved secure channel.
+8. Закройте one-time panel после передачи token.
+9. Выберите bootstrap mode, который UI считает доступным:
+   - `ssh_bootstrap`, если SSH access method настроен и host-key trust
+     подтвержден;
+   - `manual_bundle`, если backend показывает доступный manual bundle path.
+10. Подтвердите выбранный mode. Guided request отправляет только
+    `{ bootstrap_mode }`; он не включает `reinstall_agent`, `force_reenroll`,
+    token value, token id, SSH private key, secret reference или node profile
+    fields.
+11. Отслеживайте backend job/run в UI. Accepted или queued job не считается
+    успешным onboarding.
+12. Дождитесь backend-derived registration evidence.
+13. Дождитесь first heartbeat. UI не считает node ready только по bootstrap job.
+14. Когда registration и heartbeat подтверждены, запустите guided inventory
+    sync, если UI предлагает это действие и у оператора есть permission
+    `node.write`.
+15. Подтвердите inventory sync. UI ставит только
+    `POST /api/v1/nodes/{id}/inventory/sync` через operator endpoint.
+16. Дождитесь inventory job progression и backend inventory evidence.
+17. Считайте node ready только когда UI показывает registration, heartbeat,
+    inventory evidence и healthy communication state.
+
+Security notes:
+
+- enrollment-token plaintext не хранится в query cache, mutation state,
+  localStorage, sessionStorage, URL, logs, toasts или screenshots;
+- если one-time token panel закрыт, повторно открыть старый plaintext нельзя;
+- stale token response отбрасывается при смене node, закрытии drawer, потере
+  permission или новом one-time secret action;
+- guided onboarding не revoke tokens и не показывает manual bundle material;
+- reveal/download manual bundle остаются только на вкладке `Bootstrap`;
+- guided inventory sync требует `node.write` отдельно от `node.bootstrap`;
+- unknown или failed registration/heartbeat/inventory states должны
+  расследоваться через Diagnostics и Jobs, а не обходиться manual success;
+- live external-node onboarding, SSH connectivity и bundle execution на
+  реальной node должны быть подтверждены отдельно перед production cutover.
 
 Чтобы добавить новый SSH access method с secret material в новой UI:
 

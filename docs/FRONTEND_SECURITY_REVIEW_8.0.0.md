@@ -341,8 +341,10 @@ Frontend controls:
 - manual bundle reveal/download buttons remain only in the Bootstrap tab; the
   Onboarding tab may navigate to Bootstrap when
   `manual_bundle_available === true`;
-- the Onboarding tab has no buttons for token revoke, manual bundle
-  reveal/download or inventory sync;
+- the Onboarding tab has no buttons for token revoke or manual bundle
+  reveal/download; guided inventory sync is exposed only after backend
+  registration and heartbeat evidence, requires `node.write` separately from
+  `node.bootstrap`, and uses the shared operator inventory-sync endpoint;
 - issue/reissue requires explicit confirmation, a valid TTL between 1 and 720
   hours and an acknowledgement that the plaintext token is sensitive and shown
   only once;
@@ -399,6 +401,32 @@ Frontend controls:
 
 Evidence controls:
 
+- backend registration hardening commit
+  `2a8784b36f47d35f758968a382b33c785ee534af`, GitHub Actions run
+  `29393548655` PASS;
+- retry/reissue and response-loss recovery commit
+  `54dfcb83c2fdd2444d8b868289b5c995a14dfbdf`, GitHub Actions run
+  `29398570940` PASS;
+- real HTTP/router/PostgreSQL onboarding evidence commit
+  `8206a42cfab7a6218fdcc7caf2222050b694fdca`, GitHub Actions run
+  `29401792602` PASS;
+- read-only onboarding UI commit
+  `40c769278e7098c9662d2129d4f7b568012374cb`, GitHub Actions run
+  `29404400407` PASS;
+- secure token actions commit
+  `dfeb94276c9d996003e6a3785bd41afdf625df16`, GitHub Actions run
+  `29407238972` PASS;
+- guided bootstrap commit
+  `5d5532b26bc8bda228dc51d079b823f1ea2b232f`, GitHub Actions run
+  `29411127362` PASS;
+- guided registration, heartbeat and inventory progression commit
+  `42065d6ac765a66ac983c611c0f0fdfaf8cb67a2`, GitHub Actions run
+  `29415883087` PASS, including PostgreSQL integration;
+- PostgreSQL integration covers disposable PostgreSQL, real router,
+  session/RBAC/CSRF, real agent registration, signed heartbeat, signed job
+  claim/result flow, replay protection, real inventory persistence, real
+  diagnostics, replacement-token recovery and backend-derived
+  `communication_state = inventory_ok`;
 - pure-model tests cover not-started, active token, bootstrap queued/running,
   successful/failed bootstrap ordering, registration, revoked agent, heartbeat
   states, unhealthy communication states, inventory evidence, ready criteria,
@@ -426,8 +454,9 @@ Evidence controls:
   calls, no `/legacy/`, polling lifecycle, partial query failure display,
   browser-storage safety and absence of production console logging.
 
-Final acceptance/debt closure remains pending Step 4D. Live external-node smoke
-remains release-validation debt.
+Guided Agent Onboarding security review is accepted for PR-review evidence in
+Step 4D.1. Release debt accounting remains Step 4D.2, and live external-node
+smoke remains release-validation debt.
 
 ## 13. RC1 Limitations
 
@@ -435,8 +464,7 @@ The new console remains incomplete for final write parity. The following are
 intentionally disabled, backend-missing or legacy-only after FE8-P0-09B:
 
 - non-VLESS access service materialization and access-group migration conflict UI;
-- final guided node agent onboarding acceptance/evidence/debt closure pending
-  Step 4D;
+- live external-node onboarding smoke and Step 4D.2 release debt closure;
 - agent identity revoke, reboot, emergency cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
