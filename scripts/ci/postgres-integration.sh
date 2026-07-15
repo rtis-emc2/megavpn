@@ -109,6 +109,15 @@ run_json_checked \
   TestPostgresIntegrationGetNodeBootstrapRunScopedAndResolvesManualBundleSecret
 
 run_json_checked \
+  ./internal/infra/postgres \
+  'TestPostgresIntegrationRegisterAgentWithEnrollment' \
+  'postgres-agent-registration-infra' \
+  TestPostgresIntegrationRegisterAgentWithEnrollmentAtomic \
+  TestPostgresIntegrationRegisterAgentWithEnrollmentRollbackOnAuditFailure \
+  TestPostgresIntegrationRegisterAgentWithEnrollmentRejectsRetiredBeforeTokenUse \
+  TestPostgresIntegrationRegisterAgentWithEnrollmentConcurrentTokenUse
+
+run_json_checked \
   ./internal/api/http \
   'TestPostgresIntegrationCreateNodeSSHAccessMethodHTTP' \
   'postgres-ssh-http' \
@@ -119,3 +128,15 @@ run_json_checked \
   'TestPostgresIntegrationNodeBootstrapBundleRevealDownloadHTTP' \
   'postgres-bootstrap-bundle-http' \
   TestPostgresIntegrationNodeBootstrapBundleRevealDownloadHTTP
+
+run_json_checked \
+  ./internal/api/http \
+  'TestPostgresIntegrationAgentOnboardingRegisterHeartbeatInventoryDiagnosticsHTTP' \
+  'postgres-agent-onboarding-http' \
+  TestPostgresIntegrationAgentOnboardingRegisterHeartbeatInventoryDiagnosticsHTTP
+
+run_json_checked \
+  ./internal/api/http \
+  'TestPostgresIntegrationAgentOnboardingReissueRecoveryHTTP' \
+  'postgres-agent-onboarding-recovery-http' \
+  TestPostgresIntegrationAgentOnboardingReissueRecoveryHTTP
