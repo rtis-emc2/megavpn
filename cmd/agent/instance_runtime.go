@@ -488,7 +488,15 @@ func isAllowedInstanceUnit(payload instanceJobPayload, unit string) bool {
 
 func isSafeSystemdUnitToken(unit string) bool {
 	unit = strings.TrimSpace(unit)
-	if unit == "" || strings.Contains(unit, "/") || strings.Contains(unit, "..") {
+	if unit == "" || strings.HasPrefix(unit, "-") || strings.Contains(unit, "/") || strings.Contains(unit, `\`) || strings.Contains(unit, "..") {
+		return false
+	}
+	if strings.ContainsAny(unit, `;&|$<>'"(){}[]*?!`) {
+		return false
+	}
+	if strings.HasSuffix(unit, ".service") {
+		unit = strings.TrimSuffix(unit, ".service")
+	} else if strings.Contains(unit, ".") {
 		return false
 	}
 	for _, r := range unit {

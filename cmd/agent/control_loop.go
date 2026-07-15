@@ -150,6 +150,10 @@ func runControlLoop(ctx context.Context, log agentLogger, pollInterval time.Dura
 		}
 
 		if err := syncWithCore(ctx, log, c, st); err != nil {
+			if errors.Is(err, ErrAgentSelfRemovalScheduled) {
+				log.Info("agent self-removal scheduled after acknowledged cleanup result")
+				return
+			}
 			failures++
 			wait := retryDelay(failures-1, 3*time.Second, pollInterval)
 			log.Error("control plane sync failed; retry scheduled", "error", err, "retry_in", wait.String())
@@ -169,6 +173,11 @@ func runControlLoop(ctx context.Context, log agentLogger, pollInterval time.Dura
 }
 
 func syncWithCore(ctx context.Context, log agentLogger, c *client, st *agentState) error {
+	if scheduled, err := processPendingAgentSelfRemoval(ctx); err != nil {
+		return fmt.Errorf("pending post-ack self-removal failed: %w", err)
+	} else if scheduled {
+		return ErrAgentSelfRemovalScheduled
+	}
 	if err := c.heartbeat(ctx, st.NodeID, st.NodeName); err != nil {
 		return fmt.Errorf("heartbeat failed: %w", err)
 	}
@@ -186,10 +195,21 @@ func syncWithCore(ctx context.Context, log agentLogger, c *client, st *agentStat
 		return nil
 	}
 	log.Info("agent job received", "job_id", j.ID, "type", j.Type)
-	status, result := c.execute(ctx, j, st)
-	logAgentJobResult(log, j, status, result)
-	if err := c.submit(ctx, j.ID, status, result); err != nil {
+	outcome := c.executeOutcome(ctx, j, st)
+	logAgentJobResult(log, j, outcome.Status, outcome.Result)
+	if err := c.submit(ctx, j.ID, outcome.Status, outcome.Result); err != nil {
 		return fmt.Errorf("submit job result failed: %w", err)
+	}
+	if outcome.AfterSubmit != nil {
+		if err := outcome.AfterSubmit(ctx); err != nil {
+			if errors.Is(err, ErrAgentSelfRemovalScheduled) {
+				return ErrAgentSelfRemovalScheduled
+			}
+			return fmt.Errorf("post-submit action failed: %w", err)
+		}
+		if outcome.StopAfterAck {
+			return ErrAgentSelfRemovalScheduled
+		}
 	}
 	return nil
 }
@@ -216,6 +236,14 @@ func jobResultText(result map[string]any, key string) string {
 		return ""
 	}
 	return truncate(stringify(result[key]), 500)
+}
+
+func (c *client) executeOutcome(ctx context.Context, j job, st *agentState) jobExecutionOutcome {
+	if j.Type == "node.emergency_cleanup" {
+		return c.emergencyCleanupNodeOutcome(ctx, j, *st)
+	}
+	status, result := c.execute(ctx, j, st)
+	return jobExecutionOutcome{Status: status, Result: result}
 }
 
 func retryDelay(attempt int, minWait, maxWait time.Duration) time.Duration {
@@ -280,7 +308,8 @@ func (c *client) execute(ctx context.Context, j job, st *agentState) (string, ma
 	case "node.agent.rotate_token":
 		return c.rotateAgentToken(ctx, j, st)
 	case "node.emergency_cleanup":
-		return c.emergencyCleanupNode(ctx, j, *st)
+		outcome := c.emergencyCleanupNodeOutcome(ctx, j, *st)
+		return outcome.Status, outcome.Result
 	case "node.reboot":
 		return c.rebootNode(ctx, j, *st)
 	case "node.backhaul.apply":
