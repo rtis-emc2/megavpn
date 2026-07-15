@@ -2,16 +2,16 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-14T19:31:03Z`
+Generated UTC: `2026-07-15T05:31:52Z`
 
 Status: **READY FOR PR REVIEW, NOT READY FOR FINAL CUTOVER**.
 
 Current accepted evidence HEAD inspected:
-`1ffda5b00efb98fa9f60d22a998f1e9e2c52daf2`.
+`3abc200c3d7c5525eaded994244af488d0728b41`.
 
 Latest accepted CI:
-GitHub Actions run `29361072970` PASS for
-`1ffda5b00efb98fa9f60d22a998f1e9e2c52daf2`.
+GitHub Actions run `29391281058` PASS for
+`3abc200c3d7c5525eaded994244af488d0728b41`.
 
 ## Ready For PR Review
 
@@ -26,6 +26,11 @@ GitHub Actions run `29361072970` PASS for
 - Secure SSH access-method creation is connected where implemented, with
   PostgreSQL-backed integration evidence for the atomic secret/access-method
   path.
+- Manual bootstrap bundle reveal/download is connected through the new React
+  console using primary POST reveal/download endpoints only. Sensitive bundle
+  handling is transient and explicitly confirmed, and PostgreSQL-backed plus
+  real HTTP/router integration evidence exists with required bundle tests
+  executed without skips.
 - `/legacy/` remains rollback for other incomplete workflows.
 - Missing exact sub-actions remain disabled or documented with backend-missing
   reasons.
@@ -50,8 +55,10 @@ GitHub Actions run `29361072970` PASS for
 - Version tag and release metadata are not synchronized to final `8.0.0`.
 - Full production release gate has not passed without skips.
 - Live disposable API/DB/node smoke has not run.
+- Live node/bootstrap and agent onboarding validation has not run.
 - Disposable PostgreSQL integration evidence exists for the tested backend
-  suites, including SSH access-method creation.
+  suites, including SSH access-method creation and manual bootstrap bundle
+  reveal/download.
 - Backup/restore evidence remains missing.
 - Full live disposable API/node/service smoke remains missing.
 - Responsive desktop/tablet/phone workflow screenshots are missing.

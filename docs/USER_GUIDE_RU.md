@@ -402,6 +402,60 @@ Security notes:
    credentials и не реализует SSH самостоятельно.
 4. Дождитесь heartbeat: node должна перейти в `online`.
 
+Чтобы открыть или скачать manual bootstrap bundle в новой UI:
+
+1. Откройте `Nodes`.
+2. Выберите node.
+3. Откройте вкладку `Bootstrap`.
+4. Запустите или найдите завершенный `manual_bundle` bootstrap run.
+5. Убедитесь, что строка показывает доступный manual bundle.
+6. Выберите явное действие:
+   - `Reveal bundle`;
+   - `Download bundle`.
+
+Reveal flow:
+
+1. Нажмите `Reveal bundle`.
+2. Проверьте node и сокращенный bootstrap-run identifier.
+3. Отметьте acknowledgement, что material содержит sensitive
+   agent-enrollment data.
+4. Подтвердите действие.
+5. Просматривайте bundle только в secure reveal panel.
+6. Используйте `Copy bundle` только когда утвержденная operational procedure
+   требует clipboard transfer.
+7. Закройте panel после использования.
+
+Download flow:
+
+1. Нажмите `Download bundle`.
+2. Подтвердите sensitive-material acknowledgement.
+3. Скачайте server-generated `.env` attachment.
+4. Храните и передавайте его только через approved secure channel.
+5. Удалите локальные копии по secret-handling policy организации после
+   завершения bootstrap procedure.
+
+Security notes для manual bundle:
+
+- reveal и download требуют permission `node.bootstrap`;
+- обе операции пишутся в audit;
+- repeated reveal/download могут быть разрешены, пока backend material
+  доступен, и каждое действие аудируется отдельно;
+- bundle может содержать sensitive enrollment material;
+- не вставляйте bundle в tickets, chat, email, wiki, logs или documentation;
+- не коммитьте bundle в Git;
+- не храните bundle в незащищенной shared folder;
+- просмотр или скачивание bundle не устанавливает node trust;
+- reveal/download не доказывает, что bundle был выполнен;
+- reveal/download не доказывает успешную установку agent;
+- reveal/download не доказывает agent registration;
+- reveal/download не доказывает heartbeat;
+- live operator onboarding validation остается обязательной;
+- UI не трактует bundle как one-time material;
+- закрытие panel минимизирует application-level retention, но не гарантирует
+  JavaScript runtime memory erasure;
+- `/legacy/` остается общей rollback UI для релиза, но больше не требуется для
+  этого exact reveal/download workflow.
+
 `ssh_host_key_sha256` защищает bootstrap от MITM. Fingerprint должен
 соответствовать реальному host key node. Не обходите это поле непроверенным
 значением: неправильный fingerprint должен блокировать SSH bootstrap и web

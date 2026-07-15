@@ -225,24 +225,40 @@ Backend/API controls used by the UI:
 - purpose-specific `POST /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle/reveal`;
 - purpose-specific `POST /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle/download`;
 - `node.bootstrap` authorization and existing CSRF/session handling;
-- scoped node/run lookup with `manual_bundle_available` status from the
-  bootstrap run metadata;
-- backend-owned secret resolution; the UI does not inspect secret refs or
-  `result_payload` to discover bundle contents;
-- backend audit/fail-closed behavior remains authoritative.
+- direct `node_id` + `run_id` lookup;
+- run ownership, `manual_bundle` mode and `succeeded` status validation;
+- expected secret type and metadata validation for node id,
+  `material=agent_bootstrap_env` and bootstrap run id when present;
+- maximum bundle size enforcement;
+- targeted `manual_bundle_available` projection;
+- removal of secret reference and plaintext fields from public bootstrap-run
+  projections;
+- backend-owned encrypted secret resolution; the UI does not inspect secret
+  refs or `result_payload` to discover bundle contents;
+- no-store/private response headers, no `ETag` and no `Last-Modified`;
+- safe server-owned attachment filename;
+- exact-byte download through the backend endpoint;
+- separate `node.bootstrap_bundle.reveal` and
+  `node.bootstrap_bundle.download` audit actions;
+- fail-closed audit before secret-bearing responses;
+- bundle absence from logs and audit payloads.
 
 Frontend controls:
 
 - the new UI does not call deprecated compatibility `GET /bundle`;
 - the new UI does not call `/api/v1/secret-refs`;
+- the new UI does not call `/legacy/`;
+- availability is based only on `manual_bundle_available`;
 - reveal and download both require explicit confirmation plus an
   acknowledgement checkbox;
 - confirmation dialogs show only safe metadata: node label, short bootstrap run
   ID and action type;
 - revealed bundle content is held only in local component state and is cleared
-  on close, target/permission changes, new reveal and unmount;
-- reveal mutation variables contain node ID, run ID and a one-time consumer, not
-  the bundle content;
+  on close, target/run/permission changes, new reveal, stale response and
+  unmount;
+- no browser-storage, query-key or global-store persistence is used for bundle
+  content;
+- reveal mutation variables contain node ID and run ID, not the bundle content;
 - download always calls the dedicated POST download endpoint, even when a reveal
   panel is already open;
 - download uses an object URL and temporary anchor, then removes the anchor and
@@ -253,11 +269,23 @@ Frontend controls:
 
 Evidence controls:
 
-- API tests cover POST reveal/download, CSRF, credentials, no-store blob
-  download, filename parsing/sanitization and HTML-response rejection;
-- page tests cover confirmation gating, acknowledgement gating, copy/download,
-  404 stale clearing/refetch, permission gating, no `/legacy/`, no
-  `/api/v1/secret-refs` and no browser-storage persistence for bundle content.
+- fake-store/unit HTTP tests cover POST reveal/download, CSRF, credentials,
+  no-store download, filename parsing/sanitization and HTML-response rejection;
+- frontend API/page tests cover confirmation gating, acknowledgement gating,
+  copy/download, 404 stale clearing/refetch, permission gating, no `/legacy/`,
+  no `/api/v1/secret-refs` and no browser-storage persistence for bundle
+  content;
+- real PostgreSQL scoped lookup and secret resolution are covered by
+  `TestPostgresIntegrationGetNodeBootstrapRunScopedAndResolvesManualBundleSecret`;
+- real HTTP/router/PostgreSQL evidence is covered by
+  `TestPostgresIntegrationNodeBootstrapBundleRevealDownloadHTTP`;
+- encrypted-at-rest, public projection redaction, reveal, exact-byte download,
+  persisted audit, RBAC rejection, CSRF rejection, cross-node rejection,
+  missing-bundle rejection and log-redaction assertions are covered by the
+  PostgreSQL-backed tests;
+- GitHub Actions run `29391281058`, job `PostgreSQL integration tests`, ran
+  `postgres-bootstrap-bundle-infra` and `postgres-bootstrap-bundle-http`
+  without skips.
 
 The UI minimizes bundle lifetime and prevents application-level persistence;
 JavaScript runtime memory erasure is not guaranteed.

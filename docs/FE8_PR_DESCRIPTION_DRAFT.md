@@ -2,13 +2,13 @@
 
 Branch: `release/8.0.0-frontend-console`
 
-Generated UTC: `2026-07-14T19:31:03Z`
+Generated UTC: `2026-07-15T05:31:52Z`
 
 Current FE8 evidence HEAD:
-`1ffda5b00efb98fa9f60d22a998f1e9e2c52daf2`
+`3abc200c3d7c5525eaded994244af488d0728b41`
 
 Current FE8 evidence CI:
-GitHub Actions run `29361072970` PASS.
+GitHub Actions run `29391281058` PASS.
 
 ## Status
 
@@ -56,9 +56,10 @@ the new React console serves the root UI and migrated workflows.
 - `Services`: service pack list/detail/create/update/enable/disable/delete,
   create instance from pack and runtime artifact list/metadata/import.
 - `Nodes`: create/edit, observability, diagnostics, inventory, secure SSH
-  access-method creation, bootstrap, enrollment tokens, SSH session ticket
-  launch, host-key scan/pin, agent token rotation and retire workflows where
-  backend endpoints exist.
+  access-method creation, secure manual bootstrap bundle reveal/download,
+  bootstrap, enrollment tokens, SSH session ticket launch, host-key scan/pin,
+  agent token rotation and retire workflows where backend endpoints exist.
+  Agent onboarding and live bootstrap validation are not complete.
 - `Platform -> Certificates`: certificate list/detail, import preview/apply,
   self-signed create, managed CA create, issue, set default, revoke/delete and
   managed PKI root creation where backend endpoints exist.
@@ -82,17 +83,22 @@ the new React console serves the root UI and migrated workflows.
 - Private keys, SMTP passwords, invite/session secrets, access secrets,
   subscription tokens and generated config payloads are handled as transient
   data and must not be logged or persisted in browser storage.
+- Manual bootstrap bundle reveal/download requires explicit sensitive-material
+  acknowledgement, uses transient local reveal state, audits backend
+  reveal/download actions, uses no-store download responses and does not expose
+  public secret references.
 - Frontend static guards block page-level raw API calls, production console
   logging, unreviewed HTML sinks and unsafe browser token storage.
 - RBAC, CSRF, audit and backend validation remain backend-owned controls.
 
 ## CI Evidence
 
-- Current evidence HEAD: `1ffda5b00efb98fa9f60d22a998f1e9e2c52daf2`.
-- GitHub Actions CI: `29361072970` PASS.
+- Current evidence HEAD: `3abc200c3d7c5525eaded994244af488d0728b41`.
+- GitHub Actions CI: `29391281058` PASS.
 - PostgreSQL integration job: `PostgreSQL integration tests` PASS against
-  PostgreSQL 16, including non-skipping SSH access-method store and
-  HTTP/PostgreSQL tests.
+  PostgreSQL 16, including non-skipping SSH access-method store/HTTP tests,
+  manual bootstrap bundle store test and manual bootstrap bundle real
+  HTTP/router/PostgreSQL test. Required focused groups executed without skips.
 - Local Go checks passed: `gofmt -l cmd internal`, `go vet ./...`,
   `go test ./...`, `go test -race ./...` and
   `go build ./cmd/api ./cmd/worker ./cmd/agent ./cmd/migrate ./cmd/admin`.
@@ -127,8 +133,10 @@ any final production cutover decision.
 - Version tag and release metadata are not synchronized to final `8.0.0`.
 - Full production release gate has not passed without skips.
 - Live disposable API/DB/node smoke has not run.
+- Live node/bootstrap and agent onboarding validation has not run.
 - Disposable PostgreSQL integration evidence exists for the tested backend
-  suites, including SSH access-method creation.
+  suites, including SSH access-method creation and manual bootstrap bundle
+  reveal/download.
 - Backup/restore evidence remains missing.
 - Full live disposable API/DB/node smoke remains missing.
 - Responsive desktop/tablet/phone workflow evidence is missing.

@@ -56,7 +56,7 @@ Final release debt readiness assessment:
   the new UI is limited to API base and locale, and text LF shape is protected
   by `scripts/ci/text-lf-guard.sh`.
 
-Current FE8-P0-09B evidence date UTC: `2026-07-14T19:31:03Z`
+Current FE8-P0-09B evidence date UTC: `2026-07-15T05:31:52Z`
 
 FE8-P0-09B Nodes create/edit feature commit:
 recorded in the final task response after commit and push.
@@ -74,6 +74,20 @@ FE8-P0-09B secure SSH access-method PostgreSQL evidence CI:
 GitHub Actions run `29361072970` PASS, job `PostgreSQL integration tests`,
 against PostgreSQL 16 with required SSH access-method tests executed without
 skips.
+
+FE8-P0-09B manual bootstrap bundle backend hardening commit:
+`a6aee38cedec281d2037741c6ba2dbac5e47840f`
+
+FE8-P0-09B manual bootstrap bundle frontend workflow commit:
+`27fcaf4a0e7fe90e3cb6ee80a0f2b22de05722cb`
+
+FE8-P0-09B manual bootstrap bundle PostgreSQL/HTTP evidence HEAD:
+`3abc200c3d7c5525eaded994244af488d0728b41`
+
+FE8-P0-09B manual bootstrap bundle evidence CI:
+GitHub Actions run `29391281058` PASS, job `PostgreSQL integration tests`,
+against PostgreSQL 16 with required groups `postgres-bootstrap-bundle-infra`
+and `postgres-bootstrap-bundle-http` executed without skips.
 
 Previous FE8-P0-09A evidence date UTC: `2026-07-14T16:36:06Z`
 
@@ -270,8 +284,8 @@ This evidence records the current 8.0.0 frontend branch after FE8-P0-08A:
 | `cd frontend && npm run test` | PASS | Equivalent Vitest run through bundled Node: 10 files, 92 tests passed. |
 | `cd frontend && npm run i18n:check` | PASS | Equivalent command run through bundled Node: i18n key parity ok, 920 keys. |
 | `cd frontend && npm run build` | PASS | Equivalent build run through bundled Node; Vite wrote `web/index.html`, `web/.vite/manifest.json`, `web/assets/index-CjMOOOow.js`, `web/assets/index-CMdslovF.css`. |
-| GitHub clean npm frontend checks | PASS | GitHub Actions run `29361072970` used the CI npm path for the branch. |
-| GitHub disposable PostgreSQL integration checks | PASS | GitHub Actions run `29361072970`, job `PostgreSQL integration tests`, used PostgreSQL 16 and ran the required SSH store/HTTP tests without skips. |
+| GitHub clean npm frontend checks | PASS | GitHub Actions run `29391281058` used the CI npm path for the branch. |
+| GitHub disposable PostgreSQL integration checks | PASS | GitHub Actions run `29391281058`, job `PostgreSQL integration tests`, used PostgreSQL 16 and ran the required SSH and manual bootstrap bundle store/HTTP tests without skips. |
 | `scripts/ci/frontend-serving-smoke.sh` | PASS | Root/deep links/legacy/API non-shadowing/static asset 404 contract holds. |
 | `scripts/ci/frontend-static-guards.sh` | PASS | Static frontend security guards pass. |
 | `scripts/ci/docs-consistency.sh` | PASS | Documentation consistency ok for backend release `7.1.1.0`. |
@@ -421,10 +435,10 @@ safe metadata edit workflows against mocked backend API responses:
 
 Nodes create/edit safe profile workflows work in the new UI without `/legacy/`
 for control-plane node records. Generic create/edit does not create SSH secrets
-or claim enrollment/online state. Agent registration/onboarding, manual
-bootstrap bundle reveal, agent identity revoke, reboot, emergency cleanup,
-stale rotation cleanup and service discovery ignore/unignore remain
-separate/open workflows.
+or claim enrollment/online state. Agent registration/onboarding, live manual
+bundle execution, agent identity revoke, reboot, emergency cleanup, stale
+rotation cleanup and service discovery ignore/unignore remain separate/open
+workflows.
 
 ## FE8-P0-09B Secure SSH Access Method Evidence
 
@@ -456,13 +470,62 @@ React UI and dedicated backend API:
 | Concurrent duplicate protection | `TestPostgresIntegrationCreateNodeSSHAccessMethodConcurrentDuplicate` verifies advisory-lock/duplicate behavior under concurrency. |
 | Retired-node rejection | `TestPostgresIntegrationCreateNodeSSHAccessMethodRejectsRetiredNode` verifies retired nodes reject new SSH access methods. |
 | Audit and response redaction | PostgreSQL/HTTP tests verify audit persistence and that response/log-visible payloads do not expose private key, `secret_ref_id`, ciphertext, nonce or key version. |
-| Non-skipping PostgreSQL CI evidence | GitHub Actions run `29361072970`, job `PostgreSQL integration tests`, ran the required SSH store and HTTP/PostgreSQL tests against PostgreSQL 16 without skips. |
+| Non-skipping PostgreSQL CI evidence | GitHub Actions run `29361072970` ran required SSH store and HTTP/PostgreSQL tests without skips. Manual bootstrap bundle evidence is recorded separately below. |
 
 Nodes -> Security now supports secure creation and encrypted persistence of a
 new SSH access method with secret material in the new UI without `/legacy/`.
 This evidence covers configuration and persistence only. It does not claim live
 SSH connectivity, successful bootstrap, agent enrollment or production node
 validation; live disposable node smoke remains open.
+
+## FE8-P0-09B Manual Bootstrap Bundle Reveal/Download Evidence
+
+Secure reveal and download of an existing manual bootstrap bundle is connected
+in the new UI without `/legacy/`. The completed scope is operator retrieval
+from an already completed `manual_bundle` bootstrap run, not execution of that
+bundle or successful onboarding of a real node.
+
+Implementation and evidence:
+
+- backend hardening commit
+  `a6aee38cedec281d2037741c6ba2dbac5e47840f`;
+- frontend workflow commit
+  `27fcaf4a0e7fe90e3cb6ee80a0f2b22de05722cb`;
+- PostgreSQL/HTTP evidence HEAD
+  `3abc200c3d7c5525eaded994244af488d0728b41`;
+- GitHub Actions run `29391281058` PASS, job `PostgreSQL integration tests`;
+- required non-skipping groups `postgres-bootstrap-bundle-infra` and
+  `postgres-bootstrap-bundle-http`;
+- required tests
+  `TestPostgresIntegrationGetNodeBootstrapRunScopedAndResolvesManualBundleSecret`
+  and `TestPostgresIntegrationNodeBootstrapBundleRevealDownloadHTTP`.
+
+Accepted implementation scope:
+
+- secure retrieval from an already completed manual bootstrap run;
+- separate audited `POST /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle/reveal`
+  and `POST /api/v1/nodes/{id}/bootstrap-runs/{run_id}/bundle/download`
+  operations;
+- no deprecated compatibility `GET /bundle` use in the React frontend;
+- no generic `/api/v1/secret-refs` use;
+- no `/legacy/` dependency for this workflow;
+- no public secret-reference exposure in bootstrap-run projections;
+- `manual_bundle_available` is the availability signal;
+- no-store response handling and safe backend-owned attachment filename;
+- transient frontend reveal state with explicit confirmation and
+  sensitive-material acknowledgement;
+- copy only on explicit operator action;
+- exact-byte backend POST download through a Blob response;
+- real PostgreSQL store and real HTTP/router evidence without skips.
+
+Explicitly unverified scope remains:
+
+- bundle execution on a real node;
+- successful agent installation;
+- successful agent registration;
+- agent heartbeat;
+- end-to-end live bootstrap;
+- live operator onboarding.
 
 ## FE8-P0-05B Nodes Security/Control Test Evidence
 
@@ -805,9 +868,9 @@ Fully connected in the new console:
   maintenance mode, inventory view/sync, capability install/verify, diagnostics
   retry/run, service discovery list/import and async job tracking;
 - `Nodes` bootstrap/security/control for configured nodes: enrollment token
-  create/rotate/revoke, bootstrap/reinstall job queueing, host-key scan/pin,
-  SSH access-method creation, SSH session ticket launch, agent token rotation
-  and retire/force-retire.
+  create/rotate/revoke, bootstrap/reinstall job queueing, manual bootstrap
+  bundle reveal/download, host-key scan/pin, SSH access-method creation, SSH
+  session ticket launch, agent token rotation and retire/force-retire.
 - `Clients -> Routes/Maintenance` generic client edit, route
   list/create/update/delete, service access list/rotation/revoke/delete,
   delivery history and generated config cleanup.
@@ -827,8 +890,8 @@ Still disabled, read-only or legacy-only:
 
 - non-VLESS access group materialization workflows;
 - migration conflict UI for access groups;
-- node agent registration/onboarding, manual bootstrap bundle reveal, agent
-  identity revoke, reboot, emergency cleanup and stale rotation cleanup;
+- node agent registration/onboarding, agent identity revoke, reboot, emergency
+  cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance draft-save
@@ -879,7 +942,8 @@ Still disabled, read-only or legacy-only:
 - Integrated live API smoke was not run against a disposable DB/API in this
   session; current evidence is frontend/API-contract test coverage against
   mocked backend responses, local commands and GitHub disposable PostgreSQL
-  integration evidence for the secure SSH access-method workflow.
+  integration evidence for the secure SSH access-method and manual bootstrap
+  bundle reveal/download workflows.
 
 ## 14. Go / No-Go
 
