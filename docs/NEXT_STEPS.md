@@ -3,6 +3,8 @@
 **Release:** `7.1.1.0`
 
 Current roadmap: [`ROADMAP_V1_AND_TZ.md`](../ROADMAP_V1_AND_TZ.md).
+Future 9.0.0 architecture target:
+[`ROADMAP_9.0.0.md`](../ROADMAP_9.0.0.md).
 Russian companion: [`NEXT_STEPS_RU.md`](NEXT_STEPS_RU.md).
 Canonical repository: `github.com/rtis-emc2/megavpn`.
 

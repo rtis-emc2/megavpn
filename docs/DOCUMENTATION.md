@@ -28,9 +28,11 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | 14 | [VLESS access groups](VLESS_GROUPS.md) | Reusable VLESS client routing groups |
 | 15 | [VLESS subscriptions](VLESS_SUBSCRIPTIONS.md) | Per-client VLESS subscription tokens and delivery workflow |
 | 16 | [Roadmap](../ROADMAP_V1_AND_TZ.md) | Product roadmap and technical specification |
-| 17 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
-| 18 | [Security review](SECURITY_REVIEW_7.1.1.0.md) | Security and release review artifact |
-| 19 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
+| 17 | [Roadmap 9.0.0](../ROADMAP_9.0.0.md) | Target architecture for database-canonical artifacts and cluster-ready Control Plane |
+| 18 | [Next steps](NEXT_STEPS.md) | Engineering backlog checkpoint |
+| 19 | [Security review](SECURITY_REVIEW_7.1.1.0.md) | Security and release review artifact |
+| 20 | [Russian roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Russian roadmap companion |
+| 21 | [Russian Roadmap 9.0.0](../ROADMAP_9.0.0_RU.md) | Russian 9.0.0 target architecture companion |
 
 ## Documentation Ownership
 
@@ -48,7 +50,7 @@ Russian entry point: [DOCUMENTATION_RU.md](DOCUMENTATION_RU.md).
 | Client access groups | `docs/ACCESS_GROUPS.md`, `docs/ACCESS_GROUPS_RU.md` | Generic source-of-truth model for group membership and runtime projection. |
 | VLESS client routing | `docs/VLESS_GROUPS.md`, `docs/VLESS_GROUPS_RU.md` | Reusable access groups, default VLESS group selection and provisioning behavior. |
 | VLESS subscriptions | `docs/VLESS_SUBSCRIPTIONS.md`, `docs/VLESS_SUBSCRIPTIONS_RU.md` | Per-client bearer-token rotation, public feed behavior and operator delivery workflow. |
-| Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic and tactical product planning. |
+| Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `ROADMAP_9.0.0.md`, `ROADMAP_9.0.0_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic and tactical product planning. |
 
 ## Language Policy
 

@@ -28,9 +28,11 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | 14 | [VLESS access groups](VLESS_GROUPS_RU.md) | Reusable VLESS client routing groups |
 | 15 | [VLESS-подписки](VLESS_SUBSCRIPTIONS_RU.md) | Per-client VLESS subscription tokens и workflow доставки |
 | 16 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
-| 17 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
-| 18 | [Security review](SECURITY_REVIEW_7.1.1.0.md) | Security и release review artifact |
-| 19 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
+| 17 | [Roadmap 9.0.0](../ROADMAP_9.0.0_RU.md) | Целевая архитектура database-canonical artifacts и cluster-ready Control Plane |
+| 18 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
+| 19 | [Security review](SECURITY_REVIEW_7.1.1.0.md) | Security и release review artifact |
+| 20 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
+| 21 | [English Roadmap 9.0.0](../ROADMAP_9.0.0.md) | English companion для 9.0.0 target architecture |
 
 ## Владение документацией
 
@@ -48,7 +50,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | Client access groups | `docs/ACCESS_GROUPS.md`, `docs/ACCESS_GROUPS_RU.md` | Generic source-of-truth модель для group membership и runtime projection. |
 | VLESS client routing | `docs/VLESS_GROUPS.md`, `docs/VLESS_GROUPS_RU.md` | Reusable access groups, default VLESS group selection и provisioning behavior. |
 | VLESS subscriptions | `docs/VLESS_SUBSCRIPTIONS.md`, `docs/VLESS_SUBSCRIPTIONS_RU.md` | Per-client bearer-token rotation, public feed behavior и operator delivery workflow. |
-| Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic и tactical product planning. |
+| Roadmap | `ROADMAP_V1_AND_TZ.md`, `ROADMAP_V1_AND_TZ_RU.md`, `ROADMAP_9.0.0.md`, `ROADMAP_9.0.0_RU.md`, `docs/NEXT_STEPS.md`, `docs/NEXT_STEPS_RU.md` | Strategic и tactical product planning. |
 
 ## Языковая политика
 

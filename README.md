@@ -38,6 +38,7 @@ Start here:
 - [VLESS access groups](docs/VLESS_GROUPS.md)
 - [Self-testing](docs/SELF_TESTING.md)
 - [Roadmap and technical specification](ROADMAP_V1_AND_TZ.md)
+- [Roadmap 9.0.0: stateless artifacts and cluster-ready control plane](ROADMAP_9.0.0.md)
 
 ## Product Scope
 

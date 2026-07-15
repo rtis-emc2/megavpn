@@ -39,6 +39,7 @@ Operator
 - [VLESS access groups](docs/VLESS_GROUPS_RU.md)
 - [Self-testing](docs/SELF_TESTING.md)
 - [Roadmap и техническая спецификация](ROADMAP_V1_AND_TZ_RU.md)
+- [Roadmap 9.0.0: stateless artifacts и cluster-ready Control Plane](ROADMAP_9.0.0_RU.md)
 
 ## Назначение
 

@@ -3,6 +3,8 @@
 **Релиз:** `7.1.1.0`
 
 Актуальный baseline: [`ROADMAP_V1_AND_TZ_RU.md`](../ROADMAP_V1_AND_TZ_RU.md).
+Будущая архитектурная цель 9.0.0:
+[`ROADMAP_9.0.0_RU.md`](../ROADMAP_9.0.0_RU.md).
 Английская версия: [`NEXT_STEPS.md`](NEXT_STEPS.md).
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`.
 
