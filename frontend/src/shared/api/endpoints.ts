@@ -142,6 +142,7 @@ import type {
   NodeRetireResult,
   NodeSSHAccessMethodCreateInput,
   NodeSSHAccessMethodCreateResult,
+  NodeStaleRotationPreview,
   NodeUpdateInput,
   ReadyStatus,
   RoutePolicy,
@@ -393,6 +394,10 @@ export function setNodeMaintenance(nodeId: string, enabled: boolean): Promise<No
 
 export function getNodeDiagnostics(nodeId: string): Promise<NodeDiagnostics> {
   return apiRequest<NodeDiagnostics>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/diagnostics`);
+}
+
+export function getNodeStaleRotationPreview(nodeId: string): Promise<NodeStaleRotationPreview> {
+  return apiRequest<NodeStaleRotationPreview>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/diagnostics/stale-rotation`);
 }
 
 export async function getNodeAgentState(nodeId: string): Promise<NodeAgentState> {

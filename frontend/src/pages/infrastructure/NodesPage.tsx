@@ -26,6 +26,7 @@ import type {
   NodeInventorySnapshot,
   NodeServiceDiscovery,
   NodeServiceInstaller,
+  NodeStaleRotationPreview,
 } from '../../shared/api/types';
 import { hasPermission } from '../../shared/permissions/permissions';
 import {
@@ -52,6 +53,7 @@ import {
   useNodeServiceDiscoveries,
   useNodeServiceDiscoverySummary,
   useNodeServiceInstallers,
+  useNodeStaleRotationPreview,
   useNodes,
   useReinstallOrUpdateNodeAgent,
   useRevealNodeBootstrapBundle,
@@ -76,6 +78,7 @@ import {
   ENROLLMENT_TOKEN_TTL_MIN_HOURS,
   validateEnrollmentTokenTTL,
 } from './enrollmentTokenControls';
+import { NodeLifecycleControlsPanel } from './NodeLifecycleControlsPanel';
 import { NodeOnboardingTab } from './NodeOnboardingTab';
 import { deriveNodeOnboardingModel, shouldPollNodeOnboarding, type NodeOnboardingTargetTab } from './nodeOnboarding';
 import {
@@ -592,6 +595,7 @@ function NodeProfileModal({ mode, node, open, canWrite, onClose, onDone }: {
 function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId: string; open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
   const auth = useAuth();
+  const canReadNodes = hasPermission(auth.permissions, auth.roles, 'node.read');
   const canWriteNodes = hasPermission(auth.permissions, auth.roles, 'node.write');
   const canBootstrapNodes = hasPermission(auth.permissions, auth.roles, 'node.bootstrap');
   const queryClient = useQueryClient();
@@ -618,8 +622,10 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     trackedInventoryJobIDs: guidedInventoryJobIds,
   }) : null;
   const onboardingPollInterval: number | false = open && activeTab === 'onboarding' && cachedOnboardingModel && shouldPollNodeOnboarding(cachedOnboardingModel) ? 10_000 : false;
+  const staleRotationPreviewEnabled = open && activeTab === 'lifecycle' && canReadNodes && Boolean(nodeId);
   const detail = useNodeDetail(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
   const diagnostics = useNodeDiagnostics(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : 15_000 });
+  const staleRotationPreview = useNodeStaleRotationPreview(nodeId, { retry: false, enabled: staleRotationPreviewEnabled, refetchInterval: false });
   const inventory = useNodeInventory(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
   const capabilities = useNodeCapabilities(nodeId, { retry: false });
   const capabilityDrift = useNodeCapabilityDrift(nodeId, { retry: false });
@@ -987,6 +993,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
 
   const firstAgentJob = diagnostics.data?.agent?.last_job_result_job_id || diagnostics.data?.agent?.last_job_claim_job_id || diagnostics.data?.agent?.last_job_claim_job_id || '';
   const effectiveJobIds = jobIds.length ? jobIds : firstAgentJob ? [firstAgentJob] : [];
+  const currentStaleRotationPreview = staleRotationPreview.data?.node_id === current?.id ? staleRotationPreview.data : undefined;
 
   return (
     <Drawer title={nodeLabel(current)} open={open} onClose={onClose}>
@@ -1131,7 +1138,20 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
               />
             ) : null}
             {activeTab === 'terminal' ? <TerminalTab node={current} accessMethods={accessMethods} busy={busy} onConfirm={openConfirm} /> : null}
-            {activeTab === 'lifecycle' ? <LifecycleTab node={current} busy={busy} onConfirm={openConfirm} /> : null}
+            {activeTab === 'lifecycle' ? (
+              <LifecycleTab
+                node={current}
+                busy={busy}
+                onConfirm={openConfirm}
+                diagnostics={diagnostics.data}
+                staleRotationPreview={currentStaleRotationPreview}
+                staleRotationPreviewLoading={staleRotationPreview.isLoading}
+                staleRotationPreviewFetching={staleRotationPreview.isFetching}
+                staleRotationPreviewError={staleRotationPreview.isError ? staleRotationPreview.error : undefined}
+                canReadNode={canReadNodes}
+                onRefreshStaleRotationPreview={() => void staleRotationPreview.refetch()}
+              />
+            ) : null}
             {activeTab === 'jobs' ? <NodeJobsTab jobIds={effectiveJobIds} diagnostics={diagnostics.data} /> : null}
             <NodeProfileModal
               mode="edit"
@@ -2234,7 +2254,29 @@ function TerminalTab({ node, accessMethods, busy, onConfirm }: {
   );
 }
 
-function LifecycleTab({ node, busy, onConfirm }: { node: NodeDetail; busy: boolean; onConfirm: (action: ConfirmAction) => void }) {
+function LifecycleTab({
+  node,
+  busy,
+  onConfirm,
+  diagnostics,
+  staleRotationPreview,
+  staleRotationPreviewLoading,
+  staleRotationPreviewFetching,
+  staleRotationPreviewError,
+  canReadNode,
+  onRefreshStaleRotationPreview,
+}: {
+  node: NodeDetail;
+  busy: boolean;
+  onConfirm: (action: ConfirmAction) => void;
+  diagnostics?: NodeDiagnostics;
+  staleRotationPreview?: NodeStaleRotationPreview;
+  staleRotationPreviewLoading: boolean;
+  staleRotationPreviewFetching: boolean;
+  staleRotationPreviewError?: unknown;
+  canReadNode: boolean;
+  onRefreshStaleRotationPreview: () => void;
+}) {
   const { t } = useTranslation();
   const [confirmation, setConfirmation] = useState('');
   const [reason, setReason] = useState('');
@@ -2242,6 +2284,16 @@ function LifecycleTab({ node, busy, onConfirm }: { node: NodeDetail; busy: boole
   const forceReady = confirmation.trim() === expected;
   return (
     <div className="page-stack">
+      <NodeLifecycleControlsPanel
+        node={node}
+        diagnostics={diagnostics}
+        staleRotationPreview={staleRotationPreview}
+        staleRotationPreviewError={staleRotationPreviewError}
+        staleRotationPreviewLoading={staleRotationPreviewLoading}
+        staleRotationPreviewFetching={staleRotationPreviewFetching}
+        canReadNode={canReadNode}
+        onRefreshStaleRotationPreview={onRefreshStaleRotationPreview}
+      />
       <Card>
         <CardBody>
           <div className="page-stack">

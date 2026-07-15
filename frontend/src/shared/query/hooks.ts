@@ -77,6 +77,7 @@ import {
   getNodeCapabilitiesDrift,
   getNodeInventory,
   getNodeServiceDiscoverySummary,
+  getNodeStaleRotationPreview,
   listClientArtifacts,
   listClientAccesses,
   listClientDeliveryHistory,
@@ -296,6 +297,7 @@ import type {
   NodeRetireResult,
   NodeSSHAccessMethodCreateInput,
   NodeSSHAccessMethodCreateResult,
+  NodeStaleRotationPreview,
   NodeUpdateInput,
   PkiRoot,
   PkiRootCreateInput,
@@ -392,6 +394,7 @@ function invalidateNodeQueries(queryClient: ReturnType<typeof useQueryClient>, n
   if (nodeId) {
     void queryClient.invalidateQueries({ queryKey: ['node', nodeId] });
     void queryClient.invalidateQueries({ queryKey: ['node-diagnostics', nodeId] });
+    void queryClient.invalidateQueries({ queryKey: ['node-stale-rotation-preview', nodeId] });
     void queryClient.invalidateQueries({ queryKey: ['node-inventory', nodeId] });
     void queryClient.invalidateQueries({ queryKey: ['node-capabilities', nodeId] });
     void queryClient.invalidateQueries({ queryKey: ['node-capability-drift', nodeId] });
@@ -451,6 +454,17 @@ export function useNodeDiagnostics(nodeId: string | undefined, options?: QueryOp
     enabled: Boolean(nodeId),
     staleTime: stale.fast,
     refetchInterval: 15_000,
+    ...options,
+  });
+}
+
+export function useNodeStaleRotationPreview(nodeId: string | undefined, options?: QueryOptions<NodeStaleRotationPreview>) {
+  return useQuery({
+    queryKey: ['node-stale-rotation-preview', nodeId],
+    queryFn: () => getNodeStaleRotationPreview(nodeId || ''),
+    enabled: Boolean(nodeId),
+    staleTime: stale.fast,
+    refetchInterval: false,
     ...options,
   });
 }

@@ -4,6 +4,7 @@ import {
   downloadNodeBootstrapBundle,
   createEnrollmentToken,
   extractEnrollmentTokenSecret,
+  getNodeStaleRotationPreview,
   listEnrollmentTokens,
   parseContentDispositionFilename,
   revealNodeBootstrapBundle,
@@ -209,5 +210,74 @@ describe('node enrollment token endpoints', () => {
       token_hint: 'alias...token',
       status: 'active',
     })).toBe('alias-secret-token');
+  });
+});
+
+describe('node stale rotation preview endpoint', () => {
+  const calls: FetchCall[] = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://megavpn.test');
+      const method = String(init?.method || 'GET').toUpperCase();
+      const path = `${url.pathname}${url.search}`;
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      calls.push({
+        method,
+        path,
+        body,
+        headers: trackedHeaders(init?.headers),
+        credentials: init?.credentials,
+        cache: init?.cache,
+      });
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node%2Fone/diagnostics/stale-rotation') {
+        return json({
+          node_id: 'node/one',
+          stale_rotation_detected: true,
+          token_rotation_status: 'rotating',
+          evaluated_at: '2026-07-14T08:00:00Z',
+          candidates: [{
+            job_id: 'job-1',
+            status: 'running',
+            created_at: '2026-07-14T07:45:00Z',
+            started_at: '2026-07-14T07:46:00Z',
+            age_seconds: 900,
+            stale_reason: 'claimed_without_result_and_agent_inactive',
+            safe_to_clear: true,
+          }],
+        });
+      }
+      return json({ error: `unhandled ${method} ${url.pathname}` }, 404);
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('uses a read-only GET path without CSRF, body or destructive cleanup calls', async () => {
+    const result = await getNodeStaleRotationPreview('node/one');
+
+    expect(result.node_id).toBe('node/one');
+    expect(result.candidates[0]).toMatchObject({
+      job_id: 'job-1',
+      stale_reason: 'claimed_without_result_and_agent_inactive',
+      safe_to_clear: true,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: 'GET',
+      path: '/api/v1/nodes/node%2Fone/diagnostics/stale-rotation',
+      credentials: 'include',
+    });
+    expect(calls[0].body).toBeUndefined();
+    expect(calls[0].headers.accept).toBe('application/json');
+    expect(calls[0].headers['x-megavpn-csrf']).toBeUndefined();
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    expect(calls.some((call) => call.path.includes('clear-stale-rotation'))).toBe(false);
   });
 });

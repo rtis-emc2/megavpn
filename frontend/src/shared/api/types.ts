@@ -173,6 +173,28 @@ export type NodeDiagnostics = APIRecord & {
 
 export type NodeDiagnostic = NodeDiagnostics;
 
+export type NodeStaleRotationCandidate = {
+  job_id: string;
+  status: string;
+  created_at: string;
+  started_at?: string;
+  last_claim_at?: string;
+  last_result_at?: string;
+  last_seen_at?: string;
+  last_poll_at?: string;
+  age_seconds: number;
+  stale_reason: string;
+  safe_to_clear: boolean;
+};
+
+export type NodeStaleRotationPreview = {
+  node_id: string;
+  stale_rotation_detected: boolean;
+  token_rotation_status: string;
+  evaluated_at: string;
+  candidates: NodeStaleRotationCandidate[];
+};
+
 export type NodeCapability = APIRecord & {
   id: string;
   node_id?: string;

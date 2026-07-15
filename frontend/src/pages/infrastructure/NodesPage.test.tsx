@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EnrollmentToken, NodeBootstrapRun, NodeDiagnostics, NodeInventorySnapshot } from '../../shared/api/types';
+import type { EnrollmentToken, NodeBootstrapRun, NodeDiagnostics, NodeInventorySnapshot, NodeStaleRotationPreview } from '../../shared/api/types';
 import { AuthProvider } from '../../shared/auth/AuthProvider';
 import i18n from '../../shared/i18n';
 import { NodesPage } from './NodesPage';
@@ -186,6 +186,26 @@ const bootstrapRuns = [
   },
 ];
 
+const staleRotationPreview: NodeStaleRotationPreview = {
+  node_id: 'node-1',
+  stale_rotation_detected: true,
+  token_rotation_status: 'rotating',
+  evaluated_at: '2026-07-09T08:10:00Z',
+  candidates: [{
+    job_id: 'job-stale-rotation-1',
+    status: 'running',
+    created_at: '2026-07-09T07:50:00Z',
+    started_at: '2026-07-09T07:51:00Z',
+    last_claim_at: '2026-07-09T07:52:00Z',
+    last_result_at: '2026-07-09T07:53:00Z',
+    last_seen_at: '2026-07-09T07:40:00Z',
+    last_poll_at: '2026-07-09T07:41:00Z',
+    age_seconds: 1200,
+    stale_reason: 'unclaimed_without_agent_progress',
+    safe_to_clear: true,
+  }],
+};
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -278,6 +298,7 @@ describe('NodesPage', () => {
   let currentAccessMethods: typeof accessMethods;
   let currentEnrollmentTokens: EnrollmentToken[];
   let currentBootstrapRuns: NodeBootstrapRun[];
+  let currentStaleRotationPreview: NodeStaleRotationPreview;
   let manualBundleRevealContent: string;
   let manualBundleDownloadContent: string;
   let emptyEnrollmentIssueResponse: boolean;
@@ -329,6 +350,7 @@ describe('NodesPage', () => {
     currentAccessMethods = accessMethods.map((method) => ({ ...method }));
     currentEnrollmentTokens = enrollmentTokens.map((token) => ({ ...token }));
     currentBootstrapRuns = bootstrapRuns.map((run) => ({ ...run }));
+    currentStaleRotationPreview = clone(staleRotationPreview);
     manualBundleRevealContent = '';
     manualBundleDownloadContent = '';
     emptyEnrollmentIssueResponse = false;
@@ -404,6 +426,7 @@ describe('NodesPage', () => {
         return json(currentNode);
       }
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/diagnostics') return json(currentDiagnostics);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/diagnostics/stale-rotation') return json(currentStaleRotationPreview);
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/inventory') {
         if (!currentInventory) return json({ error: 'inventory not found' }, 404);
         return json(currentInventory);
@@ -930,6 +953,55 @@ describe('NodesPage', () => {
     expect(storageSet.mock.calls.some(([key, value]) => String(key).toLowerCase().includes('token') || String(value).includes('enroll-secret-token') || String(value).includes('enroll-rotated-token') || String(value).includes('ssh-session-ticket'))).toBe(false);
     expect(window.localStorage.getItem('enrollment_token')).toBeNull();
     expect(window.sessionStorage.getItem('enrollment_token')).toBeNull();
+  });
+
+  it('loads stale rotation preview only on the Lifecycle tab without destructive lifecycle wrappers', async () => {
+    await openNode();
+
+    expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/diagnostics/stale-rotation')).toBe(false);
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'GET' && call.path === '/api/v1/nodes/node-1/diagnostics/stale-rotation')).toBe(true));
+
+    const previewCall = calls.find((call) => call.path === '/api/v1/nodes/node-1/diagnostics/stale-rotation');
+    expect(previewCall).toMatchObject({ method: 'GET', credentials: 'include' });
+    expect(previewCall?.headers['x-megavpn-csrf']).toBeUndefined();
+    await screen.findAllByText('Unclaimed rotation without agent progress.');
+    expect(screen.getAllByText('job-stal...').length).toBeGreaterThan(0);
+    expect(document.body.textContent || '').not.toContain('tok_...');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh preview' }));
+    await waitFor(() => expect(calls.filter((call) => call.method === 'GET' && call.path === '/api/v1/nodes/node-1/diagnostics/stale-rotation')).toHaveLength(2));
+    for (const forbiddenPath of [
+      '/api/v1/nodes/node-1/agent-identity/revoke',
+      '/api/v1/nodes/node-1/reboot',
+      '/api/v1/nodes/node-1/emergency-cleanup',
+      '/api/v1/nodes/node-1/diagnostics/clear-stale-rotation',
+    ]) {
+      expect(calls.some((call) => call.method === 'POST' && call.path === forbiddenPath)).toBe(false);
+    }
+    expect(screen.queryByRole('button', { name: /revoke agent identity/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reboot node/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /emergency cleanup/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /clear stale rotation/i })).not.toBeInTheDocument();
+  });
+
+  it('does not fetch stale rotation preview without node.read permission', async () => {
+    await openNode({ ...authPayload, permissions: ['node.write', 'node.bootstrap'] });
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Permission required: node.read');
+    expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/diagnostics/stale-rotation')).toBe(false);
+  });
+
+  it('does not render stale rotation preview data for a different selected node', async () => {
+    currentStaleRotationPreview = { ...currentStaleRotationPreview, node_id: 'node-previous' };
+    await openNode();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await waitFor(() => expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/diagnostics/stale-rotation')).toBe(true));
+    expect(screen.queryByText('Unclaimed rotation without agent progress.')).not.toBeInTheDocument();
+    expect(screen.queryByText('job-stal...')).not.toBeInTheDocument();
+    expect(screen.queryByText('node-previous')).not.toBeInTheDocument();
   });
 
   it('reveals, copies and downloads manual bootstrap bundles only after explicit acknowledgement', async () => {
