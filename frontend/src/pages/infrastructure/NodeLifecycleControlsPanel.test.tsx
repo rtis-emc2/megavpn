@@ -49,7 +49,8 @@ const preview: NodeStaleRotationPreview = {
 
 function renderPanel(overrides: Partial<ComponentProps<typeof NodeLifecycleControlsPanel>> = {}) {
   const onRefreshStaleRotationPreview = vi.fn();
-  render(
+  const onOpenRevokeDialog = vi.fn();
+  const result = render(
     <NodeLifecycleControlsPanel
       node={node}
       diagnostics={diagnostics}
@@ -58,11 +59,15 @@ function renderPanel(overrides: Partial<ComponentProps<typeof NodeLifecycleContr
       staleRotationPreviewFetching={false}
       staleRotationPreviewError={undefined}
       canReadNode
+      canBootstrapNode
+      lifecycleDataCurrent
+      revokePending={false}
+      onOpenRevokeDialog={onOpenRevokeDialog}
       onRefreshStaleRotationPreview={onRefreshStaleRotationPreview}
       {...overrides}
     />,
   );
-  return { onRefreshStaleRotationPreview };
+  return { onOpenRevokeDialog, onRefreshStaleRotationPreview, rerender: result.rerender };
 }
 
 describe('NodeLifecycleControlsPanel', () => {
@@ -84,7 +89,7 @@ describe('NodeLifecycleControlsPanel', () => {
     expect(bodyText).not.toContain('request_payload');
     expect(bodyText).not.toContain('result_payload');
     expect(bodyText).not.toContain('secret_ref');
-    expect(screen.queryByRole('button', { name: /revoke/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Revoke agent identity' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /reboot/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /emergency cleanup/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /clear/i })).not.toBeInTheDocument();
@@ -100,6 +105,10 @@ describe('NodeLifecycleControlsPanel', () => {
         staleRotationPreviewFetching={false}
         staleRotationPreviewError={undefined}
         canReadNode
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        onOpenRevokeDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -114,6 +123,10 @@ describe('NodeLifecycleControlsPanel', () => {
         staleRotationPreviewFetching={false}
         staleRotationPreviewError={undefined}
         canReadNode
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        onOpenRevokeDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -128,6 +141,10 @@ describe('NodeLifecycleControlsPanel', () => {
         staleRotationPreviewFetching={false}
         staleRotationPreviewError={new APIError('secret_ref raw backend message', 403, { error: 'secret_ref raw backend message' })}
         canReadNode
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        onOpenRevokeDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -143,6 +160,10 @@ describe('NodeLifecycleControlsPanel', () => {
         staleRotationPreviewFetching={false}
         staleRotationPreviewError={undefined}
         canReadNode={false}
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        onOpenRevokeDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -164,5 +185,68 @@ describe('NodeLifecycleControlsPanel', () => {
     expect(within(table).getAllByText('Yes').length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole('button', { name: 'Refresh preview' }));
     expect(onRefreshStaleRotationPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it('gates agent identity revoke by node.bootstrap and identity state only', async () => {
+    const { onOpenRevokeDialog, rerender } = renderPanel();
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke agent identity' }));
+    expect(onOpenRevokeDialog).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <NodeLifecycleControlsPanel
+        node={node}
+        diagnostics={{ ...diagnostics, agent: { ...(diagnostics.agent || {}), status: 'revoked' } }}
+        staleRotationPreview={preview}
+        staleRotationPreviewLoading={false}
+        staleRotationPreviewFetching={false}
+        staleRotationPreviewError={undefined}
+        canReadNode
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        onOpenRevokeDialog={vi.fn()}
+        onRefreshStaleRotationPreview={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Agent identity is already revoked. Refresh diagnostics to inspect recovery state.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revoke agent identity' })).not.toBeInTheDocument();
+
+    rerender(
+      <NodeLifecycleControlsPanel
+        node={node}
+        diagnostics={{ ...diagnostics, agent: { ...(diagnostics.agent || {}), status: 'missing' } }}
+        staleRotationPreview={preview}
+        staleRotationPreviewLoading={false}
+        staleRotationPreviewFetching={false}
+        staleRotationPreviewError={undefined}
+        canReadNode
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        onOpenRevokeDialog={vi.fn()}
+        onRefreshStaleRotationPreview={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('No active agent identity is visible. Backend may still reject or confirm exact state after refresh.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revoke agent identity' })).not.toBeInTheDocument();
+
+    rerender(
+      <NodeLifecycleControlsPanel
+        node={node}
+        diagnostics={diagnostics}
+        staleRotationPreview={preview}
+        staleRotationPreviewLoading={false}
+        staleRotationPreviewFetching={false}
+        staleRotationPreviewError={undefined}
+        canReadNode
+        canBootstrapNode={false}
+        lifecycleDataCurrent
+        revokePending={false}
+        onOpenRevokeDialog={vi.fn()}
+        onRefreshStaleRotationPreview={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Permission required: node.bootstrap');
+    expect(screen.queryByRole('button', { name: 'Revoke agent identity' })).not.toBeInTheDocument();
   });
 });

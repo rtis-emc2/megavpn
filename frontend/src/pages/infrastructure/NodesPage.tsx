@@ -14,6 +14,7 @@ import type {
   HostKeyScanResult,
   Job,
   NodeAccessMethod,
+  NodeAgentIdentityRevokeInput,
   NodeCapability,
   NodeCapabilityInstallInput,
   NodeCreateInput,
@@ -59,6 +60,7 @@ import {
   useRevealNodeBootstrapBundle,
   useRetireNode,
   useRevokeEnrollmentToken,
+  useRevokeNodeAgentIdentity,
   useRotateEnrollmentToken,
   useRotateNodeAgentToken,
   useRunNodeDiagnosticsAction,
@@ -89,6 +91,7 @@ import {
   type NodeBootstrapMode,
   type NodeBootstrapModeAvailability,
 } from './nodeBootstrapReadiness';
+import { NodeAgentIdentityRevokeDialog } from './NodeAgentIdentityRevokeDialog';
 
 type NodeTab = 'overview' | 'runtime' | 'onboarding' | 'inventory' | 'capabilities' | 'diagnostics' | 'discovery' | 'bootstrap' | 'security' | 'terminal' | 'lifecycle' | 'jobs';
 
@@ -608,7 +611,9 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const [guidedBootstrapRunIds, setGuidedBootstrapRunIds] = useState<string[]>([]);
   const [guidedInventoryJobIds, setGuidedInventoryJobIds] = useState<string[]>([]);
   const [oneTimePanel, setOneTimePanel] = useState<OneTimePanelState | null>(null);
+  const [agentRevokeNodeId, setAgentRevokeNodeId] = useState<string | null>(null);
   const secretRequestRef = useRef(0);
+  const agentRevokeRequestRef = useRef(0);
   const selectedNodeIdRef = useRef(nodeId);
   const canBootstrapRef = useRef(canBootstrapNodes);
   const cachedOnboardingNode = queryClient.getQueryData<NodeDetail>(['node', nodeId]) || node;
@@ -656,6 +661,8 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const launchSSH = useLaunchNodeSshSession();
   const retire = useRetireNode();
   const forceRetire = useForceRetireNode();
+  const revokeAgentIdentity = useRevokeNodeAgentIdentity();
+  const resetAgentIdentityRevoke = revokeAgentIdentity.reset;
   const current = detail.data || node;
   const busy = maintenance.isPending
     || syncInventory.isPending
@@ -676,19 +683,23 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     || rotateAgentToken.isPending
     || launchSSH.isPending
     || retire.isPending
-    || forceRetire.isPending;
+    || forceRetire.isPending
+    || revokeAgentIdentity.isPending;
 
   useEffect(() => {
     selectedNodeIdRef.current = nodeId;
     secretRequestRef.current += 1;
+    agentRevokeRequestRef.current += 1;
     const timeout = window.setTimeout(() => {
       setOneTimePanel(null);
+      setAgentRevokeNodeId(null);
+      resetAgentIdentityRevoke();
       setGuidedBootstrapJobIds([]);
       setGuidedBootstrapRunIds([]);
       setGuidedInventoryJobIds([]);
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [nodeId]);
+  }, [nodeId, resetAgentIdentityRevoke]);
 
   useEffect(() => {
     canBootstrapRef.current = canBootstrapNodes;
@@ -703,8 +714,11 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   useEffect(() => {
     if (!open) {
       secretRequestRef.current += 1;
+      agentRevokeRequestRef.current += 1;
       const timeout = window.setTimeout(() => {
         setOneTimePanel(null);
+        setAgentRevokeNodeId(null);
+        resetAgentIdentityRevoke();
         setGuidedBootstrapJobIds([]);
         setGuidedBootstrapRunIds([]);
         setGuidedInventoryJobIds([]);
@@ -712,7 +726,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       return () => window.clearTimeout(timeout);
     }
     return undefined;
-  }, [open]);
+  }, [open, resetAgentIdentityRevoke]);
 
   useEffect(() => {
     if (inventory.data?.id && guidedInventoryJobIds.length) {
@@ -757,6 +771,45 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     }
     setConfirm(action);
   };
+
+  const openAgentIdentityRevokeDialog = () => {
+    if (!current || !canBootstrapNodes) return;
+    agentRevokeRequestRef.current += 1;
+    resetAgentIdentityRevoke();
+    setAgentRevokeNodeId(current.id);
+  };
+
+  const closeAgentIdentityRevokeDialog = () => {
+    agentRevokeRequestRef.current += 1;
+    setAgentRevokeNodeId(null);
+    resetAgentIdentityRevoke();
+  };
+
+  const submitAgentIdentityRevoke = async (input: NodeAgentIdentityRevokeInput) => {
+    const targetNodeId = agentRevokeNodeId;
+    if (!targetNodeId || targetNodeId !== current?.id || !canBootstrapNodes) return;
+    const requestId = agentRevokeRequestRef.current + 1;
+    agentRevokeRequestRef.current = requestId;
+    const result = await revokeAgentIdentity.mutateAsync({ nodeId: targetNodeId, input });
+    if (agentRevokeRequestRef.current !== requestId || selectedNodeIdRef.current !== targetNodeId || current?.id !== targetNodeId || result.node_id !== targetNodeId) {
+      setNotice(t('nodes.lifecycleControls.agentIdentityRevoke.errors.contractMismatch'));
+      void detail.refetch();
+      void diagnostics.refetch();
+      void staleRotationPreview.refetch();
+      return;
+    }
+    closeAgentIdentityRevokeDialog();
+    setActiveTab('lifecycle');
+    const count = Number(result.revoked_enrollment_tokens || 0);
+    const countText = count > 0 ? ` ${t('nodes.lifecycleControls.agentIdentityRevoke.revokedEnrollmentTokenCount', { count })}` : '';
+    const revokedAt = result.revoked_at ? ` ${t('nodes.lifecycleControls.agentIdentityRevoke.revokedAt', { value: text(result.revoked_at) })}` : '';
+    setNotice(`${t(result.already_revoked ? 'nodes.lifecycleControls.agentIdentityRevoke.alreadyRevokedNotice' : 'nodes.lifecycleControls.agentIdentityRevoke.success')}${countText}${revokedAt}`.trim());
+    void detail.refetch();
+    void diagnostics.refetch();
+    void enrollmentTokens.refetch();
+    void staleRotationPreview.refetch();
+  };
+
   const visibleOneTimePanel = open && canBootstrapNodes && oneTimePanel?.nodeId === current?.id ? oneTimePanel : null;
 
   const recordJobs = (result: unknown) => {
@@ -994,6 +1047,10 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const firstAgentJob = diagnostics.data?.agent?.last_job_result_job_id || diagnostics.data?.agent?.last_job_claim_job_id || diagnostics.data?.agent?.last_job_claim_job_id || '';
   const effectiveJobIds = jobIds.length ? jobIds : firstAgentJob ? [firstAgentJob] : [];
   const currentStaleRotationPreview = staleRotationPreview.data?.node_id === current?.id ? staleRotationPreview.data : undefined;
+  const diagnosticsBelongsToCurrent = !diagnostics.data?.node?.id || diagnostics.data.node.id === current?.id;
+  const diagnosticsAgentBelongsToCurrent = !diagnostics.data?.agent?.node_id || diagnostics.data.agent.node_id === current?.id;
+  const lifecycleDataCurrent = Boolean(current && diagnosticsBelongsToCurrent && diagnosticsAgentBelongsToCurrent);
+  const agentRevokeDialogNode = current && agentRevokeNodeId === current.id ? current : undefined;
 
   return (
     <Drawer title={nodeLabel(current)} open={open} onClose={onClose}>
@@ -1149,6 +1206,10 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 staleRotationPreviewFetching={staleRotationPreview.isFetching}
                 staleRotationPreviewError={staleRotationPreview.isError ? staleRotationPreview.error : undefined}
                 canReadNode={canReadNodes}
+                canBootstrapNode={canBootstrapNodes}
+                lifecycleDataCurrent={lifecycleDataCurrent}
+                revokePending={revokeAgentIdentity.isPending}
+                onOpenAgentIdentityRevoke={openAgentIdentityRevokeDialog}
                 onRefreshStaleRotationPreview={() => void staleRotationPreview.refetch()}
               />
             ) : null}
@@ -1173,6 +1234,18 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
               onConfirm={() => void runConfirmed()}
               onClose={() => setConfirm(null)}
             />
+            {agentRevokeDialogNode ? (
+              <NodeAgentIdentityRevokeDialog
+                open={Boolean(agentRevokeDialogNode)}
+                node={agentRevokeDialogNode}
+                diagnostics={diagnostics.data}
+                pending={revokeAgentIdentity.isPending}
+                error={revokeAgentIdentity.error}
+                canBootstrapNode={canBootstrapNodes}
+                onCancel={closeAgentIdentityRevokeDialog}
+                onConfirm={submitAgentIdentityRevoke}
+              />
+            ) : null}
           </div>
         ) : null}
       </QueryBoundary>
@@ -2264,6 +2337,10 @@ function LifecycleTab({
   staleRotationPreviewFetching,
   staleRotationPreviewError,
   canReadNode,
+  canBootstrapNode,
+  lifecycleDataCurrent,
+  revokePending,
+  onOpenAgentIdentityRevoke,
   onRefreshStaleRotationPreview,
 }: {
   node: NodeDetail;
@@ -2275,6 +2352,10 @@ function LifecycleTab({
   staleRotationPreviewFetching: boolean;
   staleRotationPreviewError?: unknown;
   canReadNode: boolean;
+  canBootstrapNode: boolean;
+  lifecycleDataCurrent: boolean;
+  revokePending: boolean;
+  onOpenAgentIdentityRevoke: () => void;
   onRefreshStaleRotationPreview: () => void;
 }) {
   const { t } = useTranslation();
@@ -2292,6 +2373,10 @@ function LifecycleTab({
         staleRotationPreviewLoading={staleRotationPreviewLoading}
         staleRotationPreviewFetching={staleRotationPreviewFetching}
         canReadNode={canReadNode}
+        canBootstrapNode={canBootstrapNode}
+        lifecycleDataCurrent={lifecycleDataCurrent}
+        revokePending={revokePending}
+        onOpenRevokeDialog={onOpenAgentIdentityRevoke}
         onRefreshStaleRotationPreview={onRefreshStaleRotationPreview}
       />
       <Card>

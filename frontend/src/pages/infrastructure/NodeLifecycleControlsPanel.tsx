@@ -1,4 +1,4 @@
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { NodeDetail, NodeDiagnostics, NodeStaleRotationCandidate, NodeStaleRotationPreview } from '../../shared/api/types';
 import { Badge, Button, Card, CardBody, DataTable, EmptyState, LoadingSkeleton, StatusBadge, Toolbar } from '../../shared/ui';
@@ -7,6 +7,8 @@ import {
   deriveNodeLifecycleStatusModel,
   describeStaleRotationReason,
   formatAgeSeconds,
+  nodeAgentIdentityExpectedConfirmation,
+  normalizeLifecycleStatus,
   staleRotationPreviewErrorKey,
   type NodeLifecycleSeverity,
 } from './nodeLifecycleControls';
@@ -19,6 +21,10 @@ type NodeLifecycleControlsPanelProps = {
   staleRotationPreviewLoading: boolean;
   staleRotationPreviewFetching: boolean;
   canReadNode: boolean;
+  canBootstrapNode: boolean;
+  lifecycleDataCurrent: boolean;
+  revokePending: boolean;
+  onOpenRevokeDialog: () => void;
   onRefreshStaleRotationPreview: () => void;
 };
 
@@ -52,12 +58,21 @@ export function NodeLifecycleControlsPanel({
   staleRotationPreviewLoading,
   staleRotationPreviewFetching,
   canReadNode,
+  canBootstrapNode,
+  lifecycleDataCurrent,
+  revokePending,
+  onOpenRevokeDialog,
   onRefreshStaleRotationPreview,
 }: NodeLifecycleControlsPanelProps) {
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
   const model = deriveNodeLifecycleStatusModel({ node, diagnostics, staleRotationPreview });
   const candidates = staleRotationPreview?.candidates || [];
+  const agentIdentityStatus = normalizeLifecycleStatus(diagnostics?.agent?.status || node.agent_status || '');
+  const identityAlreadyRevoked = agentIdentityStatus === 'revoked';
+  const identityMissing = ['missing', 'none', 'not_found', 'deleted'].includes(agentIdentityStatus);
+  const identityUnknown = !agentIdentityStatus || agentIdentityStatus === 'unknown';
+  const revokeAllowed = canBootstrapNode && lifecycleDataCurrent && !identityAlreadyRevoked && !identityMissing;
 
   return (
     <div className="page-stack">
@@ -90,6 +105,55 @@ export function NodeLifecycleControlsPanel({
               <strong>{t('nodes.lifecycleControls.deferredActionsTitle')}</strong>
               <span className="muted">{t('nodes.lifecycleControls.deferredActionsBody')}</span>
             </div>
+          </div>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <Toolbar>
+              <StatusBadge status={agentIdentityStatus || 'unknown'} />
+              {identityUnknown ? <Badge>{t('nodes.lifecycleControls.agentIdentityRevoke.statusUnknown')}</Badge> : null}
+              {identityAlreadyRevoked ? <Badge>{t('nodes.lifecycleControls.agentIdentityRevoke.alreadyRevokedBadge')}</Badge> : null}
+            </Toolbar>
+            <div>
+              <h3 className="card-title">{t('nodes.lifecycleControls.agentIdentityRevoke.actionTitle')}</h3>
+              <p className="muted">{t('nodes.lifecycleControls.agentIdentityRevoke.actionDescription')}</p>
+            </div>
+            <div className="definition-grid">
+              <span>{t('nodes.lifecycleControls.agentIdentityRevoke.identityStatus')}</span>
+              <strong>{lifecycleStatusValue(agentIdentityStatus || 'unknown')}</strong>
+              <span>{t('nodes.lifecycleControls.agentIdentityRevoke.confirmationTarget')}</span>
+              <strong>{nodeAgentIdentityExpectedConfirmation(node)}</strong>
+            </div>
+            {!canBootstrapNode ? (
+              <div role="alert" className="error-state-inline">{t('common.permissionRequired', { permission: 'node.bootstrap' })}</div>
+            ) : null}
+            {canBootstrapNode && !lifecycleDataCurrent ? (
+              <div role="alert" className="error-state-inline">{t('nodes.lifecycleControls.agentIdentityRevoke.lifecycleDataStale')}</div>
+            ) : null}
+            {canBootstrapNode && identityAlreadyRevoked ? (
+              <div role="status" className="inline-panel">{t('nodes.lifecycleControls.agentIdentityRevoke.identityAlreadyRevokedState')}</div>
+            ) : null}
+            {canBootstrapNode && identityMissing ? (
+              <div role="status" className="inline-panel">{t('nodes.lifecycleControls.agentIdentityRevoke.identityMissingState')}</div>
+            ) : null}
+            {canBootstrapNode && identityUnknown ? (
+              <div role="alert" className="error-state-inline">{t('nodes.lifecycleControls.agentIdentityRevoke.identityUnknownWarning')}</div>
+            ) : null}
+            <Toolbar>
+              {revokeAllowed ? (
+                <Button
+                  variant="danger"
+                  icon={<ShieldAlert size={16} />}
+                  disabled={revokePending}
+                  onClick={onOpenRevokeDialog}
+                >
+                  {revokePending ? t('nodes.lifecycleControls.agentIdentityRevoke.pending') : t('nodes.lifecycleControls.agentIdentityRevoke.buttonLabel')}
+                </Button>
+              ) : null}
+            </Toolbar>
           </div>
         </CardBody>
       </Card>

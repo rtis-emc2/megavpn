@@ -299,6 +299,8 @@ describe('NodesPage', () => {
   let currentEnrollmentTokens: EnrollmentToken[];
   let currentBootstrapRuns: NodeBootstrapRun[];
   let currentStaleRotationPreview: NodeStaleRotationPreview;
+  let agentRevokeResponseNodeId: string;
+  let agentRevokeAlreadyRevoked: boolean;
   let manualBundleRevealContent: string;
   let manualBundleDownloadContent: string;
   let emptyEnrollmentIssueResponse: boolean;
@@ -351,6 +353,8 @@ describe('NodesPage', () => {
     currentEnrollmentTokens = enrollmentTokens.map((token) => ({ ...token }));
     currentBootstrapRuns = bootstrapRuns.map((run) => ({ ...run }));
     currentStaleRotationPreview = clone(staleRotationPreview);
+    agentRevokeResponseNodeId = 'node-1';
+    agentRevokeAlreadyRevoked = false;
     manualBundleRevealContent = '';
     manualBundleDownloadContent = '';
     emptyEnrollmentIssueResponse = false;
@@ -628,6 +632,40 @@ describe('NodesPage', () => {
         };
         currentBootstrapRuns = [run as NodeBootstrapRun, ...currentBootstrapRuns];
         return json({ job: job('job-bootstrap', 'node.bootstrap'), bootstrap_run: run }, 202);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/agent-identity/revoke') {
+        const status = actionErrors.agentRevoke;
+        if (status) {
+          const messages: Record<number, { code: string; error: string }> = {
+            400: { code: 'node_agent_revoke_request_invalid', error: 'invalid request contains token_hash raw text' },
+            403: { code: 'node_agent_revoke_request_invalid', error: 'node.bootstrap permission required Authorization: Bearer raw' },
+            404: { code: 'node_agent_revoke_node_not_found', error: 'node not found secret_ref raw' },
+            409: { code: 'node_agent_revoke_confirmation_mismatch', error: 'node confirmation mismatch token_hash raw' },
+            429: { code: 'rate_limited', error: 'rate limited token raw' },
+            500: { code: 'node_agent_revoke_internal_error', error: 'store failed token_hash raw' },
+            503: { code: 'node_agent_revoke_internal_error', error: 'service unavailable secret_ref raw' },
+          };
+          const payload = messages[status] || { code: 'node_agent_revoke_internal_error', error: 'agent revoke failed' };
+          return json({ status: 'error', ...payload }, status);
+        }
+        currentNode = { ...currentNode, agent_status: 'revoked', updated_at: '2026-07-09T08:12:00Z' };
+        currentDiagnostics = {
+          ...currentDiagnostics,
+          agent: {
+            ...(currentDiagnostics.agent || {}),
+            node_id: 'node-1',
+            status: 'revoked',
+          },
+        };
+        currentEnrollmentTokens = currentEnrollmentTokens.map((token) => token.status === 'active' ? { ...token, status: 'revoked' } : token);
+        return json({
+          status: 'revoked',
+          node_id: agentRevokeResponseNodeId,
+          agent_status: 'revoked',
+          revoked_at: '2026-07-09T08:12:00Z',
+          already_revoked: agentRevokeAlreadyRevoked,
+          revoked_enrollment_tokens: agentRevokeAlreadyRevoked ? 0 : 1,
+        });
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/agent-token/rotate') return json(job('job-agent-rotate', 'node.agent.rotate_token'), 202);
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/ssh/sessions') {
@@ -979,7 +1017,7 @@ describe('NodesPage', () => {
     ]) {
       expect(calls.some((call) => call.method === 'POST' && call.path === forbiddenPath)).toBe(false);
     }
-    expect(screen.queryByRole('button', { name: /revoke agent identity/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /revoke agent identity/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /reboot node/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /emergency cleanup/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /clear stale rotation/i })).not.toBeInTheDocument();
@@ -1002,6 +1040,95 @@ describe('NodesPage', () => {
     expect(screen.queryByText('Unclaimed rotation without agent progress.')).not.toBeInTheDocument();
     expect(screen.queryByText('job-stal...')).not.toBeInTheDocument();
     expect(screen.queryByText('node-previous')).not.toBeInTheDocument();
+  });
+
+  it('revokes agent identity through the dedicated dialog without legacy or adjacent destructive calls', async () => {
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    const queryClient = await openNode();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await waitFor(() => expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/diagnostics/stale-rotation')).toBe(true));
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke agent identity' }));
+
+    const dialog = activeDialog();
+    expect(within(dialog).getByText('This is a destructive trust operation. Backend validation is authoritative and the current agent credentials stop authenticating after success.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Uninstall the agent.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Automatically create a replacement enrollment token.')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Revoke identity' })).toBeDisabled();
+    await userEvent.type(within(dialog).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(dialog).getByLabelText('Operator reason'), 'incident response');
+    await userEvent.click(within(dialog).getByLabelText(/I understand that identity revocation/));
+    await userEvent.dblClick(within(dialog).getByRole('button', { name: 'Revoke identity' }));
+
+    await waitFor(() => expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/agent-identity/revoke')).toHaveLength(1));
+    const revokeCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/agent-identity/revoke');
+    expect(revokeCall?.body).toEqual({ confirmation: 'Edge One', reason: 'incident response' });
+    expect(Object.keys(revokeCall?.body || {}).sort()).toEqual(['confirmation', 'reason']);
+    expect(revokeCall?.body).not.toHaveProperty('acknowledged');
+    expect(revokeCall?.body).not.toHaveProperty('node_id');
+    expect(revokeCall?.headers['x-megavpn-csrf']).toBe('1');
+
+    expect(await screen.findByText(/Agent identity revoked. The previous agent credentials can no longer authenticate./)).toBeInTheDocument();
+    expect(screen.getByText(/Active enrollment credentials revoked: 1./)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Lifecycle' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('dialog', { name: 'Revoke agent identity' })).not.toBeInTheDocument();
+    expect(JSON.stringify(queryClient.getMutationCache().getAll().map((mutation) => mutation.state.variables))).not.toContain('incident response');
+    expect(storageSet.mock.calls.some(([key, value]) => /revoke|agent|token|confirmation|reason/i.test(String(key)) || /incident response|Edge One/.test(String(value)))).toBe(false);
+    expect(document.body.textContent || '').not.toContain('tok_...');
+    expect(document.body.textContent || '').not.toContain('token_hash');
+    expect(document.body.textContent || '').not.toContain('secret_ref');
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/reboot')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/emergency-cleanup')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/diagnostics/clear-stale-rotation')).toBe(false);
+    expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path.includes('/enrollment-token'))).toBe(false);
+  });
+
+  it('handles already-revoked result as informational', async () => {
+    agentRevokeAlreadyRevoked = true;
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Revoke agent identity' }));
+    await userEvent.type(within(activeDialog()).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(activeDialog()).getByLabelText('Operator reason'), 'second review');
+    await userEvent.click(within(activeDialog()).getByLabelText(/I understand that identity revocation/));
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Revoke identity' }));
+    expect(await screen.findByText(/Agent identity was already revoked./)).toBeInTheDocument();
+    expect(screen.queryByText(/Active enrollment credentials revoked:/)).not.toBeInTheDocument();
+  });
+
+  it('handles safe backend errors and node-id mismatch without fake success', async () => {
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    actionErrors.agentRevoke = 409;
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke agent identity' }));
+    await userEvent.type(within(activeDialog()).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(activeDialog()).getByLabelText('Operator reason'), 'incident response');
+    await userEvent.click(within(activeDialog()).getByLabelText(/I understand that identity revocation/));
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Revoke identity' }));
+    expect(await screen.findByText('Backend rejected the confirmation. Type the current node name again.')).toBeInTheDocument();
+    expect(document.body.textContent || '').not.toContain('token_hash raw');
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Cancel' }));
+
+    actionErrors.agentRevoke = 0;
+    agentRevokeAlreadyRevoked = false;
+    agentRevokeResponseNodeId = 'node-other';
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke agent identity' }));
+    await userEvent.type(within(activeDialog()).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(activeDialog()).getByLabelText('Operator reason'), 'incident response');
+    await userEvent.click(within(activeDialog()).getByLabelText(/I understand that identity revocation/));
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Revoke identity' }));
+    expect(await screen.findByText('Backend returned a result for a different node. Current UI state was not marked successful; refresh node data.')).toBeInTheDocument();
+    expect(within(activeDialog()).getByRole('heading', { name: 'Revoke agent identity' })).toBeInTheDocument();
+  });
+
+  it('keeps agent identity revoke disabled without node.bootstrap permission', async () => {
+    await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    expect(await screen.findByText('Permission required: node.bootstrap')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revoke agent identity' })).not.toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/agent-identity/revoke')).toBe(false);
   });
 
   it('reveals, copies and downloads manual bootstrap bundles only after explicit acknowledgement', async () => {

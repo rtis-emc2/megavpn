@@ -8,6 +8,7 @@ import {
   listEnrollmentTokens,
   parseContentDispositionFilename,
   revealNodeBootstrapBundle,
+  revokeNodeAgentIdentity,
   sanitizeDownloadFilename,
 } from './endpoints';
 
@@ -279,5 +280,115 @@ describe('node stale rotation preview endpoint', () => {
     expect(calls[0].headers['x-megavpn-csrf']).toBeUndefined();
     expect(calls.some((call) => call.method === 'POST')).toBe(false);
     expect(calls.some((call) => call.path.includes('clear-stale-rotation'))).toBe(false);
+  });
+});
+
+describe('node agent identity revoke endpoint', () => {
+  const calls: FetchCall[] = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://megavpn.test');
+      const method = String(init?.method || 'GET').toUpperCase();
+      const path = `${url.pathname}${url.search}`;
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      calls.push({
+        method,
+        path,
+        body,
+        headers: trackedHeaders(init?.headers),
+        credentials: init?.credentials,
+        cache: init?.cache,
+      });
+
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node%2Fone/agent-identity/revoke') {
+        if (body?.reason === 'return conflict') {
+          return json({ status: 'error', code: 'node_agent_revoke_conflict', error: 'secret_ref raw backend text' }, 409);
+        }
+        return json({
+          status: 'revoked',
+          node_id: 'node/one',
+          agent_status: 'revoked',
+          revoked_at: '2026-07-14T08:30:00Z',
+          already_revoked: false,
+          revoked_enrollment_tokens: 1,
+        });
+      }
+      return json({ error: `unhandled ${method} ${url.pathname}` }, 404);
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('uses exact POST path and request body without UI-only or secret-like fields', async () => {
+    const result = await revokeNodeAgentIdentity('node/one', {
+      confirmation: 'Edge One',
+      reason: 'incident response',
+    });
+
+    expect(result).toEqual({
+      status: 'revoked',
+      node_id: 'node/one',
+      agent_status: 'revoked',
+      revoked_at: '2026-07-14T08:30:00Z',
+      already_revoked: false,
+      revoked_enrollment_tokens: 1,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/v1/nodes/node%2Fone/agent-identity/revoke',
+      body: {
+        confirmation: 'Edge One',
+        reason: 'incident response',
+      },
+      credentials: 'include',
+    });
+    expect(Object.keys(calls[0].body || {}).sort()).toEqual(['confirmation', 'reason']);
+    expect(calls[0].body).not.toHaveProperty('acknowledged');
+    expect(calls[0].body).not.toHaveProperty('node_id');
+    expect(calls[0].headers.accept).toBe('application/json');
+    expect(calls[0].headers['content-type']).toBe('application/json');
+    expect(calls[0].headers['x-megavpn-csrf']).toBe('1');
+    expect(JSON.stringify(result)).not.toMatch(/token_hash|token_hint|secret_ref|signature|nonce|authorization|enrollment_token_ids/i);
+    expect(calls.some((call) => call.path.endsWith('/reboot'))).toBe(false);
+    expect(calls.some((call) => call.path.endsWith('/emergency-cleanup'))).toBe(false);
+    expect(calls.some((call) => call.path.includes('clear-stale-rotation'))).toBe(false);
+  });
+
+  it('keeps already_revoked typed and preserves APIError on backend conflicts', async () => {
+    vi.mocked(fetch).mockImplementationOnce(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://megavpn.test');
+      const method = String(init?.method || 'GET').toUpperCase();
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      calls.push({
+        method,
+        path: `${url.pathname}${url.search}`,
+        body,
+        headers: trackedHeaders(init?.headers),
+        credentials: init?.credentials,
+        cache: init?.cache,
+      });
+      return json({
+        status: 'revoked',
+        node_id: 'node/one',
+        agent_status: 'revoked',
+        revoked_at: '2026-07-14T08:31:00Z',
+        already_revoked: true,
+        revoked_enrollment_tokens: 0,
+      });
+    });
+    const already = await revokeNodeAgentIdentity('node/one', { confirmation: 'Edge One', reason: 'second review' });
+    expect(already.already_revoked).toBe(true);
+    expect(already.revoked_enrollment_tokens).toBe(0);
+
+    await expect(revokeNodeAgentIdentity('node/one', { confirmation: 'Edge One', reason: 'return conflict' })).rejects.toBeInstanceOf(APIError);
+    expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node%2Fone/agent-identity/revoke')).toHaveLength(2);
   });
 });

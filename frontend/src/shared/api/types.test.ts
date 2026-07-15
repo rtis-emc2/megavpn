@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from 'vitest';
-import type { EnrollmentToken, EnrollmentTokenIssueResult, NodeStaleRotationCandidate, NodeStaleRotationPreview } from './types';
+import type { EnrollmentToken, EnrollmentTokenIssueResult, NodeAgentIdentityRevokeInput, NodeAgentIdentityRevokeResult, NodeStaleRotationCandidate, NodeStaleRotationPreview } from './types';
 
 describe('enrollment token API types', () => {
   it('keeps safe list tokens separate from secret-bearing issue responses', () => {
@@ -32,5 +32,30 @@ describe('node stale rotation preview API types', () => {
       stale_reason: string;
       safe_to_clear: boolean;
     }>();
+  });
+});
+
+describe('node agent identity revoke API types', () => {
+  it('keeps the request and response contract exact and redacted', () => {
+    expectTypeOf<NodeAgentIdentityRevokeInput>().toEqualTypeOf<{
+      confirmation: string;
+      reason: string;
+    }>();
+    expectTypeOf<NodeAgentIdentityRevokeInput>().not.toHaveProperty('node_id');
+    expectTypeOf<NodeAgentIdentityRevokeInput>().not.toHaveProperty('acknowledged');
+    expectTypeOf<NodeAgentIdentityRevokeInput>().not.toHaveProperty('token');
+
+    expectTypeOf<NodeAgentIdentityRevokeResult>().toEqualTypeOf<{
+      status: string;
+      node_id: string;
+      agent_status: string;
+      revoked_at: string;
+      already_revoked: boolean;
+      revoked_enrollment_tokens: number;
+    }>();
+    expectTypeOf<NodeAgentIdentityRevokeResult>().not.toHaveProperty('token');
+    expectTypeOf<NodeAgentIdentityRevokeResult>().not.toHaveProperty('token_hash');
+    expectTypeOf<NodeAgentIdentityRevokeResult>().not.toHaveProperty('token_hint');
+    expectTypeOf<NodeAgentIdentityRevokeResult>().not.toHaveProperty('secret_ref');
   });
 });

@@ -1,5 +1,5 @@
 import { APIError } from '../../shared/api/client';
-import type { NodeDetail, NodeDiagnostics, NodeStaleRotationCandidate, NodeStaleRotationPreview } from '../../shared/api/types';
+import type { NodeAgentIdentityRevokeInput, NodeDetail, NodeDiagnostics, NodeStaleRotationCandidate, NodeStaleRotationPreview } from '../../shared/api/types';
 
 export type NodeLifecycleSeverity = 'healthy' | 'warning' | 'blocked' | 'neutral';
 
@@ -33,9 +33,41 @@ export type NodeStaleRotationReasonDescriptor = {
   known: boolean;
 };
 
+export type NodeAgentIdentityRevokeForm = {
+  confirmation: string;
+  reason: string;
+  acknowledged: boolean;
+};
+
+export type NodeAgentIdentityRevokeValidation = {
+  valid: boolean;
+  expectedConfirmation: string;
+  input?: NodeAgentIdentityRevokeInput;
+  errors: {
+    confirmation?: string;
+    reason?: string;
+    acknowledgement?: string;
+  };
+};
+
+export const NODE_AGENT_IDENTITY_REVOKE_MAX_CONFIRMATION_LENGTH = 512;
+export const NODE_AGENT_IDENTITY_REVOKE_MIN_REASON_LENGTH = 5;
+export const NODE_AGENT_IDENTITY_REVOKE_MAX_REASON_LENGTH = 500;
+
 const healthyStatuses = new Set(['active', 'available', 'connected', 'healthy', 'ok', 'online', 'ready', 'registered', 'running', 'succeeded']);
 const warningStatuses = new Set(['pending', 'queued', 'rotating', 'starting', 'stale', 'unknown', 'warn', 'warning']);
 const blockedStatuses = new Set(['blocked', 'deleted', 'disabled', 'failed', 'offline', 'retired', 'revoked', 'unavailable']);
+const unsafeReasonMarkers = [
+  'authorization:',
+  'bearer ',
+  'agent_token',
+  'enrollment_token',
+  'token_hash',
+  'private_key',
+  'secret_ref',
+  'x-megavpn-agent-signature',
+  'x-megavpn-agent-nonce',
+];
 
 export const NODE_STALE_ROTATION_REASON_LABEL_KEYS: Record<string, string> = {
   unclaimed_without_agent_progress: 'nodes.lifecycleControls.reasons.unclaimedWithoutAgentProgress',
@@ -66,6 +98,64 @@ const blockedReasonSet = new Set([
 
 export function normalizeLifecycleStatus(value: unknown): string {
   return String(value || '').trim().toLowerCase();
+}
+
+export function nodeAgentIdentityExpectedConfirmation(node: Pick<NodeDetail, 'id' | 'name'>): string {
+  return String(node.name || '').trim() || node.id;
+}
+
+export function reasonLooksUnsafeForNodeAgentIdentityRevoke(reason: string): boolean {
+  if (hasControlCharacter(reason)) return true;
+  if (reason.includes('{') || reason.includes('}')) return true;
+  const lower = reason.toLowerCase();
+  return unsafeReasonMarkers.some((marker) => lower.includes(marker));
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 32 || code === 127) return true;
+  }
+  return false;
+}
+
+export function validateNodeAgentIdentityRevokeForm(node: Pick<NodeDetail, 'id' | 'name'>, form: NodeAgentIdentityRevokeForm): NodeAgentIdentityRevokeValidation {
+  const expectedConfirmation = nodeAgentIdentityExpectedConfirmation(node);
+  const confirmation = form.confirmation.trim();
+  const reason = form.reason.trim();
+  const errors: NodeAgentIdentityRevokeValidation['errors'] = {};
+
+  if (!confirmation) {
+    errors.confirmation = 'nodes.lifecycleControls.agentIdentityRevoke.errors.confirmationRequired';
+  } else if (confirmation.length > NODE_AGENT_IDENTITY_REVOKE_MAX_CONFIRMATION_LENGTH) {
+    errors.confirmation = 'nodes.lifecycleControls.agentIdentityRevoke.errors.confirmationTooLong';
+  } else if (hasControlCharacter(confirmation)) {
+    errors.confirmation = 'nodes.lifecycleControls.agentIdentityRevoke.errors.confirmationUnsafe';
+  } else if (confirmation !== expectedConfirmation) {
+    errors.confirmation = 'nodes.lifecycleControls.agentIdentityRevoke.errors.confirmationMismatch';
+  }
+
+  if (!reason) {
+    errors.reason = 'nodes.lifecycleControls.agentIdentityRevoke.errors.reasonRequired';
+  } else if (reason.length < NODE_AGENT_IDENTITY_REVOKE_MIN_REASON_LENGTH) {
+    errors.reason = 'nodes.lifecycleControls.agentIdentityRevoke.errors.reasonTooShort';
+  } else if (reason.length > NODE_AGENT_IDENTITY_REVOKE_MAX_REASON_LENGTH) {
+    errors.reason = 'nodes.lifecycleControls.agentIdentityRevoke.errors.reasonTooLong';
+  } else if (reasonLooksUnsafeForNodeAgentIdentityRevoke(reason)) {
+    errors.reason = 'nodes.lifecycleControls.agentIdentityRevoke.errors.reasonUnsafe';
+  }
+
+  if (!form.acknowledged) {
+    errors.acknowledgement = 'nodes.lifecycleControls.agentIdentityRevoke.errors.acknowledgementRequired';
+  }
+
+  const valid = !errors.confirmation && !errors.reason && !errors.acknowledgement;
+  return {
+    valid,
+    expectedConfirmation,
+    input: valid ? { confirmation, reason } : undefined,
+    errors,
+  };
 }
 
 export function lifecycleSeverityForStatus(value: unknown): NodeLifecycleSeverity {
@@ -191,6 +281,44 @@ export function staleRotationPreviewErrorKey(error: unknown): string {
       return 'nodes.lifecycleControls.errors.validation';
     default:
       return 'nodes.lifecycleControls.errors.generic';
+  }
+}
+
+function apiErrorCode(error: APIError): string {
+  const payload = error.payload;
+  if (payload && typeof payload === 'object' && 'code' in payload) {
+    return String((payload as { code?: unknown }).code || '');
+  }
+  return '';
+}
+
+export function nodeAgentIdentityRevokeErrorKey(error: unknown): string {
+  if (!(error instanceof APIError)) return 'nodes.lifecycleControls.agentIdentityRevoke.errors.generic';
+  const code = apiErrorCode(error);
+  if (code === 'node_agent_revoke_confirmation_mismatch') return 'nodes.lifecycleControls.agentIdentityRevoke.errors.confirmationMismatchBackend';
+  if (code === 'node_agent_identity_missing') return 'nodes.lifecycleControls.agentIdentityRevoke.errors.identityMissingBackend';
+  if (code === 'node_agent_revoke_conflict') return 'nodes.lifecycleControls.agentIdentityRevoke.errors.conflict';
+  if (code === 'node_agent_revoke_node_not_found') return 'nodes.lifecycleControls.agentIdentityRevoke.errors.nodeNotFound';
+  if (code === 'node_agent_revoke_request_invalid') return 'nodes.lifecycleControls.agentIdentityRevoke.errors.requestInvalid';
+  if (code === 'node_agent_revoke_internal_error') return 'nodes.lifecycleControls.agentIdentityRevoke.errors.serviceUnavailable';
+
+  switch (error.status) {
+    case 400:
+    case 422:
+      return 'nodes.lifecycleControls.agentIdentityRevoke.errors.requestInvalid';
+    case 403:
+      return 'nodes.lifecycleControls.agentIdentityRevoke.errors.permissionRequired';
+    case 404:
+      return 'nodes.lifecycleControls.agentIdentityRevoke.errors.nodeNotFound';
+    case 409:
+      return 'nodes.lifecycleControls.agentIdentityRevoke.errors.conflict';
+    case 429:
+      return 'nodes.lifecycleControls.agentIdentityRevoke.errors.rateLimited';
+    case 500:
+    case 503:
+      return 'nodes.lifecycleControls.agentIdentityRevoke.errors.serviceUnavailable';
+    default:
+      return 'nodes.lifecycleControls.agentIdentityRevoke.errors.generic';
   }
 }
 

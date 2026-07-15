@@ -119,6 +119,7 @@ import {
   removeClientAccessGroupMembership,
   retireNode,
   revealNodeBootstrapBundle,
+  revokeNodeAgentIdentity,
   revokeEnrollmentToken,
   revokeClientShareLink,
   revokeClientSubscription,
@@ -272,6 +273,8 @@ import type {
   MailTestResult,
   HostKeyDecisionResult,
   HostKeyScanResult,
+  NodeAgentIdentityRevokeInput,
+  NodeAgentIdentityRevokeResult,
   NodeAgentState,
   NodeAccessMethod,
   NodeBootstrapBundleDownloadResult,
@@ -405,6 +408,16 @@ function invalidateNodeQueries(queryClient: ReturnType<typeof useQueryClient>, n
     void queryClient.invalidateQueries({ queryKey: ['node-bootstrap-runs', nodeId] });
     void queryClient.invalidateQueries({ queryKey: ['node-enrollment-tokens', nodeId] });
   }
+}
+
+function invalidateNodeAgentIdentityRevokeQueries(queryClient: ReturnType<typeof useQueryClient>, nodeId: string) {
+  void queryClient.invalidateQueries({ queryKey: ['nodes'] });
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  void queryClient.invalidateQueries({ queryKey: ['node', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-diagnostics', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-agent-state', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-enrollment-tokens', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-stale-rotation-preview', nodeId] });
 }
 
 function invalidateJobsFromResult(queryClient: ReturnType<typeof useQueryClient>, result: unknown) {
@@ -725,6 +738,15 @@ export function useForceRetireNode() {
   return useMutation<NodeRetireResult, Error, { nodeId: string; confirmation: string; reason?: string }>({
     mutationFn: ({ nodeId, confirmation, reason }) => forceRetireNode(nodeId, { confirmation, reason }),
     onSuccess: (_result, input) => invalidateNodeQueries(queryClient, input.nodeId),
+  });
+}
+
+export function useRevokeNodeAgentIdentity() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeAgentIdentityRevokeResult, Error, { nodeId: string; input: NodeAgentIdentityRevokeInput }>({
+    mutationFn: ({ nodeId, input }) => revokeNodeAgentIdentity(nodeId, input),
+    onSuccess: (_result, variables) => invalidateNodeAgentIdentityRevokeQueries(queryClient, variables.nodeId),
+    gcTime: 0,
   });
 }
 

@@ -5,8 +5,12 @@ import {
   deriveNodeLifecycleStatusModel,
   describeStaleRotationReason,
   formatAgeSeconds,
+  nodeAgentIdentityExpectedConfirmation,
+  nodeAgentIdentityRevokeErrorKey,
+  reasonLooksUnsafeForNodeAgentIdentityRevoke,
   staleRotationCandidateKey,
   staleRotationPreviewErrorKey,
+  validateNodeAgentIdentityRevokeForm,
 } from './nodeLifecycleControls';
 
 const node: NodeDetail = {
@@ -95,5 +99,44 @@ describe('node lifecycle controls model', () => {
     expect(formatAgeSeconds(59)).toBe('59s');
     expect(formatAgeSeconds(125)).toBe('2m 5s');
     expect(formatAgeSeconds(7260)).toBe('2h 1m');
+  });
+});
+
+describe('node agent identity revoke helpers', () => {
+  it('validates exact confirmation, trimmed input, reason bounds and UI-only acknowledgement', () => {
+    expect(nodeAgentIdentityExpectedConfirmation(node)).toBe('Edge One');
+    expect(nodeAgentIdentityExpectedConfirmation({ ...node, name: '' })).toBe('node-1');
+
+    expect(validateNodeAgentIdentityRevokeForm(node, { confirmation: '', reason: 'incident response', acknowledged: true }).errors.confirmation).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.confirmationRequired');
+    expect(validateNodeAgentIdentityRevokeForm(node, { confirmation: 'edge one', reason: 'incident response', acknowledged: true }).errors.confirmation).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.confirmationMismatch');
+    expect(validateNodeAgentIdentityRevokeForm(node, { confirmation: 'x'.repeat(513), reason: 'incident response', acknowledged: true }).errors.confirmation).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.confirmationTooLong');
+    expect(validateNodeAgentIdentityRevokeForm(node, { confirmation: 'Edge\nOne', reason: 'incident response', acknowledged: true }).errors.confirmation).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.confirmationUnsafe');
+    expect(validateNodeAgentIdentityRevokeForm(node, { confirmation: ' Edge One ', reason: ' incident response ', acknowledged: false }).errors.acknowledgement).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.acknowledgementRequired');
+
+    const valid = validateNodeAgentIdentityRevokeForm(node, { confirmation: ' Edge One ', reason: ' incident response ', acknowledged: true });
+    expect(valid.valid).toBe(true);
+    expect(valid.input).toEqual({ confirmation: 'Edge One', reason: 'incident response' });
+  });
+
+  it('rejects unsafe reasons without exposing request or secret markers', () => {
+    expect(validateNodeAgentIdentityRevokeForm(node, { confirmation: 'Edge One', reason: '', acknowledged: true }).errors.reason).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.reasonRequired');
+    expect(validateNodeAgentIdentityRevokeForm(node, { confirmation: 'Edge One', reason: 'bad', acknowledged: true }).errors.reason).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.reasonTooShort');
+    expect(validateNodeAgentIdentityRevokeForm(node, { confirmation: 'Edge One', reason: 'r'.repeat(501), acknowledged: true }).errors.reason).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.reasonTooLong');
+
+    for (const reason of ['has\nnewline', 'Authorization: Bearer abc', 'Bearer token', 'agent_token=abc', 'enrollment_token=abc', 'token_hash=abc', 'private_key=abc', 'secret_ref=abc', '{"request":"body"}']) {
+      expect(reasonLooksUnsafeForNodeAgentIdentityRevoke(reason)).toBe(true);
+      expect(validateNodeAgentIdentityRevokeForm(node, { confirmation: 'Edge One', reason, acknowledged: true }).errors.reason).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.reasonUnsafe');
+    }
+  });
+
+  it('maps backend revoke errors using safe status and code allowlists', () => {
+    expect(nodeAgentIdentityRevokeErrorKey(new APIError('raw sql token_hash', 409, { code: 'node_agent_revoke_confirmation_mismatch', error: 'raw sql token_hash' }))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.confirmationMismatchBackend');
+    expect(nodeAgentIdentityRevokeErrorKey(new APIError('raw', 409, { code: 'node_agent_identity_missing' }))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.identityMissingBackend');
+    expect(nodeAgentIdentityRevokeErrorKey(new APIError('raw', 409, { code: 'node_agent_revoke_conflict' }))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.conflict');
+    expect(nodeAgentIdentityRevokeErrorKey(new APIError('raw', 404, { code: 'node_agent_revoke_node_not_found' }))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.nodeNotFound');
+    expect(nodeAgentIdentityRevokeErrorKey(new APIError('raw', 400, { code: 'node_agent_revoke_request_invalid' }))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.requestInvalid');
+    expect(nodeAgentIdentityRevokeErrorKey(new APIError('raw', 429, { error: 'rate limited' }))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.rateLimited');
+    expect(nodeAgentIdentityRevokeErrorKey(new APIError('raw', 503, { error: 'down' }))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.serviceUnavailable');
+    expect(nodeAgentIdentityRevokeErrorKey(new Error('network'))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.generic');
   });
 });

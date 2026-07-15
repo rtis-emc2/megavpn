@@ -195,6 +195,20 @@ export type NodeStaleRotationPreview = {
   candidates: NodeStaleRotationCandidate[];
 };
 
+export type NodeAgentIdentityRevokeInput = {
+  confirmation: string;
+  reason: string;
+};
+
+export type NodeAgentIdentityRevokeResult = {
+  status: string;
+  node_id: string;
+  agent_status: string;
+  revoked_at: string;
+  already_revoked: boolean;
+  revoked_enrollment_tokens: number;
+};
+
 export type NodeCapability = APIRecord & {
   id: string;
   node_id?: string;

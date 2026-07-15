@@ -114,6 +114,8 @@ import type {
   PlatformSettingsInput,
   HostKeyDecisionResult,
   HostKeyScanResult,
+  NodeAgentIdentityRevokeInput,
+  NodeAgentIdentityRevokeResult,
   NodeCapability,
   NodeCapabilityDrift,
   NodeCapabilityInstallEvent,
@@ -398,6 +400,13 @@ export function getNodeDiagnostics(nodeId: string): Promise<NodeDiagnostics> {
 
 export function getNodeStaleRotationPreview(nodeId: string): Promise<NodeStaleRotationPreview> {
   return apiRequest<NodeStaleRotationPreview>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/diagnostics/stale-rotation`);
+}
+
+export function revokeNodeAgentIdentity(nodeId: string, input: NodeAgentIdentityRevokeInput): Promise<NodeAgentIdentityRevokeResult> {
+  return sendJSON<NodeAgentIdentityRevokeResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/agent-identity/revoke`, 'POST', {
+    confirmation: input.confirmation,
+    reason: input.reason,
+  });
 }
 
 export async function getNodeAgentState(nodeId: string): Promise<NodeAgentState> {
