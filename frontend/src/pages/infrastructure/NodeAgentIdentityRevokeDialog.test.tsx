@@ -55,7 +55,7 @@ describe('NodeAgentIdentityRevokeDialog', () => {
   it('renders accurate destructive warnings without token-like diagnostic material', () => {
     renderDialog();
 
-    expect(screen.getByRole('dialog')).toHaveTextContent('Revoke agent identity');
+    expect(screen.getByRole('dialog', { name: 'Revoke agent identity' })).toBeInTheDocument();
     expect(screen.getByText('Invalidate the current agent identity.')).toBeInTheDocument();
     expect(screen.getByText('Prevent the current agent token from authenticating.')).toBeInTheDocument();
     expect(screen.getByText('Revoke active unused enrollment tokens for this node.')).toBeInTheDocument();

@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IconButton } from './Button';
 
@@ -23,6 +23,7 @@ function useEscapeClose(open: boolean, onClose: () => void) {
 
 export function Drawer({ title, open, onClose, children }: OverlayProps) {
   const { t } = useTranslation();
+  const titleID = useId();
   const ref = useRef<HTMLDivElement | null>(null);
   useEscapeClose(open, onClose);
   useEffect(() => {
@@ -31,9 +32,9 @@ export function Drawer({ title, open, onClose, children }: OverlayProps) {
   if (!open) return null;
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <aside className="drawer" role="dialog" aria-modal="true" tabIndex={-1} ref={ref}>
+      <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby={titleID} tabIndex={-1} ref={ref}>
         <div className="overlay-head">
-          <h2 className="card-title">{title}</h2>
+          <h2 id={titleID} className="card-title">{title}</h2>
           <IconButton title={t('common.close')} onClick={onClose}><X size={18} /></IconButton>
         </div>
         <div className="overlay-body">{children}</div>
@@ -44,6 +45,7 @@ export function Drawer({ title, open, onClose, children }: OverlayProps) {
 
 export function Modal({ title, open, onClose, children }: OverlayProps) {
   const { t } = useTranslation();
+  const titleID = useId();
   const ref = useRef<HTMLDivElement | null>(null);
   useEscapeClose(open, onClose);
   useEffect(() => {
@@ -52,9 +54,9 @@ export function Modal({ title, open, onClose, children }: OverlayProps) {
   if (!open) return null;
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal" role="dialog" aria-modal="true" tabIndex={-1} ref={ref}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby={titleID} tabIndex={-1} ref={ref}>
         <div className="overlay-head">
-          <h2 className="card-title">{title}</h2>
+          <h2 id={titleID} className="card-title">{title}</h2>
           <IconButton title={t('common.close')} onClick={onClose}><X size={18} /></IconButton>
         </div>
         <div className="overlay-body">{children}</div>
