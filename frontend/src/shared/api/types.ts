@@ -164,6 +164,11 @@ export type NodeDiagnostics = APIRecord & {
   latest_inventory?: NodeInventorySnapshot;
   discovery_summary?: NodeServiceDiscoverySummary;
   recent_discoveries?: NodeServiceDiscovery[];
+  latest_enrollment_token?: EnrollmentToken;
+  active_enrollment_token?: EnrollmentToken;
+  last_bootstrap?: NodeBootstrapRun;
+  last_successful_bootstrap?: NodeBootstrapRun;
+  last_failed_bootstrap?: NodeBootstrapRun;
 };
 
 export type NodeDiagnostic = NodeDiagnostics;

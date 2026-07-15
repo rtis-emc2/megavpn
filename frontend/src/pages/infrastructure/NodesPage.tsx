@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { Activity, Boxes, CheckCircle2, Copy, DownloadCloud, FilePenLine, Fingerprint, KeyRound, PackageCheck, PlusCircle, Play, RefreshCw, RotateCcw, Search, ServerCog, ShieldAlert, ShieldCheck, TerminalSquare, Trash2, Wrench } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -21,6 +22,7 @@ import type {
   NodeMutationResult,
   NodeBootstrapBundleRevealResult,
   NodeBootstrapRun,
+  NodeInventorySnapshot,
   NodeServiceDiscovery,
   NodeServiceInstaller,
 } from '../../shared/api/types';
@@ -67,8 +69,10 @@ import {
 import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
+import { NodeOnboardingTab } from './NodeOnboardingTab';
+import { deriveNodeOnboardingModel, shouldPollNodeOnboarding, type NodeOnboardingTargetTab } from './nodeOnboarding';
 
-type NodeTab = 'overview' | 'runtime' | 'inventory' | 'capabilities' | 'diagnostics' | 'discovery' | 'bootstrap' | 'security' | 'terminal' | 'lifecycle' | 'jobs';
+type NodeTab = 'overview' | 'runtime' | 'onboarding' | 'inventory' | 'capabilities' | 'diagnostics' | 'discovery' | 'bootstrap' | 'security' | 'terminal' | 'lifecycle' | 'jobs';
 
 type ConfirmAction =
   | { type: 'maintenance-enable'; node: NodeDetail }
@@ -494,24 +498,34 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const auth = useAuth();
   const canWriteNodes = hasPermission(auth.permissions, auth.roles, 'node.write');
   const canBootstrapNodes = hasPermission(auth.permissions, auth.roles, 'node.bootstrap');
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<NodeTab>('overview');
   const [editOpen, setEditOpen] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
   const [notice, setNotice] = useState('');
   const [jobIds, setJobIds] = useState<string[]>([]);
   const [oneTimePanel, setOneTimePanel] = useState<OneTimePanelState | null>(null);
-  const detail = useNodeDetail(nodeId, { retry: false });
-  const diagnostics = useNodeDiagnostics(nodeId, { retry: false });
-  const inventory = useNodeInventory(nodeId, { retry: false });
+  const cachedOnboardingNode = queryClient.getQueryData<NodeDetail>(['node', nodeId]) || node;
+  const cachedOnboardingModel = cachedOnboardingNode ? deriveNodeOnboardingModel({
+    node: cachedOnboardingNode,
+    diagnostics: queryClient.getQueryData<NodeDiagnostics>(['node-diagnostics', nodeId]),
+    enrollmentTokens: queryClient.getQueryData<EnrollmentToken[]>(['node-enrollment-tokens', nodeId]),
+    bootstrapRuns: queryClient.getQueryData<NodeBootstrapRun[]>(['node-bootstrap-runs', nodeId]),
+    inventory: queryClient.getQueryData<NodeInventorySnapshot>(['node-inventory', nodeId]),
+  }) : null;
+  const onboardingPollInterval: number | false = open && activeTab === 'onboarding' && cachedOnboardingModel && shouldPollNodeOnboarding(cachedOnboardingModel) ? 10_000 : false;
+  const detail = useNodeDetail(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
+  const diagnostics = useNodeDiagnostics(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : 15_000 });
+  const inventory = useNodeInventory(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
   const capabilities = useNodeCapabilities(nodeId, { retry: false });
   const capabilityDrift = useNodeCapabilityDrift(nodeId, { retry: false });
   const capabilityEvents = useNodeCapabilityInstallEvents(nodeId, { retry: false });
   const installers = useNodeServiceInstallers({ retry: false });
   const discoveries = useNodeServiceDiscoveries(nodeId, { retry: false });
   const discoverySummary = useNodeServiceDiscoverySummary(nodeId, { retry: false });
-  const enrollmentTokens = useNodeEnrollmentTokens(nodeId, { retry: false });
+  const enrollmentTokens = useNodeEnrollmentTokens(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
   const accessMethods = useNodeAccessMethods(nodeId, { retry: false });
-  const bootstrapRuns = useNodeBootstrapRuns(nodeId, { retry: false });
+  const bootstrapRuns = useNodeBootstrapRuns(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
   const maintenance = useSetNodeMaintenance();
   const syncInventory = useSyncNodeInventory();
   const installCapability = useInstallNodeCapability();
@@ -559,6 +573,18 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     if (ids.length) {
       setJobIds((existing) => Array.from(new Set([...ids, ...existing])).slice(0, 5));
     }
+  };
+
+  const refreshOnboardingStatus = async () => {
+    const results = await Promise.allSettled([
+      detail.refetch(),
+      diagnostics.refetch(),
+      enrollmentTokens.refetch(),
+      bootstrapRuns.refetch(),
+      inventory.refetch(),
+    ]);
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
   };
 
   const runConfirmed = async () => {
@@ -679,7 +705,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
         {current ? (
           <div className="page-stack">
             <div className="tabs" role="tablist" aria-label={t('nodes.detailTabs')}>
-              {(['overview', 'runtime', 'inventory', 'capabilities', 'diagnostics', 'discovery', 'bootstrap', 'security', 'terminal', 'lifecycle', 'jobs'] as NodeTab[]).map((tab) => (
+              {(['overview', 'runtime', 'onboarding', 'inventory', 'capabilities', 'diagnostics', 'discovery', 'bootstrap', 'security', 'terminal', 'lifecycle', 'jobs'] as NodeTab[]).map((tab) => (
                 <button
                   key={tab}
                   className={`tab-link ${activeTab === tab ? 'active' : ''}`.trim()}
@@ -703,6 +729,23 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
             ) : null}
             {activeTab === 'overview' ? <OverviewTab node={current} busy={busy} onConfirm={setConfirm} canWrite={canWriteNodes} onEdit={() => setEditOpen(true)} /> : null}
             {activeTab === 'runtime' ? <RuntimeTab node={current} diagnostics={diagnostics} /> : null}
+            {activeTab === 'onboarding' ? (
+              <NodeOnboardingTab
+                node={current}
+                diagnostics={diagnostics.data}
+                diagnosticsError={diagnostics.isError ? diagnostics.error : undefined}
+                enrollmentTokens={enrollmentTokens.data}
+                enrollmentTokensError={enrollmentTokens.isError ? enrollmentTokens.error : undefined}
+                bootstrapRuns={bootstrapRuns.data}
+                bootstrapRunsError={bootstrapRuns.isError ? bootstrapRuns.error : undefined}
+                inventory={inventory.data}
+                inventoryError={inventory.isError ? inventory.error : undefined}
+                canBootstrap={canBootstrapNodes}
+                onOpenTab={(tab: NodeOnboardingTargetTab) => setActiveTab(tab)}
+                onRefresh={refreshOnboardingStatus}
+                formatError={formatAPIError}
+              />
+            ) : null}
             {activeTab === 'inventory' ? <InventoryTab node={current} inventory={inventory} busy={busy} onConfirm={setConfirm} /> : null}
             {activeTab === 'capabilities' ? (
               <CapabilitiesTab

@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EnrollmentToken, NodeBootstrapRun, NodeDiagnostics, NodeInventorySnapshot } from '../../shared/api/types';
 import { AuthProvider } from '../../shared/auth/AuthProvider';
 import i18n from '../../shared/i18n';
 import { NodesPage } from './NodesPage';
@@ -185,6 +186,10 @@ const bootstrapRuns = [
   },
 ];
 
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 function json(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -267,7 +272,11 @@ describe('NodesPage', () => {
   let nodeList: Array<typeof node>;
   let createdNode: typeof node | null;
   let currentNode: typeof node;
+  let currentDiagnostics: NodeDiagnostics;
+  let currentInventory: NodeInventorySnapshot | null;
   let currentAccessMethods: typeof accessMethods;
+  let currentEnrollmentTokens: EnrollmentToken[];
+  let currentBootstrapRuns: NodeBootstrapRun[];
   let manualBundleRevealContent: string;
   let manualBundleDownloadContent: string;
 
@@ -275,9 +284,13 @@ describe('NodesPage', () => {
     calls.length = 0;
     actionErrors = {};
     currentNode = { ...node };
+    currentDiagnostics = clone(diagnostics);
+    currentInventory = clone(inventory);
     createdNode = null;
     nodeList = [currentNode];
     currentAccessMethods = accessMethods.map((method) => ({ ...method }));
+    currentEnrollmentTokens = enrollmentTokens.map((token) => ({ ...token }));
+    currentBootstrapRuns = bootstrapRuns.map((run) => ({ ...run }));
     manualBundleRevealContent = '';
     manualBundleDownloadContent = '';
     window.localStorage.clear();
@@ -349,8 +362,11 @@ describe('NodesPage', () => {
         nodeList = createdNode ? [currentNode, createdNode] : [currentNode];
         return json(currentNode);
       }
-      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/diagnostics') return json(diagnostics);
-      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/inventory') return json(inventory);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/diagnostics') return json(currentDiagnostics);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/inventory') {
+        if (!currentInventory) return json({ error: 'inventory not found' }, 404);
+        return json(currentInventory);
+      }
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/capabilities') return json(capabilities);
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/capabilities/drift') {
         return json({ node_id: 'node-1', required: ['nginx', 'xray-core'], drift: [{ capability_code: 'xray-core', desired: 'available', actual: 'available', in_sync: true }] });
@@ -365,9 +381,9 @@ describe('NodesPage', () => {
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/services/discovery-summary') {
         return json({ node_id: 'node-1', total: 1, discovered: 1, imported: 0, ignored: 0, importable_count: 1, by_service: { 'xray-core': 1 } });
       }
-      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/enrollment-tokens') return json(enrollmentTokens);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/enrollment-tokens') return json(currentEnrollmentTokens);
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/access-methods') return json(currentAccessMethods);
-      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/bootstrap-runs') return json(bootstrapRuns);
+      if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1/bootstrap-runs') return json(currentBootstrapRuns);
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/bootstrap-runs/bootstrap-run-manual/bundle/reveal') {
         const status = actionErrors.bundleReveal;
         if (status) {
@@ -432,7 +448,7 @@ describe('NodesPage', () => {
         return json({ id: 'token-rotated', node_id: 'node-1', token: 'enroll-rotated-token', token_hint: 'rotate...token', status: 'active', expires_at: '2026-07-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' });
       }
       if (method === 'DELETE' && url.pathname === '/api/v1/nodes/node-1/enrollment-tokens/token-1') {
-        return json({ ...enrollmentTokens[0], status: 'revoked' });
+        return json({ ...currentEnrollmentTokens[0], status: 'revoked' });
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/ssh/host-key-scan') {
         if (actionErrors.scanHostKey === 500) return json({ error: 'ssh-keyscan failed' }, 500);
@@ -487,6 +503,7 @@ describe('NodesPage', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1031,6 +1048,231 @@ describe('NodesPage', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Import' })[0]);
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     await screen.findByText(/Conflict: service already imported/);
+  });
+
+  it('renders read-only agent onboarding status with safe evidence only', async () => {
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const indexedOpen = vi.fn();
+    vi.stubGlobal('indexedDB', { open: indexedOpen });
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'online',
+      communication_state: 'inventory_ok',
+      agent: {
+        ...currentDiagnostics.agent,
+        status: 'active',
+        agent_version: '8.0.0-agent',
+        protocol_version: 'v1',
+        registered_at: '2026-07-09T08:00:00Z',
+        last_seen_at: '2026-07-09T08:00:30Z',
+        last_inventory_sync_at: '2026-07-09T08:01:00Z',
+        token_rotation_status: 'active',
+        token_hint: 'agent...hint',
+      },
+      active_enrollment_token: {
+        ...currentEnrollmentTokens[0],
+        token: 'hidden-active-token',
+        enrollment_token: 'hidden-enrollment-token',
+        secret_ref_id: 'secret-ref-hidden',
+      },
+      last_bootstrap: {
+        ...currentBootstrapRuns[1],
+        result_payload: {
+          agent_bootstrapenv: 'MEGAVPN_AGENT_ENROLLMENT_TOKEN=hidden',
+          secret_ref_id: 'bootstrap-secret-ref',
+        },
+      },
+      latest_inventory: currentInventory || undefined,
+    };
+    currentEnrollmentTokens = [{
+      ...currentEnrollmentTokens[0],
+      token: 'hidden-list-token',
+      enrollment_token: 'hidden-list-enrollment-token',
+      secret_ref_id: 'secret-list-ref',
+    }];
+
+    await openNode();
+    expect(screen.getByRole('tab', { name: 'Onboarding' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Runtime / Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Bootstrap' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Security' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Diagnostics' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    expect(await screen.findByText('Agent onboarding')).toBeInTheDocument();
+    expect(screen.getAllByText('Ready').length).toBeGreaterThan(0);
+    const steps = screen.getByRole('list', { name: 'Agent onboarding' });
+    expect(within(steps).getAllByRole('listitem')).toHaveLength(6);
+    expect(within(steps).getByText('Control-plane node')).toBeInTheDocument();
+    expect(within(steps).getByText('Enrollment credential')).toBeInTheDocument();
+    expect(within(steps).getByText('Bootstrap preparation')).toBeInTheDocument();
+    expect(within(steps).getByText('Agent registration')).toBeInTheDocument();
+    expect(within(steps).getByText('Heartbeat')).toBeInTheDocument();
+    expect(within(steps).getByText('Inventory')).toBeInTheDocument();
+    expect(screen.getAllByText('Edge One').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('agent_managed').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('agent...hint').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('inventory_ok').length).toBeGreaterThan(0);
+    expect(screen.getByText('Live external-node validation is not proven.')).toBeInTheDocument();
+
+    const pageText = document.body.textContent || '';
+    expect(pageText).not.toContain('hidden-active-token');
+    expect(pageText).not.toContain('hidden-enrollment-token');
+    expect(pageText).not.toContain('hidden-list-token');
+    expect(pageText).not.toContain('hidden-list-enrollment-token');
+    expect(pageText).not.toContain('secret-ref-hidden');
+    expect(pageText).not.toContain('bootstrap-secret-ref');
+    expect(pageText).not.toContain('MEGAVPN_AGENT_ENROLLMENT_TOKEN');
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+    expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
+    expect(storageSet).not.toHaveBeenCalled();
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(indexedOpen).not.toHaveBeenCalled();
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleDebug).not.toHaveBeenCalled();
+    expect(String(NodesPage)).not.toContain('dangerouslySetInnerHTML');
+  });
+
+  it('uses onboarding navigation buttons without executing onboarding mutations or agent routes', async () => {
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'missing_agent_identity',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+      },
+    };
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [];
+    currentInventory = null;
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    expect((await screen.findAllByText('Not started')).length).toBeGreaterThan(0);
+    expect(await screen.findByText(/Inventory is unavailable/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open Security' })[0]);
+    expect(screen.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open Bootstrap' })[0]);
+    expect(screen.getByRole('tab', { name: 'Bootstrap' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open Runtime' })[0]);
+    expect(screen.getByRole('tab', { name: 'Runtime / Agent' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open Inventory' })[0]);
+    expect(screen.getByRole('tab', { name: 'Inventory' })).toHaveAttribute('aria-selected', 'true');
+
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      communication_state: 'auth_failure',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'missing',
+        last_auth_failure_at: '2026-07-09T08:10:00Z',
+      },
+    };
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
+    await screen.findByText('Status refreshed.');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open Diagnostics' })[0]);
+    expect(screen.getByRole('tab', { name: 'Diagnostics' })).toHaveAttribute('aria-selected', 'true');
+
+    const forbiddenMutations = [
+      '/api/v1/nodes/node-1/enrollment-token',
+      '/api/v1/nodes/node-1/enrollment-token/rotate',
+      '/api/v1/nodes/node-1/bootstrap',
+      '/api/v1/nodes/node-1/inventory/sync',
+    ];
+    expect(calls.filter((call) => call.method !== 'GET' && forbiddenMutations.includes(call.path))).toHaveLength(0);
+    expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+  });
+
+  it('keeps onboarding visible without node.bootstrap and shows the read-only permission hint', async () => {
+    await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+
+    expect(await screen.findByText('Read-only onboarding status')).toBeInTheDocument();
+    expect(screen.getByText('node.bootstrap is required for onboarding actions. Status remains visible with read permissions.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create token' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Queue bootstrap' })).not.toBeInTheDocument();
+  });
+
+  it('polls safe onboarding queries only while active and stops when ready or closed', async () => {
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'unknown',
+      communication_state: 'awaiting_enrollment',
+      agent: {
+        node_id: 'node-1',
+        status: 'missing',
+        token_rotation_status: 'awaiting_enrollment',
+      },
+    };
+    currentInventory = null;
+    renderPage();
+    expect((await screen.findAllByText('Edge One')).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
+    await screen.findByRole('heading', { name: 'Edge One' });
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    calls.length = 0;
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await Promise.resolve();
+    expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/diagnostics')).toBe(true);
+    expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/enrollment-tokens')).toBe(true);
+    expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/bootstrap-runs?limit=25')).toBe(true);
+    expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/inventory')).toBe(true);
+    expect(calls.every((call) => call.method === 'GET')).toBe(true);
+    expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Runtime / Agent' }));
+    calls.length = 0;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/enrollment-tokens')).toBe(false);
+    expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/bootstrap-runs?limit=25')).toBe(false);
+    expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/inventory')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    calls.length = 0;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not start onboarding polling for an already ready model', async () => {
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'online',
+      communication_state: 'inventory_ok',
+      agent: {
+        node_id: 'node-1',
+        status: 'active',
+        registered_at: '2026-07-09T08:00:00Z',
+        last_seen_at: '2026-07-09T08:00:30Z',
+        last_inventory_sync_at: '2026-07-09T08:01:00Z',
+        token_rotation_status: 'active',
+      },
+      latest_inventory: inventory,
+    };
+    currentInventory = clone(inventory);
+    renderPage();
+    expect((await screen.findAllByText('Edge One')).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
+    await screen.findByRole('heading', { name: 'Edge One' });
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    expect(screen.getAllByText('Ready').length).toBeGreaterThan(0);
+    calls.length = 0;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls).toHaveLength(0);
   });
 
   it('keeps raw API paths and legacy workflow links out of the Nodes page component', () => {

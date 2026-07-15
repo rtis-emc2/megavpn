@@ -290,14 +290,73 @@ Evidence controls:
 The UI minimizes bundle lifetime and prevents application-level persistence;
 JavaScript runtime memory erasure is not guaranteed.
 
-## 12. RC1 Limitations
+## 12. Guided Agent Onboarding Status Review
+
+Nodes -> Onboarding now provides a guided read-only status model without
+`/legacy/`. The reviewed scope is status derivation and navigation to existing
+Nodes tabs, not onboarding mutation execution.
+
+Backend/API controls used by the UI:
+
+- existing operator `GET /api/v1/nodes/{id}` detail;
+- existing operator `GET /api/v1/nodes/{id}/diagnostics`;
+- existing operator `GET /api/v1/nodes/{id}/enrollment-tokens`;
+- existing operator `GET /api/v1/nodes/{id}/bootstrap-runs`;
+- existing operator `GET /api/v1/nodes/{id}/inventory`;
+- redacted diagnostics projections for enrollment-token metadata and bootstrap
+  run summaries;
+- backend-derived `heartbeat_state`, `communication_state` and
+  `token_rotation_status`.
+
+Frontend controls:
+
+- the onboarding model is a pure typed derivation module and does not accept
+  `/agent/*` responses, registration responses, plaintext enrollment tokens,
+  bootstrap bundle contents, private keys or secret references;
+- the Onboarding tab is read-only and has no buttons for token create/rotate,
+  token revoke, bootstrap start, manual bundle reveal/download or inventory
+  sync;
+- next-step buttons only change the selected existing Nodes tab;
+- ready status requires agent registration, heartbeat evidence, inventory
+  evidence and a healthy backend communication state;
+- queued bootstrap or queued inventory jobs are not treated as successful
+  onboarding;
+- retired/deleted nodes are blocked;
+- partial query failures are rendered as safe per-source alerts rather than
+  collapsing to fake `not_started`;
+- 10-second onboarding polling is limited to safe read queries while the
+  Onboarding tab is active and stops when the model becomes ready/blocked, the
+  tab changes or the drawer closes;
+- token plaintext, token hashes, `secret_ref_id`, request signatures, nonces,
+  authorization headers, bootstrap bundle content and raw secret metadata are
+  not rendered by the onboarding panel;
+- onboarding state is not persisted to localStorage, sessionStorage, IndexedDB,
+  URL query parameters, router state or a global mutable store.
+
+Evidence controls:
+
+- pure-model tests cover not-started, active token, bootstrap queued/running,
+  successful/failed bootstrap ordering, registration, revoked agent, heartbeat
+  states, unhealthy communication states, inventory evidence, ready criteria,
+  unknown statuses, source-array immutability and plaintext token omission;
+- Nodes UI tests cover the Onboarding tab, existing tab preservation, six
+  ordered steps, safe evidence rendering, secret redaction, navigation-only
+  next-step buttons, no `/agent/*` browser calls, no onboarding mutations,
+  polling lifecycle, partial query failure display, read-only permission hint,
+  browser-storage safety and absence of production console logging.
+
+Guided onboarding actions remain pending Step 4C.2. Final acceptance/debt
+closure remains pending Step 4D. Live external-node smoke remains release
+validation debt.
+
+## 13. RC1 Limitations
 
 The new console remains incomplete for final write parity. The following are
 intentionally disabled, backend-missing or legacy-only after FE8-P0-09B:
 
 - non-VLESS access service materialization and access-group migration conflict UI;
-- node agent registration/onboarding, agent identity revoke, reboot, emergency
-  cleanup and stale rotation cleanup;
+- guided node agent onboarding mutations, agent identity revoke, reboot,
+  emergency cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance
@@ -309,7 +368,7 @@ intentionally disabled, backend-missing or legacy-only after FE8-P0-09B:
 This is a security-positive limitation: operators must not see a clickable
 action unless it is backed by real endpoint behavior and safe UX.
 
-## 12. Required Checks
+## 14. Required Checks
 
 For RC1 evidence, run:
 

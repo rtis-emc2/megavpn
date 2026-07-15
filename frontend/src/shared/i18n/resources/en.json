@@ -186,6 +186,7 @@
     "tabs": {
       "overview": "Overview",
       "runtime": "Runtime / Agent",
+      "onboarding": "Onboarding",
       "inventory": "Inventory",
       "capabilities": "Capabilities",
       "diagnostics": "Diagnostics",
@@ -195,6 +196,124 @@
       "terminal": "Terminal / Access",
       "lifecycle": "Lifecycle",
       "jobs": "Jobs / Activity"
+    },
+    "onboarding": {
+      "agentOnboarding": "Agent onboarding",
+      "statusTitle": "Onboarding status",
+      "currentStep": "Current step",
+      "safeEvidence": "Safe evidence",
+      "evidenceTime": "Evidence time",
+      "readOnlyStatus": "Read-only onboarding status",
+      "bootstrapPermissionHint": "node.bootstrap is required for onboarding actions. Status remains visible with read permissions.",
+      "liveValidationNotProven": "Live external-node validation is not proven.",
+      "refreshStatus": "Refresh status",
+      "statusRefreshed": "Status refreshed.",
+      "openOverview": "Open Overview",
+      "openSecurity": "Open Security",
+      "openBootstrap": "Open Bootstrap",
+      "openRuntime": "Open Runtime",
+      "openInventory": "Open Inventory",
+      "openDiagnostics": "Open Diagnostics",
+      "status": {
+        "not_started": "Not started",
+        "in_progress": "In progress",
+        "action_required": "Action required",
+        "ready": "Ready",
+        "degraded": "Degraded",
+        "blocked": "Blocked"
+      },
+      "stepStatus": {
+        "complete": "Complete",
+        "current": "Current",
+        "pending": "Pending",
+        "warning": "Warning",
+        "blocked": "Blocked"
+      },
+      "steps": {
+        "profile": {
+          "title": "Control-plane node"
+        },
+        "credential": {
+          "title": "Enrollment credential"
+        },
+        "bootstrap": {
+          "title": "Bootstrap preparation"
+        },
+        "registration": {
+          "title": "Agent registration"
+        },
+        "heartbeat": {
+          "title": "Heartbeat"
+        },
+        "inventory": {
+          "title": "Inventory"
+        }
+      },
+      "evidence": {
+        "profile_retired": "The node is retired or deleted; onboarding cannot continue.",
+        "profile_loaded": "The control-plane node record is loaded.",
+        "profile_maintenance": "The node profile is loaded and currently in maintenance mode.",
+        "profile_missing": "Waiting for the node profile.",
+        "credential_node_blocked": "Credential work is blocked because the node is retired.",
+        "credential_auth_failure": "Diagnostics report an authentication failure.",
+        "credential_revoked": "Agent credential rotation status is revoked.",
+        "credential_registered": "The agent is already registered, so an enrollment credential is no longer the active milestone.",
+        "credential_active_token": "Enrollment token active.",
+        "credential_waiting_for_token": "Waiting for enrollment token.",
+        "bootstrap_node_blocked": "Bootstrap is blocked because the node is retired.",
+        "bootstrap_registered_path": "A registered agent proves that a supported onboarding path completed.",
+        "bootstrap_successful": "A successful bootstrap run is recorded.",
+        "bootstrap_running": "Bootstrap running.",
+        "bootstrap_queued": "Bootstrap queued.",
+        "bootstrap_cancelled": "The latest bootstrap run was cancelled.",
+        "bootstrap_failed": "Bootstrap failed.",
+        "bootstrap_unknown_status": "The latest bootstrap status is not terminal and is treated conservatively.",
+        "bootstrap_waiting": "Waiting for bootstrap.",
+        "registration_node_blocked": "Registration is blocked because the node is retired.",
+        "registration_revoked": "The agent identity is revoked.",
+        "registration_auth_failure": "Authentication failure prevents trusting registration health.",
+        "registration_registered": "Agent registered.",
+        "registration_waiting": "Waiting for agent registration.",
+        "registration_pending": "Agent registration is pending earlier onboarding milestones.",
+        "heartbeat_node_blocked": "Heartbeat is blocked because the node is retired.",
+        "heartbeat_online": "Heartbeat online.",
+        "heartbeat_stalled": "Heartbeat stalled.",
+        "heartbeat_channel_offline": "Channel offline.",
+        "heartbeat_auth_failure": "Authentication failure affects heartbeat trust.",
+        "heartbeat_offline": "Heartbeat offline.",
+        "heartbeat_degraded": "Heartbeat degraded.",
+        "heartbeat_waiting": "Waiting for first heartbeat.",
+        "heartbeat_pending": "Heartbeat waits for agent registration.",
+        "inventory_node_blocked": "Inventory is blocked because the node is retired.",
+        "inventory_job_result_stalled": "Job result stalled.",
+        "inventory_auth_failure": "Authentication failure affects inventory sync.",
+        "inventory_channel_offline": "Channel offline.",
+        "inventory_job_failed": "The latest safe inventory job evidence is failed.",
+        "inventory_synchronized": "Inventory synchronized.",
+        "inventory_waiting": "Waiting for inventory.",
+        "inventory_pending": "Inventory waits for heartbeat evidence."
+      },
+      "evidenceLabels": {
+        "node_name": "Node",
+        "node_status": "Node status",
+        "execution_mode": "Execution mode",
+        "token_status": "Token status",
+        "token_hint": "Token hint",
+        "token_expires_at": "Token expiry",
+        "token_used_at": "Token used",
+        "agent_status": "Agent status",
+        "token_rotation_status": "Token rotation status",
+        "bootstrap_mode": "Bootstrap mode",
+        "run_status": "Run status",
+        "agent_version": "Agent version",
+        "protocol_version": "Protocol version",
+        "bootstrap_status": "Bootstrap status",
+        "heartbeat_state": "Heartbeat state",
+        "communication_state": "Communication state",
+        "heartbeat_drift_seconds": "Heartbeat drift seconds",
+        "inventory_id": "Inventory snapshot",
+        "last_inventory_sync_at": "Last inventory sync"
+      }
     },
     "platform": "Platform",
     "executionMode": "Execution mode",
