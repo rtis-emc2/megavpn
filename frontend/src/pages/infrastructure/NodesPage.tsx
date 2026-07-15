@@ -92,7 +92,7 @@ type NodeTab = 'overview' | 'runtime' | 'onboarding' | 'inventory' | 'capabiliti
 type ConfirmAction =
   | { type: 'maintenance-enable'; node: NodeDetail }
   | { type: 'maintenance-disable'; node: NodeDetail }
-  | { type: 'inventory-sync'; node: NodeDetail }
+  | { type: 'inventory-sync'; node: NodeDetail; source: 'inventory' | 'onboarding'; heartbeatAt?: string; communicationState?: string; retry?: boolean }
   | { type: 'capability-install'; node: NodeDetail; input: NodeCapabilityInstallInput }
   | { type: 'capability-verify'; node: NodeDetail; serviceCode: string }
   | { type: 'diagnostics'; node: NodeDetail; action: NodeDiagnosticsAction }
@@ -246,6 +246,29 @@ function bootstrapActionErrorKey(error: unknown): string {
       return 'nodes.onboarding.bootstrapErrors.unavailable';
     default:
       return 'nodes.onboarding.bootstrapErrors.generic';
+  }
+}
+
+function inventorySyncActionErrorKey(error: unknown): string {
+  if (!(error instanceof APIError)) return 'nodes.onboarding.inventoryErrors.generic';
+  switch (error.status) {
+    case 400:
+    case 422:
+      return 'nodes.onboarding.inventoryErrors.invalid';
+    case 403:
+      return 'nodes.onboarding.inventoryErrors.forbidden';
+    case 404:
+      return 'nodes.onboarding.inventoryErrors.notFound';
+    case 409:
+      return 'nodes.onboarding.inventoryErrors.conflict';
+    case 429:
+      return 'nodes.onboarding.inventoryErrors.rateLimited';
+    case 500:
+      return 'nodes.onboarding.inventoryErrors.server';
+    case 503:
+      return 'nodes.onboarding.inventoryErrors.unavailable';
+    default:
+      return 'nodes.onboarding.inventoryErrors.generic';
   }
 }
 
@@ -579,6 +602,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const [jobIds, setJobIds] = useState<string[]>([]);
   const [guidedBootstrapJobIds, setGuidedBootstrapJobIds] = useState<string[]>([]);
   const [guidedBootstrapRunIds, setGuidedBootstrapRunIds] = useState<string[]>([]);
+  const [guidedInventoryJobIds, setGuidedInventoryJobIds] = useState<string[]>([]);
   const [oneTimePanel, setOneTimePanel] = useState<OneTimePanelState | null>(null);
   const secretRequestRef = useRef(0);
   const selectedNodeIdRef = useRef(nodeId);
@@ -591,6 +615,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     bootstrapRuns: queryClient.getQueryData<NodeBootstrapRun[]>(['node-bootstrap-runs', nodeId]),
     accessMethods: queryClient.getQueryData<NodeAccessMethod[]>(['node-access-methods', nodeId]),
     inventory: queryClient.getQueryData<NodeInventorySnapshot>(['node-inventory', nodeId]),
+    trackedInventoryJobIDs: guidedInventoryJobIds,
   }) : null;
   const onboardingPollInterval: number | false = open && activeTab === 'onboarding' && cachedOnboardingModel && shouldPollNodeOnboarding(cachedOnboardingModel) ? 10_000 : false;
   const detail = useNodeDetail(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
@@ -654,6 +679,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       setOneTimePanel(null);
       setGuidedBootstrapJobIds([]);
       setGuidedBootstrapRunIds([]);
+      setGuidedInventoryJobIds([]);
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [nodeId]);
@@ -675,11 +701,20 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
         setOneTimePanel(null);
         setGuidedBootstrapJobIds([]);
         setGuidedBootstrapRunIds([]);
+        setGuidedInventoryJobIds([]);
       }, 0);
       return () => window.clearTimeout(timeout);
     }
     return undefined;
   }, [open]);
+
+  useEffect(() => {
+    if (inventory.data?.id && guidedInventoryJobIds.length) {
+      const timeout = window.setTimeout(() => setGuidedInventoryJobIds([]), 0);
+      return () => window.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [inventory.data?.id, guidedInventoryJobIds.length]);
 
   useEffect(() => () => {
     secretRequestRef.current += 1;
@@ -755,6 +790,14 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     ]);
   };
 
+  const refreshAfterGuidedInventoryAction = async () => {
+    await Promise.allSettled([
+      detail.refetch(),
+      diagnostics.refetch(),
+      inventory.refetch(),
+    ]);
+  };
+
   const runConfirmed = async () => {
     if (!confirm) return;
     setNotice('');
@@ -769,9 +812,17 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
         setNotice(t('nodes.maintenanceUpdated'));
         setActiveTab('overview');
       } else if (confirm.type === 'inventory-sync') {
-        result = await syncInventory.mutateAsync({ nodeId: confirm.node.id });
-        setNotice(t('nodes.actionAccepted'));
-        setActiveTab('jobs');
+        const job = await syncInventory.mutateAsync({ nodeId: confirm.node.id });
+        result = job;
+        if (confirm.source === 'onboarding') {
+          setGuidedInventoryJobIds((existing) => Array.from(new Set([job.id, ...existing].filter(Boolean))).slice(0, 5));
+          setNotice(t('nodes.onboarding.inventoryJobAccepted'));
+          setActiveTab('onboarding');
+          await refreshAfterGuidedInventoryAction();
+        } else {
+          setNotice(t('nodes.actionAccepted'));
+          setActiveTab('jobs');
+        }
       } else if (confirm.type === 'capability-install') {
         result = await installCapability.mutateAsync({ nodeId: confirm.node.id, input: confirm.input });
         setNotice(t('nodes.actionAccepted'));
@@ -916,6 +967,18 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
           void detail.refetch();
           void bootstrapRuns.refetch();
         }
+      } else if (confirm.type === 'inventory-sync' && confirm.source === 'onboarding') {
+        setNotice(t(inventorySyncActionErrorKey(error)));
+        if (error instanceof APIError && (error.status === 403 || error.status === 404)) {
+          setConfirm(null);
+          setGuidedInventoryJobIds([]);
+          void detail.refetch();
+          void diagnostics.refetch();
+          void inventory.refetch();
+        } else if (error instanceof APIError && error.status === 409) {
+          void diagnostics.refetch();
+          void inventory.refetch();
+        }
       } else {
         setNotice(formatAPIError(error));
       }
@@ -969,10 +1032,13 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 inventory={inventory.data}
                 inventoryError={inventory.isError ? inventory.error : undefined}
                 canBootstrap={canBootstrapNodes}
+                canSyncInventory={canWriteNodes}
                 busy={busy}
                 bootstrapBusy={bootstrap.isPending}
+                inventorySyncBusy={syncInventory.isPending}
                 trackedBootstrapJobIDs={guidedBootstrapJobIds}
                 trackedBootstrapRunIDs={guidedBootstrapRunIds}
+                trackedInventoryJobIDs={guidedInventoryJobIds}
                 onOpenTab={(tab: NodeOnboardingTargetTab) => setActiveTab(tab)}
                 onRefresh={refreshOnboardingStatus}
                 onRequestEnrollmentToken={(input) => openConfirm({
@@ -997,6 +1063,25 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                     source: 'onboarding',
                     modeAvailability,
                     retry: readiness.latestFailedRun?.id === readiness.latestRun?.id,
+                  });
+                }}
+                onRequestInventorySync={() => {
+                  const model = deriveNodeOnboardingModel({
+                    node: current,
+                    diagnostics: diagnostics.data,
+                    enrollmentTokens: enrollmentTokens.data,
+                    bootstrapRuns: bootstrapRuns.data,
+                    accessMethods: accessMethods.data,
+                    inventory: inventory.data,
+                    trackedInventoryJobIDs: guidedInventoryJobIds,
+                  });
+                  openConfirm({
+                    type: 'inventory-sync',
+                    node: current,
+                    source: 'onboarding',
+                    heartbeatAt: current.last_heartbeat_at || diagnostics.data?.agent?.last_seen_at || current.agent_last_seen_at,
+                    communicationState: diagnostics.data?.communication_state,
+                    retry: model.inventorySyncFailed,
                   });
                 }}
                 formatError={formatAPIError}
@@ -1062,7 +1147,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
               }}
             />
             <NodeConfirmDialog
-              key={confirm ? `${confirm.type}:${confirm.node.id}:${confirm.type === 'bootstrap' ? `${confirm.source}:${confirm.input.bootstrap_mode || ''}` : ''}` : 'closed'}
+              key={confirm ? `${confirm.type}:${confirm.node.id}:${confirm.type === 'bootstrap' ? `${confirm.source}:${confirm.input.bootstrap_mode || ''}` : confirm.type === 'inventory-sync' ? confirm.source : ''}` : 'closed'}
               action={confirm}
               busy={busy}
               onConfirm={() => void runConfirmed()}
@@ -1169,7 +1254,7 @@ function InventoryTab({ node, inventory, busy, onConfirm }: { node: NodeDetail; 
       <Card>
         <CardBody>
           <Toolbar>
-            <Button variant="primary" icon={<DownloadCloud size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'inventory-sync', node })}>{t('nodes.syncInventory')}</Button>
+            <Button variant="primary" icon={<DownloadCloud size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'inventory-sync', node, source: 'inventory' })}>{t('nodes.syncInventory')}</Button>
             <Button icon={<RefreshCw size={16} />} onClick={() => void inventory.refetch()}>{t('common.refresh')}</Button>
           </Toolbar>
           {inventory.isError ? <div role="alert" className="error-state-inline">{t('nodes.inventoryUnavailable')}: {formatAPIError(inventory.error)}</div> : null}
@@ -2219,6 +2304,7 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
   const enrollmentRotate = action.type === 'enrollment-rotate';
   const enrollmentIssueAction = enrollmentCreate || enrollmentRotate;
   const guidedBootstrapAction = action.type === 'bootstrap' && action.source === 'onboarding';
+  const guidedInventoryAction = action.type === 'inventory-sync' && action.source === 'onboarding';
   const service = action.type === 'capability-install'
     ? action.input.service_code
     : action.type === 'capability-verify'
@@ -2244,6 +2330,26 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
           service: service || 'n/a',
         })}</p>
         {action.type === 'diagnostics' && action.action === 'reconcile-runtime' ? <p>{t('nodes.reconcileRuntimeImpact')}</p> : null}
+        {guidedInventoryAction ? (
+          <>
+            <div className="definition-grid">
+              <span>{t('common.name')}</span><strong>{nodeLabel(action.node)}</strong>
+              <span>{t('common.id')}</span><strong>{shortID(action.node.id)}</strong>
+              <span>{t('nodes.onboarding.inventoryActionType')}</span><strong>{action.retry ? t('nodes.onboarding.retryInventorySynchronization') : t('nodes.onboarding.synchronizeInventory')}</strong>
+              <span>{t('nodes.lastSeen')}</span><strong>{text(action.heartbeatAt)}</strong>
+              <span>{t('nodes.communicationState')}</span><strong>{text(action.communicationState)}</strong>
+            </div>
+            <ul>
+              <li>{t('nodes.onboarding.inventoryAsyncJob')}</li>
+              <li>{t('nodes.onboarding.inventoryAcceptanceDoesNotProveSync')}</li>
+            </ul>
+            <Checkbox
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+              label={t('nodes.onboarding.inventorySyncAcknowledge')}
+            />
+          </>
+        ) : null}
         {guidedBootstrapAction ? (
           <>
             <div className="definition-grid">
@@ -2315,7 +2421,7 @@ function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: Confi
         {action.type === 'node-force-retire' ? <pre className="code-block">{safeJSON({ confirmation: action.confirmation, reason: action.reason || 'operator force retire' })}</pre> : null}
         {action.type === 'service-import' ? <pre className="code-block">{safeJSON({ id: action.discovery.id, service_code: action.discovery.service_code, name: action.discovery.name, endpoint: [action.discovery.endpoint_host, action.discovery.endpoint_port].filter(Boolean).join(':') })}</pre> : null}
         <Toolbar>
-          <Button variant={dangerous ? 'danger' : 'primary'} disabled={busy || ((enrollmentIssueAction || guidedBootstrapAction) && !acknowledged)} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
+          <Button variant={dangerous ? 'danger' : 'primary'} disabled={busy || ((enrollmentIssueAction || guidedBootstrapAction || guidedInventoryAction) && !acknowledged)} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
           <Button onClick={onClose}>{t('common.cancel')}</Button>
         </Toolbar>
       </div>

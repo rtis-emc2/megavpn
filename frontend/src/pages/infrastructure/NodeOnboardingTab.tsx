@@ -1,4 +1,4 @@
-import { KeyRound, Play, RefreshCw, RotateCcw } from 'lucide-react';
+import { DownloadCloud, KeyRound, Play, RefreshCw, RotateCcw } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
@@ -19,6 +19,7 @@ import {
 } from './enrollmentTokenControls';
 import {
   deriveNodeOnboardingModel,
+  type NodeInventoryJobState,
   type NodeOnboardingStep,
   type NodeOnboardingTargetTab,
 } from './nodeOnboarding';
@@ -42,14 +43,18 @@ type NodeOnboardingTabProps = {
   inventory?: NodeInventorySnapshot;
   inventoryError?: unknown;
   canBootstrap: boolean;
+  canSyncInventory: boolean;
   busy: boolean;
   bootstrapBusy: boolean;
+  inventorySyncBusy: boolean;
   trackedBootstrapJobIDs?: string[];
   trackedBootstrapRunIDs?: string[];
+  trackedInventoryJobIDs?: string[];
   onOpenTab: (tab: NodeOnboardingTargetTab) => void;
   onRefresh: () => Promise<void>;
   onRequestEnrollmentToken: (input: { mode: 'issue' | 'reissue'; ttlHours: number }) => void;
   onRequestBootstrap: (input: { bootstrapMode: NodeBootstrapMode }) => void;
+  onRequestInventorySync: () => void;
   formatError: (error: unknown) => string;
 };
 
@@ -116,6 +121,10 @@ function statusKey(status?: string): string {
       : 'nodes.onboarding.bootstrapFailed';
   }
   return 'nodes.onboarding.bootstrapUnknown';
+}
+
+function inventoryJobStateLabelKey(state: NodeInventoryJobState): string {
+  return `nodes.onboarding.inventoryJobStates.${state}`;
 }
 
 function StepStatusBadge({ status }: { status: string }) {
@@ -188,14 +197,18 @@ export function NodeOnboardingTab({
   inventory,
   inventoryError,
   canBootstrap,
+  canSyncInventory,
   busy,
   bootstrapBusy,
+  inventorySyncBusy,
   trackedBootstrapJobIDs = [],
   trackedBootstrapRunIDs = [],
+  trackedInventoryJobIDs = [],
   onOpenTab,
   onRefresh,
   onRequestEnrollmentToken,
   onRequestBootstrap,
+  onRequestInventorySync,
   formatError,
 }: NodeOnboardingTabProps) {
   const { t } = useTranslation();
@@ -211,7 +224,8 @@ export function NodeOnboardingTab({
     bootstrapRuns,
     accessMethods,
     inventory,
-  }), [node, diagnostics, enrollmentTokens, bootstrapRuns, accessMethods, inventory]);
+    trackedInventoryJobIDs,
+  }), [node, diagnostics, enrollmentTokens, bootstrapRuns, accessMethods, inventory, trackedInventoryJobIDs]);
   const ttlValidation = validateEnrollmentTokenTTL(ttlInput);
   const actionMode = model.recommendedAction === 'issue_enrollment_token'
     ? 'issue'
@@ -232,13 +246,26 @@ export function NodeOnboardingTab({
   const selectedBootstrapAvailability = bootstrapModes.find((mode) => mode.mode === effectiveBootstrapMode);
   const latestBootstrapRun = (bootstrapRuns || []).find((run) => run.id === model.latestBootstrapRunID);
   const latestBootstrapStatusGroup = nodeBootstrapRunStatusGroup(model.latestBootstrapStatus);
+  const agent = diagnostics?.agent;
+  const registrationTime = agent?.registered_at;
+  const heartbeatTime = node.last_heartbeat_at || agent?.last_seen_at || node.agent_last_seen_at;
+  const latestInventoryTime = agent?.last_inventory_sync_at || diagnostics?.latest_inventory?.created_at || inventory?.created_at;
   const showBootstrapSection = !actionMode && (
     model.currentStep === 'bootstrap'
     || model.bootstrapSelectionRequired
     || Boolean(recommendedBootstrapAction)
-    || Boolean(model.latestBootstrapRunID)
+    || (!model.registered && Boolean(model.latestBootstrapRunID))
     || (model.currentStep === 'registration' && !model.registered)
   );
+  const showInventorySection = !actionMode && !showBootstrapSection && (
+    model.currentStep === 'inventory'
+    || model.recommendedAction === 'sync_inventory'
+    || model.inventoryJobState !== 'not_requested'
+    || model.inventoryObserved
+    || model.overallStatus === 'ready'
+  );
+  const showHeartbeatWaitingSection = !actionMode && !showBootstrapSection && !showInventorySection && model.currentStep === 'heartbeat' && model.registered && !model.heartbeatObserved;
+  const showRegistrationWaitingSection = !actionMode && !showBootstrapSection && !showInventorySection && !showHeartbeatWaitingSection && model.currentStep === 'registration' && !model.registered;
   const errors: Array<{ key: string; error: unknown }> = [];
   if (diagnosticsError) errors.push({ key: 'diagnosticsUnavailable', error: diagnosticsError });
   if (enrollmentTokensError) errors.push({ key: 'enrollmentTokensUnavailable', error: enrollmentTokensError });
@@ -436,14 +463,101 @@ export function NodeOnboardingTab({
                 {trackedBootstrapJobIDs.length ? <Button type="button" onClick={() => onOpenTab('jobs')}>{t('nodes.onboarding.openJobs')}</Button> : null}
               </Toolbar>
               {!canBootstrap ? <p className="muted">{t('nodes.onboarding.bootstrapPermissionHint')}</p> : null}
-              <p className="muted">{t('nodes.onboarding.guidedInventoryRemainsNext')}</p>
+              <p className="muted">{t('nodes.onboarding.guidedInventoryRequiresRegistrationHeartbeat')}</p>
             </div>
           </CardBody>
         </Card>
-      ) : model.currentStep === 'registration' && !model.registered ? (
+      ) : showInventorySection ? (
         <Card>
           <CardBody>
-            <p className="muted">{t('nodes.onboarding.waitingForAgentRegistration')}</p>
+            <div className="page-stack">
+              <h3 className="card-title">{t('nodes.onboarding.synchronizeInventory')}</h3>
+              <p className="muted">{t('nodes.onboarding.inventoryAsyncJob')}</p>
+              <div className="definition-grid">
+                <span>{t('nodes.onboarding.agentRegistrationObserved')}</span><strong>{model.registered ? t('common.yes') : t('common.no')}</strong>
+                <span>{t('nodes.onboarding.evidenceTime')}</span><strong>{fmt.date(registrationTime)}</strong>
+                <span>{t('nodes.onboarding.firstHeartbeatObserved')}</span><strong>{model.heartbeatObserved ? t('common.yes') : t('common.no')}</strong>
+                <span>{t('nodes.lastSeen')}</span><strong>{fmt.date(heartbeatTime)}</strong>
+                <span>{t('nodes.heartbeatState')}</span><strong>{model.heartbeatState}</strong>
+                <span>{t('nodes.communicationState')}</span><strong>{model.communicationState}</strong>
+                <span>{t('nodes.lastInventory')}</span><strong>{fmt.date(latestInventoryTime)}</strong>
+                <span>{t('nodes.onboarding.inventoryJobState')}</span><strong>{t(inventoryJobStateLabelKey(model.inventoryJobState))}</strong>
+                {model.latestInventoryJobID ? (
+                  <>
+                    <span>{t('nodes.job')}</span><strong><code>{shortID(model.latestInventoryJobID)}</code></strong>
+                  </>
+                ) : null}
+                {model.latestInventoryJobStatus ? (
+                  <>
+                    <span>{t('common.status')}</span><strong>{text(model.latestInventoryJobStatus)}</strong>
+                  </>
+                ) : null}
+                {model.latestInventoryJobAt ? (
+                  <>
+                    <span>{t('nodes.onboarding.jobEvidenceTime')}</span><strong>{fmt.date(model.latestInventoryJobAt)}</strong>
+                  </>
+                ) : null}
+              </div>
+              {model.inventoryObserved ? <p className="muted">{t('nodes.onboarding.inventorySynchronized')}</p> : null}
+              {model.inventorySyncInProgress ? <p className="muted">{model.inventoryJobState === 'running' ? t('nodes.onboarding.inventoryJobRunning') : t('nodes.onboarding.inventoryJobAccepted')}</p> : null}
+              {model.inventorySyncStalled ? <div role="alert" className="error-state-inline">{t('nodes.onboarding.inventoryResultStalled')}</div> : null}
+              {model.inventorySyncFailed ? <div role="alert" className="error-state-inline">{t('nodes.onboarding.inventorySynchronizationFailed')}</div> : null}
+              {!model.heartbeatObserved ? <p className="muted">{t('nodes.onboarding.waitingForFirstHeartbeat')}</p> : null}
+              {model.heartbeatObserved && model.heartbeatState !== 'online' ? <p className="muted">{t('nodes.onboarding.heartbeatMustBeOnline')}</p> : null}
+              {trackedInventoryJobIDs.length ? (
+                <p className="muted">
+                  {t('nodes.onboarding.inventoryJobAccepted')}: {trackedInventoryJobIDs.map((jobId) => shortID(jobId)).join(', ')}
+                </p>
+              ) : null}
+              {model.overallStatus === 'ready' ? (
+                <div className="inline-panel">
+                  <strong>{t('nodes.onboarding.onboardingReady')}</strong>
+                  <p className="muted">{t('nodes.onboarding.controlPlaneMilestonesComplete')}</p>
+                  <p className="muted">{t('nodes.onboarding.liveValidationStillRequired')}</p>
+                </div>
+              ) : null}
+              <Toolbar>
+                {model.recommendedAction === 'sync_inventory' && canSyncInventory ? (
+                  <Button
+                    type="button"
+                    variant={model.inventorySyncFailed ? 'danger' : 'primary'}
+                    icon={<DownloadCloud size={16} />}
+                    disabled={inventorySyncBusy || busy || !model.inventorySyncEligible}
+                    onClick={onRequestInventorySync}
+                  >
+                    {model.inventorySyncFailed ? t('nodes.onboarding.retryInventorySynchronization') : t('nodes.onboarding.synchronizeInventory')}
+                  </Button>
+                ) : null}
+                <Button type="button" onClick={() => onOpenTab('inventory')}>{t('nodes.onboarding.openInventory')}</Button>
+                {trackedInventoryJobIDs.length || model.latestInventoryJobID ? <Button type="button" onClick={() => onOpenTab('jobs')}>{t('nodes.onboarding.openJobs')}</Button> : null}
+                <Button type="button" onClick={() => onOpenTab('diagnostics')}>{t('nodes.onboarding.openDiagnostics')}</Button>
+              </Toolbar>
+              {model.recommendedAction === 'sync_inventory' && !canSyncInventory ? <p className="muted">{t('nodes.onboarding.inventoryPermissionHint')}</p> : null}
+            </div>
+          </CardBody>
+        </Card>
+      ) : showHeartbeatWaitingSection ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <p className="muted">{t('nodes.onboarding.waitingForFirstHeartbeat')}</p>
+              <Toolbar>
+                <Button type="button" onClick={() => onOpenTab('runtime')}>{t('nodes.onboarding.openRuntime')}</Button>
+                <Button type="button" onClick={() => onOpenTab('diagnostics')}>{t('nodes.onboarding.openDiagnostics')}</Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : showRegistrationWaitingSection ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <p className="muted">{t('nodes.onboarding.waitingForAgentRegistration')}</p>
+              <Toolbar>
+                <Button type="button" onClick={() => onOpenTab('runtime')}>{t('nodes.onboarding.openRuntime')}</Button>
+                <Button type="button" onClick={() => onOpenTab('diagnostics')}>{t('nodes.onboarding.openDiagnostics')}</Button>
+              </Toolbar>
+            </div>
           </CardBody>
         </Card>
       ) : null}

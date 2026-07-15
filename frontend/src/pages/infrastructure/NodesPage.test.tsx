@@ -284,6 +284,40 @@ describe('NodesPage', () => {
   let delayEnrollmentCreateResponse: boolean;
   let resolveEnrollmentCreateResponse: (() => void) | null;
 
+  function setInventorySyncEligibleState(overrides: Partial<Omit<NodeDiagnostics, 'agent'>> & { agent?: Partial<NonNullable<NodeDiagnostics['agent']>> } = {}) {
+    const baseAgent = {
+      node_id: 'node-1',
+      status: 'active',
+      agent_version: '8.0.0-agent',
+      protocol_version: 'v1',
+      registered_at: '2026-07-09T08:00:00Z',
+      last_seen_at: '2026-07-09T08:00:30Z',
+      token_rotation_status: 'active',
+    };
+    const { agent: agentOverrides, ...diagnosticOverrides } = overrides;
+    currentNode = {
+      ...currentNode,
+      agent_status: 'online',
+      agent_last_seen_at: '2026-07-09T08:00:30Z',
+      last_heartbeat_at: '2026-07-09T08:00:30Z',
+    };
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      heartbeat_state: 'online',
+      heartbeat_drift_seconds: 4,
+      communication_state: 'healthy',
+      latest_inventory: undefined,
+      ...diagnosticOverrides,
+      agent: {
+        ...baseAgent,
+        ...(agentOverrides || {}),
+      },
+    };
+    currentInventory = null;
+    currentEnrollmentTokens = [];
+    currentBootstrapRuns = [];
+  }
+
   beforeEach(async () => {
     calls.length = 0;
     actionErrors = {};
@@ -431,7 +465,22 @@ describe('NodesPage', () => {
         return json({ ...node, status: 'maintenance' });
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/maintenance/disable') return json(node);
-      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/inventory/sync') return json(job('job-inventory', 'node.inventory.sync'), 202);
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/inventory/sync') {
+        const status = actionErrors.inventorySync;
+        if (status) {
+          const messages: Record<number, string> = {
+            400: 'invalid inventory sync request',
+            403: 'node.write permission required',
+            404: 'node not found',
+            409: 'active inventory job already exists',
+            429: 'inventory sync rate limited',
+            500: 'inventory sync queue failed',
+            503: 'inventory sync service unavailable',
+          };
+          return json({ error: messages[status] || 'inventory sync failed' }, status);
+        }
+        return json(job('job-inventory', 'node.inventory.sync'), 202);
+      }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/capabilities/install') return json(job('job-install', 'node.capability.install'), 202);
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/capabilities/verify') {
         if (actionErrors.verify) return json({ error: 'service_code is required' }, actionErrors.verify);
@@ -1280,6 +1329,170 @@ describe('NodesPage', () => {
     expect(calls.filter((call) => call.method !== 'GET' && forbiddenMutations.includes(call.path))).toHaveLength(0);
     expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
     expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+  });
+
+  it('queues guided inventory synchronization only after acknowledgement and keeps onboarding active', async () => {
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    setInventorySyncEligibleState();
+
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+
+    const syncButton = await screen.findByRole('button', { name: 'Synchronize inventory' });
+    expect(screen.getByText('Agent registration observed')).toBeInTheDocument();
+    expect(screen.getByText('First heartbeat observed')).toBeInTheDocument();
+    expect(screen.getByText('Inventory synchronization queues an asynchronous agent job.')).toBeInTheDocument();
+
+    const syncPath = '/api/v1/nodes/node-1/inventory/sync';
+    expect(calls.filter((call) => call.method === 'POST' && call.path === syncPath)).toHaveLength(0);
+    await userEvent.click(syncButton);
+    expect(calls.filter((call) => call.method === 'POST' && call.path === syncPath)).toHaveLength(0);
+
+    const dialog = activeDialog();
+    expect(within(dialog).getByText('Edge One')).toBeInTheDocument();
+    expect(within(dialog).getByText('node-1')).toBeInTheDocument();
+    expect(within(dialog).getByText('healthy')).toBeInTheDocument();
+    expect(within(dialog).getByText('Job acceptance does not prove inventory synchronization.')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/secret_ref_id/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/request_payload/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/result_payload/i)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm' })).toBeDisabled();
+
+    await userEvent.click(within(dialog).getByLabelText(/queues an asynchronous inventory job/));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(calls.filter((call) => call.method === 'POST' && call.path === syncPath)).toHaveLength(1));
+    expect(screen.getByRole('tab', { name: 'Onboarding' })).toHaveAttribute('aria-selected', 'true');
+    expect((await screen.findAllByText('Inventory job accepted')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Accepted').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Inventory synchronized.')).not.toBeInTheDocument();
+
+    const postCount = calls.filter((call) => call.method === 'POST' && call.path === syncPath).length;
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open Jobs' })[0]);
+    expect(screen.getByRole('tab', { name: 'Jobs / Activity' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(calls.some((call) => call.method === 'GET' && call.path === '/api/v1/jobs/job-inventory')).toBe(true));
+    expect(calls.filter((call) => call.method === 'POST' && call.path === syncPath)).toHaveLength(postCount);
+    expect(calls.every((call) => !call.path.startsWith('/agent'))).toBe(true);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+    expect(storageSet).not.toHaveBeenCalled();
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleDebug).not.toHaveBeenCalled();
+  });
+
+  it('uses node.write rather than node.bootstrap for guided inventory synchronization', async () => {
+    setInventorySyncEligibleState();
+    await openNode({ ...authPayload, permissions: ['node.read', 'node.bootstrap'] });
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+
+    expect(await screen.findByText('node.write is required for inventory synchronization. Status remains visible with read permissions.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Synchronize inventory' })).not.toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/inventory/sync')).toBe(false);
+  });
+
+  it('allows node.write-only operators to run guided inventory sync on an already registered node', async () => {
+    setInventorySyncEligibleState();
+    await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+
+    expect(await screen.findByText('Read-only onboarding status')).toBeInTheDocument();
+    expect(screen.getAllByText('node.bootstrap is required for onboarding actions. Status remains visible with read permissions.').length).toBeGreaterThan(0);
+    await userEvent.click(await screen.findByRole('button', { name: 'Synchronize inventory' }));
+    const dialog = activeDialog();
+    await userEvent.click(within(dialog).getByLabelText(/queues an asynchronous inventory job/));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/inventory/sync')).toBe(true));
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/bootstrap')).toBe(false);
+  });
+
+  it('renders guided inventory running, stalled, failed and ready states from backend evidence', async () => {
+    setInventorySyncEligibleState({
+      communication_state: 'job_running',
+      agent: {
+        last_job_claim_job_id: 'job-inventory',
+        last_job_claim_type: 'node.inventory.sync',
+        last_job_claim_at: '2026-07-09T08:01:00Z',
+      },
+    });
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    expect(await screen.findByText('Inventory job running.')).toBeInTheDocument();
+    expect(screen.getAllByText('Running').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Synchronize inventory' })).not.toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/inventory/sync')).toBe(false);
+  });
+
+  it('blocks duplicate guided inventory sync for stalled jobs and allows explicit retry after failed jobs', async () => {
+    setInventorySyncEligibleState({
+      communication_state: 'job_result_stalled',
+      agent: {
+        last_job_claim_job_id: 'job-inventory',
+        last_job_claim_type: 'node.inventory.sync',
+        last_job_claim_at: '2026-07-09T08:01:00Z',
+      },
+    });
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    expect(await screen.findByText('Inventory result stalled. Review diagnostics before retrying.')).toBeInTheDocument();
+    expect(screen.getAllByText('Stalled').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Synchronize inventory' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry inventory synchronization' })).not.toBeInTheDocument();
+
+    setInventorySyncEligibleState({
+      agent: {
+        last_job_result_job_id: 'job-inventory',
+        last_job_result_type: 'node.inventory.sync',
+        last_job_result_status: 'failed',
+        last_job_result_at: '2026-07-09T08:02:00Z',
+      },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
+    expect(await screen.findByText('Inventory synchronization failed.')).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: 'Retry inventory synchronization' }));
+    const dialog = activeDialog();
+    expect(within(dialog).getByText('Retry inventory synchronization')).toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/inventory/sync')).toBe(false);
+  });
+
+  it('handles guided inventory conflicts without recording a local accepted job', async () => {
+    actionErrors.inventorySync = 409;
+    setInventorySyncEligibleState();
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Synchronize inventory' }));
+    const dialog = activeDialog();
+    await userEvent.click(within(dialog).getByLabelText(/queues an asynchronous inventory job/));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    await screen.findByText('Inventory synchronization conflicts with current node or job state.');
+    expect(activeDialog()).toBe(dialog);
+    expect(screen.queryByText('Inventory job accepted')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open Jobs' })).not.toBeInTheDocument();
+    expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/inventory/sync')).toHaveLength(1);
+  });
+
+  it('renders ready state only after registration, heartbeat, inventory and healthy communication evidence', async () => {
+    setInventorySyncEligibleState({
+      communication_state: 'inventory_ok',
+      latest_inventory: inventory,
+      agent: {
+        last_inventory_sync_at: '2026-07-09T08:01:00Z',
+      },
+    });
+    currentInventory = clone(inventory);
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
+
+    expect((await screen.findAllByText('Ready')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Onboarding ready')).toBeInTheDocument();
+    expect(screen.getByText('Control-plane onboarding milestones are complete.')).toBeInTheDocument();
+    expect(screen.getByText('Live external-node validation is still required before production cutover.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Synchronize inventory' })).not.toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/inventory/sync')).toBe(false);
   });
 
   it('issues an enrollment token from onboarding with explicit confirmation and one-time display', async () => {

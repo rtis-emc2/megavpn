@@ -290,14 +290,16 @@ Evidence controls:
 The UI minimizes bundle lifetime and prevents application-level persistence;
 JavaScript runtime memory erasure is not guaranteed.
 
-## 12. Guided Agent Onboarding Status, Token and Bootstrap Action Review
+## 12. Guided Agent Onboarding Status, Token, Bootstrap and Inventory Sync Review
 
 Nodes -> Onboarding now provides a guided status model plus secure enrollment
-token issue/reissue actions and guided bootstrap mode selection/job submission
+token issue/reissue actions, guided bootstrap mode selection/job submission,
+registration waiting, heartbeat waiting and guided inventory-sync submission
 without `/legacy/`. The reviewed mutation scope is limited to existing
-operator enrollment-token endpoints and the existing operator bootstrap
-endpoint. It does not include agent registration, manual bundle
-reveal/download, inventory sync or connectivity proof.
+operator enrollment-token endpoints, the existing operator bootstrap endpoint
+and the existing operator inventory-sync endpoint. It does not include browser
+agent registration, manual bundle reveal/download or live external-node
+connectivity proof.
 
 Backend/API controls used by the UI:
 
@@ -310,10 +312,13 @@ Backend/API controls used by the UI:
 - existing operator `POST /api/v1/nodes/{id}/enrollment-token`;
 - existing operator `POST /api/v1/nodes/{id}/enrollment-token/rotate`;
 - existing operator `POST /api/v1/nodes/{id}/bootstrap`;
+- existing operator `POST /api/v1/nodes/{id}/inventory/sync`;
 - redacted diagnostics projections for enrollment-token metadata and bootstrap
   run summaries;
 - backend-derived `heartbeat_state`, `communication_state` and
-  `token_rotation_status`.
+  `token_rotation_status`;
+- backend job claim/result projections for source-defined inventory job types
+  `node.inventory` and `node.inventory.sync`.
 
 Frontend controls:
 
@@ -354,11 +359,28 @@ Frontend controls:
 - guided bootstrap records returned job/run identifiers, keeps the selected
   node drawer on Onboarding and lets the operator navigate to Jobs without
   treating accepted jobs as success;
+- after real registration and heartbeat evidence, guided inventory sync uses
+  the same `syncNodeInventory` / `useSyncNodeInventory` wrapper and mutation
+  hook as the standalone Inventory tab; the hook remains owned by `NodeDrawer`
+  and is not instantiated inside `NodeOnboardingTab`;
+- guided inventory sync requires `node.write` separately from `node.bootstrap`,
+  is not exposed when the operator lacks `node.write`, requires explicit
+  confirmation plus acknowledgement, queues only
+  `POST /api/v1/nodes/{id}/inventory/sync`, keeps the operator on Onboarding
+  and stores returned job IDs only in bounded component-local state;
+- guided inventory sync is never queued automatically after token issue,
+  bootstrap job acceptance, bootstrap success, registration or heartbeat, and
+  it is not retried automatically after failure;
+- accepted, queued, running, stalled, failed, superseded and unknown inventory
+  job states are derived only from safe operator diagnostics, inventory
+  snapshots and transient returned job IDs. Accepted/queued/running jobs are
+  not treated as synchronized inventory;
 - ready status requires agent registration, heartbeat evidence, inventory
   evidence and a healthy backend communication state;
 - queued bootstrap or queued inventory jobs are not treated as successful
   onboarding;
-- unknown bootstrap-run status fails closed for guided bootstrap submission;
+- unknown bootstrap-run status and unknown inventory job/result state fail
+  closed for guided mutation submission;
 - retired/deleted nodes are blocked;
 - partial query failures are rendered as safe per-source alerts rather than
   collapsing to fake `not_started`;
@@ -366,8 +388,9 @@ Frontend controls:
   Onboarding tab is active and stops when the model becomes ready/blocked, the
   tab changes or the drawer closes;
 - token plaintext, token hashes, `secret_ref_id`, request signatures, nonces,
-  authorization headers, bootstrap bundle content and raw secret metadata are
-  not rendered by the onboarding panel except for the intentional one-time
+  authorization headers, bootstrap bundle content, raw diagnostics, raw job
+  payloads, complete inventory payloads and raw secret metadata are not
+  rendered by the onboarding panel except for the intentional one-time
   plaintext token reveal after a successful issue/reissue response;
 - plaintext tokens are not retained in query data, mutation data, mutation
   variables, global state, Zustand, localStorage, sessionStorage, IndexedDB,
@@ -380,7 +403,10 @@ Evidence controls:
   successful/failed bootstrap ordering, registration, revoked agent, heartbeat
   states, unhealthy communication states, inventory evidence, ready criteria,
   unknown statuses, source-array immutability, action recommendations for
-  token issue/reissue and guided bootstrap, no destructive recommendation for
+  token issue/reissue, guided bootstrap and guided inventory sync, exact
+  inventory job-type recognition, accepted/running/stalled/failed/superseded
+  inventory states, failed relevant results, unrelated failed results, unknown
+  successful-without-inventory results, no destructive recommendation for
   unknown statuses and plaintext token omission;
 - bootstrap-readiness tests cover exact supported modes, retired/deleted/local
   blocks, SSH prerequisite checks, manual bundle without SSH, active/unknown
@@ -392,14 +418,16 @@ Evidence controls:
   stale-response discard, guided bootstrap mode selection, safe SSH/manual
   confirmation, exact `{ bootstrap_mode }` request shape, returned job/run
   tracking, manual-bundle-ready navigation without reveal/download,
-  firewall-prerequisite error handling, permission-aware action disabling,
-  no `/agent/*` browser calls, no `/legacy/`, no inventory mutation from
-  Onboarding, polling lifecycle, partial query failure display,
+  firewall-prerequisite error handling, guided registration waiting, guided
+  heartbeat waiting, guided inventory confirmation/acknowledgement,
+  `node.write` versus `node.bootstrap` permission separation, accepted job
+  tracking, running/stalled/failed/ready inventory progression, 409 conflict
+  handling, permission-aware action hiding/disabling, no `/agent/*` browser
+  calls, no `/legacy/`, polling lifecycle, partial query failure display,
   browser-storage safety and absence of production console logging.
 
-Guided registration/heartbeat waiting and inventory sync remain pending Step
-4C.2B2. Final acceptance/debt closure remains pending Step 4D. Live
-external-node smoke remains release-validation debt.
+Final acceptance/debt closure remains pending Step 4D. Live external-node smoke
+remains release-validation debt.
 
 ## 13. RC1 Limitations
 
@@ -407,8 +435,8 @@ The new console remains incomplete for final write parity. The following are
 intentionally disabled, backend-missing or legacy-only after FE8-P0-09B:
 
 - non-VLESS access service materialization and access-group migration conflict UI;
-- guided node agent onboarding actions beyond enrollment-token issue/reissue
-  and guided bootstrap mode selection/job submission;
+- final guided node agent onboarding acceptance/evidence/debt closure pending
+  Step 4D;
 - agent identity revoke, reboot, emergency cleanup and stale rotation cleanup;
 - node service discovery ignore/unignore;
 - runtime artifact delete;

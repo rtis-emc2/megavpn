@@ -386,6 +386,221 @@ describe('node onboarding model', () => {
     expect(running.recommendedAction).toBe('none');
   });
 
+  it('recommends inventory synchronization only for registered nodes with online heartbeat and safe communication', () => {
+    const eligibleNode = { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' };
+    const eligible = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'healthy' }),
+    });
+    expect(eligible.recommendedAction).toBe('sync_inventory');
+    expect(eligible.inventorySyncEligible).toBe(true);
+    expect(eligible.inventoryJobState).toBe('not_requested');
+    expect(stepStatus(eligible, 'inventory')).toBe('current');
+
+    const cases = [
+      ['missing registration', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: diagnostics({ heartbeat_state: 'online', communication_state: 'healthy' }) })],
+      ['missing heartbeat', deriveNodeOnboardingModel({ node, diagnostics: registeredDiagnostics({ communication_state: 'healthy' }) })],
+      ['offline heartbeat', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'offline', communication_state: 'channel_offline' }) })],
+      ['degraded heartbeat', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'degraded', communication_state: 'degraded' }) })],
+      ['auth failure', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'auth_failure' }) })],
+      ['heartbeat stalled', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'heartbeat_stalled' }) })],
+      ['channel offline', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'channel_offline' }) })],
+      ['unknown communication', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'mystery' }) })],
+      ['retired node', deriveNodeOnboardingModel({ node: { ...eligibleNode, status: 'retired' }, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'healthy' }) })],
+      ['active bootstrap', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'healthy' }), bootstrapRuns: [runningRun] })],
+    ] as const;
+    for (const [label, model] of cases) {
+      expect(model.inventorySyncEligible, label).toBe(false);
+      expect(model.recommendedAction, label).not.toBe('sync_inventory');
+    }
+
+    const revoked = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'auth_failure',
+        agent: {
+          node_id: 'node-1',
+          status: 'revoked',
+          registered_at: '2026-07-09T08:07:00Z',
+          revoked_at: '2026-07-09T08:08:00Z',
+          token_rotation_status: 'revoked',
+        },
+      }),
+    });
+    expect(revoked.recommendedAction).toBe('reissue_enrollment_token');
+    expect(revoked.inventorySyncEligible).toBe(false);
+
+    const withInventory = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'healthy', latest_inventory: inventory }),
+    });
+    expect(withInventory.inventorySyncEligible).toBe(false);
+    expect(withInventory.recommendedAction).toBe('none');
+  });
+
+  it('derives inventory job states from exact inventory job evidence without completing inventory from acceptance alone', () => {
+    const eligibleNode = { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' };
+
+    const accepted = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'healthy' }),
+      trackedInventoryJobIDs: ['job-inventory'],
+    });
+    expect(accepted.inventoryJobState).toBe('accepted');
+    expect(accepted.inventorySyncInProgress).toBe(true);
+    expect(accepted.inventoryObserved).toBe(false);
+    expect(accepted.recommendedAction).toBe('none');
+
+    const claimed = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'healthy',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_claim_job_id: 'job-inventory',
+          last_job_claim_type: 'node.inventory.sync',
+          last_job_claim_at: '2026-07-09T08:09:00Z',
+        },
+      }),
+    });
+    expect(claimed.inventoryJobState).toBe('running');
+    expect(claimed.recommendedAction).toBe('none');
+
+    const running = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'job_running',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_claim_job_id: 'job-inventory',
+          last_job_claim_type: 'node.inventory',
+          last_job_claim_at: '2026-07-09T08:09:00Z',
+        },
+      }),
+    });
+    expect(running.inventoryJobState).toBe('running');
+    expect(running.overallStatus).toBe('in_progress');
+
+    const stalled = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'job_result_stalled',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_claim_job_id: 'job-inventory',
+          last_job_claim_type: 'node.inventory.sync',
+          last_job_claim_at: '2026-07-09T08:09:00Z',
+        },
+      }),
+    });
+    expect(stalled.inventoryJobState).toBe('stalled');
+    expect(stalled.inventorySyncStalled).toBe(true);
+    expect(stalled.recommendedAction).toBe('none');
+    expect(stepEvidence(stalled, 'inventory')).toBe('inventory_job_result_stalled');
+
+    const failed = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'healthy',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_result_job_id: 'job-inventory',
+          last_job_result_type: 'node.inventory.sync',
+          last_job_result_status: 'failed',
+          last_job_result_at: '2026-07-09T08:10:00Z',
+        },
+      }),
+    });
+    expect(failed.inventoryJobState).toBe('failed');
+    expect(failed.inventorySyncFailed).toBe(true);
+    expect(failed.recommendedAction).toBe('sync_inventory');
+
+    const unrelatedFailed = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'healthy',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_result_job_id: 'job-discovery',
+          last_job_result_type: 'node.discovery.sync',
+          last_job_result_status: 'failed',
+          last_job_result_at: '2026-07-09T08:10:00Z',
+        },
+      }),
+    });
+    expect(unrelatedFailed.inventoryJobState).toBe('not_requested');
+    expect(unrelatedFailed.inventorySyncFailed).toBe(false);
+    expect(unrelatedFailed.recommendedAction).toBe('sync_inventory');
+
+    const succeededWithoutInventory = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'healthy',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_result_job_id: 'job-inventory',
+          last_job_result_type: 'node.inventory.sync',
+          last_job_result_status: 'succeeded',
+          last_job_result_at: '2026-07-09T08:10:00Z',
+        },
+      }),
+      trackedInventoryJobIDs: ['job-inventory'],
+    });
+    expect(succeededWithoutInventory.inventoryJobState).toBe('unknown');
+    expect(succeededWithoutInventory.inventoryObserved).toBe(false);
+    expect(succeededWithoutInventory.overallStatus).toBe('action_required');
+
+    const superseded = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'inventory_ok',
+        latest_inventory: inventory,
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_result_job_id: 'job-inventory',
+          last_job_result_type: 'node.inventory.sync',
+          last_job_result_status: 'failed',
+          last_job_result_at: '2026-07-09T08:08:30Z',
+          last_inventory_sync_at: '2026-07-09T08:09:00Z',
+        },
+      }),
+      inventory,
+      trackedInventoryJobIDs: ['job-inventory'],
+    });
+    expect(superseded.inventoryJobState).toBe('superseded');
+    expect(superseded.inventoryObserved).toBe(true);
+    expect(superseded.overallStatus).toBe('ready');
+  });
+
   it('recommends guided bootstrap from backend-supported readiness without requiring a browser-visible token', () => {
     const missingCredential = deriveNodeOnboardingModel({
       node: { ...node, execution_mode: 'manual_bundle' },

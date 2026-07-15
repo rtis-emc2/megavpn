@@ -42,7 +42,19 @@ export type NodeOnboardingActionKey =
   | 'reissue_enrollment_token'
   | 'start_ssh_bootstrap'
   | 'start_manual_bundle'
+  | 'sync_inventory'
   | 'none';
+
+export type NodeInventoryJobState =
+  | 'not_requested'
+  | 'accepted'
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'stalled'
+  | 'superseded'
+  | 'unknown';
 
 export type NodeOnboardingEvidence = {
   key: string;
@@ -72,6 +84,14 @@ export type NodeOnboardingModel = {
   recommendedBootstrapMode?: NodeBootstrapMode;
   latestBootstrapRunID?: string;
   latestBootstrapStatus?: string;
+  inventorySyncEligible: boolean;
+  inventorySyncInProgress: boolean;
+  inventorySyncFailed: boolean;
+  inventorySyncStalled: boolean;
+  inventoryJobState: NodeInventoryJobState;
+  latestInventoryJobID?: string;
+  latestInventoryJobStatus?: string;
+  latestInventoryJobAt?: string;
   registered: boolean;
   heartbeatObserved: boolean;
   inventoryObserved: boolean;
@@ -84,14 +104,19 @@ export type NodeOnboardingInput = {
   bootstrapRuns?: NodeBootstrapRun[];
   inventory?: NodeInventorySnapshot;
   accessMethods?: NodeAccessMethod[];
+  trackedInventoryJobIDs?: string[];
 };
 
 const terminalCommunicationStates = new Set(['inventory_ok', 'discovery_ok', 'healthy']);
+const inventoryActionCommunicationStates = new Set(['discovery_ok', 'healthy']);
 const strongActionCommunicationStates = new Set(['auth_failure', 'heartbeat_stalled', 'channel_offline', 'job_result_stalled']);
 const unhealthyCommunicationStates = new Set(['degraded', 'auth_failure', 'heartbeat_stalled', 'channel_offline', 'job_result_stalled']);
 const inProgressBootstrapStatuses = new Set(['queued', 'running', 'retrying', 'pending']);
 const successfulBootstrapStatuses = new Set(['succeeded', 'success', 'completed']);
 const failedBootstrapStatuses = new Set(['failed', 'cancelled', 'canceled']);
+const inventoryJobTypes = new Set(['node.inventory', 'node.inventory.sync']);
+const failedJobResultStatuses = new Set(['failed', 'error', 'cancelled', 'canceled']);
+const successfulJobResultStatuses = new Set(['succeeded', 'success', 'completed']);
 
 function normalize(value?: string | null): string {
   return String(value || '').trim().toLowerCase();
@@ -165,7 +190,82 @@ function safeTokenEvidence(token?: EnrollmentToken): NodeOnboardingEvidence[] {
 
 function inventoryJobFailed(diagnostics?: NodeDiagnostics): boolean {
   const agent = diagnostics?.agent;
-  return normalize(agent?.last_job_result_status) === 'failed' && normalize(agent?.last_job_result_type).includes('inventory');
+  return failedJobResultStatuses.has(normalize(agent?.last_job_result_status)) && inventoryJobTypes.has(normalize(agent?.last_job_result_type));
+}
+
+function isInventoryJobType(value?: string | null): boolean {
+  return inventoryJobTypes.has(normalize(value));
+}
+
+function latestInventoryEvidenceAt(diagnostics?: NodeDiagnostics, inventory?: NodeInventorySnapshot): string | undefined {
+  const candidates = [
+    diagnostics?.agent?.last_inventory_sync_at,
+    diagnostics?.latest_inventory?.created_at,
+    inventory?.created_at,
+  ].filter(Boolean) as string[];
+  return candidates.sort((left, right) => timestamp(right) - timestamp(left))[0];
+}
+
+type InventoryJobEvidence = {
+  state: NodeInventoryJobState;
+  jobID?: string;
+  status?: string;
+  at?: string;
+};
+
+function deriveInventoryJobEvidence(
+  diagnostics?: NodeDiagnostics,
+  inventory?: NodeInventorySnapshot,
+  trackedJobIDs: string[] = [],
+): InventoryJobEvidence {
+  const agent = diagnostics?.agent;
+  const communicationState = normalize(diagnostics?.communication_state);
+  const trackedJobID = trackedJobIDs.find(Boolean);
+  const claimID = present(agent?.last_job_claim_job_id);
+  const claimType = normalize(agent?.last_job_claim_type);
+  const claimAt = present(agent?.last_job_claim_at);
+  const resultID = present(agent?.last_job_result_job_id);
+  const resultType = normalize(agent?.last_job_result_type);
+  const resultStatus = normalize(agent?.last_job_result_status);
+  const resultAt = present(agent?.last_job_result_at);
+  const inventoryAt = latestInventoryEvidenceAt(diagnostics, inventory);
+  const resultTime = timestamp(resultAt);
+  const claimTime = timestamp(claimAt);
+  const claimIsInventory = isInventoryJobType(claimType);
+  const resultIsInventory = isInventoryJobType(resultType);
+  const claimMatchesTracked = claimIsInventory && (!trackedJobID || !claimID || claimID === trackedJobID);
+  const resultMatchesTracked = resultIsInventory && (!trackedJobID || !resultID || resultID === trackedJobID);
+
+  if (inventoryAt) {
+    return {
+      state: trackedJobID ? 'superseded' : 'succeeded',
+      jobID: trackedJobID || resultID || claimID,
+      status: 'synchronized',
+      at: inventoryAt,
+    };
+  }
+  if (communicationState === 'job_result_stalled' && claimMatchesTracked) {
+    return { state: 'stalled', jobID: claimID || trackedJobID, status: 'job_result_stalled', at: claimAt };
+  }
+  if (communicationState === 'job_running' && claimIsInventory) {
+    return { state: 'running', jobID: claimID || trackedJobID, status: 'running', at: claimAt };
+  }
+  if (claimMatchesTracked && claimID && (!resultID || resultID !== claimID) && claimTime > resultTime) {
+    return { state: 'running', jobID: claimID, status: 'running', at: claimAt };
+  }
+  if (resultMatchesTracked && failedJobResultStatuses.has(resultStatus)) {
+    return { state: 'failed', jobID: resultID || trackedJobID, status: resultStatus || 'failed', at: resultAt };
+  }
+  if (resultMatchesTracked && successfulJobResultStatuses.has(resultStatus)) {
+    return { state: 'unknown', jobID: resultID || trackedJobID, status: resultStatus || 'succeeded_without_inventory', at: resultAt };
+  }
+  if (trackedJobID) {
+    return { state: 'accepted', jobID: trackedJobID, status: 'accepted' };
+  }
+  if (claimIsInventory && communicationState === 'job_running') {
+    return { state: 'running', jobID: claimID, status: 'running', at: claimAt };
+  }
+  return { state: 'not_requested' };
 }
 
 function step(
@@ -234,6 +334,11 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
   const heartbeatTimestamp = node?.last_heartbeat_at || agent?.last_seen_at || node?.agent_last_seen_at || undefined;
   const heartbeatObserved = Boolean(heartbeatTimestamp);
   const inventoryObserved = Boolean(diagnostics?.latest_inventory?.id || inventory?.id || agent?.last_inventory_sync_at);
+  const inventoryJob = deriveInventoryJobEvidence(diagnostics, inventory, input.trackedInventoryJobIDs);
+  const inventorySyncInProgress = inventoryJob.state === 'accepted' || inventoryJob.state === 'queued' || inventoryJob.state === 'running';
+  const inventorySyncFailed = inventoryJob.state === 'failed';
+  const inventorySyncStalled = inventoryJob.state === 'stalled';
+  const inventorySyncUnknown = inventoryJob.state === 'unknown';
   const authOrCredentialProblem = communicationState === 'auth_failure' || tokenRotationStatus === 'revoked';
   const bootstrapInProgress = inProgressBootstrapStatuses.has(latestRunStatus);
   const bootstrapSucceeded = latestSuccessIsCurrent;
@@ -345,20 +450,29 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
   let inventoryStep: NodeOnboardingStep;
   if (retired) {
     inventoryStep = step('inventory', 'blocked', 'inventory_node_blocked', [], undefined, 'overview');
-  } else if (communicationState === 'job_result_stalled' || communicationState === 'auth_failure' || communicationState === 'channel_offline' || inventoryJobFailed(diagnostics)) {
-    inventoryStep = step('inventory', 'warning', communicationState === 'job_result_stalled' ? 'inventory_job_result_stalled' : communicationState === 'auth_failure' ? 'inventory_auth_failure' : communicationState === 'channel_offline' ? 'inventory_channel_offline' : 'inventory_job_failed', [
-      { key: 'communication_state', value: communicationState },
-      { key: 'last_inventory_sync_at', value: agent?.last_inventory_sync_at || 'n/a' },
-    ], agent?.last_job_result_at || agent?.last_inventory_sync_at, 'diagnostics');
   } else if (inventoryObserved) {
     inventoryStep = step('inventory', 'complete', 'inventory_synchronized', [
       { key: 'inventory_id', value: diagnostics?.latest_inventory?.id || inventory?.id || 'n/a' },
       { key: 'last_inventory_sync_at', value: agent?.last_inventory_sync_at || diagnostics?.latest_inventory?.created_at || inventory?.created_at || 'n/a' },
       { key: 'communication_state', value: communicationState },
     ], agent?.last_inventory_sync_at || diagnostics?.latest_inventory?.created_at || inventory?.created_at, 'inventory');
+  } else if (inventorySyncStalled || inventorySyncFailed || inventorySyncUnknown || communicationState === 'job_result_stalled' || communicationState === 'auth_failure' || communicationState === 'channel_offline' || inventoryJobFailed(diagnostics)) {
+    inventoryStep = step('inventory', 'warning', inventorySyncUnknown ? 'inventory_job_unknown' : communicationState === 'job_result_stalled' || inventorySyncStalled ? 'inventory_job_result_stalled' : communicationState === 'auth_failure' ? 'inventory_auth_failure' : communicationState === 'channel_offline' ? 'inventory_channel_offline' : 'inventory_job_failed', [
+      { key: 'communication_state', value: communicationState },
+      { key: 'inventory_job_status', value: inventoryJob.status || 'n/a' },
+      { key: 'inventory_job_id', value: inventoryJob.jobID || 'n/a' },
+      { key: 'last_inventory_sync_at', value: agent?.last_inventory_sync_at || 'n/a' },
+    ], inventoryJob.at || agent?.last_job_result_at || agent?.last_inventory_sync_at, 'diagnostics');
+  } else if (inventorySyncInProgress) {
+    inventoryStep = step('inventory', 'current', inventoryJob.state === 'running' ? 'inventory_job_running' : inventoryJob.state === 'queued' ? 'inventory_job_queued' : 'inventory_job_accepted', [
+      { key: 'communication_state', value: communicationState },
+      { key: 'inventory_job_status', value: inventoryJob.status || inventoryJob.state },
+      { key: 'inventory_job_id', value: inventoryJob.jobID || 'n/a' },
+    ], inventoryJob.at || heartbeatTimestamp, 'jobs');
   } else if (registered && heartbeatObserved) {
     inventoryStep = step('inventory', 'current', 'inventory_waiting', [
       { key: 'communication_state', value: communicationState },
+      { key: 'heartbeat_state', value: heartbeatState },
     ], heartbeatTimestamp, 'inventory');
   } else {
     inventoryStep = step('inventory', 'pending', 'inventory_pending', [], undefined, 'inventory');
@@ -368,13 +482,31 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
   const problem = firstProblemStep(steps);
   const hasBootstrapRun = Boolean(latestRun);
   const hasFailedBootstrapAction = latestFailureIsCurrent && !registered;
+  const nonInventoryJobRunning = communicationState === 'job_running' && Boolean(agent?.last_job_claim_type) && !isInventoryJobType(agent?.last_job_claim_type);
+  const heartbeatHealthyForInventory = heartbeatState === 'online';
+  const inventorySyncEligible = Boolean(node)
+    && !retired
+    && registered
+    && heartbeatObserved
+    && heartbeatHealthyForInventory
+    && !inventoryObserved
+    && !inventorySyncInProgress
+    && !inventorySyncStalled
+    && !inventorySyncUnknown
+    && !agentRevoked
+    && !reissueRequired
+    && !bootstrapInProgress
+    && !bootstrapReadiness.hasUnknownBootstrap
+    && inventoryActionCommunicationStates.has(communicationState)
+    && !strongActionCommunicationStates.has(communicationState)
+    && !nonInventoryJobRunning;
   let overallStatus: NodeOnboardingOverallStatus;
 
   if (retired) {
     overallStatus = 'blocked';
   } else if (registered && heartbeatObserved && inventoryObserved && terminalCommunicationStates.has(communicationState)) {
     overallStatus = 'ready';
-  } else if (strongActionCommunicationStates.has(communicationState) || agentRevoked || hasFailedBootstrapAction) {
+  } else if (strongActionCommunicationStates.has(communicationState) || agentRevoked || hasFailedBootstrapAction || inventorySyncFailed || inventorySyncUnknown) {
     overallStatus = 'action_required';
   } else if (registered && heartbeatObserved && inventoryObserved && (unhealthyCommunicationStates.has(communicationState) || heartbeatState === 'degraded' || heartbeatState === 'offline')) {
     overallStatus = 'degraded';
@@ -407,15 +539,17 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
     && !registered
     && (bootstrapStep.status === 'pending' || bootstrapStep.status === 'warning')
     && bootstrapReadiness.selectionRequired;
-  const recommendedAction: NodeOnboardingActionKey = retired || registered
+  const recommendedAction: NodeOnboardingActionKey = retired
     ? 'none'
     : reissueRequired || (credentialStep.status === 'warning' && (authOrCredentialProblem || agentRevoked))
       ? 'reissue_enrollment_token'
       : bootstrapCanStart
           ? bootstrapModeAction
-          : node && !activeToken && !bootstrapModeAvailable && !bootstrapInProgress && !bootstrapReadiness.hasUnknownBootstrap && !strongActionCommunicationStates.has(communicationState) && (credentialStep.status === 'current' || credentialStep.status === 'pending')
+          : node && !registered && !activeToken && !bootstrapModeAvailable && !bootstrapInProgress && !bootstrapReadiness.hasUnknownBootstrap && !strongActionCommunicationStates.has(communicationState) && (credentialStep.status === 'current' || credentialStep.status === 'pending')
             ? 'issue_enrollment_token'
-            : 'none';
+            : inventorySyncEligible
+              ? 'sync_inventory'
+              : 'none';
 
   return {
     overallStatus,
@@ -431,6 +565,14 @@ export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboa
     recommendedBootstrapMode: bootstrapReadiness.defaultMode,
     latestBootstrapRunID: latestRun?.id,
     latestBootstrapStatus: latestRun?.status,
+    inventorySyncEligible,
+    inventorySyncInProgress,
+    inventorySyncFailed,
+    inventorySyncStalled,
+    inventoryJobState: inventoryJob.state,
+    latestInventoryJobID: inventoryJob.jobID,
+    latestInventoryJobStatus: inventoryJob.status,
+    latestInventoryJobAt: inventoryJob.at,
     registered,
     heartbeatObserved,
     inventoryObserved,
