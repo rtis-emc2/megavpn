@@ -463,8 +463,9 @@ func createAgentOnboardingNodeViaHTTP(t *testing.T, handler nethttp.Handler, ses
 	if rec.Code != nethttp.StatusCreated {
 		t.Fatalf("node create status = %d, want 201", rec.Code)
 	}
-	if node.ID == "" || node.Name == "" || node.Address == "" || node.LocationLabel == "" {
-		t.Fatalf("created node projection missing required profile fields: %#v", node)
+	if node.ID == "" || node.Name == "" || node.Address == "" || node.OSFamily == "" || node.OSVersion == "" || node.Architecture == "" {
+		t.Fatalf("created node projection missing required profile fields: id_present=%t name_present=%t address_present=%t os_family_present=%t os_version_present=%t arch_present=%t",
+			node.ID != "", node.Name != "", node.Address != "", node.OSFamily != "", node.OSVersion != "", node.Architecture != "")
 	}
 	return node
 }
