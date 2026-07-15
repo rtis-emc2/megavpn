@@ -118,6 +118,14 @@ run_json_checked \
   TestPostgresIntegrationRegisterAgentWithEnrollmentConcurrentTokenUse
 
 run_json_checked \
+  ./internal/infra/postgres \
+  'TestPostgresIntegrationRevokeNodeAgentIdentity' \
+  'postgres-agent-identity-revoke-infra' \
+  TestPostgresIntegrationRevokeNodeAgentIdentityAtomic \
+  TestPostgresIntegrationRevokeNodeAgentIdentityAuditRollback \
+  TestPostgresIntegrationRevokeNodeAgentIdentityIdempotentAndConcurrent
+
+run_json_checked \
   ./internal/api/http \
   'TestPostgresIntegrationCreateNodeSSHAccessMethodHTTP' \
   'postgres-ssh-http' \
@@ -140,3 +148,9 @@ run_json_checked \
   'TestPostgresIntegrationAgentOnboardingReissueRecoveryHTTP' \
   'postgres-agent-onboarding-recovery-http' \
   TestPostgresIntegrationAgentOnboardingReissueRecoveryHTTP
+
+run_json_checked \
+  ./internal/api/http \
+  'TestPostgresIntegrationRevokeNodeAgentIdentityRejectsOldSignedAgentHTTP' \
+  'postgres-agent-identity-revoke-http' \
+  TestPostgresIntegrationRevokeNodeAgentIdentityRejectsOldSignedAgentHTTP
