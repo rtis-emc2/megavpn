@@ -90,9 +90,7 @@ func TestPostgresIntegrationCreateNodeEmergencyCleanupJobAtomic(t *testing.T) {
 		t.Fatalf("second active cleanup error = %v, want ErrNodeEmergencyCleanupConflict", err)
 	}
 	markPostgresIntegrationJobTerminalWithoutSideEffects(t, ctx, store, job.ID, "cancelled")
-	if err := store.HeartbeatWithVersion(ctx, fixture.node.Name, "agent-after-cleanup-test", "v1"); err != nil {
-		t.Fatalf("refresh heartbeat evidence: %v", err)
-	}
+	refreshPostgresIntegrationEmergencyCleanupChannelEvidence(t, ctx, store, fixture.node.ID)
 	nextResult, err := store.CreateNodeEmergencyCleanupJob(ctx, fixture.node.ID, domain.NodeEmergencyCleanupJobCreateInput{
 		CleanupScope:                  domain.NodeEmergencyCleanupScopeFullNode,
 		IncludeAgent:                  true,
@@ -676,6 +674,18 @@ func markPostgresIntegrationJobTerminalWithoutSideEffects(t *testing.T, ctx cont
 	}
 	if _, err := store.db.Exec(ctx, `delete from resource_locks where job_id=$1`, jobID); err != nil {
 		t.Fatalf("delete resource lock: %v", err)
+	}
+}
+
+func refreshPostgresIntegrationEmergencyCleanupChannelEvidence(t *testing.T, ctx context.Context, store *Store, nodeID string) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	if _, err := store.db.Exec(ctx, `update nodes set last_heartbeat_at=$2 where id=$1`, nodeID, now); err != nil {
+		t.Fatalf("refresh node heartbeat evidence: %v", err)
+	}
+	if _, err := store.db.Exec(ctx, `update node_agents set last_seen_at=$2,last_job_poll_at=$2 where node_id=$1`, nodeID, now); err != nil {
+		t.Fatalf("refresh agent channel evidence: %v", err)
 	}
 }
 
