@@ -773,6 +773,27 @@ func writeJSON(w nethttp.ResponseWriter, code int, v any) {
 func writeErr(w nethttp.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, response{"status": "error", "error": msg})
 }
+
+func setSensitiveResponseHeaders(w nethttp.ResponseWriter) {
+	h := w.Header()
+	h.Set("Cache-Control", "no-store, private, max-age=0")
+	h.Set("Pragma", "no-cache")
+	h.Set("Expires", "0")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Del("ETag")
+	h.Del("Last-Modified")
+}
+
+func writeSensitiveJSON(w nethttp.ResponseWriter, code int, v any) {
+	setSensitiveResponseHeaders(w)
+	writeJSON(w, code, v)
+}
+
+func writeSensitiveErr(w nethttp.ResponseWriter, code int, msg string) {
+	writeSensitiveJSON(w, code, response{"status": "error", "error": msg})
+}
+
 func decode(r *nethttp.Request, v any) bool {
 	return decodeJSONBody(r, v, false)
 }
@@ -2301,6 +2322,44 @@ type agentRegisterReq struct {
 	AgentVersion    string `json:"agent_version"`
 	ProtocolVersion string `json:"protocol_version"`
 }
+
+type agentRegisterResp struct {
+	Status     string                `json:"status"`
+	Node       agentRegisterNodeResp `json:"node"`
+	AgentToken string                `json:"agent_token"`
+	TokenHint  string                `json:"token_hint"`
+}
+
+type agentRegisterNodeResp struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Address string `json:"address"`
+}
+
+const (
+	maxAgentRegisterNodeIDLength   = 64
+	maxAgentRegisterTokenLength    = 512
+	maxAgentRegisterNameLength     = 256
+	maxAgentRegisterAddressLength  = 512
+	maxAgentRegisterVersionLength  = 128
+	maxAgentRegisterProtocolLength = 64
+)
+
+var agentRegisterNodeIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+func (req *agentRegisterReq) clearCredentials() {
+	req.Token = ""
+	req.EnrollmentToken = ""
+}
+
+func agentRegisterNodeProjection(n domain.Node) agentRegisterNodeResp {
+	return agentRegisterNodeResp{
+		ID:      n.ID,
+		Name:    n.Name,
+		Address: n.Address,
+	}
+}
+
 type agentHeartbeatReq struct {
 	NodeID          string `json:"node_id"`
 	Name            string `json:"name"`
@@ -2333,6 +2392,96 @@ func bearerToken(r *nethttp.Request) string {
 	return ""
 }
 
+func validateAgentRegisterLine(field, value string, maxLen int, required bool) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		if required {
+			return "", field + " is required"
+		}
+		return "", ""
+	}
+	if len(value) > maxLen {
+		return "", field + " is too long"
+	}
+	if err := domain.ValidateSingleLine(field, value); err != nil {
+		return "", err.Error()
+	}
+	return value, ""
+}
+
+func validateAgentRegisterSecretFormat(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) > maxAgentRegisterTokenLength {
+		return false
+	}
+	return domain.ValidateSingleLine("registration credential", value) == nil
+}
+
+func validateAgentRegisterEnrollment(req *agentRegisterReq) string {
+	nodeID, msg := validateAgentRegisterLine("node_id", req.NodeID, maxAgentRegisterNodeIDLength, true)
+	if msg != "" {
+		return msg
+	}
+	if !agentRegisterNodeIDPattern.MatchString(nodeID) {
+		return "node_id is invalid"
+	}
+	req.NodeID = nodeID
+	if req.EnrollmentToken == "" || !validateAgentRegisterSecretFormat(req.EnrollmentToken) {
+		return "invalid registration credential"
+	}
+	if msg := validateAgentRegisterMetadata(req); msg != "" {
+		return msg
+	}
+	return ""
+}
+
+func validateAgentRegisterLegacy(req *agentRegisterReq, bearer string) string {
+	if req.Token != "" && !validateAgentRegisterSecretFormat(req.Token) {
+		return "invalid registration credential"
+	}
+	if bearer != "" && !validateAgentRegisterSecretFormat(bearer) {
+		return "invalid registration credential"
+	}
+	if msg := validateAgentRegisterMetadata(req); msg != "" {
+		return msg
+	}
+	return ""
+}
+
+func validateAgentRegisterMetadata(req *agentRegisterReq) string {
+	var msg string
+	if req.Name, msg = validateAgentRegisterLine("name", req.Name, maxAgentRegisterNameLength, false); msg != "" {
+		return msg
+	}
+	if req.Address, msg = validateAgentRegisterLine("address", req.Address, maxAgentRegisterAddressLength, false); msg != "" {
+		return msg
+	}
+	if req.AgentVersion, msg = validateAgentRegisterLine("agent_version", req.AgentVersion, maxAgentRegisterVersionLength, false); msg != "" {
+		return msg
+	}
+	if req.ProtocolVersion, msg = validateAgentRegisterLine("protocol_version", req.ProtocolVersion, maxAgentRegisterProtocolLength, false); msg != "" {
+		return msg
+	}
+	return ""
+}
+
+func writeAgentRegisterStoreError(w nethttp.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrAgentRegistrationInvalidCredential):
+		writeSensitiveErr(w, nethttp.StatusUnauthorized, "agent registration credential invalid")
+	case errors.Is(err, domain.ErrAgentRegistrationNodeNotFound):
+		writeSensitiveErr(w, nethttp.StatusNotFound, "agent registration target node not found")
+	case errors.Is(err, domain.ErrAgentRegistrationNodeRetired):
+		writeSensitiveErr(w, nethttp.StatusConflict, "agent registration target node is retired")
+	case errors.Is(err, domain.ErrAgentRegistrationAuditFailed):
+		writeSensitiveErr(w, nethttp.StatusInternalServerError, "agent registration failed")
+	default:
+		writeSensitiveErr(w, nethttp.StatusInternalServerError, "agent registration failed")
+	}
+}
+
 func (s *Server) authorizeAgentBootstrap(r *nethttp.Request, token string) bool {
 	authToken := bearerToken(r)
 	return s.agentToken != "" && (authToken == s.agentToken || (token != "" && token == s.agentToken))
@@ -2360,28 +2509,62 @@ func (s *Server) authorizeAgentJob(r *nethttp.Request, jobID string) bool {
 	return false
 }
 func (s *Server) agentRegister(w nethttp.ResponseWriter, r *nethttp.Request) {
+	setSensitiveResponseHeaders(w)
 	var req agentRegisterReq
 	if !decode(r, &req) {
-		writeErr(w, 400, "invalid agent register payload")
+		writeSensitiveErr(w, 400, "invalid agent register payload")
 		return
 	}
+	defer req.clearCredentials()
+	bearer := bearerToken(r)
+	hasNodeID := strings.TrimSpace(req.NodeID) != ""
+	hasEnrollmentToken := req.EnrollmentToken != ""
+	hasLegacyCredential := req.Token != "" || bearer != ""
 	var n domain.Node
 	var agentToken string
 	var err error
-	if req.NodeID != "" && req.EnrollmentToken != "" {
+	if hasNodeID || hasEnrollmentToken {
+		if !hasNodeID || !hasEnrollmentToken {
+			writeSensitiveErr(w, 400, "agent enrollment requires node_id and enrollment_token")
+			return
+		}
+		if hasLegacyCredential {
+			writeSensitiveErr(w, 400, "agent registration credentials are ambiguous")
+			return
+		}
+		if msg := validateAgentRegisterEnrollment(&req); msg != "" {
+			writeSensitiveErr(w, 400, msg)
+			return
+		}
 		n, agentToken, err = s.store.RegisterAgentWithEnrollmentVersion(r.Context(), req.NodeID, req.EnrollmentToken, req.Name, req.Address, req.AgentVersion, req.ProtocolVersion)
-	} else if s.allowAutoRegister && s.authorizeAgentBootstrap(r, req.Token) {
+	} else if hasLegacyCredential {
+		if msg := validateAgentRegisterLegacy(&req, bearer); msg != "" {
+			writeSensitiveErr(w, 400, msg)
+			return
+		}
+		if !s.allowAutoRegister || !s.authorizeAgentBootstrap(r, req.Token) {
+			writeSensitiveErr(w, 401, "agent registration credential invalid")
+			return
+		}
 		n, err = s.store.UpsertAgentNodeWithVersion(r.Context(), req.Name, req.Address, req.Token, req.AgentVersion, req.ProtocolVersion)
 		agentToken = req.Token
+		if agentToken == "" {
+			agentToken = bearer
+		}
 	} else {
-		writeErr(w, 401, "agent enrollment required: set MEGAVPN_AGENT_NODE_ID and MEGAVPN_AGENT_ENROLLMENT_TOKEN")
+		writeSensitiveErr(w, 401, "agent enrollment required: set MEGAVPN_AGENT_NODE_ID and MEGAVPN_AGENT_ENROLLMENT_TOKEN")
 		return
 	}
 	if err != nil {
-		writeErr(w, 409, err.Error())
+		writeAgentRegisterStoreError(w, err)
 		return
 	}
-	writeJSON(w, 200, response{"status": "registered", "node": n, "agent_token": agentToken, "token_hint": tokenHint(agentToken)})
+	writeSensitiveJSON(w, 200, agentRegisterResp{
+		Status:     "registered",
+		Node:       agentRegisterNodeProjection(n),
+		AgentToken: agentToken,
+		TokenHint:  tokenHint(agentToken),
+	})
 }
 func (s *Server) agentHeartbeat(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req agentHeartbeatReq

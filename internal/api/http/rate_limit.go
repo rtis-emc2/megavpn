@@ -79,6 +79,10 @@ func (s *Server) withRateLimit(scope string, limit int, window time.Duration, ne
 		ok, retryAfter := s.rateLimiter.allow(key, limit, window)
 		if !ok {
 			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+			if scope == "agent_register" {
+				writeSensitiveErr(w, http.StatusTooManyRequests, "rate limit exceeded")
+				return
+			}
 			writeErr(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}

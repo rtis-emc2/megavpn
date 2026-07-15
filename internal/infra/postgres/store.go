@@ -436,7 +436,9 @@ func (s *Store) UpsertAgentNodeWithVersion(ctx context.Context, name, address, t
 		return domain.Node{}, errors.New("agent node name is empty")
 	}
 	row := s.db.QueryRow(ctx, `select
-		n.id,n.name,n.kind,n.role,n.status,n.address,n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
+		n.id,n.name,n.kind,n.role,n.status,n.address,coalesce(n.location_label,''),n.latitude,n.longitude,n.accuracy_radius_km,
+		coalesce(n.geoip_provider,''),coalesce(n.geoip_status,''),coalesce(n.geoip_ip,''),coalesce(n.geoip_country_code,''),coalesce(n.geoip_country_name,''),coalesce(n.geoip_region,''),coalesce(n.geoip_city,''),coalesce(n.geoip_org,''),coalesce(n.geoip_asn,''),n.geoip_resolved_at,coalesce(n.geoip_error,''),
+		n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
 		coalesce(na.agent_version,''),coalesce(na.protocol_version,''),na.registered_at,na.last_seen_at
 	from nodes n
 	left join node_agents na on na.node_id=n.id
@@ -452,10 +454,7 @@ func (s *Store) UpsertAgentNodeWithVersion(ctx context.Context, name, address, t
 		return n, err
 	}
 	now := time.Now().UTC()
-	fingerprint := token
-	if fingerprint == "" {
-		fingerprint = "agent:" + name
-	}
+	fingerprint := "agent:" + n.ID
 	agentVersion = normalizeAgentRuntimeVersion(agentVersion, "dev")
 	protocolVersion = normalizeAgentRuntimeVersion(protocolVersion, "v1")
 	_, err = s.db.Exec(ctx, `insert into node_agents(id,node_id,status,agent_version,protocol_version,fingerprint,registered_at,last_seen_at)
@@ -3035,6 +3034,12 @@ func (s *Store) CreateAudit(ctx context.Context, actor, action, resource string,
 	return a, err
 }
 
+func createAuditTx(ctx context.Context, tx pgx.Tx, actor, action, resource string, resourceID *string, summary string) (domain.AuditEvent, error) {
+	a := domain.AuditEvent{ID: id.New(), ActorType: actor, Action: action, ResourceType: resource, ResourceID: resourceID, Summary: summary, CreatedAt: time.Now().UTC()}
+	_, err := tx.Exec(ctx, `insert into audit_events(id,actor_user_id,actor_type,action,resource_type,resource_id,summary,payload_json,created_at) values($1,null,$2,$3,$4,$5,$6,'{}'::jsonb,$7)`, a.ID, a.ActorType, a.Action, a.ResourceType, a.ResourceID, a.Summary, a.CreatedAt)
+	return a, err
+}
+
 func (s *Store) SeedLocalInventory(ctx context.Context) error {
 	_, err := s.db.Exec(ctx, `insert into nodes(id,name,kind,role,status,address,os_family,os_version,architecture,execution_mode,agent_status,created_at,updated_at) values($1,'local','local','egress','online','127.0.0.1','linux','unknown','amd64','local_managed','unknown',now(),now()) on conflict(name) where status <> 'retired' do nothing`, id.New())
 	return err
@@ -3109,22 +3114,31 @@ func (s *Store) RegisterAgentWithEnrollment(ctx context.Context, nodeID, token, 
 }
 
 func (s *Store) RegisterAgentWithEnrollmentVersion(ctx context.Context, nodeID, token, name, address, agentVersion, protocolVersion string) (domain.Node, string, error) {
+	nodeID = strings.TrimSpace(nodeID)
 	if nodeID == "" || token == "" {
-		return domain.Node{}, "", errors.New("node_id and enrollment_token are required")
+		return domain.Node{}, "", domain.ErrAgentRegistrationInvalidCredential
 	}
 	hash := hashToken(token)
-	agentToken := randomToken(32)
-	agentHash := hashToken(agentToken)
-	agentHint := tokenHint(agentToken)
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return domain.Node{}, "", err
 	}
 	defer tx.Rollback(ctx)
+	var nodeStatus string
+	err = tx.QueryRow(ctx, `select status from nodes where id=$1 for update`, nodeID).Scan(&nodeStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Node{}, "", domain.ErrAgentRegistrationNodeNotFound
+	}
+	if err != nil {
+		return domain.Node{}, "", err
+	}
+	if nodeStatus == "retired" {
+		return domain.Node{}, "", domain.ErrAgentRegistrationNodeRetired
+	}
 	var tokID string
 	err = tx.QueryRow(ctx, `select id from node_enrollment_tokens where node_id=$1 and token_hash=$2 and status='active' and expires_at > now() for update`, nodeID, hash).Scan(&tokID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.Node{}, "", errors.New("invalid or expired enrollment token")
+		return domain.Node{}, "", domain.ErrAgentRegistrationInvalidCredential
 	}
 	if err != nil {
 		return domain.Node{}, "", err
@@ -3138,17 +3152,21 @@ func (s *Store) RegisterAgentWithEnrollmentVersion(ctx context.Context, nodeID, 
 	if err != nil {
 		return domain.Node{}, "", err
 	}
-	if name == "" {
-		name = "node-" + nodeID[:8]
-	}
-	if address == "" {
-		address = "127.0.0.1"
-	}
-	_, err = tx.Exec(ctx, `update nodes set name=coalesce(nullif($2,''),name), kind='remote', status='online', address=coalesce(nullif($3,''),address), os_family='linux', os_version=coalesce(nullif(os_version,''),'unknown'), architecture=coalesce(nullif(architecture,''),'amd64'), execution_mode='agent_managed', agent_status='online', last_heartbeat_at=$4, updated_at=$4 where id=$1`, nodeID, name, address, now)
+	_, err = tx.Exec(ctx, `update nodes
+		set kind='remote',
+		    status=case when status in ('maintenance','draining') then status else 'online' end,
+		    execution_mode='agent_managed',
+		    agent_status='online',
+		    last_heartbeat_at=$2,
+		    updated_at=$2
+		where id=$1 and status <> 'retired'`, nodeID, now)
 	if err != nil {
 		return domain.Node{}, "", err
 	}
-	fingerprint := "sha256:" + hash[:32]
+	agentToken := randomToken(32)
+	agentHash := hashToken(agentToken)
+	agentHint := tokenHint(agentToken)
+	fingerprint := "agent:" + nodeID
 	agentVersion = normalizeAgentRuntimeVersion(agentVersion, "alpha")
 	protocolVersion = normalizeAgentRuntimeVersion(protocolVersion, "v1")
 	_, err = tx.Exec(ctx, `insert into node_agents(id,node_id,status,agent_version,protocol_version,fingerprint,registered_at,last_seen_at,agent_token_hash,token_hint)
@@ -3165,12 +3183,25 @@ func (s *Store) RegisterAgentWithEnrollmentVersion(ctx context.Context, nodeID, 
 	if err != nil {
 		return domain.Node{}, "", err
 	}
+	if _, err := createAuditTx(ctx, tx, "agent", "agent.register", "node", &nodeID, "agent registered by enrollment"); err != nil {
+		return domain.Node{}, "", fmt.Errorf("%w: %v", domain.ErrAgentRegistrationAuditFailed, err)
+	}
+	row := tx.QueryRow(ctx, `select
+		n.id,n.name,n.kind,n.role,n.status,n.address,coalesce(n.location_label,''),n.latitude,n.longitude,n.accuracy_radius_km,
+		coalesce(n.geoip_provider,''),coalesce(n.geoip_status,''),coalesce(n.geoip_ip,''),coalesce(n.geoip_country_code,''),coalesce(n.geoip_country_name,''),coalesce(n.geoip_region,''),coalesce(n.geoip_city,''),coalesce(n.geoip_org,''),coalesce(n.geoip_asn,''),n.geoip_resolved_at,coalesce(n.geoip_error,''),
+		n.os_family,n.os_version,n.architecture,n.execution_mode,n.agent_status,n.last_heartbeat_at,n.created_at,n.updated_at,
+		coalesce(na.agent_version,''),coalesce(na.protocol_version,''),na.registered_at,na.last_seen_at
+	from nodes n
+	left join node_agents na on na.node_id=n.id
+	where n.id=$1`, nodeID)
+	n, err := scanNode(row)
+	if err != nil {
+		return domain.Node{}, "", err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return domain.Node{}, "", err
 	}
-	_, _ = s.CreateAudit(ctx, "agent", "agent.register", "node", &nodeID, "agent registered by enrollment")
-	n, err := s.GetNode(ctx, nodeID)
-	return n, agentToken, err
+	return n, agentToken, nil
 }
 
 func (s *Store) HeartbeatByNodeID(ctx context.Context, nodeID string) error {
