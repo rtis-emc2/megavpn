@@ -151,6 +151,34 @@ func TestRebootNodeReportsBoundedFailure(t *testing.T) {
 	}
 }
 
+func TestRebootNodeRedactsSensitiveCommandOutput(t *testing.T) {
+	calls := installNodePowerCommandRunner(t, []int{1, 1, 1}, []string{
+		"Authorization: Bearer secret",
+		"agent_token=secret",
+		"plain failure",
+	})
+
+	status, result := client{}.rebootNode(context.Background(), rebootTestJob("job-redact-1", "node-1", "edge-01", "edge-01", "maintenance window"), agentState{NodeID: "node-1", NodeName: "edge-01"})
+	if status != "failed" {
+		t.Fatalf("status = %q, want failed; result=%#v", status, result)
+	}
+	if len(*calls) != 3 {
+		t.Fatalf("command calls = %d, want 3", len(*calls))
+	}
+	steps, ok := result["steps"].([]map[string]any)
+	if !ok || len(steps) != 3 {
+		t.Fatalf("steps = %#v, want three maps", result["steps"])
+	}
+	for _, step := range steps[:2] {
+		if output := stringify(step["output"]); output != "[redacted sensitive reboot command output]" {
+			t.Fatalf("sensitive output was not redacted: %q", output)
+		}
+	}
+	if output := stringify(steps[2]["output"]); output != "plain failure" {
+		t.Fatalf("non-sensitive output = %q, want plain failure", output)
+	}
+}
+
 func TestNodeRebootUnitNameIsRepeatSafeAndReasonFree(t *testing.T) {
 	reason := "maintenance window"
 	first := nodeRebootUnitName("JOB/One with spaces", "usr")

@@ -83,7 +83,7 @@ func (c client) rebootNode(ctx context.Context, j job, st agentState) (string, m
 			"mechanism": attempt.mechanism,
 			"command":   append([]string{attempt.name}, attempt.args...),
 			"exit_code": code,
-			"output":    truncate(out, nodeRebootOutputLimit),
+			"output":    redactNodeRebootCommandOutput(out),
 		}
 		if attempt.unit != "" {
 			step["unit"] = attempt.unit
@@ -109,6 +109,28 @@ func (c client) rebootNode(ctx context.Context, j job, st agentState) (string, m
 	result["error"] = "failed to schedule node reboot command"
 	result["duration_ms"] = time.Since(started).Milliseconds()
 	return "failed", result
+}
+
+func redactNodeRebootCommandOutput(output string) string {
+	output = truncate(strings.TrimSpace(output), nodeRebootOutputLimit)
+	lower := strings.ToLower(output)
+	for _, marker := range []string{
+		"authorization:",
+		"bearer ",
+		"agent_token",
+		"enrollment_token",
+		"token_hash",
+		"x-megavpn-agent-signature",
+		"x-megavpn-agent-nonce",
+		"private_key",
+		"secret_ref",
+		"password",
+	} {
+		if strings.Contains(lower, marker) {
+			return "[redacted sensitive reboot command output]"
+		}
+	}
+	return output
 }
 
 func nodeRebootUnitName(jobID, suffix string) string {
