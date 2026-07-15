@@ -134,6 +134,15 @@ run_json_checked \
   TestPostgresIntegrationCreateNodeRebootJobConcurrentConflict
 
 run_json_checked \
+  ./internal/infra/postgres \
+  'TestPostgresIntegrationCreateNodeEmergencyCleanupJob' \
+  'postgres-node-emergency-cleanup-infra' \
+  TestPostgresIntegrationCreateNodeEmergencyCleanupJobAtomic \
+  TestPostgresIntegrationCreateNodeEmergencyCleanupJobAuditRollback \
+  TestPostgresIntegrationCreateNodeEmergencyCleanupJobConcurrentConflict \
+  TestPostgresIntegrationCreateNodeEmergencyCleanupJobPlanFailureRollback
+
+run_json_checked \
   ./internal/api/http \
   'TestPostgresIntegrationCreateNodeSSHAccessMethodHTTP' \
   'postgres-ssh-http' \

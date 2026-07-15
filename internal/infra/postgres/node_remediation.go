@@ -43,48 +43,107 @@ func (s *Store) CreateNodeChannelProbeJob(ctx context.Context, nodeID string) (d
 	return job, nil
 }
 
-func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string, includeAgent bool, confirmation, cleanupScope string) (domain.Job, error) {
-	node, err := s.GetNode(ctx, nodeID)
+func (s *Store) CreateNodeEmergencyCleanupJob(ctx context.Context, nodeID string, input domain.NodeEmergencyCleanupJobCreateInput) (domain.NodeEmergencyCleanupJobCreateResult, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, domain.ValidationError{Message: "node id is required"}
+	}
+	if err := input.NormalizeAndValidate(); err != nil {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return domain.Job{}, err
+		return domain.NodeEmergencyCleanupJobCreateResult{}, err
 	}
-	if strings.EqualFold(node.Status, "retired") {
-		return domain.Job{}, errors.New("node is retired")
+	defer tx.Rollback(ctx)
+
+	var nodeName string
+	var nodeStatus string
+	var lastHeartbeatAt *time.Time
+	if err := tx.QueryRow(ctx, `select name,status,last_heartbeat_at from nodes where id=$1 for update`, nodeID).Scan(&nodeName, &nodeStatus, &lastHeartbeatAt); err != nil {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, err
 	}
-	expectedConfirmation := strings.TrimSpace(node.Name)
+	if isTerminalNodeRebootStatus(nodeStatus) {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, domain.ErrNodeEmergencyCleanupConflict
+	}
+	if strings.TrimSpace(nodeStatus) != "maintenance" {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, domain.ErrNodeEmergencyCleanupMaintenanceRequired
+	}
+
+	expectedConfirmation := strings.TrimSpace(nodeName)
 	if expectedConfirmation == "" {
-		expectedConfirmation = strings.TrimSpace(nodeID)
+		expectedConfirmation = nodeID
 	}
-	if strings.TrimSpace(confirmation) != expectedConfirmation {
-		return domain.Job{}, fmt.Errorf("confirmation must match node name %q", expectedConfirmation)
+	if input.Confirmation != expectedConfirmation {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, domain.ErrNodeEmergencyCleanupConfirmationMismatch
 	}
-	cleanupScope = normalizeNodeCleanupScope(cleanupScope, includeAgent)
-	instances, err := s.nodeInstanceCleanupPayloads(ctx, nodeID)
+
+	if err := validateNodeEmergencyCleanupAgentReadyTx(ctx, tx, nodeID, lastHeartbeatAt); err != nil {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, err
+	}
+
+	conflict, err := nodeHasActiveEmergencyCleanupConflictTx(ctx, tx, nodeID)
 	if err != nil {
-		return domain.Job{}, err
+		return domain.NodeEmergencyCleanupJobCreateResult{}, err
 	}
+	if conflict {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, domain.ErrNodeEmergencyCleanupConflict
+	}
+
+	plan, err := buildNodeEmergencyCleanupPlanTx(ctx, tx, nodeID, input.CleanupScope, input.IncludeAgent)
+	if err != nil {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, err
+	}
+
+	now := time.Now().UTC()
 	payload := map[string]any{
-		"node_id":       nodeID,
-		"node_name":     expectedConfirmation,
-		"include_agent": includeAgent,
-		"cleanup_scope": cleanupScope,
-		"confirmation":  strings.TrimSpace(confirmation),
-		"instances":     instances,
-		"requested_at":  time.Now().UTC().Format(time.RFC3339),
+		"schema":               "node.emergency_cleanup.v1",
+		"node_id":              nodeID,
+		"node_name":            expectedConfirmation,
+		"cleanup_scope":        input.CleanupScope,
+		"include_agent":        input.IncludeAgent,
+		"confirmation":         input.Confirmation,
+		"reason":               input.Reason,
+		"requested_at":         now.Format(time.RFC3339),
+		"cleanup_plan_version": domain.NodeEmergencyCleanupPlanVersion,
+		"instances":            plan.instances,
 	}
-	job, err := s.CreateJob(ctx, domain.Job{
+	job, payloadJSON, err := normalizeJobForInsert(domain.Job{
 		Type:      "node.emergency_cleanup",
 		ScopeType: "node",
 		ScopeID:   &nodeID,
 		NodeID:    &nodeID,
 		Priority:  1,
 		Payload:   payload,
+		CreatedAt: now,
 	})
 	if err != nil {
-		return job, err
+		return domain.NodeEmergencyCleanupJobCreateResult{}, err
 	}
-	_, _ = s.CreateAudit(ctx, "system", "node.emergency_cleanup", "node", &nodeID, "node emergency cleanup queued")
-	return job, nil
+	if err := insertJobRow(ctx, tx, job, payloadJSON); err != nil {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, err
+	}
+	if err := acquireJobResourceLockTx(ctx, tx, job); err != nil {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, domain.ErrNodeEmergencyCleanupConflict
+	}
+	auditSummary := fmt.Sprintf(
+		"node emergency cleanup job queued: node_id=%s node_name=%s job_id=%s cleanup_scope=%s include_agent=%t instance_targets=%d reason=%s",
+		nodeID,
+		expectedConfirmation,
+		job.ID,
+		input.CleanupScope,
+		input.IncludeAgent,
+		plan.summary.InstanceTargetCount,
+		input.Reason,
+	)
+	if _, err := insertAuditForUser(ctx, tx, input.ActorUserID, "node.emergency_cleanup.queue", "node", &nodeID, auditSummary); err != nil {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, fmt.Errorf("%w: %v", domain.ErrNodeEmergencyCleanupAuditFailed, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.NodeEmergencyCleanupJobCreateResult{}, err
+	}
+	return domain.NodeEmergencyCleanupJobCreateResult{Job: job, PlanSummary: plan.summary}, nil
 }
 
 func (s *Store) ForceRetireNode(ctx context.Context, nodeID, confirmation, reason string) (domain.Node, error) {
@@ -576,6 +635,190 @@ func nodeHasActiveRebootConflictTx(ctx context.Context, tx pgx.Tx, nodeID string
 	return ok, err
 }
 
+func validateNodeEmergencyCleanupAgentReadyTx(ctx context.Context, tx pgx.Tx, nodeID string, lastHeartbeatAt *time.Time) error {
+	var agentStatus string
+	var revokedAt *time.Time
+	var tokenHash string
+	var lastSeenAt *time.Time
+	var lastAuthFailureAt *time.Time
+	var lastJobPollAt *time.Time
+	var lastJobResultAt *time.Time
+	var lastInventorySyncAt *time.Time
+	var lastDiscoverySyncAt *time.Time
+	var lastRuntimeSyncAt *time.Time
+	if err := tx.QueryRow(ctx, `select status,revoked_at,coalesce(agent_token_hash,''),last_seen_at,last_auth_failure_at,last_job_poll_at,last_job_result_at,last_inventory_sync_at,last_discovery_sync_at,last_runtime_sync_at
+		from node_agents
+		where node_id=$1
+		for update`, nodeID).Scan(&agentStatus, &revokedAt, &tokenHash, &lastSeenAt, &lastAuthFailureAt, &lastJobPollAt, &lastJobResultAt, &lastInventorySyncAt, &lastDiscoverySyncAt, &lastRuntimeSyncAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrNodeEmergencyCleanupAgentMissing
+		}
+		return err
+	}
+	if agentStatus != "active" || revokedAt != nil || strings.TrimSpace(tokenHash) == "" {
+		return domain.ErrNodeEmergencyCleanupAgentUnavailable
+	}
+	now := time.Now().UTC()
+	lastEvidence := latestTime(lastHeartbeatAt, lastSeenAt, lastJobPollAt, lastJobResultAt, lastInventorySyncAt, lastDiscoverySyncAt, lastRuntimeSyncAt)
+	if lastEvidence == nil || now.Sub(lastEvidence.UTC()) > nodeRebootChannelEvidenceMaxAge {
+		return domain.ErrNodeEmergencyCleanupAgentUnavailable
+	}
+	latestOK := latestTime(lastHeartbeatAt, lastSeenAt, lastJobResultAt, lastInventorySyncAt, lastDiscoverySyncAt, lastRuntimeSyncAt)
+	if lastAuthFailureAt != nil && (latestOK == nil || lastAuthFailureAt.After(latestOK.UTC())) {
+		return domain.ErrNodeEmergencyCleanupAgentUnavailable
+	}
+	return nil
+}
+
+func nodeHasActiveEmergencyCleanupConflictTx(ctx context.Context, tx pgx.Tx, nodeID string) (bool, error) {
+	return nodeHasActiveRebootConflictTx(ctx, tx, nodeID)
+}
+
+type nodeEmergencyCleanupPlan struct {
+	instances []map[string]any
+	summary   domain.NodeEmergencyCleanupPlanSummary
+}
+
+func buildNodeEmergencyCleanupPlanTx(ctx context.Context, tx pgx.Tx, nodeID, cleanupScope string, includeAgent bool) (nodeEmergencyCleanupPlan, error) {
+	rows, err := tx.Query(ctx, `select
+		i.id::text,
+		sd.code,
+		i.name,
+		i.slug,
+		coalesce(i.systemd_unit,''),
+		coalesce(i.endpoint_host,''),
+		coalesce(i.endpoint_port,0)
+	from instances i
+	join service_definitions sd on sd.id=i.service_definition_id
+	where i.node_id=$1
+	  and i.status <> 'deleted'
+	order by lower(sd.code), lower(i.slug), lower(i.name), i.created_at, i.id
+	for share of i`, nodeID)
+	if err != nil {
+		return nodeEmergencyCleanupPlan{}, err
+	}
+	defer rows.Close()
+
+	instances := make([]map[string]any, 0)
+	serviceCounts := map[string]int{}
+	for rows.Next() {
+		var instanceID string
+		var serviceCode string
+		var name string
+		var slug string
+		var systemdUnit string
+		var endpointHost string
+		var endpointPort int
+		if err := rows.Scan(&instanceID, &serviceCode, &name, &slug, &systemdUnit, &endpointHost, &endpointPort); err != nil {
+			return nodeEmergencyCleanupPlan{}, err
+		}
+		target, err := safeNodeEmergencyCleanupTarget(instanceID, serviceCode, name, slug, systemdUnit, endpointHost, endpointPort)
+		if err != nil {
+			return nodeEmergencyCleanupPlan{}, fmt.Errorf("%w: %v", domain.ErrNodeEmergencyCleanupPlanInvalid, err)
+		}
+		instances = append(instances, target)
+		serviceCounts[normalizeInstanceRuntimeCode(serviceCode)]++
+	}
+	if err := rows.Err(); err != nil {
+		return nodeEmergencyCleanupPlan{}, err
+	}
+
+	summary := domain.NodeEmergencyCleanupPlanSummary{
+		CleanupScope:          cleanupScope,
+		IncludeAgent:          includeAgent,
+		InstanceTargetCount:   len(instances),
+		ServiceCounts:         serviceCounts,
+		NodeRuntimeCleanup:    cleanupScope == domain.NodeEmergencyCleanupScopeFullNode,
+		AgentRemovalRequested: includeAgent,
+	}
+	return nodeEmergencyCleanupPlan{instances: instances, summary: summary}, nil
+}
+
+func safeNodeEmergencyCleanupTarget(instanceID, serviceCode, name, slug, systemdUnit, endpointHost string, endpointPort int) (map[string]any, error) {
+	instanceID = strings.TrimSpace(instanceID)
+	serviceCode = normalizeInstanceRuntimeCode(serviceCode)
+	name = strings.TrimSpace(name)
+	slug = strings.TrimSpace(slug)
+	systemdUnit = strings.TrimSpace(systemdUnit)
+	endpointHost = strings.TrimSpace(endpointHost)
+
+	if err := validateNodeEmergencyCleanupIdentifier("instance_id", instanceID, 128); err != nil {
+		return nil, err
+	}
+	if err := validateNodeEmergencyCleanupIdentifier("service_code", serviceCode, 64); err != nil {
+		return nil, err
+	}
+	if err := validateNodeEmergencyCleanupSingleLine("name", name, 256); err != nil {
+		return nil, err
+	}
+	if err := validateNodeEmergencyCleanupSingleLine("slug", slug, 256); err != nil {
+		return nil, err
+	}
+	if systemdUnit != "" {
+		if err := validateNodeEmergencyCleanupSystemdUnit(systemdUnit); err != nil {
+			return nil, err
+		}
+	}
+	if endpointHost != "" {
+		if err := validateNodeEmergencyCleanupSingleLine("endpoint_host", endpointHost, 253); err != nil {
+			return nil, err
+		}
+	}
+	if endpointPort < 0 || endpointPort > 65535 {
+		return nil, fmt.Errorf("endpoint_port is invalid")
+	}
+
+	return map[string]any{
+		"instance_id":          instanceID,
+		"action":               "delete",
+		"service_code":         serviceCode,
+		"runtime_service_code": serviceCode,
+		"name":                 name,
+		"slug":                 slug,
+		"systemd_unit":         systemdUnit,
+		"endpoint_host":        endpointHost,
+		"endpoint_port":        endpointPort,
+		"enabled":              false,
+	}, nil
+}
+
+func validateNodeEmergencyCleanupSingleLine(field, value string, maxLen int) error {
+	if len(value) > maxLen {
+		return fmt.Errorf("%s must be at most %d characters", field, maxLen)
+	}
+	if err := domain.ValidateSingleLine(field, value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateNodeEmergencyCleanupIdentifier(field, value string, maxLen int) error {
+	if value == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	if err := validateNodeEmergencyCleanupSingleLine(field, value, maxLen); err != nil {
+		return err
+	}
+	for _, r := range value {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
+			return fmt.Errorf("%s contains unsafe characters", field)
+		}
+	}
+	return nil
+}
+
+func validateNodeEmergencyCleanupSystemdUnit(unit string) error {
+	if err := validateNodeEmergencyCleanupSingleLine("systemd_unit", unit, 256); err != nil {
+		return err
+	}
+	for _, r := range unit {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' || r == '@' || r == ':') {
+			return fmt.Errorf("systemd_unit contains unsafe characters")
+		}
+	}
+	return nil
+}
+
 func (s *Store) QueueNodeRuntimeReconcile(ctx context.Context, nodeID, source string) ([]domain.Job, []string, error) {
 	nodeID = strings.TrimSpace(nodeID)
 	node, err := s.GetNode(ctx, nodeID)
@@ -729,50 +972,6 @@ func normalizeNodeCleanupScope(value string, includeAgent bool) string {
 		return "full_node"
 	}
 	return "services_only"
-}
-
-func (s *Store) nodeInstanceCleanupPayloads(ctx context.Context, nodeID string) ([]map[string]any, error) {
-	rows, err := s.db.Query(ctx, `select id from instances where node_id=$1 and status <> 'deleted' order by created_at asc`, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	instanceIDs := []string{}
-	for rows.Next() {
-		var instanceID string
-		if err := rows.Scan(&instanceID); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		instanceIDs = append(instanceIDs, instanceID)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
-
-	out := []map[string]any{}
-	for _, instanceID := range instanceIDs {
-		instance, err := s.GetInstance(ctx, instanceID)
-		if err != nil {
-			return nil, err
-		}
-		payload, err := s.buildInstanceDeleteJobPayload(ctx, instance)
-		if err != nil {
-			payload = map[string]any{
-				"instance_id":  instance.ID,
-				"action":       "delete",
-				"service_code": instance.ServiceCode,
-				"name":         instance.Name,
-				"slug":         instance.Slug,
-				"systemd_unit": instance.SystemdUnit,
-				"enabled":      false,
-				"spec":         map[string]any{"render_error": err.Error()},
-			}
-		}
-		out = append(out, payload)
-	}
-	return out, nil
 }
 
 func (s *Store) RequeueNodeStuckJob(ctx context.Context, nodeID string) (domain.Job, error) {

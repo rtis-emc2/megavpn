@@ -63,7 +63,7 @@ type Store interface {
 	GetNodeDiagnostics(context.Context, string) (domain.NodeDiagnostics, error)
 	CreateNodeAgentTokenRotateJob(context.Context, string) (domain.Job, error)
 	CreateNodeChannelProbeJob(context.Context, string) (domain.Job, error)
-	CreateNodeEmergencyCleanupJob(context.Context, string, bool, string, string) (domain.Job, error)
+	CreateNodeEmergencyCleanupJob(context.Context, string, domain.NodeEmergencyCleanupJobCreateInput) (domain.NodeEmergencyCleanupJobCreateResult, error)
 	CreateNodeRebootJob(context.Context, string, domain.NodeRebootJobCreateInput) (domain.Job, error)
 	QueueNodeRuntimeReconcile(context.Context, string, string) ([]domain.Job, []string, error)
 	CreateNodeRoutePolicyApplyJob(context.Context, string) (domain.Job, error)
@@ -739,9 +739,12 @@ type nodeBootstrapRequest struct {
 }
 
 type nodeEmergencyCleanupRequest struct {
-	IncludeAgent bool   `json:"include_agent"`
-	Confirmation string `json:"confirmation"`
-	CleanupScope string `json:"cleanup_scope"`
+	CleanupScope                  string `json:"cleanup_scope"`
+	IncludeAgent                  *bool  `json:"include_agent"`
+	Confirmation                  string `json:"confirmation"`
+	Reason                        string `json:"reason"`
+	AcknowledgeDestructiveCleanup *bool  `json:"acknowledge_destructive_cleanup"`
+	AcknowledgeAgentRemoval       *bool  `json:"acknowledge_agent_removal"`
 }
 
 type nodeForceRetireRequest struct {
@@ -1316,15 +1319,50 @@ func (s *Server) createNodeBootstrapJob(w nethttp.ResponseWriter, r *nethttp.Req
 func (s *Server) createNodeEmergencyCleanupJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req nodeEmergencyCleanupRequest
 	if !decode(r, &req) {
-		writeErr(w, 400, "invalid emergency cleanup payload")
+		writeSensitiveCodeErr(w, nethttp.StatusBadRequest, nodeEmergencyCleanupRequestInvalid, "invalid emergency cleanup payload")
 		return
 	}
-	job, err := s.store.CreateNodeEmergencyCleanupJob(r.Context(), idParam(r), req.IncludeAgent, req.Confirmation, req.CleanupScope)
+	authCtx, ok := authFromRequest(r)
+	if !ok {
+		writeSensitiveCodeErr(w, nethttp.StatusUnauthorized, nodeEmergencyCleanupRequestInvalid, "authentication required")
+		return
+	}
+	includeAgent := false
+	if req.IncludeAgent != nil {
+		includeAgent = *req.IncludeAgent
+	}
+	ackDestructive := false
+	if req.AcknowledgeDestructiveCleanup != nil {
+		ackDestructive = *req.AcknowledgeDestructiveCleanup
+	}
+	ackAgentRemoval := false
+	if req.AcknowledgeAgentRemoval != nil {
+		ackAgentRemoval = *req.AcknowledgeAgentRemoval
+	}
+	input := domain.NodeEmergencyCleanupJobCreateInput{
+		CleanupScope:                  req.CleanupScope,
+		IncludeAgent:                  includeAgent,
+		Confirmation:                  req.Confirmation,
+		Reason:                        req.Reason,
+		AcknowledgeDestructiveCleanup: ackDestructive,
+		AcknowledgeAgentRemoval:       ackAgentRemoval,
+		ActorUserID:                   &authCtx.User.ID,
+	}
+	if err := input.NormalizeAndValidate(); err != nil {
+		writeNodeEmergencyCleanupError(w, err)
+		return
+	}
+	result, err := s.store.CreateNodeEmergencyCleanupJob(r.Context(), idParam(r), input)
 	if err != nil {
-		writeErr(w, 409, err.Error())
+		writeNodeEmergencyCleanupError(w, err)
 		return
 	}
-	writeJSON(w, 202, redactedJob(job))
+	writeSensitiveJSON(w, nethttp.StatusAccepted, response{
+		"status":       "queued",
+		"message":      "emergency cleanup job queued",
+		"job":          redactedJob(result.Job),
+		"plan_summary": result.PlanSummary,
+	})
 }
 
 func (s *Server) createNodeRebootJob(w nethttp.ResponseWriter, r *nethttp.Request) {

@@ -114,8 +114,24 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		reason, err := requireString(payload, "reason")
+		if err != nil {
+			return nil, err
+		}
+		if err := validateEmergencyCleanupReason(reason); err != nil {
+			return nil, err
+		}
 		normalized["node_id"] = nodeID
 		normalized["confirmation"] = confirmation
+		normalized["reason"] = reason
+		if schema, err := optionalString(payload, "schema"); err != nil {
+			return nil, err
+		} else if schema != "" {
+			if schema != "node.emergency_cleanup.v1" {
+				return nil, validationf("payload.schema is unsupported for node emergency cleanup")
+			}
+			normalized["schema"] = schema
+		}
 		if nodeName, err := optionalString(payload, "node_name"); err != nil {
 			return nil, err
 		} else if nodeName != "" {
@@ -128,13 +144,39 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else {
 			normalized["include_agent"] = false
 		}
-		cleanupScope, err := optionalString(payload, "cleanup_scope")
+		cleanupScope, err := requireString(payload, "cleanup_scope")
 		if err != nil {
 			return nil, err
 		}
 		includeAgent, _ := normalized["include_agent"].(bool)
-		cleanupScope = normalizeNodeCleanupScope(cleanupScope, includeAgent)
+		if cleanupScope != "services_only" && cleanupScope != "full_node" {
+			return nil, validationf("payload.cleanup_scope must be services_only or full_node")
+		}
+		if includeAgent && cleanupScope != "full_node" {
+			return nil, validationf("payload.include_agent requires cleanup_scope full_node")
+		}
 		normalized["cleanup_scope"] = cleanupScope
+		planVersion, ok, err := optionalInt(payload, "cleanup_plan_version")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, validationf("payload.cleanup_plan_version is required")
+		}
+		if planVersion != 1 {
+			return nil, validationf("payload.cleanup_plan_version is unsupported")
+		}
+		normalized["cleanup_plan_version"] = planVersion
+		requestedAt, err := requireString(payload, "requested_at")
+		if err != nil {
+			return nil, err
+		}
+		normalized["requested_at"] = requestedAt
+		instances, err := normalizeEmergencyCleanupTargets(payload["instances"])
+		if err != nil {
+			return nil, err
+		}
+		normalized["instances"] = instances
 	case "node.reboot":
 		nodeID, err := requireString(payload, "node_id")
 		if err != nil {
@@ -674,18 +716,219 @@ func trimOptionalStrings(dst, src map[string]any, keys ...string) {
 	}
 }
 
-func normalizeNodeCleanupScope(value string, includeAgent bool) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	switch value {
-	case "services_only", "service", "services", "instances", "instance_runtime":
-		return "services_only"
-	case "full_node", "full", "node", "all", "wipe":
-		return "full_node"
+func normalizeEmergencyCleanupTargets(raw any) ([]any, error) {
+	if raw == nil {
+		return nil, validationf("payload.instances is required")
 	}
-	if includeAgent {
-		return "full_node"
+	switch items := raw.(type) {
+	case []any:
+		out := make([]any, 0, len(items))
+		for idx, item := range items {
+			target, ok := item.(map[string]any)
+			if !ok {
+				return nil, validationf("payload.instances[%d] must be an object", idx)
+			}
+			normalized, err := normalizeEmergencyCleanupTarget(target, idx)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, normalized)
+		}
+		return out, nil
+	case []map[string]any:
+		out := make([]any, 0, len(items))
+		for idx, target := range items {
+			normalized, err := normalizeEmergencyCleanupTarget(target, idx)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, normalized)
+		}
+		return out, nil
+	default:
+		return nil, validationf("payload.instances must be an array")
 	}
-	return "services_only"
+}
+
+func normalizeEmergencyCleanupTarget(src map[string]any, idx int) (map[string]any, error) {
+	allowed := map[string]bool{
+		"instance_id":          true,
+		"action":               true,
+		"service_code":         true,
+		"runtime_service_code": true,
+		"name":                 true,
+		"slug":                 true,
+		"systemd_unit":         true,
+		"endpoint_host":        true,
+		"endpoint_port":        true,
+		"enabled":              true,
+	}
+	for key := range src {
+		if !allowed[key] || emergencyCleanupTargetForbiddenKey(key) {
+			return nil, validationf("payload.instances[%d].%s is not allowed", idx, key)
+		}
+	}
+	instanceID, err := requireString(src, "instance_id")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateEmergencyCleanupIdentifier("instance_id", instanceID, 128); err != nil {
+		return nil, validationf("payload.instances[%d].%s", idx, err.Error())
+	}
+	action, err := requireString(src, "action")
+	if err != nil {
+		return nil, err
+	}
+	action = driver.NormalizeOperation(action)
+	if action != driver.OperationDelete {
+		return nil, validationf("payload.instances[%d].action must be delete", idx)
+	}
+	serviceCode, err := requireString(src, "service_code")
+	if err != nil {
+		return nil, err
+	}
+	serviceCode = driver.NormalizeCode(serviceCode)
+	if err := validateEmergencyCleanupIdentifier("service_code", serviceCode, 64); err != nil {
+		return nil, validationf("payload.instances[%d].%s", idx, err.Error())
+	}
+	runtimeServiceCode, err := optionalString(src, "runtime_service_code")
+	if err != nil {
+		return nil, err
+	}
+	if runtimeServiceCode == "" {
+		runtimeServiceCode = serviceCode
+	}
+	runtimeServiceCode = driver.NormalizeCode(runtimeServiceCode)
+	if runtimeServiceCode != serviceCode {
+		return nil, validationf("payload.instances[%d].runtime_service_code must match service_code", idx)
+	}
+	name, err := optionalString(src, "name")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateEmergencyCleanupString("name", name, 256); err != nil {
+		return nil, validationf("payload.instances[%d].%s", idx, err.Error())
+	}
+	slug, err := optionalString(src, "slug")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateEmergencyCleanupString("slug", slug, 256); err != nil {
+		return nil, validationf("payload.instances[%d].%s", idx, err.Error())
+	}
+	systemdUnit, err := optionalString(src, "systemd_unit")
+	if err != nil {
+		return nil, err
+	}
+	if systemdUnit != "" {
+		if err := validateEmergencyCleanupSystemdUnit(systemdUnit); err != nil {
+			return nil, validationf("payload.instances[%d].%s", idx, err.Error())
+		}
+	}
+	endpointHost, err := optionalString(src, "endpoint_host")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateEmergencyCleanupString("endpoint_host", endpointHost, 253); err != nil {
+		return nil, validationf("payload.instances[%d].%s", idx, err.Error())
+	}
+	endpointPort, ok, err := optionalInt(src, "endpoint_port")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		endpointPort = 0
+	}
+	if endpointPort < 0 || endpointPort > 65535 {
+		return nil, validationf("payload.instances[%d].endpoint_port is invalid", idx)
+	}
+	enabled, ok, err := optionalBool(src, "enabled")
+	if err != nil {
+		return nil, err
+	}
+	if ok && enabled {
+		return nil, validationf("payload.instances[%d].enabled must be false for delete", idx)
+	}
+	return map[string]any{
+		"instance_id":          instanceID,
+		"action":               driver.OperationDelete,
+		"service_code":         serviceCode,
+		"runtime_service_code": runtimeServiceCode,
+		"name":                 name,
+		"slug":                 slug,
+		"systemd_unit":         systemdUnit,
+		"endpoint_host":        endpointHost,
+		"endpoint_port":        endpointPort,
+		"enabled":              false,
+	}, nil
+}
+
+func emergencyCleanupTargetForbiddenKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	switch key {
+	case "spec", "spec_json", "secret_ref_id", "secret_ref", "credential", "credentials", "credential_json", "config", "config_content", "rendered", "rendered_config", "render_error", "private_key", "password", "token", "agent_token", "authorization", "nonce", "signature":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateEmergencyCleanupReason(reason string) error {
+	if err := validateEmergencyCleanupString("reason", reason, 500); err != nil {
+		return err
+	}
+	if len(reason) < 5 {
+		return validationf("payload.reason must be at least 5 characters")
+	}
+	lower := strings.ToLower(reason)
+	if strings.ContainsAny(reason, "{}") {
+		return validationf("payload.reason must not contain request bodies")
+	}
+	for _, marker := range []string{"authorization:", "bearer ", "agent_token", "enrollment_token", "token_hash", "x-megavpn-agent-signature", "x-megavpn-agent-nonce", "private_key", "secret_ref"} {
+		if strings.Contains(lower, marker) {
+			return validationf("payload.reason must not contain tokens, credentials, headers, or request bodies")
+		}
+	}
+	return nil
+}
+
+func validateEmergencyCleanupString(field, value string, maxLen int) error {
+	if len(value) > maxLen {
+		return validationf("%s must be at most %d characters", field, maxLen)
+	}
+	for _, r := range value {
+		if r == 0 || r < 32 || r == 127 {
+			return validationf("%s must not contain control characters", field)
+		}
+	}
+	return nil
+}
+
+func validateEmergencyCleanupIdentifier(field, value string, maxLen int) error {
+	if value == "" {
+		return validationf("%s is required", field)
+	}
+	if err := validateEmergencyCleanupString(field, value, maxLen); err != nil {
+		return err
+	}
+	for _, r := range value {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
+			return validationf("%s contains unsafe characters", field)
+		}
+	}
+	return nil
+}
+
+func validateEmergencyCleanupSystemdUnit(unit string) error {
+	if err := validateEmergencyCleanupString("systemd_unit", unit, 256); err != nil {
+		return err
+	}
+	for _, r := range unit {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' || r == '@' || r == ':') {
+			return validationf("systemd_unit contains unsafe characters")
+		}
+	}
+	return nil
 }
 
 func requireString(payload map[string]any, key string) (string, error) {

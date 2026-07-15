@@ -76,10 +76,27 @@ func TestNormalizeNodeCapabilityInstallPreservesBinaryRepositoryPayload(t *testi
 
 func TestNormalizeNodeEmergencyCleanupUsesNodeNameConfirmation(t *testing.T) {
 	payload, err := Normalize("node.emergency_cleanup", map[string]any{
-		"node_id":       " node-1 ",
-		"node_name":     " edge-01 ",
-		"confirmation":  " edge-01 ",
-		"include_agent": "true",
+		"schema":               "node.emergency_cleanup.v1",
+		"node_id":              " node-1 ",
+		"node_name":            " edge-01 ",
+		"confirmation":         " edge-01 ",
+		"reason":               " maintenance window ",
+		"cleanup_scope":        "full_node",
+		"include_agent":        "true",
+		"cleanup_plan_version": 1,
+		"requested_at":         "2026-07-15T00:00:00Z",
+		"instances": []map[string]any{{
+			"instance_id":          "inst-1",
+			"action":               "delete",
+			"service_code":         "xray-core",
+			"runtime_service_code": "xray-core",
+			"name":                 "Xray One",
+			"slug":                 "xray-one",
+			"systemd_unit":         "megavpn-xray-one.service",
+			"endpoint_host":        "198.51.100.10",
+			"endpoint_port":        443,
+			"enabled":              false,
+		}},
 	})
 	if err != nil {
 		t.Fatalf("Normalize returned error: %v", err)
@@ -99,22 +116,74 @@ func TestNormalizeNodeEmergencyCleanupUsesNodeNameConfirmation(t *testing.T) {
 	if got := payload["cleanup_scope"]; got != "full_node" {
 		t.Fatalf("cleanup_scope = %v, want full_node", got)
 	}
+	if got := payload["reason"]; got != "maintenance window" {
+		t.Fatalf("reason = %v, want maintenance window", got)
+	}
+	instances, ok := payload["instances"].([]any)
+	if !ok || len(instances) != 1 {
+		t.Fatalf("instances = %#v, want one safe target", payload["instances"])
+	}
 }
 
-func TestNormalizeNodeEmergencyCleanupDefaultsToServicesOnly(t *testing.T) {
-	payload, err := Normalize("node.emergency_cleanup", map[string]any{
-		"node_id":      "node-1",
-		"node_name":    "edge-01",
-		"confirmation": "edge-01",
+func TestNormalizeNodeEmergencyCleanupRequiresExplicitV1Plan(t *testing.T) {
+	_, err := Normalize("node.emergency_cleanup", map[string]any{
+		"node_id":       "node-1",
+		"node_name":     "edge-01",
+		"confirmation":  "edge-01",
+		"cleanup_scope": "services_only",
 	})
-	if err != nil {
-		t.Fatalf("Normalize returned error: %v", err)
+	if err == nil {
+		t.Fatal("expected validation error for missing reason and plan")
 	}
-	if got := payload["include_agent"]; got != false {
-		t.Fatalf("include_agent = %v, want false", got)
+	if !IsValidationError(err) {
+		t.Fatalf("expected validation error, got %T", err)
 	}
-	if got := payload["cleanup_scope"]; got != "services_only" {
-		t.Fatalf("cleanup_scope = %v, want services_only", got)
+}
+
+func TestNormalizeNodeEmergencyCleanupRejectsLegacyAliasesAndSecretTargets(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload map[string]any
+	}{
+		{
+			name: "legacy alias",
+			payload: map[string]any{
+				"node_id":              "node-1",
+				"confirmation":         "edge-01",
+				"reason":               "maintenance window",
+				"cleanup_scope":        "wipe",
+				"cleanup_plan_version": 1,
+				"requested_at":         "2026-07-15T00:00:00Z",
+				"instances":            []map[string]any{},
+			},
+		},
+		{
+			name: "secret target",
+			payload: map[string]any{
+				"node_id":              "node-1",
+				"confirmation":         "edge-01",
+				"reason":               "maintenance window",
+				"cleanup_scope":        "services_only",
+				"cleanup_plan_version": 1,
+				"requested_at":         "2026-07-15T00:00:00Z",
+				"instances": []map[string]any{{
+					"instance_id":  "inst-1",
+					"action":       "delete",
+					"service_code": "wireguard",
+					"spec":         map[string]any{"private_key": "secret"},
+				}},
+			},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Normalize("node.emergency_cleanup", tc.payload); err == nil {
+				t.Fatal("expected validation error")
+			} else if !IsValidationError(err) {
+				t.Fatalf("expected validation error, got %T", err)
+			}
+		})
 	}
 }
 

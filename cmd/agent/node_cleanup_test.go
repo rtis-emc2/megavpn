@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEmergencyCleanupManagedUnitAllowlist(t *testing.T) {
 	fullNodeAllowed := []string{
@@ -29,6 +32,67 @@ func TestEmergencyCleanupManagedUnitAllowlist(t *testing.T) {
 		if isEmergencyManagedUnit(unit) {
 			t.Fatalf("expected %s to be blocked", unit)
 		}
+	}
+}
+
+func TestEmergencyCleanupVersionedPayloadValidation(t *testing.T) {
+	payload := map[string]any{
+		"node_id":              "node-1",
+		"node_name":            "edge-01",
+		"confirmation":         "edge-01",
+		"reason":               "maintenance window",
+		"cleanup_scope":        "full_node",
+		"include_agent":        true,
+		"cleanup_plan_version": 1,
+		"instances": []any{map[string]any{
+			"instance_id":  "inst-1",
+			"action":       "delete",
+			"service_code": "xray-core",
+		}},
+	}
+	scope, err := validateEmergencyCleanupJobPayload(payload, true)
+	if err != nil {
+		t.Fatalf("validate payload: %v", err)
+	}
+	if scope != "full_node" {
+		t.Fatalf("scope = %q, want full_node", scope)
+	}
+}
+
+func TestEmergencyCleanupVersionedPayloadRejectsInvalidContract(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(map[string]any)
+		want string
+	}{
+		{name: "missing reason", edit: func(p map[string]any) { delete(p, "reason") }, want: "reason"},
+		{name: "future version", edit: func(p map[string]any) { p["cleanup_plan_version"] = 2 }, want: "unsupported"},
+		{name: "legacy scope alias", edit: func(p map[string]any) { p["cleanup_scope"] = "wipe" }, want: "cleanup_scope"},
+		{name: "agent removal services only", edit: func(p map[string]any) { p["cleanup_scope"] = "services_only" }, want: "include_agent"},
+		{name: "missing instances", edit: func(p map[string]any) { delete(p, "instances") }, want: "instances"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			payload := map[string]any{
+				"node_id":              "node-1",
+				"node_name":            "edge-01",
+				"confirmation":         "edge-01",
+				"reason":               "maintenance window",
+				"cleanup_scope":        "full_node",
+				"include_agent":        true,
+				"cleanup_plan_version": 1,
+				"instances":            []any{},
+			}
+			tc.edit(payload)
+			_, err := validateEmergencyCleanupJobPayload(payload, true)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want marker %q", err.Error(), tc.want)
+			}
+		})
 	}
 }
 
