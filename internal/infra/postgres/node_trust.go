@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -69,41 +70,102 @@ func (s *Store) RotateNodeEnrollmentToken(ctx context.Context, nodeID string, tt
 	return token, nil
 }
 
-func (s *Store) RevokeNodeAgentIdentity(ctx context.Context, nodeID string) (domain.Node, error) {
-	if _, err := s.GetNode(ctx, nodeID); err != nil {
-		return domain.Node{}, err
+func (s *Store) RevokeNodeAgentIdentity(ctx context.Context, nodeID string, input domain.NodeAgentIdentityRevokeInput) (domain.NodeAgentIdentityRevokeResult, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return domain.NodeAgentIdentityRevokeResult{}, domain.ValidationError{Message: "node id is required"}
+	}
+	if err := input.NormalizeAndValidate(); err != nil {
+		return domain.NodeAgentIdentityRevokeResult{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return domain.Node{}, err
+		return domain.NodeAgentIdentityRevokeResult{}, err
 	}
 	defer tx.Rollback(ctx)
 
+	var nodeName string
+	if err := tx.QueryRow(ctx, `select name from nodes where id=$1 for update`, nodeID).Scan(&nodeName); err != nil {
+		return domain.NodeAgentIdentityRevokeResult{}, err
+	}
+	expectedConfirmation := strings.TrimSpace(nodeName)
+	if expectedConfirmation == "" {
+		expectedConfirmation = nodeID
+	}
+	if input.Confirmation != expectedConfirmation {
+		return domain.NodeAgentIdentityRevokeResult{}, domain.ErrNodeAgentRevokeConfirmationMismatch
+	}
+
+	var agentID string
+	var agentStatus string
+	var revokedAt *time.Time
+	if err := tx.QueryRow(ctx, `select id,status,revoked_at from node_agents where node_id=$1 for update`, nodeID).Scan(&agentID, &agentStatus, &revokedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.NodeAgentIdentityRevokeResult{}, domain.ErrNodeAgentIdentityMissing
+		}
+		return domain.NodeAgentIdentityRevokeResult{}, err
+	}
+	if agentStatus == "revoked" {
+		if revokedAt == nil {
+			return domain.NodeAgentIdentityRevokeResult{}, domain.ErrNodeAgentRevokeConflict
+		}
+		return domain.NodeAgentIdentityRevokeResult{
+			Status:                  "revoked",
+			NodeID:                  nodeID,
+			AgentStatus:             "revoked",
+			RevokedAt:               *revokedAt,
+			AlreadyRevoked:          true,
+			RevokedEnrollmentTokens: 0,
+		}, nil
+	}
+	if agentStatus != "active" || revokedAt != nil {
+		return domain.NodeAgentIdentityRevokeResult{}, domain.ErrNodeAgentRevokeConflict
+	}
+
 	now := time.Now().UTC()
-	if _, err := tx.Exec(ctx, `update node_agents
+	var persistedRevokedAt time.Time
+	err = tx.QueryRow(ctx, `update node_agents
 		set status='revoked',
 		    revoked_at=$2,
 		    agent_token_hash=null
-		where node_id=$1`, nodeID, now); err != nil {
-		return domain.Node{}, err
+		where id=$1 and status='active' and revoked_at is null
+		returning revoked_at`, agentID, now).Scan(&persistedRevokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.NodeAgentIdentityRevokeResult{}, domain.ErrNodeAgentRevokeConflict
 	}
-	if _, err := tx.Exec(ctx, `update node_enrollment_tokens
+	if err != nil {
+		return domain.NodeAgentIdentityRevokeResult{}, err
+	}
+
+	cmd, err := tx.Exec(ctx, `update node_enrollment_tokens
 		set status='revoked'
-		where node_id=$1 and status='active'`, nodeID); err != nil {
-		return domain.Node{}, err
+		where node_id=$1 and status='active' and used_at is null and expires_at > $2`, nodeID, now)
+	if err != nil {
+		return domain.NodeAgentIdentityRevokeResult{}, err
 	}
+	revokedEnrollmentTokens := cmd.RowsAffected()
+
 	if _, err := tx.Exec(ctx, `update nodes
 		set agent_status='revoked',
-		    status=case when status in ('retired','maintenance') then status else 'degraded' end,
 		    updated_at=$2
 		where id=$1`, nodeID, now); err != nil {
-		return domain.Node{}, err
+		return domain.NodeAgentIdentityRevokeResult{}, err
+	}
+	auditSummary := fmt.Sprintf("agent identity revoked: node_id=%s node_name=%s enrollment_tokens_revoked=%d reason=%s", nodeID, nodeName, revokedEnrollmentTokens, input.Reason)
+	if _, err := insertAuditForUser(ctx, tx, input.ActorUserID, "node.agent_identity.revoke", "node", &nodeID, auditSummary); err != nil {
+		return domain.NodeAgentIdentityRevokeResult{}, fmt.Errorf("%w: %v", domain.ErrNodeAgentRevokeAuditFailed, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return domain.Node{}, err
+		return domain.NodeAgentIdentityRevokeResult{}, err
 	}
-	_, _ = s.CreateAudit(ctx, "system", "node.agent_identity.revoke", "node", &nodeID, "agent identity revoked")
-	return s.GetNode(ctx, nodeID)
+	return domain.NodeAgentIdentityRevokeResult{
+		Status:                  "revoked",
+		NodeID:                  nodeID,
+		AgentStatus:             "revoked",
+		RevokedAt:               persistedRevokedAt,
+		AlreadyRevoked:          false,
+		RevokedEnrollmentTokens: revokedEnrollmentTokens,
+	}, nil
 }
 
 func (s *Store) hasPendingAgentTokenRotation(ctx context.Context, nodeID string) (bool, error) {

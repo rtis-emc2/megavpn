@@ -3955,9 +3955,16 @@ func (s *Store) ValidateAgentToken(ctx context.Context, nodeID, token string) bo
 		return false
 	}
 	var ok bool
-	err := s.db.QueryRow(ctx, `select (
-		exists(select 1 from node_agents where node_id=$1 and status='active' and revoked_at is null and agent_token_hash=$2)
-		or `+rotatedAgentTokenMatchesSQL()+`
+	err := s.db.QueryRow(ctx, `select exists(
+		select 1
+		from node_agents
+		where node_id=$1
+		  and status='active'
+		  and revoked_at is null
+		  and (
+		    agent_token_hash=$2
+		    or `+rotatedAgentTokenMatchesSQL()+`
+		  )
 	)`, nodeID, hashToken(token)).Scan(&ok)
 	return err == nil && ok
 }

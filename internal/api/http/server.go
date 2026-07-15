@@ -73,7 +73,7 @@ type Store interface {
 	ClearNodeStalePendingRotation(context.Context, string) ([]domain.Job, error)
 	RotateNodeEnrollmentToken(context.Context, string, time.Duration) (domain.NodeEnrollmentToken, error)
 	RevokeNodeEnrollmentToken(context.Context, string, string) (domain.NodeEnrollmentToken, error)
-	RevokeNodeAgentIdentity(context.Context, string) (domain.Node, error)
+	RevokeNodeAgentIdentity(context.Context, string, domain.NodeAgentIdentityRevokeInput) (domain.NodeAgentIdentityRevokeResult, error)
 	ListNodeAccessMethods(context.Context, string) ([]domain.NodeAccessMethod, error)
 	ReplaceNodeAccessMethods(context.Context, string, []domain.NodeAccessMethod) ([]domain.NodeAccessMethod, error)
 	CreateNodeSSHAccessMethod(context.Context, string, domain.NodeSSHAccessMethodCreateInput) (domain.NodeAccessMethod, error)
