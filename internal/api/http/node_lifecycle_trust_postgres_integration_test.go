@@ -59,7 +59,7 @@ func TestPostgresIntegrationNodeLifecycleStaleRotationClearRevokeHTTP(t *testing
 }
 
 func TestPostgresIntegrationNodeLifecycleStaleRotationPreviewChangedHTTP(t *testing.T) {
-	fixture := newNodeLifecycleHTTPFixture(t, "preview-changed")
+	fixture := newLifecycleTrustHTTPFixture(t, "preview-changed")
 	rotation := queueAndClaimLifecycleTrustRotation(t, fixture, true)
 	markLifecycleTrustRotationStale(t, fixture, rotation.job.ID)
 	preview, previewBody := previewLifecycleTrustStaleRotation(t, fixture, rotation.job.ID)
@@ -170,7 +170,7 @@ func TestPostgresIntegrationNodeLifecycleStaleRotationClearRevokeRedactionHTTP(t
 func executeLifecycleTrustClearRevokeSequence(t *testing.T, label string) lifecycleTrustSequenceEvidence {
 	t.Helper()
 
-	fixture := newNodeLifecycleHTTPFixture(t, "trust-"+label)
+	fixture := newLifecycleTrustHTTPFixture(t, "trust-"+label)
 	instance := createNodeLifecycleManagedInstance(t, fixture)
 	rotation := queueAndClaimLifecycleTrustRotation(t, fixture, true)
 	evidence := lifecycleTrustSequenceEvidence{fixture: fixture, rotation: rotation, instanceID: instance.ID}
@@ -347,6 +347,13 @@ func executeLifecycleTrustClearRevokeSequence(t *testing.T, label string) lifecy
 	assertHTTPPostgresCount(t, fixture.ctx, fixture.pool, `select count(*) from audit_events where resource_id=$1 and action='node.agent_identity.revoke'`, 1, fixture.node.ID)
 	assertHTTPPostgresCount(t, fixture.ctx, fixture.pool, `select count(*) from job_logs where job_id=$1`, 2, rotation.job.ID)
 	return evidence
+}
+
+func newLifecycleTrustHTTPFixture(t *testing.T, label string) nodeLifecycleHTTPFixture {
+	t.Helper()
+	fixture := newNodeLifecycleHTTPFixture(t, label)
+	attachHTTPPostgresIntegrationSecretService(t, fixture.store)
+	return fixture
 }
 
 func queueAndClaimLifecycleTrustRotation(t *testing.T, fixture nodeLifecycleHTTPFixture, verifyOperatorBoundary bool) lifecycleTrustRotation {
