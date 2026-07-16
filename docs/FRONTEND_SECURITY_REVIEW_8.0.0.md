@@ -163,10 +163,106 @@ Affected operation classes:
 - certificate revoke/delete;
 - settings apply;
 - rollback;
-- node retire/force-retire.
-- manual bootstrap bundle reveal/download.
+- node retire/force-retire;
+- manual bootstrap bundle reveal/download;
+- Agent Identity Revoke;
+- Node Reboot;
+- Emergency Cleanup;
+- Stale Rotation Clear.
 
-## 10. Secure SSH Access Method Creation Review
+## 10. Agent Lifecycle Controls Security Review
+
+Agent Identity Revoke, Node Reboot, Emergency Cleanup and Stale Rotation Clear
+are connected in the new React console. The reviewed scope covers browser,
+operator API, PostgreSQL and signed-agent protocol controls. It does not claim
+live external-node execution.
+
+Common frontend controls:
+
+- all requests use the shared authenticated API client with
+  `credentials: include`;
+- unsafe methods receive the CSRF header and backend RBAC remains authoritative;
+- mutations require `node.bootstrap`; stale-rotation preview requires
+  `node.read`;
+- exact confirmation, required reasons and operation-specific acknowledgements
+  are validated without treating frontend checks as an authorization boundary;
+- safe translated error maps are used instead of arbitrary backend messages;
+- destructive state is not changed optimistically and queued jobs are not
+  treated as completed host operations;
+- form secrets/reasons and mutation results are not persisted in browser
+  storage; mutation cache retention is minimized for these workflows;
+- selected-node/request-context checks reject stale or mismatched responses;
+- duplicate submission is blocked, automatic mutation retry is disabled and
+  successful mutations perform focused query invalidation;
+- browser code never calls `/agent/*`; signed-agent routes remain agent-only.
+
+Agent Identity Revoke controls:
+
+- PostgreSQL identity, enrollment-token and audit changes are atomic;
+- audit records the authenticated operator, not a synthetic system actor;
+- active unused enrollment tokens are revoked and old signed-agent credentials
+  are rejected;
+- operator response is metadata-only and node/history/inventory/jobs remain;
+- recovery requires an explicit new enrollment token and is not automatic.
+
+Node Reboot controls:
+
+- job, conflict lock and audit creation are atomic;
+- conflicting destructive jobs are rejected rather than queued concurrently;
+- agent scheduling uses an explicit executable and argument vector rather than
+  a shell-expanded operator string;
+- scheduling results are bounded and redacted;
+- queued or scheduled status is never described as reboot recovery.
+
+Emergency Cleanup controls:
+
+- the backend derives a deterministic plan; the browser cannot supply paths,
+  systemd units, targets, commands or configuration bodies;
+- maintenance mode is a backend-enforced precondition;
+- filesystem and systemd resources are allowlisted, with path containment and
+  no-follow symlink protections;
+- shared Nginx is never intentionally stopped or disabled; validation failure
+  blocks reload and is reported as failure;
+- plan validation rollback and transactional job/audit creation prevent partial
+  control-plane success;
+- partial execution failure is not reported as success;
+- agent self-removal is scheduled only after the signed cleanup result has been
+  acknowledged by the control plane;
+- raw command, path, unit and configuration output is not returned to the
+  operator UI.
+
+Stale Rotation controls:
+
+- preview is a read-only backend classification;
+- clear requires the exact complete expected set from that preview;
+- changed preview evidence returns a conflict without partial mutation;
+- only correlated pending rotation state, locks and leases are cleared;
+- active identity/token is preserved and only explicit identity revoke can
+  invalidate it;
+- no force override and no frontend stale threshold exist.
+
+Protocol and integration controls:
+
+- real router, operator session, CSRF and disposable PostgreSQL were used;
+- signed-agent requests exercised timestamp, nonce, body-hash and signature
+  validation, replay rejection and response-signature verification;
+- jobs, claims, results, locks, job logs and audit were persisted
+  transactionally;
+- sentinel assertions verified redaction across operator responses, errors,
+  audit, job logs and captured server logs.
+
+No relevant plaintext credential was found in the reviewed responses,
+persistence, logs, audit, fixtures, or tracked source. This is scoped review
+evidence and does not establish impossibility of future credential exposure.
+
+Evidence boundary:
+
+- signed-agent execution results were simulated through the real protocol;
+- no real host reboot, cleanup, filesystem, systemd, Nginx, network or agent
+  self-removal operation was executed;
+- live external-node lifecycle evidence remains open.
+
+## 11. Secure SSH Access Method Creation Review
 
 Nodes -> Security now supports creating a new SSH access method with secret
 material without `/legacy/`. The reviewed scope is secure configuration and
@@ -213,7 +309,7 @@ Evidence controls:
 The UI minimizes secret lifetime and prevents application-level persistence;
 JavaScript runtime memory erasure is not guaranteed.
 
-## 11. Manual Bootstrap Bundle Reveal/Download Review
+## 12. Manual Bootstrap Bundle Reveal/Download Review
 
 Nodes -> Bootstrap now supports manual bootstrap bundle reveal and download
 without `/legacy/`. The reviewed scope is secure operator retrieval from an
@@ -290,7 +386,7 @@ Evidence controls:
 The UI minimizes bundle lifetime and prevents application-level persistence;
 JavaScript runtime memory erasure is not guaranteed.
 
-## 12. Guided Agent Onboarding Status, Token, Bootstrap and Inventory Sync Review
+## 13. Guided Agent Onboarding Status, Token, Bootstrap and Inventory Sync Review
 
 Nodes -> Onboarding now provides a guided status model plus secure enrollment
 token issue/reissue actions, guided bootstrap mode selection/job submission,
@@ -458,14 +554,13 @@ Guided Agent Onboarding security review is accepted for PR-review evidence in
 Step 4D.1. Release debt accounting remains Step 4D.2, and live external-node
 smoke remains release-validation debt.
 
-## 13. RC1 Limitations
+## 14. RC1 Limitations
 
 The new console remains incomplete for final write parity. The following are
 intentionally disabled, backend-missing or legacy-only after FE8-P0-09B:
 
 - non-VLESS access service materialization and access-group migration conflict UI;
-- live external-node onboarding smoke and Step 4D.2 release debt closure;
-- agent identity revoke, reboot, emergency cleanup and stale rotation cleanup;
+- live external-node onboarding/lifecycle smoke and Step 4B debt closure;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance
@@ -477,7 +572,7 @@ intentionally disabled, backend-missing or legacy-only after FE8-P0-09B:
 This is a security-positive limitation: operators must not see a clickable
 action unless it is backed by real endpoint behavior and safe UX.
 
-## 14. Required Checks
+## 15. Required Checks
 
 For RC1 evidence, run:
 

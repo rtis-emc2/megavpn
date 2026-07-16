@@ -56,6 +56,19 @@ Final release debt readiness assessment:
   the new UI is limited to API base and locale, and text LF shape is protected
   by `scripts/ci/text-lf-guard.sh`.
 
+Current FE8-P0-09C evidence date UTC: `2026-07-16T13:19:28Z`
+
+Current accepted FE8-P0-09C functional evidence HEAD:
+`2a1045bedfbc750f800eefcf6e977a850f239e4c`
+
+Current accepted FE8-P0-09C functional evidence CI:
+GitHub Actions run `29499118214` PASS. The workflow Release gate was SKIPPED,
+not passed.
+
+Status: **READY FOR PR REVIEW, NOT READY FOR FINAL CUTOVER**. Agent Lifecycle
+Controls are accepted for PR review and controlled staging. Live external-node
+execution remains open, and final cutover status remains **NO-GO**.
+
 Current FE8-P0-09B evidence date UTC: `2026-07-15T12:54:06Z`
 
 FE8-P0-09B agent registration hardening commit:
@@ -490,9 +503,84 @@ safe metadata edit workflows against mocked backend API responses:
 Nodes create/edit safe profile workflows work in the new UI without `/legacy/`
 for control-plane node records. Generic create/edit does not create SSH secrets
 or claim enrollment/online state. Guided agent onboarding is recorded in the
-next section. Live external-node onboarding smoke, live manual bundle
-execution, agent identity revoke, reboot, emergency cleanup, stale rotation
-cleanup and service discovery ignore/unignore remain separate/open workflows.
+next section. Agent identity revoke, reboot, Emergency Cleanup and stale
+rotation preview/clear are connected and recorded in the FE8-P0-09C section
+below. Live external-node onboarding, reboot, cleanup and recovery evidence,
+live manual bundle execution and service discovery ignore/unignore remain open.
+
+## FE8-P0-09C Agent Lifecycle Controls Acceptance Evidence
+
+FE8-P0-09C is accepted for PR review and controlled staging evidence. Agent
+Identity Revoke, Node Reboot, Emergency Cleanup and Stale Token Rotation
+preview/clear are connected in the new React console and do not require
+`/legacy/`. Disposable operator HTTP/PostgreSQL and signed-agent protocol
+evidence exists. Live external-node execution remains open, the Release gate
+has not passed, and final production cutover remains **NO-GO**.
+
+Implementation and evidence chain:
+
+| Evidence item | Commit / run | Status |
+| --- | --- | --- |
+| Agent Identity Revoke backend | `6bc05a54689acf6552eddcc08336f33d0e31f5bc`; follow-up `e1110851c32ef332953f9d018ea40ee375f937ca`; CI `29437272596` | PASS |
+| Node Reboot backend and agent scheduling | `63bdb9843a0efcc1de9a6de4cc88258c9b6a5364`; redaction follow-up `1922e9b245c4af262036f969601a2e86fd10e566`; CI `29439939343` | PASS |
+| Emergency Cleanup control plane | `8bf9298f5d5895cbe63cb03fed2ac6f78a031879`; maintenance follow-up `24b2cec81f04b2f2d2593476a13574f89c928054`; CI `29442481855` | PASS |
+| Emergency Cleanup agent execution | `5d28d2be05b9b727325454094bf5a0c6368a7b16`; CI `29444758850` | PASS |
+| Stale Token Rotation backend | `64751506a299ba2e7318a33c9b6299b8d226cba6`; CI `29446522570` | PASS |
+| Read-only Lifecycle/Stale Rotation Preview UI | `211c190c67fa0936f75a1ea09add4e4dd7fc2caf`; CI `29448187132` | PASS |
+| Agent Identity Revoke UI | `b438ccb67e4dd0e6b5f5c1fff504bb825e4b4afc`; accessibility follow-up `735fe5bb2bd44c7a0affd1a2aa710e2592590894`; CI `29451111385` | PASS |
+| Node Reboot UI | `fa13ac4edfdca4bcbeb46e381c4c7886b2077db5`; CI `29480136478` | PASS |
+| Emergency Cleanup UI | `023142562702d6b98ee2431562b1b34592acabf2`; CI `29483290405` | PASS |
+| Stale Rotation Clear UI | `6133bcc88018874d5762b3b047a4ee8f7d704a7b`; CI `29486825657` | PASS |
+| Reboot/Cleanup operator HTTP/PostgreSQL protocol evidence | `c9ae052938f7679aa1e520bd7d14a179182199cf`; maintenance follow-up `1fc65b8b9c4506ad2a0668c51f3136e86299f6f6`; CI `29492058153` | PASS |
+| Stale Clear to Identity Revoke sequence evidence | `9e549482f2c88c97d0297c98f609ff2c04185f82`; secret-service fixture follow-up `e7863abd30587b41e2c6e6e04b335fc6c070a283` | PASS in final CI |
+| Frontend test stabilization and final functional evidence | `2a1045bedfbc750f800eefcf6e977a850f239e4c`; CI `29499118214` | PASS; Release gate SKIPPED |
+
+Accepted workflow semantics:
+
+- **Agent Identity Revoke:** requires `node.bootstrap`, exact node-name
+  confirmation and a reason. The PostgreSQL transition atomically revokes the
+  active identity and active unused enrollment tokens. Old signed-agent
+  credentials are rejected while the node record, history, inventory and jobs
+  remain. Recovery requires explicit issuance of a new enrollment token; no
+  automatic re-enrollment occurs.
+- **Node Reboot:** requires `node.bootstrap`, exact node-name confirmation and
+  a reason. Success means that an asynchronous `node.reboot` job was queued.
+  An agent result means only that the reboot command was scheduled; neither
+  queueing nor scheduling proves reboot execution or recovery. The browser does
+  not optimistically mark the node offline or rebooting.
+- **Emergency Cleanup:** requires `node.bootstrap`, maintenance mode, an exact
+  `services_only` or `full_node` scope, exact confirmation, reason and
+  destructive acknowledgement. Agent removal is available only for
+  `full_node` and requires a separate acknowledgement. The backend generates
+  the safe plan summary; shared Nginx is never intentionally stopped or
+  disabled. Self-removal is scheduled only after an acknowledged job result.
+  HTTP 202 means queued only and is not real-host cleanup evidence.
+- **Stale Rotation Preview/Clear:** preview requires `node.read`; clear requires
+  `node.bootstrap`. Clear submits the exact backend-safe expected-job set and
+  rejects a changed preview. The frontend has no stale-age algorithm and no
+  partial operator selection. Clear preserves the active identity/token and
+  invalidates only correlated pending rotation state. It neither rotates nor
+  issues a token.
+
+Accepted disposable integration scope:
+
+- real operator router, session authentication, RBAC and CSRF;
+- disposable PostgreSQL transitions, locks, jobs, job logs and audit;
+- signed-agent timestamp, nonce, body-hash and request-signature validation;
+- replay rejection and response-signature verification;
+- actual job queue, claim and result persistence through protocol endpoints;
+- real stale preview/clear and explicit identity revoke mutations;
+- active-token preservation, old-credential rejection, enrollment-token
+  invalidation and explicit recovery-token issuance;
+- metadata-only operator responses and redaction sentinel assertions.
+
+Evidence boundary:
+
+The integration tests simulated safe agent execution results through the real
+signed-agent protocol. They did not execute reboot, shutdown, filesystem
+deletion, systemd operations, Nginx validation/reload, network changes or agent
+self-removal. Live external-node lifecycle validation remains open and is
+required before production use.
 
 ## FE8-P0-09B Agent Registration and Onboarding Acceptance Evidence
 
@@ -996,6 +1084,9 @@ Fully connected in the new console:
   selection, bootstrap job submission, registration waiting, first-heartbeat
   waiting, guided inventory-sync submission, inventory job progression and
   backend-derived ready-state derivation.
+- `Nodes` Agent Identity Revoke, Node Reboot, Emergency Cleanup and Stale Token
+  Rotation preview/clear with explicit safety controls, queued-only semantics
+  and disposable protocol evidence.
 - `Clients -> Routes/Maintenance` generic client edit, route
   list/create/update/delete, service access list/rotation/revoke/delete,
   delivery history and generated config cleanup.
@@ -1015,8 +1106,8 @@ Still disabled, read-only or legacy-only:
 
 - non-VLESS access group materialization workflows;
 - migration conflict UI for access groups;
-- live external node onboarding smoke, Step 4D.2 release debt closure, agent
-  identity revoke, reboot, emergency cleanup and stale rotation cleanup;
+- live external-node onboarding and lifecycle execution smoke, plus the
+  deferred Step 4B debt/release/PR-package accounting closure;
 - node service discovery ignore/unignore;
 - runtime artifact delete;
 - separate service pack validation, instance spec preview and instance draft-save
@@ -1068,7 +1159,8 @@ Still disabled, read-only or legacy-only:
   this session; current evidence is frontend/API-contract test coverage against
   mocked backend responses, local commands and GitHub disposable PostgreSQL
   integration evidence for the secure SSH access-method, manual bootstrap
-  bundle reveal/download and guided agent onboarding workflows.
+  bundle reveal/download, guided agent onboarding and Agent Lifecycle Controls
+  protocol workflows. This is not live host execution evidence.
 
 ## 14. Go / No-Go
 
@@ -1081,10 +1173,10 @@ Recommendation:
   existing Instances runtime control, service pack instance creation, manual
   instance creation, runtime artifact list/import, existing Nodes
   observability/diagnostics/inventory, Nodes bootstrap/security/control and
-  Nodes guided agent onboarding workflows, Certificates/PKI workflows and
-  Platform settings/mail/access workflows, Backhaul link actions and Route
-  Policy preview/apply/cleanup where backend endpoints exist in controlled
-  staging after operator review.
+  Nodes guided agent onboarding and Agent Lifecycle Controls workflows,
+  Certificates/PKI workflows and Platform settings/mail/access workflows,
+  Backhaul link actions and Route Policy preview/apply/cleanup where backend
+  endpoints exist in controlled staging after operator review.
 - NO-GO for final 8.0.0 release cutover or removing `/legacy/`.
 
 Remaining blockers for final cutover:
@@ -1092,11 +1184,9 @@ Remaining blockers for final cutover:
 1. run integrated smoke/e2e against disposable DB/API data for VLESS, Clients
    core/artifacts/delivery/routes/access maintenance/config cleanup, Firewall
    Instances/Service Packs, Backhaul and Route Policy runtime operator flows;
-2. complete Step 4D.2 debt/release/PR-package closure for Nodes
-   onboarding/registration, keep live external-node onboarding smoke open until
-   a real disposable node is validated, and migrate or explicitly defer the
-   remaining destructive remediation workflows: agent identity revoke, reboot,
-   emergency cleanup and stale rotation cleanup;
+2. complete Step 4B debt/release/PR-package closure for Nodes lifecycle
+   controls, and keep live external-node onboarding, reboot, cleanup and
+   recovery smoke open until a real disposable node is validated;
 3. add backend/browser support for runtime artifact delete if it is required for
    final operator parity;
 4. decide whether Backhaul create/delete, direct Platform user lifecycle
