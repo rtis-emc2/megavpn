@@ -21,6 +21,7 @@ import {
   createInvite,
   createManagedCertificateAuthority,
   createNode,
+  createNodeRebootJob,
   createNodeSSHAccessMethod,
   createPkiRoot,
   createSelfSignedCertificate,
@@ -293,6 +294,7 @@ import type {
   NodeEntity,
   NodeInventorySnapshot,
   NodeJobEnvelope,
+  NodeRebootInput,
   NodeRuntimeReconcileResult,
   NodeServiceDiscovery,
   NodeServiceDiscoverySummary,
@@ -418,6 +420,16 @@ function invalidateNodeAgentIdentityRevokeQueries(queryClient: ReturnType<typeof
   void queryClient.invalidateQueries({ queryKey: ['node-agent-state', nodeId] });
   void queryClient.invalidateQueries({ queryKey: ['node-enrollment-tokens', nodeId] });
   void queryClient.invalidateQueries({ queryKey: ['node-stale-rotation-preview', nodeId] });
+}
+
+function invalidateNodeRebootQueries(queryClient: ReturnType<typeof useQueryClient>, nodeId: string, job?: Job) {
+  void queryClient.invalidateQueries({ queryKey: ['nodes'] });
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  void queryClient.invalidateQueries({ queryKey: ['node', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-diagnostics', nodeId] });
+  if (job?.id) {
+    void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+  }
 }
 
 function invalidateJobsFromResult(queryClient: ReturnType<typeof useQueryClient>, result: unknown) {
@@ -746,6 +758,16 @@ export function useRevokeNodeAgentIdentity() {
   return useMutation<NodeAgentIdentityRevokeResult, Error, { nodeId: string; input: NodeAgentIdentityRevokeInput }>({
     mutationFn: ({ nodeId, input }) => revokeNodeAgentIdentity(nodeId, input),
     onSuccess: (_result, variables) => invalidateNodeAgentIdentityRevokeQueries(queryClient, variables.nodeId),
+    gcTime: 0,
+  });
+}
+
+export function useCreateNodeRebootJob() {
+  const queryClient = useQueryClient();
+  return useMutation<Job, Error, { nodeId: string; input: NodeRebootInput }>({
+    mutationFn: ({ nodeId, input }) => createNodeRebootJob(nodeId, input),
+    onSuccess: (job, variables) => invalidateNodeRebootQueries(queryClient, variables.nodeId, job),
+    retry: false,
     gcTime: 0,
   });
 }

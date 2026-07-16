@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from './client';
 import {
   downloadNodeBootstrapBundle,
+  createNodeRebootJob,
   createEnrollmentToken,
   extractEnrollmentTokenSecret,
   getNodeStaleRotationPreview,
@@ -390,5 +391,90 @@ describe('node agent identity revoke endpoint', () => {
 
     await expect(revokeNodeAgentIdentity('node/one', { confirmation: 'Edge One', reason: 'return conflict' })).rejects.toBeInstanceOf(APIError);
     expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node%2Fone/agent-identity/revoke')).toHaveLength(2);
+  });
+});
+
+describe('node reboot endpoint', () => {
+  const calls: FetchCall[] = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://megavpn.test');
+      const method = String(init?.method || 'GET').toUpperCase();
+      const path = `${url.pathname}${url.search}`;
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      calls.push({
+        method,
+        path,
+        body,
+        headers: trackedHeaders(init?.headers),
+        credentials: init?.credentials,
+        cache: init?.cache,
+      });
+
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node%2Fone/reboot') {
+        if (body?.reason === 'return conflict') {
+          return json({ status: 'error', code: 'node_reboot_conflict', error: 'raw command output token_hash' }, 409);
+        }
+        return json({
+          id: 'job-reboot-1',
+          type: 'node.reboot',
+          status: 'queued',
+          scope_type: 'node',
+          scope_id: 'node/one',
+          node_id: 'node/one',
+          created_at: '2026-07-15T08:00:00Z',
+        }, 202);
+      }
+      return json({ error: `unhandled ${method} ${url.pathname}` }, 404);
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('uses exact POST path and request body and returns the typed redacted Job', async () => {
+    const result = await createNodeRebootJob('node/one', {
+      confirmation: 'Edge One',
+      reason: 'maintenance window',
+    });
+
+    expect(result).toMatchObject({
+      id: 'job-reboot-1',
+      type: 'node.reboot',
+      status: 'queued',
+      scope_id: 'node/one',
+      node_id: 'node/one',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/v1/nodes/node%2Fone/reboot',
+      body: {
+        confirmation: 'Edge One',
+        reason: 'maintenance window',
+      },
+      credentials: 'include',
+    });
+    expect(Object.keys(calls[0].body || {}).sort()).toEqual(['confirmation', 'reason']);
+    expect(calls[0].body).not.toHaveProperty('acknowledged');
+    expect(calls[0].body).not.toHaveProperty('node_id');
+    expect(calls[0].body).not.toHaveProperty('maintenance');
+    expect(calls[0].headers.accept).toBe('application/json');
+    expect(calls[0].headers['content-type']).toBe('application/json');
+    expect(calls[0].headers['x-megavpn-csrf']).toBe('1');
+    expect(JSON.stringify(result)).not.toMatch(/payload|result|token_hash|token_hint|secret_ref|signature|nonce|authorization|command|output/i);
+    expect(calls.some((call) => call.path.endsWith('/emergency-cleanup'))).toBe(false);
+    expect(calls.some((call) => call.path.includes('clear-stale-rotation'))).toBe(false);
+  });
+
+  it('preserves APIError on backend conflicts without faking a queued job', async () => {
+    await expect(createNodeRebootJob('node/one', { confirmation: 'Edge One', reason: 'return conflict' })).rejects.toBeInstanceOf(APIError);
+    expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node%2Fone/reboot')).toHaveLength(1);
   });
 });

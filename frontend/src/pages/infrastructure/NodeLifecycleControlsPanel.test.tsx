@@ -50,6 +50,7 @@ const preview: NodeStaleRotationPreview = {
 function renderPanel(overrides: Partial<ComponentProps<typeof NodeLifecycleControlsPanel>> = {}) {
   const onRefreshStaleRotationPreview = vi.fn();
   const onOpenRevokeDialog = vi.fn();
+  const onOpenRebootDialog = vi.fn();
   const result = render(
     <NodeLifecycleControlsPanel
       node={node}
@@ -62,12 +63,14 @@ function renderPanel(overrides: Partial<ComponentProps<typeof NodeLifecycleContr
       canBootstrapNode
       lifecycleDataCurrent
       revokePending={false}
+      rebootPending={false}
       onOpenRevokeDialog={onOpenRevokeDialog}
+      onOpenRebootDialog={onOpenRebootDialog}
       onRefreshStaleRotationPreview={onRefreshStaleRotationPreview}
       {...overrides}
     />,
   );
-  return { onOpenRevokeDialog, onRefreshStaleRotationPreview, rerender: result.rerender };
+  return { onOpenRebootDialog, onOpenRevokeDialog, onRefreshStaleRotationPreview, rerender: result.rerender };
 }
 
 describe('NodeLifecycleControlsPanel', () => {
@@ -89,8 +92,8 @@ describe('NodeLifecycleControlsPanel', () => {
     expect(bodyText).not.toContain('request_payload');
     expect(bodyText).not.toContain('result_payload');
     expect(bodyText).not.toContain('secret_ref');
+    expect(screen.getByRole('button', { name: 'Queue reboot' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Revoke agent identity' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /reboot/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /emergency cleanup/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /clear/i })).not.toBeInTheDocument();
   });
@@ -108,7 +111,9 @@ describe('NodeLifecycleControlsPanel', () => {
         canBootstrapNode
         lifecycleDataCurrent
         revokePending={false}
+        rebootPending={false}
         onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -126,7 +131,9 @@ describe('NodeLifecycleControlsPanel', () => {
         canBootstrapNode
         lifecycleDataCurrent
         revokePending={false}
+        rebootPending={false}
         onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -144,7 +151,9 @@ describe('NodeLifecycleControlsPanel', () => {
         canBootstrapNode
         lifecycleDataCurrent
         revokePending={false}
+        rebootPending={false}
         onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -163,7 +172,9 @@ describe('NodeLifecycleControlsPanel', () => {
         canBootstrapNode
         lifecycleDataCurrent
         revokePending={false}
+        rebootPending={false}
         onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -187,6 +198,138 @@ describe('NodeLifecycleControlsPanel', () => {
     expect(onRefreshStaleRotationPreview).toHaveBeenCalledTimes(1);
   });
 
+  it('gates node reboot by permission, identity, channel and terminal states', async () => {
+    const { onOpenRebootDialog, rerender } = renderPanel();
+    await userEvent.click(screen.getByRole('button', { name: 'Queue reboot' }));
+    expect(onOpenRebootDialog).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <NodeLifecycleControlsPanel
+        node={node}
+        diagnostics={{ ...diagnostics, agent: { ...(diagnostics.agent || {}), status: 'revoked' } }}
+        staleRotationPreview={preview}
+        staleRotationPreviewLoading={false}
+        staleRotationPreviewFetching={false}
+        staleRotationPreviewError={undefined}
+        canReadNode
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        rebootPending={false}
+        onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
+        onRefreshStaleRotationPreview={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Agent identity is revoked. Reboot queueing is disabled.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Queue reboot' })).not.toBeInTheDocument();
+
+    rerender(
+      <NodeLifecycleControlsPanel
+        node={node}
+        diagnostics={{ ...diagnostics, agent: { ...(diagnostics.agent || {}), status: 'missing' } }}
+        staleRotationPreview={preview}
+        staleRotationPreviewLoading={false}
+        staleRotationPreviewFetching={false}
+        staleRotationPreviewError={undefined}
+        canReadNode
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        rebootPending={false}
+        onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
+        onRefreshStaleRotationPreview={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('No active agent identity is visible. Reboot queueing is disabled until identity state is recovered.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Queue reboot' })).not.toBeInTheDocument();
+
+    rerender(
+      <NodeLifecycleControlsPanel
+        node={node}
+        diagnostics={{ ...diagnostics, communication_state: 'offline' }}
+        staleRotationPreview={preview}
+        staleRotationPreviewLoading={false}
+        staleRotationPreviewFetching={false}
+        staleRotationPreviewError={undefined}
+        canReadNode
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        rebootPending={false}
+        onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
+        onRefreshStaleRotationPreview={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Agent communication is clearly unavailable. Reboot queueing is disabled until the channel recovers.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Queue reboot' })).not.toBeInTheDocument();
+
+    rerender(
+      <NodeLifecycleControlsPanel
+        node={{ ...node, status: 'retired' }}
+        diagnostics={diagnostics}
+        staleRotationPreview={preview}
+        staleRotationPreviewLoading={false}
+        staleRotationPreviewFetching={false}
+        staleRotationPreviewError={undefined}
+        canReadNode
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        rebootPending={false}
+        onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
+        onRefreshStaleRotationPreview={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('This node is in a terminal or retired state. Reboot queueing is disabled.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Queue reboot' })).not.toBeInTheDocument();
+
+    rerender(
+      <NodeLifecycleControlsPanel
+        node={node}
+        diagnostics={{ ...diagnostics, communication_state: 'unknown' }}
+        staleRotationPreview={preview}
+        staleRotationPreviewLoading={false}
+        staleRotationPreviewFetching={false}
+        staleRotationPreviewError={undefined}
+        canReadNode
+        canBootstrapNode
+        lifecycleDataCurrent
+        revokePending={false}
+        rebootPending={false}
+        onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
+        onRefreshStaleRotationPreview={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Current lifecycle state is incomplete; backend validation remains authoritative.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Queue reboot' })).toBeInTheDocument();
+
+    rerender(
+      <NodeLifecycleControlsPanel
+        node={node}
+        diagnostics={diagnostics}
+        staleRotationPreview={preview}
+        staleRotationPreviewLoading={false}
+        staleRotationPreviewFetching={false}
+        staleRotationPreviewError={undefined}
+        canReadNode
+        canBootstrapNode={false}
+        lifecycleDataCurrent
+        revokePending={false}
+        rebootPending={false}
+        onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
+        onRefreshStaleRotationPreview={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('node.bootstrap permission is required to queue a node reboot.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Queue reboot' })).not.toBeInTheDocument();
+  });
+
   it('gates agent identity revoke by node.bootstrap and identity state only', async () => {
     const { onOpenRevokeDialog, rerender } = renderPanel();
     await userEvent.click(screen.getByRole('button', { name: 'Revoke agent identity' }));
@@ -204,7 +347,9 @@ describe('NodeLifecycleControlsPanel', () => {
         canBootstrapNode
         lifecycleDataCurrent
         revokePending={false}
+        rebootPending={false}
         onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -223,7 +368,9 @@ describe('NodeLifecycleControlsPanel', () => {
         canBootstrapNode
         lifecycleDataCurrent
         revokePending={false}
+        rebootPending={false}
         onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -242,11 +389,13 @@ describe('NodeLifecycleControlsPanel', () => {
         canBootstrapNode={false}
         lifecycleDataCurrent
         revokePending={false}
+        rebootPending={false}
         onOpenRevokeDialog={vi.fn()}
+        onOpenRebootDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
-    expect(screen.getByRole('alert')).toHaveTextContent('Permission required: node.bootstrap');
+    expect(screen.getByText('Permission required: node.bootstrap')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Revoke agent identity' })).not.toBeInTheDocument();
   });
 });

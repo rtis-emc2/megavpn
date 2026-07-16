@@ -3,14 +3,19 @@ import { APIError } from '../../shared/api/client';
 import type { NodeDetail, NodeDiagnostics, NodeStaleRotationPreview } from '../../shared/api/types';
 import {
   deriveNodeLifecycleStatusModel,
+  deriveNodeRebootActionState,
   describeStaleRotationReason,
   formatAgeSeconds,
   nodeAgentIdentityExpectedConfirmation,
   nodeAgentIdentityRevokeErrorKey,
+  nodeRebootErrorKey,
+  nodeRebootExpectedConfirmation,
   reasonLooksUnsafeForNodeAgentIdentityRevoke,
+  reasonLooksUnsafeForNodeReboot,
   staleRotationCandidateKey,
   staleRotationPreviewErrorKey,
   validateNodeAgentIdentityRevokeForm,
+  validateNodeRebootForm,
 } from './nodeLifecycleControls';
 
 const node: NodeDetail = {
@@ -138,5 +143,56 @@ describe('node agent identity revoke helpers', () => {
     expect(nodeAgentIdentityRevokeErrorKey(new APIError('raw', 429, { error: 'rate limited' }))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.rateLimited');
     expect(nodeAgentIdentityRevokeErrorKey(new APIError('raw', 503, { error: 'down' }))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.serviceUnavailable');
     expect(nodeAgentIdentityRevokeErrorKey(new Error('network'))).toBe('nodes.lifecycleControls.agentIdentityRevoke.errors.generic');
+  });
+});
+
+describe('node reboot helpers', () => {
+  it('validates exact confirmation, trimmed input and UI-only acknowledgement', () => {
+    expect(nodeRebootExpectedConfirmation(node)).toBe('Edge One');
+    expect(nodeRebootExpectedConfirmation({ ...node, name: '' })).toBe('node-1');
+
+    expect(validateNodeRebootForm(node, { confirmation: '', reason: 'maintenance window', acknowledged: true }).errors.confirmation).toBe('nodes.lifecycleControls.nodeReboot.errors.confirmationRequired');
+    expect(validateNodeRebootForm(node, { confirmation: 'edge one', reason: 'maintenance window', acknowledged: true }).errors.confirmation).toBe('nodes.lifecycleControls.nodeReboot.errors.confirmationMismatch');
+    expect(validateNodeRebootForm(node, { confirmation: 'x'.repeat(513), reason: 'maintenance window', acknowledged: true }).errors.confirmation).toBe('nodes.lifecycleControls.nodeReboot.errors.confirmationTooLong');
+    expect(validateNodeRebootForm(node, { confirmation: 'Edge\nOne', reason: 'maintenance window', acknowledged: true }).errors.confirmation).toBe('nodes.lifecycleControls.nodeReboot.errors.confirmationUnsafe');
+    expect(validateNodeRebootForm(node, { confirmation: ' Edge One ', reason: ' maintenance window ', acknowledged: false }).errors.acknowledgement).toBe('nodes.lifecycleControls.nodeReboot.errors.acknowledgementRequired');
+
+    const valid = validateNodeRebootForm(node, { confirmation: ' Edge One ', reason: ' maintenance window ', acknowledged: true });
+    expect(valid.valid).toBe(true);
+    expect(valid.input).toEqual({ confirmation: 'Edge One', reason: 'maintenance window' });
+  });
+
+  it('rejects unsafe reboot reasons without exposing request or secret markers', () => {
+    expect(validateNodeRebootForm(node, { confirmation: 'Edge One', reason: '', acknowledged: true }).errors.reason).toBe('nodes.lifecycleControls.nodeReboot.errors.reasonRequired');
+    expect(validateNodeRebootForm(node, { confirmation: 'Edge One', reason: 'bad', acknowledged: true }).errors.reason).toBe('nodes.lifecycleControls.nodeReboot.errors.reasonTooShort');
+    expect(validateNodeRebootForm(node, { confirmation: 'Edge One', reason: 'r'.repeat(501), acknowledged: true }).errors.reason).toBe('nodes.lifecycleControls.nodeReboot.errors.reasonTooLong');
+
+    for (const reason of ['has\nnewline', 'Authorization: Bearer abc', 'Bearer token', 'agent_token=abc', 'enrollment_token=abc', 'token_hash=abc', 'private_key=abc', 'secret_ref=abc', '{"request":"body"}']) {
+      expect(reasonLooksUnsafeForNodeReboot(reason)).toBe(true);
+      expect(validateNodeRebootForm(node, { confirmation: 'Edge One', reason, acknowledged: true }).errors.reason).toBe('nodes.lifecycleControls.nodeReboot.errors.reasonUnsafe');
+    }
+  });
+
+  it('maps backend reboot errors using safe status and code allowlists', () => {
+    expect(nodeRebootErrorKey(new APIError('raw sql token_hash', 409, { code: 'node_reboot_confirmation_mismatch', error: 'raw sql token_hash' }))).toBe('nodes.lifecycleControls.nodeReboot.errors.confirmationMismatchBackend');
+    expect(nodeRebootErrorKey(new APIError('raw', 409, { code: 'node_reboot_agent_missing' }))).toBe('nodes.lifecycleControls.nodeReboot.errors.agentMissing');
+    expect(nodeRebootErrorKey(new APIError('raw', 409, { code: 'node_reboot_agent_unavailable' }))).toBe('nodes.lifecycleControls.nodeReboot.errors.agentUnavailable');
+    expect(nodeRebootErrorKey(new APIError('raw', 409, { code: 'node_reboot_conflict' }))).toBe('nodes.lifecycleControls.nodeReboot.errors.conflict');
+    expect(nodeRebootErrorKey(new APIError('raw', 404, { code: 'node_reboot_node_not_found' }))).toBe('nodes.lifecycleControls.nodeReboot.errors.nodeNotFound');
+    expect(nodeRebootErrorKey(new APIError('raw', 400, { code: 'node_reboot_request_invalid' }))).toBe('nodes.lifecycleControls.nodeReboot.errors.requestInvalid');
+    expect(nodeRebootErrorKey(new APIError('raw', 429, { error: 'rate limited' }))).toBe('nodes.lifecycleControls.nodeReboot.errors.rateLimited');
+    expect(nodeRebootErrorKey(new APIError('raw', 503, { error: 'down' }))).toBe('nodes.lifecycleControls.nodeReboot.errors.serviceUnavailable');
+    expect(nodeRebootErrorKey(new Error('network'))).toBe('nodes.lifecycleControls.nodeReboot.errors.generic');
+  });
+
+  it('derives reboot action availability from permission, lifecycle freshness and clear backend states', () => {
+    expect(deriveNodeRebootActionState({ node, diagnostics, canBootstrapNode: true, lifecycleDataCurrent: true })).toMatchObject({ available: true, unknownState: false });
+    expect(deriveNodeRebootActionState({ node, diagnostics, canBootstrapNode: false, lifecycleDataCurrent: true }).blockedKey).toBe('nodes.lifecycleControls.nodeReboot.blocked.permissionRequired');
+    expect(deriveNodeRebootActionState({ node, diagnostics, canBootstrapNode: true, lifecycleDataCurrent: false }).blockedKey).toBe('nodes.lifecycleControls.nodeReboot.blocked.lifecycleDataStale');
+    expect(deriveNodeRebootActionState({ node: { ...node, status: 'retired' }, diagnostics, canBootstrapNode: true, lifecycleDataCurrent: true }).blockedKey).toBe('nodes.lifecycleControls.nodeReboot.blocked.terminalNode');
+    expect(deriveNodeRebootActionState({ node, diagnostics: { ...diagnostics, agent: { ...(diagnostics.agent || {}), status: 'missing' } }, canBootstrapNode: true, lifecycleDataCurrent: true }).blockedKey).toBe('nodes.lifecycleControls.nodeReboot.blocked.identityMissing');
+    expect(deriveNodeRebootActionState({ node, diagnostics: { ...diagnostics, agent: { ...(diagnostics.agent || {}), status: 'revoked' } }, canBootstrapNode: true, lifecycleDataCurrent: true }).blockedKey).toBe('nodes.lifecycleControls.nodeReboot.blocked.identityRevoked');
+    expect(deriveNodeRebootActionState({ node, diagnostics: { ...diagnostics, communication_state: 'offline' }, canBootstrapNode: true, lifecycleDataCurrent: true }).blockedKey).toBe('nodes.lifecycleControls.nodeReboot.blocked.channelUnavailable');
+    expect(deriveNodeRebootActionState({ node, diagnostics: { ...diagnostics, communication_state: 'unknown' }, canBootstrapNode: true, lifecycleDataCurrent: true })).toMatchObject({ available: true, unknownState: true });
   });
 });

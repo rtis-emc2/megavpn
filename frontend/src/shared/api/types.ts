@@ -209,6 +209,11 @@ export type NodeAgentIdentityRevokeResult = {
   revoked_enrollment_tokens: number;
 };
 
+export type NodeRebootInput = {
+  confirmation: string;
+  reason: string;
+};
+
 export type NodeCapability = APIRecord & {
   id: string;
   node_id?: string;
@@ -1296,6 +1301,7 @@ export type Job = APIRecord & {
   status?: string;
   scope_type?: string;
   scope_id?: string;
+  node_id?: string;
   created_at?: string;
   updated_at?: string;
   result?: APIRecord;

@@ -1,10 +1,11 @@
-import { RefreshCw, ShieldAlert } from 'lucide-react';
+import { RefreshCw, RotateCcw, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { NodeDetail, NodeDiagnostics, NodeStaleRotationCandidate, NodeStaleRotationPreview } from '../../shared/api/types';
 import { Badge, Button, Card, CardBody, DataTable, EmptyState, LoadingSkeleton, StatusBadge, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import {
   deriveNodeLifecycleStatusModel,
+  deriveNodeRebootActionState,
   describeStaleRotationReason,
   formatAgeSeconds,
   nodeAgentIdentityExpectedConfirmation,
@@ -24,7 +25,9 @@ type NodeLifecycleControlsPanelProps = {
   canBootstrapNode: boolean;
   lifecycleDataCurrent: boolean;
   revokePending: boolean;
+  rebootPending: boolean;
   onOpenRevokeDialog: () => void;
+  onOpenRebootDialog: () => void;
   onRefreshStaleRotationPreview: () => void;
 };
 
@@ -61,7 +64,9 @@ export function NodeLifecycleControlsPanel({
   canBootstrapNode,
   lifecycleDataCurrent,
   revokePending,
+  rebootPending,
   onOpenRevokeDialog,
+  onOpenRebootDialog,
   onRefreshStaleRotationPreview,
 }: NodeLifecycleControlsPanelProps) {
   const { t } = useTranslation();
@@ -73,6 +78,8 @@ export function NodeLifecycleControlsPanel({
   const identityMissing = ['missing', 'none', 'not_found', 'deleted'].includes(agentIdentityStatus);
   const identityUnknown = !agentIdentityStatus || agentIdentityStatus === 'unknown';
   const revokeAllowed = canBootstrapNode && lifecycleDataCurrent && !identityAlreadyRevoked && !identityMissing;
+  const rebootState = deriveNodeRebootActionState({ node, diagnostics, canBootstrapNode, lifecycleDataCurrent });
+  const communicationState = normalizeLifecycleStatus(diagnostics?.communication_state || node.agent_channel_status || '');
 
   return (
     <div className="page-stack">
@@ -105,6 +112,45 @@ export function NodeLifecycleControlsPanel({
               <strong>{t('nodes.lifecycleControls.deferredActionsTitle')}</strong>
               <span className="muted">{t('nodes.lifecycleControls.deferredActionsBody')}</span>
             </div>
+          </div>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <Toolbar>
+              <StatusBadge status={rebootState.available ? 'warning' : 'blocked'} />
+              {rebootState.unknownState ? <Badge>{t('nodes.lifecycleControls.nodeReboot.unknownStateBadge')}</Badge> : null}
+            </Toolbar>
+            <div>
+              <h3 className="card-title">{t('nodes.lifecycleControls.nodeReboot.actionTitle')}</h3>
+              <p className="muted">{t('nodes.lifecycleControls.nodeReboot.actionDescription')}</p>
+            </div>
+            <div className="definition-grid">
+              <span>{t('nodes.lifecycleControls.nodeReboot.communicationStatus')}</span>
+              <strong>{lifecycleStatusValue(communicationState || 'unknown')}</strong>
+              <span>{t('nodes.lifecycleControls.nodeReboot.agentStatus')}</span>
+              <strong>{lifecycleStatusValue(agentIdentityStatus || 'unknown')}</strong>
+            </div>
+            {rebootState.blockedKey ? (
+              <div role="alert" className="error-state-inline">{t(rebootState.blockedKey, { permission: 'node.bootstrap' })}</div>
+            ) : null}
+            {rebootState.available && rebootState.unknownState ? (
+              <div role="alert" className="error-state-inline">{t('nodes.lifecycleControls.nodeReboot.unknownStateWarning')}</div>
+            ) : null}
+            <Toolbar>
+              {rebootState.available ? (
+                <Button
+                  variant="danger"
+                  icon={<RotateCcw size={16} />}
+                  disabled={rebootPending}
+                  onClick={onOpenRebootDialog}
+                >
+                  {rebootPending ? t('nodes.lifecycleControls.nodeReboot.pending') : t('nodes.lifecycleControls.nodeReboot.buttonLabel')}
+                </Button>
+              ) : null}
+            </Toolbar>
           </div>
         </CardBody>
       </Card>

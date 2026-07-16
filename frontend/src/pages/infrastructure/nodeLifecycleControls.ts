@@ -1,5 +1,5 @@
 import { APIError } from '../../shared/api/client';
-import type { NodeAgentIdentityRevokeInput, NodeDetail, NodeDiagnostics, NodeStaleRotationCandidate, NodeStaleRotationPreview } from '../../shared/api/types';
+import type { NodeAgentIdentityRevokeInput, NodeDetail, NodeDiagnostics, NodeRebootInput, NodeStaleRotationCandidate, NodeStaleRotationPreview } from '../../shared/api/types';
 
 export type NodeLifecycleSeverity = 'healthy' | 'warning' | 'blocked' | 'neutral';
 
@@ -50,13 +50,42 @@ export type NodeAgentIdentityRevokeValidation = {
   };
 };
 
+export type NodeRebootForm = {
+  confirmation: string;
+  reason: string;
+  acknowledged: boolean;
+};
+
+export type NodeRebootValidation = {
+  valid: boolean;
+  expectedConfirmation: string;
+  input?: NodeRebootInput;
+  errors: {
+    confirmation?: string;
+    reason?: string;
+    acknowledgement?: string;
+  };
+};
+
+export type NodeRebootActionState = {
+  available: boolean;
+  blockedKey?: string;
+  unknownState: boolean;
+};
+
 export const NODE_AGENT_IDENTITY_REVOKE_MAX_CONFIRMATION_LENGTH = 512;
 export const NODE_AGENT_IDENTITY_REVOKE_MIN_REASON_LENGTH = 5;
 export const NODE_AGENT_IDENTITY_REVOKE_MAX_REASON_LENGTH = 500;
+export const NODE_REBOOT_MAX_CONFIRMATION_LENGTH = 512;
+export const NODE_REBOOT_MIN_REASON_LENGTH = 5;
+export const NODE_REBOOT_MAX_REASON_LENGTH = 500;
 
 const healthyStatuses = new Set(['active', 'available', 'connected', 'healthy', 'ok', 'online', 'ready', 'registered', 'running', 'succeeded']);
 const warningStatuses = new Set(['pending', 'queued', 'rotating', 'starting', 'stale', 'unknown', 'warn', 'warning']);
 const blockedStatuses = new Set(['blocked', 'deleted', 'disabled', 'failed', 'offline', 'retired', 'revoked', 'unavailable']);
+const terminalNodeRebootStatuses = new Set(['deleted', 'deleting', 'retired', 'terminated']);
+const missingAgentIdentityStatuses = new Set(['missing', 'none', 'not_found', 'deleted']);
+const unavailableAgentChannelStatuses = new Set(['auth_failed', 'authentication_failed', 'blocked', 'disconnected', 'failed', 'offline', 'revoked', 'unavailable']);
 const unsafeReasonMarkers = [
   'authorization:',
   'bearer ',
@@ -104,7 +133,18 @@ export function nodeAgentIdentityExpectedConfirmation(node: Pick<NodeDetail, 'id
   return String(node.name || '').trim() || node.id;
 }
 
+export function nodeRebootExpectedConfirmation(node: Pick<NodeDetail, 'id' | 'name'>): string {
+  return String(node.name || '').trim() || node.id;
+}
+
 export function reasonLooksUnsafeForNodeAgentIdentityRevoke(reason: string): boolean {
+  if (hasControlCharacter(reason)) return true;
+  if (reason.includes('{') || reason.includes('}')) return true;
+  const lower = reason.toLowerCase();
+  return unsafeReasonMarkers.some((marker) => lower.includes(marker));
+}
+
+export function reasonLooksUnsafeForNodeReboot(reason: string): boolean {
   if (hasControlCharacter(reason)) return true;
   if (reason.includes('{') || reason.includes('}')) return true;
   const lower = reason.toLowerCase();
@@ -156,6 +196,81 @@ export function validateNodeAgentIdentityRevokeForm(node: Pick<NodeDetail, 'id' 
     input: valid ? { confirmation, reason } : undefined,
     errors,
   };
+}
+
+export function validateNodeRebootForm(node: Pick<NodeDetail, 'id' | 'name'>, form: NodeRebootForm): NodeRebootValidation {
+  const expectedConfirmation = nodeRebootExpectedConfirmation(node);
+  const confirmation = form.confirmation.trim();
+  const reason = form.reason.trim();
+  const errors: NodeRebootValidation['errors'] = {};
+
+  if (!confirmation) {
+    errors.confirmation = 'nodes.lifecycleControls.nodeReboot.errors.confirmationRequired';
+  } else if (confirmation.length > NODE_REBOOT_MAX_CONFIRMATION_LENGTH) {
+    errors.confirmation = 'nodes.lifecycleControls.nodeReboot.errors.confirmationTooLong';
+  } else if (hasControlCharacter(confirmation)) {
+    errors.confirmation = 'nodes.lifecycleControls.nodeReboot.errors.confirmationUnsafe';
+  } else if (confirmation !== expectedConfirmation) {
+    errors.confirmation = 'nodes.lifecycleControls.nodeReboot.errors.confirmationMismatch';
+  }
+
+  if (!reason) {
+    errors.reason = 'nodes.lifecycleControls.nodeReboot.errors.reasonRequired';
+  } else if (reason.length < NODE_REBOOT_MIN_REASON_LENGTH) {
+    errors.reason = 'nodes.lifecycleControls.nodeReboot.errors.reasonTooShort';
+  } else if (reason.length > NODE_REBOOT_MAX_REASON_LENGTH) {
+    errors.reason = 'nodes.lifecycleControls.nodeReboot.errors.reasonTooLong';
+  } else if (reasonLooksUnsafeForNodeReboot(reason)) {
+    errors.reason = 'nodes.lifecycleControls.nodeReboot.errors.reasonUnsafe';
+  }
+
+  if (!form.acknowledged) {
+    errors.acknowledgement = 'nodes.lifecycleControls.nodeReboot.errors.acknowledgementRequired';
+  }
+
+  const valid = !errors.confirmation && !errors.reason && !errors.acknowledgement;
+  return {
+    valid,
+    expectedConfirmation,
+    input: valid ? { confirmation, reason } : undefined,
+    errors,
+  };
+}
+
+export function deriveNodeRebootActionState(input: {
+  node: NodeDetail;
+  diagnostics?: NodeDiagnostics;
+  canBootstrapNode: boolean;
+  lifecycleDataCurrent: boolean;
+}): NodeRebootActionState {
+  const { node, diagnostics, canBootstrapNode, lifecycleDataCurrent } = input;
+  const nodeStatus = normalizeLifecycleStatus(node.status);
+  const agentStatus = normalizeLifecycleStatus(diagnostics?.agent?.status || node.agent_status || '');
+  const communicationState = normalizeLifecycleStatus(diagnostics?.communication_state || node.agent_channel_status || '');
+  const identityMissing = missingAgentIdentityStatuses.has(agentStatus);
+  const identityRevoked = agentStatus === 'revoked' || Boolean(diagnostics?.agent?.revoked_at);
+  const channelUnavailable = unavailableAgentChannelStatuses.has(communicationState);
+  const unknownState = !agentStatus || agentStatus === 'unknown' || !communicationState || communicationState === 'unknown';
+
+  if (!canBootstrapNode) {
+    return { available: false, blockedKey: 'nodes.lifecycleControls.nodeReboot.blocked.permissionRequired', unknownState };
+  }
+  if (!lifecycleDataCurrent) {
+    return { available: false, blockedKey: 'nodes.lifecycleControls.nodeReboot.blocked.lifecycleDataStale', unknownState: true };
+  }
+  if (terminalNodeRebootStatuses.has(nodeStatus)) {
+    return { available: false, blockedKey: 'nodes.lifecycleControls.nodeReboot.blocked.terminalNode', unknownState };
+  }
+  if (identityRevoked) {
+    return { available: false, blockedKey: 'nodes.lifecycleControls.nodeReboot.blocked.identityRevoked', unknownState };
+  }
+  if (identityMissing) {
+    return { available: false, blockedKey: 'nodes.lifecycleControls.nodeReboot.blocked.identityMissing', unknownState };
+  }
+  if (channelUnavailable) {
+    return { available: false, blockedKey: 'nodes.lifecycleControls.nodeReboot.blocked.channelUnavailable', unknownState };
+  }
+  return { available: true, unknownState };
 }
 
 export function lifecycleSeverityForStatus(value: unknown): NodeLifecycleSeverity {
@@ -319,6 +434,38 @@ export function nodeAgentIdentityRevokeErrorKey(error: unknown): string {
       return 'nodes.lifecycleControls.agentIdentityRevoke.errors.serviceUnavailable';
     default:
       return 'nodes.lifecycleControls.agentIdentityRevoke.errors.generic';
+  }
+}
+
+export function nodeRebootErrorKey(error: unknown): string {
+  if (!(error instanceof APIError)) return 'nodes.lifecycleControls.nodeReboot.errors.generic';
+  if (error.status === 403) return 'nodes.lifecycleControls.nodeReboot.errors.permissionRequired';
+  const code = apiErrorCode(error);
+  if (code === 'node_reboot_confirmation_mismatch') return 'nodes.lifecycleControls.nodeReboot.errors.confirmationMismatchBackend';
+  if (code === 'node_reboot_agent_missing') return 'nodes.lifecycleControls.nodeReboot.errors.agentMissing';
+  if (code === 'node_reboot_agent_unavailable') return 'nodes.lifecycleControls.nodeReboot.errors.agentUnavailable';
+  if (code === 'node_reboot_conflict') return 'nodes.lifecycleControls.nodeReboot.errors.conflict';
+  if (code === 'node_reboot_node_not_found') return 'nodes.lifecycleControls.nodeReboot.errors.nodeNotFound';
+  if (code === 'node_reboot_request_invalid') return 'nodes.lifecycleControls.nodeReboot.errors.requestInvalid';
+  if (code === 'node_reboot_internal_error') return 'nodes.lifecycleControls.nodeReboot.errors.serviceUnavailable';
+
+  switch (error.status) {
+    case 400:
+    case 422:
+      return 'nodes.lifecycleControls.nodeReboot.errors.requestInvalid';
+    case 403:
+      return 'nodes.lifecycleControls.nodeReboot.errors.permissionRequired';
+    case 404:
+      return 'nodes.lifecycleControls.nodeReboot.errors.nodeNotFound';
+    case 409:
+      return 'nodes.lifecycleControls.nodeReboot.errors.conflict';
+    case 429:
+      return 'nodes.lifecycleControls.nodeReboot.errors.rateLimited';
+    case 500:
+    case 503:
+      return 'nodes.lifecycleControls.nodeReboot.errors.serviceUnavailable';
+    default:
+      return 'nodes.lifecycleControls.nodeReboot.errors.generic';
   }
 }
 

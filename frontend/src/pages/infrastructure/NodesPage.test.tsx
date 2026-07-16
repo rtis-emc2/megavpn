@@ -301,6 +301,13 @@ describe('NodesPage', () => {
   let currentStaleRotationPreview: NodeStaleRotationPreview;
   let agentRevokeResponseNodeId: string;
   let agentRevokeAlreadyRevoked: boolean;
+  let nodeRebootResponseNodeId: string;
+  let nodeRebootResponseScopeId: string;
+  let nodeRebootResponseType: string;
+  let nodeRebootResponseStatus: string;
+  let nodeRebootErrorCode: string;
+  let delayNodeRebootResponse: boolean;
+  let resolveNodeRebootResponse: (() => void) | null;
   let manualBundleRevealContent: string;
   let manualBundleDownloadContent: string;
   let emptyEnrollmentIssueResponse: boolean;
@@ -355,6 +362,13 @@ describe('NodesPage', () => {
     currentStaleRotationPreview = clone(staleRotationPreview);
     agentRevokeResponseNodeId = 'node-1';
     agentRevokeAlreadyRevoked = false;
+    nodeRebootResponseNodeId = 'node-1';
+    nodeRebootResponseScopeId = 'node-1';
+    nodeRebootResponseType = 'node.reboot';
+    nodeRebootResponseStatus = 'queued';
+    nodeRebootErrorCode = 'node_reboot_agent_unavailable';
+    delayNodeRebootResponse = false;
+    resolveNodeRebootResponse = null;
     manualBundleRevealContent = '';
     manualBundleDownloadContent = '';
     emptyEnrollmentIssueResponse = false;
@@ -666,6 +680,38 @@ describe('NodesPage', () => {
           already_revoked: agentRevokeAlreadyRevoked,
           revoked_enrollment_tokens: agentRevokeAlreadyRevoked ? 0 : 1,
         });
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/reboot') {
+        if (delayNodeRebootResponse) {
+          await new Promise<void>((resolve) => {
+            resolveNodeRebootResponse = resolve;
+          });
+        }
+        const status = actionErrors.nodeReboot;
+        if (status) {
+          const messages: Record<number, { code: string; error: string }> = {
+            400: { code: 'node_reboot_request_invalid', error: 'invalid reboot request contains command output' },
+            403: { code: 'node_reboot_request_invalid', error: 'node.bootstrap permission required Authorization: Bearer raw' },
+            404: { code: 'node_reboot_node_not_found', error: 'node not found secret_ref raw' },
+            409: { code: nodeRebootErrorCode, error: 'node reboot conflict token_hash raw command output' },
+            429: { code: 'rate_limited', error: 'rate limited token raw' },
+            500: { code: 'node_reboot_internal_error', error: 'store failed token_hash raw' },
+            503: { code: 'node_reboot_internal_error', error: 'service unavailable secret_ref raw' },
+          };
+          const payload = messages[status] || { code: 'node_reboot_internal_error', error: 'node reboot failed' };
+          return json({ status: 'error', ...payload }, status);
+        }
+        return json({
+          id: 'job-reboot-1',
+          type: nodeRebootResponseType,
+          status: nodeRebootResponseStatus,
+          scope_type: 'node',
+          scope_id: nodeRebootResponseScopeId,
+          node_id: nodeRebootResponseNodeId,
+          created_at: '2026-07-09T08:13:00Z',
+          payload: { command: 'raw-command-output-not-rendered' },
+          result: { output: 'raw-command-output-not-rendered' },
+        }, 202);
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/agent-token/rotate') return json(job('job-agent-rotate', 'node.agent.rotate_token'), 202);
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/ssh/sessions') {
@@ -1017,8 +1063,8 @@ describe('NodesPage', () => {
     ]) {
       expect(calls.some((call) => call.method === 'POST' && call.path === forbiddenPath)).toBe(false);
     }
+    expect(screen.getByRole('button', { name: /queue reboot/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /revoke agent identity/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /reboot node/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /emergency cleanup/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /clear stale rotation/i })).not.toBeInTheDocument();
   });
@@ -1129,6 +1175,158 @@ describe('NodesPage', () => {
     expect(await screen.findByText('Permission required: node.bootstrap')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Revoke agent identity' })).not.toBeInTheDocument();
     expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/agent-identity/revoke')).toBe(false);
+  });
+
+  it('queues node reboot through the dedicated dialog with queued-only success semantics', async () => {
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    const queryClient = await openNode();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Queue reboot' }));
+
+    const dialog = activeDialog();
+    expect(within(dialog).getByRole('heading', { name: 'Reboot node' })).toBeInTheDocument();
+    expect(within(dialog).getByText('This confirms queueing only. It does not confirm that the node rebooted or returned online.')).toBeInTheDocument();
+    expect(within(dialog).getByText('May interrupt VPN and proxy traffic handled by this node.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Revoke the agent identity.')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Queue reboot' })).toBeDisabled();
+
+    await userEvent.type(within(dialog).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(dialog).getByLabelText('Operator reason'), 'maintenance window');
+    await userEvent.click(within(dialog).getByLabelText(/I understand that this queues a reboot job only/));
+    await userEvent.dblClick(within(dialog).getByRole('button', { name: 'Queue reboot' }));
+
+    await waitFor(() => expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/reboot')).toHaveLength(1));
+    const rebootCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/reboot');
+    expect(rebootCall?.body).toEqual({ confirmation: 'Edge One', reason: 'maintenance window' });
+    expect(Object.keys(rebootCall?.body || {}).sort()).toEqual(['confirmation', 'reason']);
+    expect(rebootCall?.body).not.toHaveProperty('acknowledged');
+    expect(rebootCall?.body).not.toHaveProperty('node_id');
+    expect(rebootCall?.body).not.toHaveProperty('maintenance');
+    expect(rebootCall?.headers['x-megavpn-csrf']).toBe('1');
+
+    expect((await screen.findAllByText('Node reboot job queued.')).length).toBeGreaterThan(0);
+    expect(screen.getByText('This confirms queueing only. It does not confirm that the node rebooted or returned online.')).toBeInTheDocument();
+    expect(screen.getByText('job-reboot-1')).toBeInTheDocument();
+    expect(screen.getByText('node.reboot')).toBeInTheDocument();
+    expect(screen.getAllByText('queued').length).toBeGreaterThan(0);
+    expect(screen.getByRole('tab', { name: 'Lifecycle' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('dialog', { name: 'Reboot node' })).not.toBeInTheDocument();
+    expect(document.body.textContent || '').not.toMatch(/reboot successful|node is restarting|node recovered|services restored/i);
+    expect(document.body.textContent || '').not.toContain('raw-command-output-not-rendered');
+    expect(storageSet.mock.calls.some(([key, value]) => /reboot|reason|confirmation|job|token|agent/i.test(String(key)) || /maintenance window|Edge One|raw-command-output/.test(String(value)))).toBe(false);
+    await waitFor(() => expect(JSON.stringify(queryClient.getMutationCache().getAll().map((mutation) => mutation.state.variables))).not.toContain('maintenance window'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open Jobs' }));
+    expect(screen.getByRole('tab', { name: 'Jobs / Activity' })).toHaveAttribute('aria-selected', 'true');
+    expect(document.body.textContent || '').not.toContain('raw-command-output-not-rendered');
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/maintenance/enable')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/emergency-cleanup')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/diagnostics/clear-stale-rotation')).toBe(false);
+    expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
+  });
+
+  it('does not treat unexpected reboot job type, node ownership or status as success', async () => {
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+
+    nodeRebootResponseType = 'node.inventory.sync';
+    await userEvent.click(await screen.findByRole('button', { name: 'Queue reboot' }));
+    await userEvent.type(within(activeDialog()).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(activeDialog()).getByLabelText('Operator reason'), 'maintenance window');
+    await userEvent.click(within(activeDialog()).getByLabelText(/I understand that this queues a reboot job only/));
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Queue reboot' }));
+    expect(await screen.findByText('Backend returned an unexpected reboot job response. Current UI state was not marked successful; refresh node data.')).toBeInTheDocument();
+    expect(within(activeDialog()).getByRole('heading', { name: 'Reboot node' })).toBeInTheDocument();
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Cancel' }));
+
+    nodeRebootResponseType = 'node.reboot';
+    nodeRebootResponseNodeId = 'node-other';
+    await userEvent.click(screen.getByRole('button', { name: 'Queue reboot' }));
+    await userEvent.type(within(activeDialog()).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(activeDialog()).getByLabelText('Operator reason'), 'maintenance window');
+    await userEvent.click(within(activeDialog()).getByLabelText(/I understand that this queues a reboot job only/));
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Queue reboot' }));
+    expect(await screen.findByText('Backend returned an unexpected reboot job response. Current UI state was not marked successful; refresh node data.')).toBeInTheDocument();
+    expect(within(activeDialog()).getByRole('heading', { name: 'Reboot node' })).toBeInTheDocument();
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Cancel' }));
+
+    nodeRebootResponseNodeId = 'node-1';
+    nodeRebootResponseScopeId = 'node-other';
+    await userEvent.click(screen.getByRole('button', { name: 'Queue reboot' }));
+    await userEvent.type(within(activeDialog()).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(activeDialog()).getByLabelText('Operator reason'), 'maintenance window');
+    await userEvent.click(within(activeDialog()).getByLabelText(/I understand that this queues a reboot job only/));
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Queue reboot' }));
+    expect(await screen.findByText('Backend returned an unexpected reboot job response. Current UI state was not marked successful; refresh node data.')).toBeInTheDocument();
+    expect(within(activeDialog()).getByRole('heading', { name: 'Reboot node' })).toBeInTheDocument();
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Cancel' }));
+
+    nodeRebootResponseScopeId = 'node-1';
+    nodeRebootResponseStatus = 'running';
+    await userEvent.click(screen.getByRole('button', { name: 'Queue reboot' }));
+    await userEvent.type(within(activeDialog()).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(activeDialog()).getByLabelText('Operator reason'), 'maintenance window');
+    await userEvent.click(within(activeDialog()).getByLabelText(/I understand that this queues a reboot job only/));
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Queue reboot' }));
+    expect(await screen.findByText('Backend returned an unexpected reboot job response. Current UI state was not marked successful; refresh node data.')).toBeInTheDocument();
+    expect(screen.queryByText('Node reboot job queued.')).not.toBeInTheDocument();
+  });
+
+  it('maps node reboot backend errors safely and keeps the dialog open for correction', async () => {
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+
+    const cases = [
+      { status: 400, text: 'Invalid reboot request. Review confirmation and reason.' },
+      { status: 403, text: 'node.bootstrap permission is required to queue node reboot.' },
+      { status: 404, text: 'Node no longer exists. Refresh node state.' },
+      { status: 409, code: 'node_reboot_agent_missing', text: 'Backend reports that the active agent identity is missing.' },
+      { status: 409, code: 'node_reboot_agent_unavailable', text: 'Backend reports that the agent channel is unavailable for reboot queueing.' },
+      { status: 409, code: 'node_reboot_conflict', text: 'Another active node operation prevents reboot queueing. Review Jobs and retry explicitly after the conflict is resolved.' },
+      { status: 500, text: 'Node reboot queueing is unavailable or failed server-side. No successful queueing may be assumed.' },
+    ];
+
+    for (const item of cases) {
+      actionErrors.nodeReboot = item.status;
+      nodeRebootErrorCode = item.code || 'node_reboot_agent_unavailable';
+      await userEvent.click(screen.getByRole('button', { name: 'Queue reboot' }));
+      await userEvent.type(within(activeDialog()).getByLabelText('Typed node name'), 'Edge One');
+      await userEvent.type(within(activeDialog()).getByLabelText('Operator reason'), 'maintenance window');
+      await userEvent.click(within(activeDialog()).getByLabelText(/I understand that this queues a reboot job only/));
+      await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Queue reboot' }));
+      expect(await within(activeDialog()).findByText(item.text)).toBeInTheDocument();
+      expect(activeDialog()).not.toHaveTextContent('token_hash raw');
+      expect(activeDialog()).not.toHaveTextContent('Authorization: Bearer');
+      expect(screen.queryByText('Node reboot job queued.')).not.toBeInTheDocument();
+      await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Cancel' }));
+    }
+  });
+
+  it('keeps node reboot disabled without node.bootstrap permission', async () => {
+    await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    expect(await screen.findByText('node.bootstrap permission is required to queue a node reboot.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Queue reboot' })).not.toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/reboot')).toBe(false);
+  });
+
+  it('ignores a stale node reboot response after the dialog is cancelled', async () => {
+    delayNodeRebootResponse = true;
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Queue reboot' }));
+    await userEvent.type(within(activeDialog()).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(activeDialog()).getByLabelText('Operator reason'), 'maintenance window');
+    await userEvent.click(within(activeDialog()).getByLabelText(/I understand that this queues a reboot job only/));
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Queue reboot' }));
+    await waitFor(() => expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/reboot')).toHaveLength(1));
+    await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Cancel' }));
+    resolveNodeRebootResponse?.();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Reboot node' })).not.toBeInTheDocument());
+    expect(screen.queryByText('Node reboot job queued.')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Lifecycle' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('reveals, copies and downloads manual bootstrap bundles only after explicit acknowledgement', async () => {

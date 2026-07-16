@@ -25,6 +25,7 @@ import type {
   NodeBootstrapBundleRevealResult,
   NodeBootstrapRun,
   NodeInventorySnapshot,
+  NodeRebootInput,
   NodeServiceDiscovery,
   NodeServiceInstaller,
   NodeStaleRotationPreview,
@@ -35,6 +36,7 @@ import {
   useBootstrapNode,
   useCreateNode,
   useCreateEnrollmentToken,
+  useCreateNodeRebootJob,
   useCreateNodeSSHAccessMethod,
   useDiscoverNodeServices,
   useForceRetireNode,
@@ -92,6 +94,7 @@ import {
   type NodeBootstrapModeAvailability,
 } from './nodeBootstrapReadiness';
 import { NodeAgentIdentityRevokeDialog } from './NodeAgentIdentityRevokeDialog';
+import { NodeRebootDialog } from './NodeRebootDialog';
 
 type NodeTab = 'overview' | 'runtime' | 'onboarding' | 'inventory' | 'capabilities' | 'diagnostics' | 'discovery' | 'bootstrap' | 'security' | 'terminal' | 'lifecycle' | 'jobs';
 
@@ -140,6 +143,8 @@ type RevealedBootstrapBundle = {
 type InitialNodeBootstrapRequest = {
   bootstrap_mode: NodeBootstrapMode;
 };
+
+type SafeQueuedNodeRebootJob = Pick<Job, 'id' | 'type' | 'status' | 'created_at' | 'node_id' | 'scope_id'>;
 
 type NodeProfileFormState = {
   name: string;
@@ -350,6 +355,24 @@ function recordJobsFrom(result: unknown): Job[] {
     return candidate.jobs.flatMap(recordJobsFrom);
   }
   return [];
+}
+
+function nodeRebootJobBelongsToNode(job: Job, nodeId: string): boolean {
+  const nodeRef = typeof job.node_id === 'string' ? job.node_id : '';
+  const scopeRef = typeof job.scope_id === 'string' ? job.scope_id : '';
+  return (!nodeRef || nodeRef === nodeId) && (!scopeRef || scopeRef === nodeId);
+}
+
+function safeQueuedNodeRebootJob(job: Job, nodeId: string): SafeQueuedNodeRebootJob | null {
+  if (job.type !== 'node.reboot' || job.status !== 'queued' || !nodeRebootJobBelongsToNode(job, nodeId)) return null;
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    created_at: job.created_at,
+    node_id: job.node_id,
+    scope_id: job.scope_id,
+  };
 }
 
 function compactDiagnostics(diagnostics?: NodeDiagnostics): APIRecord {
@@ -612,8 +635,11 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const [guidedInventoryJobIds, setGuidedInventoryJobIds] = useState<string[]>([]);
   const [oneTimePanel, setOneTimePanel] = useState<OneTimePanelState | null>(null);
   const [agentRevokeNodeId, setAgentRevokeNodeId] = useState<string | null>(null);
+  const [nodeRebootNodeId, setNodeRebootNodeId] = useState<string | null>(null);
+  const [queuedNodeRebootJob, setQueuedNodeRebootJob] = useState<SafeQueuedNodeRebootJob | null>(null);
   const secretRequestRef = useRef(0);
   const agentRevokeRequestRef = useRef(0);
+  const nodeRebootRequestRef = useRef(0);
   const selectedNodeIdRef = useRef(nodeId);
   const canBootstrapRef = useRef(canBootstrapNodes);
   const cachedOnboardingNode = queryClient.getQueryData<NodeDetail>(['node', nodeId]) || node;
@@ -662,7 +688,9 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const retire = useRetireNode();
   const forceRetire = useForceRetireNode();
   const revokeAgentIdentity = useRevokeNodeAgentIdentity();
+  const createRebootJob = useCreateNodeRebootJob();
   const resetAgentIdentityRevoke = revokeAgentIdentity.reset;
+  const resetNodeReboot = createRebootJob.reset;
   const current = detail.data || node;
   const busy = maintenance.isPending
     || syncInventory.isPending
@@ -684,41 +712,55 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     || launchSSH.isPending
     || retire.isPending
     || forceRetire.isPending
-    || revokeAgentIdentity.isPending;
+    || revokeAgentIdentity.isPending
+    || createRebootJob.isPending;
 
   useEffect(() => {
     selectedNodeIdRef.current = nodeId;
     secretRequestRef.current += 1;
     agentRevokeRequestRef.current += 1;
+    nodeRebootRequestRef.current += 1;
     const timeout = window.setTimeout(() => {
       setOneTimePanel(null);
       setAgentRevokeNodeId(null);
+      setNodeRebootNodeId(null);
+      setQueuedNodeRebootJob(null);
       resetAgentIdentityRevoke();
+      resetNodeReboot();
       setGuidedBootstrapJobIds([]);
       setGuidedBootstrapRunIds([]);
       setGuidedInventoryJobIds([]);
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [nodeId, resetAgentIdentityRevoke]);
+  }, [nodeId, resetAgentIdentityRevoke, resetNodeReboot]);
 
   useEffect(() => {
     canBootstrapRef.current = canBootstrapNodes;
     if (!canBootstrapNodes) {
       secretRequestRef.current += 1;
-      const timeout = window.setTimeout(() => setOneTimePanel(null), 0);
+      nodeRebootRequestRef.current += 1;
+      const timeout = window.setTimeout(() => {
+        setOneTimePanel(null);
+        setNodeRebootNodeId(null);
+        resetNodeReboot();
+      }, 0);
       return () => window.clearTimeout(timeout);
     }
     return undefined;
-  }, [canBootstrapNodes]);
+  }, [canBootstrapNodes, resetNodeReboot]);
 
   useEffect(() => {
     if (!open) {
       secretRequestRef.current += 1;
       agentRevokeRequestRef.current += 1;
+      nodeRebootRequestRef.current += 1;
       const timeout = window.setTimeout(() => {
         setOneTimePanel(null);
         setAgentRevokeNodeId(null);
+        setNodeRebootNodeId(null);
+        setQueuedNodeRebootJob(null);
         resetAgentIdentityRevoke();
+        resetNodeReboot();
         setGuidedBootstrapJobIds([]);
         setGuidedBootstrapRunIds([]);
         setGuidedInventoryJobIds([]);
@@ -726,7 +768,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       return () => window.clearTimeout(timeout);
     }
     return undefined;
-  }, [open, resetAgentIdentityRevoke]);
+  }, [open, resetAgentIdentityRevoke, resetNodeReboot]);
 
   useEffect(() => {
     if (inventory.data?.id && guidedInventoryJobIds.length) {
@@ -785,6 +827,19 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     resetAgentIdentityRevoke();
   };
 
+  const openNodeRebootDialog = () => {
+    if (!current || !canBootstrapNodes) return;
+    nodeRebootRequestRef.current += 1;
+    resetNodeReboot();
+    setNodeRebootNodeId(current.id);
+  };
+
+  const closeNodeRebootDialog = () => {
+    nodeRebootRequestRef.current += 1;
+    setNodeRebootNodeId(null);
+    resetNodeReboot();
+  };
+
   const submitAgentIdentityRevoke = async (input: NodeAgentIdentityRevokeInput) => {
     const targetNodeId = agentRevokeNodeId;
     if (!targetNodeId || targetNodeId !== current?.id || !canBootstrapNodes) return;
@@ -808,6 +863,40 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     void diagnostics.refetch();
     void enrollmentTokens.refetch();
     void staleRotationPreview.refetch();
+  };
+
+  const submitNodeReboot = async (input: NodeRebootInput) => {
+    const targetNodeId = nodeRebootNodeId;
+    if (!targetNodeId || targetNodeId !== current?.id || !canBootstrapNodes) return;
+    const requestId = nodeRebootRequestRef.current + 1;
+    nodeRebootRequestRef.current = requestId;
+    try {
+      const job = await createRebootJob.mutateAsync({ nodeId: targetNodeId, input });
+      const safeJob = safeQueuedNodeRebootJob(job, targetNodeId);
+      if (
+        nodeRebootRequestRef.current !== requestId
+        || selectedNodeIdRef.current !== targetNodeId
+        || current?.id !== targetNodeId
+        || !safeJob
+      ) {
+        setNotice(t('nodes.lifecycleControls.nodeReboot.errors.contractMismatch'));
+        void detail.refetch();
+        void diagnostics.refetch();
+        return;
+      }
+      closeNodeRebootDialog();
+      setActiveTab('lifecycle');
+      setQueuedNodeRebootJob({ ...safeJob, node_id: targetNodeId });
+      setNotice(t('nodes.lifecycleControls.nodeReboot.queuedSuccess'));
+      void detail.refetch();
+      void diagnostics.refetch();
+    } catch (error) {
+      if (error instanceof APIError && (error.status === 403 || error.status === 404 || error.status === 409 || error.status === 500 || error.status === 503)) {
+        void detail.refetch();
+        void diagnostics.refetch();
+      }
+      throw error;
+    }
   };
 
   const visibleOneTimePanel = open && canBootstrapNodes && oneTimePanel?.nodeId === current?.id ? oneTimePanel : null;
@@ -1051,6 +1140,8 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const diagnosticsAgentBelongsToCurrent = !diagnostics.data?.agent?.node_id || diagnostics.data.agent.node_id === current?.id;
   const lifecycleDataCurrent = Boolean(current && diagnosticsBelongsToCurrent && diagnosticsAgentBelongsToCurrent);
   const agentRevokeDialogNode = current && agentRevokeNodeId === current.id ? current : undefined;
+  const nodeRebootDialogNode = current && nodeRebootNodeId === current.id ? current : undefined;
+  const currentQueuedNodeRebootJob = queuedNodeRebootJob?.node_id === current?.id ? queuedNodeRebootJob : null;
 
   return (
     <Drawer title={nodeLabel(current)} open={open} onClose={onClose}>
@@ -1209,7 +1300,11 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 canBootstrapNode={canBootstrapNodes}
                 lifecycleDataCurrent={lifecycleDataCurrent}
                 revokePending={revokeAgentIdentity.isPending}
+                rebootPending={createRebootJob.isPending}
+                queuedNodeRebootJob={currentQueuedNodeRebootJob}
                 onOpenAgentIdentityRevoke={openAgentIdentityRevokeDialog}
+                onOpenNodeReboot={openNodeRebootDialog}
+                onOpenJobs={() => setActiveTab('jobs')}
                 onRefreshStaleRotationPreview={() => void staleRotationPreview.refetch()}
               />
             ) : null}
@@ -1244,6 +1339,18 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 canBootstrapNode={canBootstrapNodes}
                 onCancel={closeAgentIdentityRevokeDialog}
                 onConfirm={submitAgentIdentityRevoke}
+              />
+            ) : null}
+            {nodeRebootDialogNode ? (
+              <NodeRebootDialog
+                open={Boolean(nodeRebootDialogNode)}
+                node={nodeRebootDialogNode}
+                diagnostics={diagnostics.data}
+                pending={createRebootJob.isPending}
+                error={createRebootJob.error}
+                canBootstrapNode={canBootstrapNodes}
+                onCancel={closeNodeRebootDialog}
+                onConfirm={submitNodeReboot}
               />
             ) : null}
           </div>
@@ -2340,7 +2447,11 @@ function LifecycleTab({
   canBootstrapNode,
   lifecycleDataCurrent,
   revokePending,
+  rebootPending,
+  queuedNodeRebootJob,
   onOpenAgentIdentityRevoke,
+  onOpenNodeReboot,
+  onOpenJobs,
   onRefreshStaleRotationPreview,
 }: {
   node: NodeDetail;
@@ -2355,10 +2466,15 @@ function LifecycleTab({
   canBootstrapNode: boolean;
   lifecycleDataCurrent: boolean;
   revokePending: boolean;
+  rebootPending: boolean;
+  queuedNodeRebootJob?: SafeQueuedNodeRebootJob | null;
   onOpenAgentIdentityRevoke: () => void;
+  onOpenNodeReboot: () => void;
+  onOpenJobs: () => void;
   onRefreshStaleRotationPreview: () => void;
 }) {
   const { t } = useTranslation();
+  const fmt = useLocaleFormat();
   const [confirmation, setConfirmation] = useState('');
   const [reason, setReason] = useState('');
   const expected = nodeLabel(node);
@@ -2376,9 +2492,33 @@ function LifecycleTab({
         canBootstrapNode={canBootstrapNode}
         lifecycleDataCurrent={lifecycleDataCurrent}
         revokePending={revokePending}
+        rebootPending={rebootPending}
         onOpenRevokeDialog={onOpenAgentIdentityRevoke}
+        onOpenRebootDialog={onOpenNodeReboot}
         onRefreshStaleRotationPreview={onRefreshStaleRotationPreview}
       />
+      {queuedNodeRebootJob ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <Toolbar>
+                <StatusBadge status={queuedNodeRebootJob.status || 'queued'} />
+                <Badge>{t('nodes.lifecycleControls.nodeReboot.queuedSuccess')}</Badge>
+              </Toolbar>
+              <p className="muted">{t('nodes.lifecycleControls.nodeReboot.queueOnlyDisclaimer')}</p>
+              <div className="definition-grid">
+                <span>{t('nodes.lifecycleControls.nodeReboot.jobId')}</span><strong><code title={queuedNodeRebootJob.id}>{shortID(queuedNodeRebootJob.id)}</code></strong>
+                <span>{t('nodes.lifecycleControls.nodeReboot.jobType')}</span><strong>{queuedNodeRebootJob.type}</strong>
+                <span>{t('nodes.lifecycleControls.nodeReboot.jobStatus')}</span><strong>{queuedNodeRebootJob.status}</strong>
+                <span>{t('nodes.lifecycleControls.nodeReboot.createdAt')}</span><strong>{fmt.date(queuedNodeRebootJob.created_at)}</strong>
+              </div>
+              <Toolbar>
+                <Button type="button" onClick={onOpenJobs}>{t('nodes.lifecycleControls.nodeReboot.openJobs')}</Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
       <Card>
         <CardBody>
           <div className="page-stack">

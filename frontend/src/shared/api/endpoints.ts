@@ -136,6 +136,7 @@ import type {
   NodeInventorySnapshot,
   NodeInventorySyncResult,
   NodeJobEnvelope,
+  NodeRebootInput,
   NodeRuntimeReconcileResult,
   NodeServiceDiscovery,
   NodeServiceDiscoveryImportResult,
@@ -404,6 +405,13 @@ export function getNodeStaleRotationPreview(nodeId: string): Promise<NodeStaleRo
 
 export function revokeNodeAgentIdentity(nodeId: string, input: NodeAgentIdentityRevokeInput): Promise<NodeAgentIdentityRevokeResult> {
   return sendJSON<NodeAgentIdentityRevokeResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/agent-identity/revoke`, 'POST', {
+    confirmation: input.confirmation,
+    reason: input.reason,
+  });
+}
+
+export function createNodeRebootJob(nodeId: string, input: NodeRebootInput): Promise<Job> {
+  return sendJSON<Job>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/reboot`, 'POST', {
     confirmation: input.confirmation,
     reason: input.reason,
   });

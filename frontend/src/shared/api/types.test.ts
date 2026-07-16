@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from 'vitest';
-import type { EnrollmentToken, EnrollmentTokenIssueResult, NodeAgentIdentityRevokeInput, NodeAgentIdentityRevokeResult, NodeStaleRotationCandidate, NodeStaleRotationPreview } from './types';
+import type { EnrollmentToken, EnrollmentTokenIssueResult, Job, NodeAgentIdentityRevokeInput, NodeAgentIdentityRevokeResult, NodeRebootInput, NodeStaleRotationCandidate, NodeStaleRotationPreview } from './types';
 
 describe('enrollment token API types', () => {
   it('keeps safe list tokens separate from secret-bearing issue responses', () => {
@@ -57,5 +57,26 @@ describe('node agent identity revoke API types', () => {
     expectTypeOf<NodeAgentIdentityRevokeResult>().not.toHaveProperty('token_hash');
     expectTypeOf<NodeAgentIdentityRevokeResult>().not.toHaveProperty('token_hint');
     expectTypeOf<NodeAgentIdentityRevokeResult>().not.toHaveProperty('secret_ref');
+  });
+});
+
+describe('node reboot API types', () => {
+  it('keeps the request exact and uses the redacted Job response contract', () => {
+    expectTypeOf<NodeRebootInput>().toEqualTypeOf<{
+      confirmation: string;
+      reason: string;
+    }>();
+    expectTypeOf<NodeRebootInput>().not.toHaveProperty('node_id');
+    expectTypeOf<NodeRebootInput>().not.toHaveProperty('acknowledged');
+    expectTypeOf<NodeRebootInput>().not.toHaveProperty('maintenance');
+    expectTypeOf<NodeRebootInput>().not.toHaveProperty('command');
+    expectTypeOf<NodeRebootInput>().not.toHaveProperty('token');
+
+    expectTypeOf<Job>().toHaveProperty('id');
+    expectTypeOf<Job>().toHaveProperty('type');
+    expectTypeOf<Job>().toHaveProperty('status');
+    expectTypeOf<Job>().toHaveProperty('scope_id');
+    expectTypeOf<Job>().toHaveProperty('node_id');
+    expectTypeOf<Job>().toHaveProperty('created_at');
   });
 });
