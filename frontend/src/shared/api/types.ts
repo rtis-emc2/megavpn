@@ -214,6 +214,33 @@ export type NodeRebootInput = {
   reason: string;
 };
 
+export type NodeEmergencyCleanupScope = 'services_only' | 'full_node';
+
+export type NodeEmergencyCleanupInput = {
+  cleanup_scope: NodeEmergencyCleanupScope;
+  include_agent: boolean;
+  confirmation: string;
+  reason: string;
+  acknowledge_destructive_cleanup: boolean;
+  acknowledge_agent_removal: boolean;
+};
+
+export type NodeEmergencyCleanupPlanSummary = {
+  cleanup_scope: NodeEmergencyCleanupScope;
+  include_agent: boolean;
+  instance_target_count: number;
+  service_counts: Record<string, number>;
+  node_runtime_cleanup: boolean;
+  agent_removal_requested: boolean;
+};
+
+export type NodeEmergencyCleanupResult = {
+  status: string;
+  message: string;
+  job: Job;
+  plan_summary: NodeEmergencyCleanupPlanSummary;
+};
+
 export type NodeCapability = APIRecord & {
   id: string;
   node_id?: string;

@@ -30,6 +30,7 @@ const node = {
   architecture: 'amd64',
   execution_mode: 'agent_managed',
   agent_status: 'online',
+  agent_channel_status: 'connected',
   agent_version: '8.0.0-agent',
   agent_protocol_version: 'v1',
   agent_last_seen_at: '2026-07-09T08:00:00Z',
@@ -308,6 +309,19 @@ describe('NodesPage', () => {
   let nodeRebootErrorCode: string;
   let delayNodeRebootResponse: boolean;
   let resolveNodeRebootResponse: (() => void) | null;
+  let emergencyCleanupResponseNodeId: string;
+  let emergencyCleanupResponseScopeId: string;
+  let emergencyCleanupResponseType: string;
+  let emergencyCleanupResponseStatus: string;
+  let emergencyCleanupWrapperStatus: string;
+  let emergencyCleanupPlanScope: string;
+  let emergencyCleanupPlanIncludeAgent: boolean;
+  let emergencyCleanupPlanAgentRemoval: boolean;
+  let emergencyCleanupPlanTargetCount: number;
+  let emergencyCleanupPlanServiceCounts: Record<string, number>;
+  let emergencyCleanupErrorCode: string;
+  let delayEmergencyCleanupResponse: boolean;
+  let resolveEmergencyCleanupResponse: (() => void) | null;
   let manualBundleRevealContent: string;
   let manualBundleDownloadContent: string;
   let emptyEnrollmentIssueResponse: boolean;
@@ -348,6 +362,43 @@ describe('NodesPage', () => {
     currentBootstrapRuns = [];
   }
 
+  function setEmergencyCleanupEligibleState() {
+    currentNode = {
+      ...currentNode,
+      status: 'maintenance',
+      agent_status: 'active',
+      agent_channel_status: 'connected',
+    };
+    nodeList = [currentNode];
+    currentDiagnostics = {
+      ...currentDiagnostics,
+      node: currentNode,
+      heartbeat_state: 'healthy',
+      communication_state: 'connected',
+      agent: {
+        ...(currentDiagnostics.agent || {}),
+        node_id: 'node-1',
+        status: 'active',
+        revoked_at: undefined,
+      },
+    };
+  }
+
+  async function completeEmergencyCleanupDialog(scope: 'services_only' | 'full_node' = 'services_only', includeAgent = false) {
+    const dialog = activeDialog();
+    await userEvent.selectOptions(within(dialog).getByLabelText('Cleanup scope'), scope);
+    if (includeAgent) {
+      await userEvent.click(within(dialog).getByLabelText(/Request MegaVPN agent self-removal/));
+    }
+    await userEvent.type(within(dialog).getByLabelText('Typed node name'), 'Edge One');
+    await userEvent.type(within(dialog).getByLabelText('Operator reason'), 'maintenance window');
+    await userEvent.click(within(dialog).getByLabelText(/I understand that this queues destructive managed-resource cleanup/));
+    if (includeAgent) {
+      await userEvent.click(within(dialog).getByLabelText(/I explicitly request agent self-removal/));
+    }
+    return dialog;
+  }
+
   beforeEach(async () => {
     calls.length = 0;
     actionErrors = {};
@@ -369,6 +420,19 @@ describe('NodesPage', () => {
     nodeRebootErrorCode = 'node_reboot_agent_unavailable';
     delayNodeRebootResponse = false;
     resolveNodeRebootResponse = null;
+    emergencyCleanupResponseNodeId = 'node-1';
+    emergencyCleanupResponseScopeId = 'node-1';
+    emergencyCleanupResponseType = 'node.emergency_cleanup';
+    emergencyCleanupResponseStatus = 'queued';
+    emergencyCleanupWrapperStatus = 'queued';
+    emergencyCleanupPlanScope = 'services_only';
+    emergencyCleanupPlanIncludeAgent = false;
+    emergencyCleanupPlanAgentRemoval = false;
+    emergencyCleanupPlanTargetCount = 3;
+    emergencyCleanupPlanServiceCounts = { openvpn: 1, xray: 2 };
+    emergencyCleanupErrorCode = 'node_emergency_cleanup_conflict';
+    delayEmergencyCleanupResponse = false;
+    resolveEmergencyCleanupResponse = null;
     manualBundleRevealContent = '';
     manualBundleDownloadContent = '';
     emptyEnrollmentIssueResponse = false;
@@ -711,6 +775,56 @@ describe('NodesPage', () => {
           created_at: '2026-07-09T08:13:00Z',
           payload: { command: 'raw-command-output-not-rendered' },
           result: { output: 'raw-command-output-not-rendered' },
+        }, 202);
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/emergency-cleanup') {
+        if (delayEmergencyCleanupResponse) {
+          await new Promise<void>((resolve) => {
+            resolveEmergencyCleanupResponse = resolve;
+          });
+        }
+        const status = actionErrors.emergencyCleanup;
+        if (status) {
+          const messages: Record<number, { code: string; error: string }> = {
+            400: { code: emergencyCleanupErrorCode || 'node_emergency_cleanup_request_invalid', error: 'invalid cleanup request Authorization: Bearer raw' },
+            403: { code: 'forbidden', error: 'node.bootstrap permission required secret_ref raw' },
+            404: { code: 'node_emergency_cleanup_node_not_found', error: 'node not found token_hash raw' },
+            409: { code: emergencyCleanupErrorCode, error: 'cleanup conflict target path /etc/private command output' },
+            422: { code: 'node_emergency_cleanup_plan_invalid', error: 'unsafe plan systemd unit private_key raw' },
+            429: { code: 'rate_limited', error: 'rate limited token raw' },
+            500: { code: 'node_emergency_cleanup_internal_error', error: 'store failed target payload raw' },
+            503: { code: 'node_emergency_cleanup_internal_error', error: 'service unavailable configuration raw' },
+          };
+          const payload = messages[status] || { code: 'node_emergency_cleanup_internal_error', error: 'emergency cleanup failed' };
+          return json({ status: 'error', ...payload }, status);
+        }
+        return json({
+          status: emergencyCleanupWrapperStatus,
+          message: 'raw backend cleanup message must not render',
+          job: {
+            id: 'job-emergency-cleanup-1',
+            type: emergencyCleanupResponseType,
+            status: emergencyCleanupResponseStatus,
+            scope_type: 'node',
+            scope_id: emergencyCleanupResponseScopeId,
+            node_id: emergencyCleanupResponseNodeId,
+            created_at: '2026-07-16T08:30:00Z',
+            payload: {
+              reason: 'operator reason must not render',
+              targets: ['/managed/path/must-not-render'],
+              systemd_units: ['unit-must-not-render.service'],
+              private_key: 'private-key-must-not-render',
+            },
+            result: { command_output: 'command-output-must-not-render' },
+          },
+          plan_summary: {
+            cleanup_scope: emergencyCleanupPlanScope,
+            include_agent: emergencyCleanupPlanIncludeAgent,
+            instance_target_count: emergencyCleanupPlanTargetCount,
+            service_counts: emergencyCleanupPlanServiceCounts,
+            node_runtime_cleanup: emergencyCleanupPlanScope === 'full_node',
+            agent_removal_requested: emergencyCleanupPlanAgentRemoval,
+          },
         }, 202);
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/agent-token/rotate') return json(job('job-agent-rotate', 'node.agent.rotate_token'), 202);
@@ -1073,7 +1187,7 @@ describe('NodesPage', () => {
     await openNode({ ...authPayload, permissions: ['node.write', 'node.bootstrap'] });
 
     await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('Permission required: node.read');
+    expect(screen.getByText('Permission required: node.read')).toBeInTheDocument();
     expect(calls.some((call) => call.path === '/api/v1/nodes/node-1/diagnostics/stale-rotation')).toBe(false);
   });
 
@@ -1327,6 +1441,210 @@ describe('NodesPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Reboot node' })).not.toBeInTheDocument());
     expect(screen.queryByText('Node reboot job queued.')).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Lifecycle' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('queues services-only Emergency Cleanup once and renders only safe queued metadata and backend summary', async () => {
+    setEmergencyCleanupEligibleState();
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    const queryClient = await openNode();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Configure Emergency Cleanup' }));
+    const dialog = await completeEmergencyCleanupDialog();
+    expect(within(dialog).getByText('This confirms queueing only. It does not confirm that cleanup or agent removal completed.')).toBeInTheDocument();
+    await userEvent.dblClick(within(dialog).getByRole('button', { name: 'Queue Emergency Cleanup' }));
+
+    await waitFor(() => expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/emergency-cleanup')).toHaveLength(1));
+    const cleanupCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/emergency-cleanup');
+    expect(cleanupCall?.body).toEqual({
+      cleanup_scope: 'services_only',
+      include_agent: false,
+      confirmation: 'Edge One',
+      reason: 'maintenance window',
+      acknowledge_destructive_cleanup: true,
+      acknowledge_agent_removal: false,
+    });
+    expect(Object.keys(cleanupCall?.body || {}).sort()).toEqual([
+      'acknowledge_agent_removal',
+      'acknowledge_destructive_cleanup',
+      'cleanup_scope',
+      'confirmation',
+      'include_agent',
+      'reason',
+    ]);
+    for (const forbidden of ['node_id', 'instances', 'targets', 'paths', 'units', 'commands', 'plan', 'diagnostics']) {
+      expect(cleanupCall?.body).not.toHaveProperty(forbidden);
+    }
+    expect(cleanupCall?.headers['x-megavpn-csrf']).toBe('1');
+
+    expect((await screen.findAllByText('Emergency Cleanup job queued.')).length).toBeGreaterThan(0);
+    expect(screen.getByText('This confirms queueing only. It does not confirm that cleanup or agent removal completed.')).toBeInTheDocument();
+    expect(screen.getByText('job-emer...')).toBeInTheDocument();
+    expect(screen.queryByText('job-emergency-cleanup-1')).not.toBeInTheDocument();
+    expect(screen.getByText('node.emergency_cleanup')).toBeInTheDocument();
+    expect(screen.getByText('Managed services only')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getByText('openvpn')).toBeInTheDocument();
+    expect(screen.getByText('xray')).toBeInTheDocument();
+    expect(screen.getByText(/This summary was generated from current control-plane state during queueing/)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Lifecycle' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('dialog', { name: 'Configure Emergency Cleanup' })).not.toBeInTheDocument();
+
+    const body = document.body.textContent || '';
+    for (const forbidden of [
+      'raw backend cleanup message must not render',
+      'operator reason must not render',
+      '/managed/path/must-not-render',
+      'unit-must-not-render.service',
+      'private-key-must-not-render',
+      'command-output-must-not-render',
+    ]) expect(body).not.toContain(forbidden);
+    expect(storageSet.mock.calls.some(([key, value]) => /cleanup|reason|confirmation|job|agent/i.test(String(key)) || /maintenance window|Edge One|private-key/.test(String(value)))).toBe(false);
+    await waitFor(() => expect(JSON.stringify(queryClient.getMutationCache().getAll().map((mutation) => mutation.state.variables))).not.toContain('maintenance window'));
+    expect(invalidate.mock.calls.some(([filters]) => JSON.stringify(filters).includes('"node","node-1"'))).toBe(true);
+    expect(invalidate.mock.calls.some(([filters]) => JSON.stringify(filters).includes('"node-diagnostics","node-1"'))).toBe(true);
+    expect(invalidate.mock.calls.some(([filters]) => JSON.stringify(filters).includes('"instances"'))).toBe(true);
+    expect(invalidate.mock.calls.some(([filters]) => JSON.stringify(filters).includes('"job","job-emergency-cleanup-1"'))).toBe(true);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open Jobs' }));
+    expect(screen.getByRole('tab', { name: 'Jobs / Activity' })).toHaveAttribute('aria-selected', 'true');
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/maintenance/enable')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/agent-identity/revoke')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/reboot')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/diagnostics/clear-stale-rotation')).toBe(false);
+    expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
+  });
+
+  it('queues full-node cleanup with explicit agent-removal acknowledgement and queued-only wording', async () => {
+    setEmergencyCleanupEligibleState();
+    emergencyCleanupPlanScope = 'full_node';
+    emergencyCleanupPlanIncludeAgent = true;
+    emergencyCleanupPlanAgentRemoval = true;
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Configure Emergency Cleanup' }));
+    const dialog = await completeEmergencyCleanupDialog('full_node', true);
+    expect(within(dialog).getByText(/Agent self-removal is requested only after successful managed cleanup/)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Queue cleanup and request agent removal' }));
+
+    await waitFor(() => expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/emergency-cleanup')).toHaveLength(1));
+    expect(calls.find((call) => call.path === '/api/v1/nodes/node-1/emergency-cleanup')?.body).toEqual({
+      cleanup_scope: 'full_node',
+      include_agent: true,
+      confirmation: 'Edge One',
+      reason: 'maintenance window',
+      acknowledge_destructive_cleanup: true,
+      acknowledge_agent_removal: true,
+    });
+    expect(await screen.findByText('Agent self-removal was requested. It can begin only after successful cleanup and acknowledged result submission.')).toBeInTheDocument();
+    expect(screen.getByText('Full managed node runtime')).toBeInTheDocument();
+    expect(document.body.textContent || '').not.toMatch(/agent removed successfully|cleanup completed|node cleaned|services removed|host reset/i);
+  });
+
+  it('rejects mismatched Emergency Cleanup response contracts without showing success', async () => {
+    setEmergencyCleanupEligibleState();
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+
+    const cases: Array<() => void> = [
+      () => { emergencyCleanupResponseType = 'node.reboot'; },
+      () => { emergencyCleanupResponseNodeId = 'node-other'; },
+      () => { emergencyCleanupResponseScopeId = 'node-other'; },
+      () => { emergencyCleanupResponseStatus = 'running'; },
+      () => { emergencyCleanupWrapperStatus = 'completed'; },
+      () => { emergencyCleanupPlanScope = 'full_node'; },
+      () => { emergencyCleanupPlanIncludeAgent = true; },
+      () => { emergencyCleanupPlanAgentRemoval = true; },
+      () => { emergencyCleanupPlanTargetCount = -1; },
+      () => { emergencyCleanupPlanServiceCounts = { '<unsafe>': 1 }; },
+    ];
+    for (const mutateResponse of cases) {
+      emergencyCleanupResponseNodeId = 'node-1';
+      emergencyCleanupResponseScopeId = 'node-1';
+      emergencyCleanupResponseType = 'node.emergency_cleanup';
+      emergencyCleanupResponseStatus = 'queued';
+      emergencyCleanupWrapperStatus = 'queued';
+      emergencyCleanupPlanScope = 'services_only';
+      emergencyCleanupPlanIncludeAgent = false;
+      emergencyCleanupPlanAgentRemoval = false;
+      emergencyCleanupPlanTargetCount = 3;
+      emergencyCleanupPlanServiceCounts = { xray: 2 };
+      mutateResponse();
+      await userEvent.click(screen.getByRole('button', { name: 'Configure Emergency Cleanup' }));
+      const dialog = await completeEmergencyCleanupDialog();
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Queue Emergency Cleanup' }));
+      expect(await screen.findByText('Backend returned an unexpected Emergency Cleanup response. Current UI state was not marked successful; node, instance and job state are being refreshed.')).toBeInTheDocument();
+      expect(screen.queryByText('Emergency Cleanup job queued.')).not.toBeInTheDocument();
+      await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Cancel' }));
+    }
+  });
+
+  it('maps Emergency Cleanup backend errors safely and keeps correctable requests open', async () => {
+    setEmergencyCleanupEligibleState();
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    const cases = [
+      { status: 400, code: 'node_emergency_cleanup_request_invalid', text: 'Invalid Emergency Cleanup request.' },
+      { status: 403, code: 'forbidden', text: 'node.bootstrap permission is required to queue Emergency Cleanup.' },
+      { status: 404, code: 'node_emergency_cleanup_node_not_found', text: 'Node no longer exists.' },
+      { status: 409, code: 'node_emergency_cleanup_maintenance_required', text: 'Backend requires maintenance mode.' },
+      { status: 409, code: 'node_emergency_cleanup_agent_missing', text: 'Backend reports that the active agent identity is missing.' },
+      { status: 409, code: 'node_emergency_cleanup_agent_unavailable', text: 'Backend reports that the agent channel is unavailable.' },
+      { status: 409, code: 'node_emergency_cleanup_conflict', text: 'Another active node operation prevents Emergency Cleanup.' },
+      { status: 422, code: 'node_emergency_cleanup_plan_invalid', text: 'The backend could not create a safe executable cleanup plan' },
+      { status: 429, code: 'rate_limited', text: 'Emergency Cleanup queueing was rate limited.' },
+      { status: 500, code: 'node_emergency_cleanup_internal_error', text: 'Emergency Cleanup queueing is unavailable or failed server-side.' },
+    ];
+    for (const item of cases) {
+      actionErrors.emergencyCleanup = item.status;
+      emergencyCleanupErrorCode = item.code;
+      await userEvent.click(screen.getByRole('button', { name: 'Configure Emergency Cleanup' }));
+      const dialog = await completeEmergencyCleanupDialog();
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Queue Emergency Cleanup' }));
+      expect(await within(activeDialog()).findByText(new RegExp(item.text))).toBeInTheDocument();
+      expect(activeDialog()).not.toHaveTextContent('Authorization: Bearer raw');
+      expect(activeDialog()).not.toHaveTextContent('token_hash raw');
+      expect(activeDialog()).not.toHaveTextContent('/etc/private');
+      expect(activeDialog()).not.toHaveTextContent('private_key raw');
+      expect(screen.queryByText('Emergency Cleanup job queued.')).not.toBeInTheDocument();
+      await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Cancel' }));
+      actionErrors.emergencyCleanup = 0;
+    }
+  });
+
+  it('does not expose Emergency Cleanup outside maintenance mode', async () => {
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    expect(screen.getByText('Emergency Cleanup requires the node to already be in maintenance mode. Use the existing maintenance control first.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Configure Emergency Cleanup' })).not.toBeInTheDocument();
+    expect(calls.some((call) => call.path.endsWith('/emergency-cleanup'))).toBe(false);
+  });
+
+  it('ignores a stale Emergency Cleanup response after the drawer is closed', async () => {
+    setEmergencyCleanupEligibleState();
+    delayEmergencyCleanupResponse = true;
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Configure Emergency Cleanup' }));
+    const dialog = await completeEmergencyCleanupDialog();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Queue Emergency Cleanup' }));
+    await waitFor(() => expect(calls.filter((call) => call.path.endsWith('/emergency-cleanup'))).toHaveLength(1));
+    const allCloseButtons = screen.getAllByRole('button', { name: 'Close' });
+    await userEvent.click(allCloseButtons[0]);
+    resolveEmergencyCleanupResponse?.();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Configure Emergency Cleanup' })).not.toBeInTheDocument());
+    expect(screen.queryByText('Emergency Cleanup job queued.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Backend returned an unexpected Emergency Cleanup response/)).not.toBeInTheDocument();
+  });
+
+  it('does not expose Emergency Cleanup without node.bootstrap permission', async () => {
+    setEmergencyCleanupEligibleState();
+    await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    expect(screen.getByText('node.bootstrap permission is required to configure Emergency Cleanup.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Configure Emergency Cleanup' })).not.toBeInTheDocument();
+    expect(calls.some((call) => call.path.endsWith('/emergency-cleanup'))).toBe(false);
   });
 
   it('reveals, copies and downloads manual bootstrap bundles only after explicit acknowledgement', async () => {

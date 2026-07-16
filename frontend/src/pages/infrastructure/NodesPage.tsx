@@ -21,6 +21,7 @@ import type {
   NodeDetail,
   NodeDiagnostics,
   NodeDiagnosticsAction,
+  NodeEmergencyCleanupInput,
   NodeMutationResult,
   NodeBootstrapBundleRevealResult,
   NodeBootstrapRun,
@@ -36,6 +37,7 @@ import {
   useBootstrapNode,
   useCreateNode,
   useCreateEnrollmentToken,
+  useCreateNodeEmergencyCleanupJob,
   useCreateNodeRebootJob,
   useCreateNodeSSHAccessMethod,
   useDiscoverNodeServices,
@@ -95,6 +97,13 @@ import {
 } from './nodeBootstrapReadiness';
 import { NodeAgentIdentityRevokeDialog } from './NodeAgentIdentityRevokeDialog';
 import { NodeRebootDialog } from './NodeRebootDialog';
+import { NodeEmergencyCleanupDialog } from './NodeEmergencyCleanupDialog';
+import {
+  deriveNodeEmergencyCleanupActionState,
+  nodeEmergencyCleanupExpectedConfirmation,
+  validateQueuedNodeEmergencyCleanupResult,
+  type SafeQueuedNodeEmergencyCleanupResult,
+} from './nodeEmergencyCleanup';
 
 type NodeTab = 'overview' | 'runtime' | 'onboarding' | 'inventory' | 'capabilities' | 'diagnostics' | 'discovery' | 'bootstrap' | 'security' | 'terminal' | 'lifecycle' | 'jobs';
 
@@ -145,6 +154,15 @@ type InitialNodeBootstrapRequest = {
 };
 
 type SafeQueuedNodeRebootJob = Pick<Job, 'id' | 'type' | 'status' | 'created_at' | 'node_id' | 'scope_id'>;
+
+type NodeEmergencyCleanupTarget = {
+  nodeId: string;
+  confirmationName: string;
+};
+
+type QueuedNodeEmergencyCleanupResult = SafeQueuedNodeEmergencyCleanupResult & {
+  nodeId: string;
+};
 
 type NodeProfileFormState = {
   name: string;
@@ -637,9 +655,12 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const [agentRevokeNodeId, setAgentRevokeNodeId] = useState<string | null>(null);
   const [nodeRebootNodeId, setNodeRebootNodeId] = useState<string | null>(null);
   const [queuedNodeRebootJob, setQueuedNodeRebootJob] = useState<SafeQueuedNodeRebootJob | null>(null);
+  const [emergencyCleanupTarget, setEmergencyCleanupTarget] = useState<NodeEmergencyCleanupTarget | null>(null);
+  const [queuedEmergencyCleanup, setQueuedEmergencyCleanup] = useState<QueuedNodeEmergencyCleanupResult | null>(null);
   const secretRequestRef = useRef(0);
   const agentRevokeRequestRef = useRef(0);
   const nodeRebootRequestRef = useRef(0);
+  const emergencyCleanupRequestRef = useRef(0);
   const selectedNodeIdRef = useRef(nodeId);
   const canBootstrapRef = useRef(canBootstrapNodes);
   const cachedOnboardingNode = queryClient.getQueryData<NodeDetail>(['node', nodeId]) || node;
@@ -689,8 +710,10 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const forceRetire = useForceRetireNode();
   const revokeAgentIdentity = useRevokeNodeAgentIdentity();
   const createRebootJob = useCreateNodeRebootJob();
+  const createEmergencyCleanupJob = useCreateNodeEmergencyCleanupJob();
   const resetAgentIdentityRevoke = revokeAgentIdentity.reset;
   const resetNodeReboot = createRebootJob.reset;
+  const resetEmergencyCleanup = createEmergencyCleanupJob.reset;
   const current = detail.data || node;
   const busy = maintenance.isPending
     || syncInventory.isPending
@@ -713,54 +736,66 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     || retire.isPending
     || forceRetire.isPending
     || revokeAgentIdentity.isPending
-    || createRebootJob.isPending;
+    || createRebootJob.isPending
+    || createEmergencyCleanupJob.isPending;
 
   useEffect(() => {
     selectedNodeIdRef.current = nodeId;
     secretRequestRef.current += 1;
     agentRevokeRequestRef.current += 1;
     nodeRebootRequestRef.current += 1;
+    emergencyCleanupRequestRef.current += 1;
     const timeout = window.setTimeout(() => {
       setOneTimePanel(null);
       setAgentRevokeNodeId(null);
       setNodeRebootNodeId(null);
       setQueuedNodeRebootJob(null);
+      setEmergencyCleanupTarget(null);
+      setQueuedEmergencyCleanup(null);
       resetAgentIdentityRevoke();
       resetNodeReboot();
+      resetEmergencyCleanup();
       setGuidedBootstrapJobIds([]);
       setGuidedBootstrapRunIds([]);
       setGuidedInventoryJobIds([]);
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [nodeId, resetAgentIdentityRevoke, resetNodeReboot]);
+  }, [nodeId, resetAgentIdentityRevoke, resetEmergencyCleanup, resetNodeReboot]);
 
   useEffect(() => {
     canBootstrapRef.current = canBootstrapNodes;
     if (!canBootstrapNodes) {
       secretRequestRef.current += 1;
       nodeRebootRequestRef.current += 1;
+      emergencyCleanupRequestRef.current += 1;
       const timeout = window.setTimeout(() => {
         setOneTimePanel(null);
         setNodeRebootNodeId(null);
+        setEmergencyCleanupTarget(null);
         resetNodeReboot();
+        resetEmergencyCleanup();
       }, 0);
       return () => window.clearTimeout(timeout);
     }
     return undefined;
-  }, [canBootstrapNodes, resetNodeReboot]);
+  }, [canBootstrapNodes, resetEmergencyCleanup, resetNodeReboot]);
 
   useEffect(() => {
     if (!open) {
       secretRequestRef.current += 1;
       agentRevokeRequestRef.current += 1;
       nodeRebootRequestRef.current += 1;
+      emergencyCleanupRequestRef.current += 1;
       const timeout = window.setTimeout(() => {
         setOneTimePanel(null);
         setAgentRevokeNodeId(null);
         setNodeRebootNodeId(null);
         setQueuedNodeRebootJob(null);
+        setEmergencyCleanupTarget(null);
+        setQueuedEmergencyCleanup(null);
         resetAgentIdentityRevoke();
         resetNodeReboot();
+        resetEmergencyCleanup();
         setGuidedBootstrapJobIds([]);
         setGuidedBootstrapRunIds([]);
         setGuidedInventoryJobIds([]);
@@ -768,7 +803,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       return () => window.clearTimeout(timeout);
     }
     return undefined;
-  }, [open, resetAgentIdentityRevoke, resetNodeReboot]);
+  }, [open, resetAgentIdentityRevoke, resetEmergencyCleanup, resetNodeReboot]);
 
   useEffect(() => {
     if (inventory.data?.id && guidedInventoryJobIds.length) {
@@ -840,6 +875,29 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     resetNodeReboot();
   };
 
+  const openEmergencyCleanupDialog = () => {
+    if (!current || !canBootstrapNodes) return;
+    const actionState = deriveNodeEmergencyCleanupActionState({
+      node: current,
+      diagnostics: diagnostics.data,
+      canBootstrapNode: canBootstrapNodes,
+      lifecycleDataCurrent,
+    });
+    if (!actionState.available) return;
+    emergencyCleanupRequestRef.current += 1;
+    resetEmergencyCleanup();
+    setEmergencyCleanupTarget({
+      nodeId: current.id,
+      confirmationName: nodeEmergencyCleanupExpectedConfirmation(current),
+    });
+  };
+
+  const closeEmergencyCleanupDialog = () => {
+    emergencyCleanupRequestRef.current += 1;
+    setEmergencyCleanupTarget(null);
+    resetEmergencyCleanup();
+  };
+
   const submitAgentIdentityRevoke = async (input: NodeAgentIdentityRevokeInput) => {
     const targetNodeId = agentRevokeNodeId;
     if (!targetNodeId || targetNodeId !== current?.id || !canBootstrapNodes) return;
@@ -894,6 +952,60 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       if (error instanceof APIError && (error.status === 403 || error.status === 404 || error.status === 409 || error.status === 500 || error.status === 503)) {
         void detail.refetch();
         void diagnostics.refetch();
+      }
+      throw error;
+    }
+  };
+
+  const submitEmergencyCleanup = async (input: NodeEmergencyCleanupInput) => {
+    const target = emergencyCleanupTarget;
+    if (!target || target.nodeId !== current?.id || !canBootstrapNodes || input.confirmation !== target.confirmationName) return;
+    const actionState = deriveNodeEmergencyCleanupActionState({
+      node: current,
+      diagnostics: diagnostics.data,
+      canBootstrapNode: canBootstrapNodes,
+      lifecycleDataCurrent,
+    });
+    if (!actionState.available) return;
+    const requestId = emergencyCleanupRequestRef.current + 1;
+    emergencyCleanupRequestRef.current = requestId;
+    try {
+      const result = await createEmergencyCleanupJob.mutateAsync({ nodeId: target.nodeId, input });
+      const safeResult = validateQueuedNodeEmergencyCleanupResult(result, target.nodeId, input);
+      if (
+        emergencyCleanupRequestRef.current !== requestId
+        || selectedNodeIdRef.current !== target.nodeId
+        || current?.id !== target.nodeId
+      ) {
+        return;
+      }
+      if (!safeResult) {
+        setNotice(t('nodes.lifecycleControls.emergencyCleanup.errors.contractMismatch'));
+        void detail.refetch();
+        void diagnostics.refetch();
+        void staleRotationPreview.refetch();
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        void queryClient.invalidateQueries({ queryKey: ['instances'] });
+        return;
+      }
+      closeEmergencyCleanupDialog();
+      setActiveTab('lifecycle');
+      setQueuedEmergencyCleanup({ ...safeResult, nodeId: target.nodeId });
+      setNotice(t('nodes.lifecycleControls.emergencyCleanup.queuedSuccess'));
+      void detail.refetch();
+      void diagnostics.refetch();
+      void staleRotationPreview.refetch();
+    } catch (error) {
+      if (error instanceof APIError) {
+        if ([403, 404, 409, 422, 500, 503].includes(error.status)) {
+          void detail.refetch();
+          void diagnostics.refetch();
+          void staleRotationPreview.refetch();
+          void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        }
+        if (error.status === 422) {
+          void queryClient.invalidateQueries({ queryKey: ['instances'] });
+        }
       }
       throw error;
     }
@@ -1142,6 +1254,10 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const agentRevokeDialogNode = current && agentRevokeNodeId === current.id ? current : undefined;
   const nodeRebootDialogNode = current && nodeRebootNodeId === current.id ? current : undefined;
   const currentQueuedNodeRebootJob = queuedNodeRebootJob?.node_id === current?.id ? queuedNodeRebootJob : null;
+  const emergencyCleanupDialogNode = current && emergencyCleanupTarget?.nodeId === current.id
+    ? { ...current, name: emergencyCleanupTarget.confirmationName }
+    : undefined;
+  const currentQueuedEmergencyCleanup = queuedEmergencyCleanup?.nodeId === current?.id ? queuedEmergencyCleanup : null;
 
   return (
     <Drawer title={nodeLabel(current)} open={open} onClose={onClose}>
@@ -1301,9 +1417,12 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 lifecycleDataCurrent={lifecycleDataCurrent}
                 revokePending={revokeAgentIdentity.isPending}
                 rebootPending={createRebootJob.isPending}
+                emergencyCleanupPending={createEmergencyCleanupJob.isPending}
                 queuedNodeRebootJob={currentQueuedNodeRebootJob}
+                queuedEmergencyCleanup={currentQueuedEmergencyCleanup}
                 onOpenAgentIdentityRevoke={openAgentIdentityRevokeDialog}
                 onOpenNodeReboot={openNodeRebootDialog}
+                onOpenEmergencyCleanup={openEmergencyCleanupDialog}
                 onOpenJobs={() => setActiveTab('jobs')}
                 onRefreshStaleRotationPreview={() => void staleRotationPreview.refetch()}
               />
@@ -1351,6 +1470,18 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 canBootstrapNode={canBootstrapNodes}
                 onCancel={closeNodeRebootDialog}
                 onConfirm={submitNodeReboot}
+              />
+            ) : null}
+            {emergencyCleanupDialogNode ? (
+              <NodeEmergencyCleanupDialog
+                open={Boolean(emergencyCleanupDialogNode)}
+                node={emergencyCleanupDialogNode}
+                diagnostics={diagnostics.data}
+                pending={createEmergencyCleanupJob.isPending}
+                error={createEmergencyCleanupJob.error}
+                canBootstrapNode={canBootstrapNodes}
+                onCancel={closeEmergencyCleanupDialog}
+                onConfirm={submitEmergencyCleanup}
               />
             ) : null}
           </div>
@@ -2448,9 +2579,12 @@ function LifecycleTab({
   lifecycleDataCurrent,
   revokePending,
   rebootPending,
+  emergencyCleanupPending,
   queuedNodeRebootJob,
+  queuedEmergencyCleanup,
   onOpenAgentIdentityRevoke,
   onOpenNodeReboot,
+  onOpenEmergencyCleanup,
   onOpenJobs,
   onRefreshStaleRotationPreview,
 }: {
@@ -2467,9 +2601,12 @@ function LifecycleTab({
   lifecycleDataCurrent: boolean;
   revokePending: boolean;
   rebootPending: boolean;
+  emergencyCleanupPending: boolean;
   queuedNodeRebootJob?: SafeQueuedNodeRebootJob | null;
+  queuedEmergencyCleanup?: QueuedNodeEmergencyCleanupResult | null;
   onOpenAgentIdentityRevoke: () => void;
   onOpenNodeReboot: () => void;
+  onOpenEmergencyCleanup: () => void;
   onOpenJobs: () => void;
   onRefreshStaleRotationPreview: () => void;
 }) {
@@ -2493,8 +2630,10 @@ function LifecycleTab({
         lifecycleDataCurrent={lifecycleDataCurrent}
         revokePending={revokePending}
         rebootPending={rebootPending}
+        emergencyCleanupPending={emergencyCleanupPending}
         onOpenRevokeDialog={onOpenAgentIdentityRevoke}
         onOpenRebootDialog={onOpenNodeReboot}
+        onOpenEmergencyCleanupDialog={onOpenEmergencyCleanup}
         onRefreshStaleRotationPreview={onRefreshStaleRotationPreview}
       />
       {queuedNodeRebootJob ? (
@@ -2514,6 +2653,56 @@ function LifecycleTab({
               </div>
               <Toolbar>
                 <Button type="button" onClick={onOpenJobs}>{t('nodes.lifecycleControls.nodeReboot.openJobs')}</Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
+      {queuedEmergencyCleanup ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <Toolbar>
+                <StatusBadge status={queuedEmergencyCleanup.job.status || 'queued'} />
+                <Badge>{t('nodes.lifecycleControls.emergencyCleanup.queuedSuccess')}</Badge>
+              </Toolbar>
+              <p className="muted">{t('nodes.lifecycleControls.emergencyCleanup.queueOnlyDisclaimer')}</p>
+              {queuedEmergencyCleanup.planSummary.agent_removal_requested ? (
+                <div role="status" className="error-state-inline">
+                  {t('nodes.lifecycleControls.emergencyCleanup.agentRemovalQueuedDisclaimer')}
+                </div>
+              ) : null}
+              <div className="definition-grid">
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.jobId')}</span>
+                <strong><code>{shortID(queuedEmergencyCleanup.job.id)}</code></strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.jobType')}</span>
+                <strong>{queuedEmergencyCleanup.job.type}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.jobStatus')}</span>
+                <strong>{queuedEmergencyCleanup.job.status}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.createdAt')}</span>
+                <strong>{fmt.date(queuedEmergencyCleanup.job.created_at)}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.scopeSummary')}</span>
+                <strong>{t(`nodes.lifecycleControls.emergencyCleanup.${queuedEmergencyCleanup.planSummary.cleanup_scope === 'services_only' ? 'servicesOnlyOption' : 'fullNodeOption'}`)}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.includeAgentSummary')}</span>
+                <strong>{queuedEmergencyCleanup.planSummary.include_agent ? t('common.yes') : t('common.no')}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.targetCount')}</span>
+                <strong>{queuedEmergencyCleanup.planSummary.instance_target_count}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.serviceCounts')}</span>
+                <strong>
+                  {Object.entries(queuedEmergencyCleanup.planSummary.service_counts).length
+                    ? Object.entries(queuedEmergencyCleanup.planSummary.service_counts)
+                      .sort(([left], [right]) => left.localeCompare(right))
+                      .map(([serviceCode, count]) => <span key={serviceCode}><code>{serviceCode}</code>: {count} </span>)
+                    : t('nodes.lifecycleControls.emergencyCleanup.noServiceTargets')}
+                </strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.nodeRuntimeCleanup')}</span>
+                <strong>{queuedEmergencyCleanup.planSummary.node_runtime_cleanup ? t('common.yes') : t('common.no')}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.agentRemovalRequested')}</span>
+                <strong>{queuedEmergencyCleanup.planSummary.agent_removal_requested ? t('common.yes') : t('common.no')}</strong>
+              </div>
+              <p className="muted">{t('nodes.lifecycleControls.emergencyCleanup.planSummaryBoundary')}</p>
+              <Toolbar>
+                <Button type="button" onClick={onOpenJobs}>{t('nodes.lifecycleControls.emergencyCleanup.openJobs')}</Button>
               </Toolbar>
             </div>
           </CardBody>

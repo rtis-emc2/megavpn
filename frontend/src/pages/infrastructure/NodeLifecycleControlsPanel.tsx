@@ -1,4 +1,4 @@
-import { RefreshCw, RotateCcw, ShieldAlert } from 'lucide-react';
+import { RefreshCw, RotateCcw, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { NodeDetail, NodeDiagnostics, NodeStaleRotationCandidate, NodeStaleRotationPreview } from '../../shared/api/types';
 import { Badge, Button, Card, CardBody, DataTable, EmptyState, LoadingSkeleton, StatusBadge, Toolbar } from '../../shared/ui';
@@ -13,6 +13,7 @@ import {
   staleRotationPreviewErrorKey,
   type NodeLifecycleSeverity,
 } from './nodeLifecycleControls';
+import { deriveNodeEmergencyCleanupActionState } from './nodeEmergencyCleanup';
 
 type NodeLifecycleControlsPanelProps = {
   node: NodeDetail;
@@ -26,8 +27,10 @@ type NodeLifecycleControlsPanelProps = {
   lifecycleDataCurrent: boolean;
   revokePending: boolean;
   rebootPending: boolean;
+  emergencyCleanupPending: boolean;
   onOpenRevokeDialog: () => void;
   onOpenRebootDialog: () => void;
+  onOpenEmergencyCleanupDialog: () => void;
   onRefreshStaleRotationPreview: () => void;
 };
 
@@ -65,8 +68,10 @@ export function NodeLifecycleControlsPanel({
   lifecycleDataCurrent,
   revokePending,
   rebootPending,
+  emergencyCleanupPending,
   onOpenRevokeDialog,
   onOpenRebootDialog,
+  onOpenEmergencyCleanupDialog,
   onRefreshStaleRotationPreview,
 }: NodeLifecycleControlsPanelProps) {
   const { t } = useTranslation();
@@ -79,6 +84,7 @@ export function NodeLifecycleControlsPanel({
   const identityUnknown = !agentIdentityStatus || agentIdentityStatus === 'unknown';
   const revokeAllowed = canBootstrapNode && lifecycleDataCurrent && !identityAlreadyRevoked && !identityMissing;
   const rebootState = deriveNodeRebootActionState({ node, diagnostics, canBootstrapNode, lifecycleDataCurrent });
+  const emergencyCleanupState = deriveNodeEmergencyCleanupActionState({ node, diagnostics, canBootstrapNode, lifecycleDataCurrent });
   const communicationState = normalizeLifecycleStatus(diagnostics?.communication_state || node.agent_channel_status || '');
 
   return (
@@ -112,6 +118,47 @@ export function NodeLifecycleControlsPanel({
               <strong>{t('nodes.lifecycleControls.deferredActionsTitle')}</strong>
               <span className="muted">{t('nodes.lifecycleControls.deferredActionsBody')}</span>
             </div>
+          </div>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <Toolbar>
+              <StatusBadge status={emergencyCleanupState.available ? 'danger' : 'blocked'} />
+              <Badge>{t('nodes.lifecycleControls.emergencyCleanup.maintenanceBadge')}</Badge>
+            </Toolbar>
+            <div>
+              <h3 className="card-title">{t('nodes.lifecycleControls.emergencyCleanup.actionTitle')}</h3>
+              <p className="muted">{t('nodes.lifecycleControls.emergencyCleanup.actionDescription')}</p>
+            </div>
+            <div className="definition-grid">
+              <span>{t('nodes.lifecycleControls.emergencyCleanup.maintenanceState')}</span>
+              <strong>{lifecycleStatusValue(node.status || 'unknown')}</strong>
+              <span>{t('nodes.lifecycleControls.emergencyCleanup.agentStatus')}</span>
+              <strong>{lifecycleStatusValue(agentIdentityStatus || 'unknown')}</strong>
+              <span>{t('nodes.lifecycleControls.emergencyCleanup.communicationStatus')}</span>
+              <strong>{lifecycleStatusValue(communicationState || 'unknown')}</strong>
+            </div>
+            {emergencyCleanupState.blockedKey ? (
+              <div role="alert" className="error-state-inline">{t(emergencyCleanupState.blockedKey, { permission: 'node.bootstrap' })}</div>
+            ) : null}
+            <p className="muted">{t('nodes.lifecycleControls.emergencyCleanup.maintenanceGuidance')}</p>
+            <Toolbar>
+              {emergencyCleanupState.available ? (
+                <Button
+                  variant="danger"
+                  icon={<TriangleAlert size={16} />}
+                  disabled={emergencyCleanupPending}
+                  onClick={onOpenEmergencyCleanupDialog}
+                >
+                  {emergencyCleanupPending
+                    ? t('nodes.lifecycleControls.emergencyCleanup.pending')
+                    : t('nodes.lifecycleControls.emergencyCleanup.openAction')}
+                </Button>
+              ) : null}
+            </Toolbar>
           </div>
         </CardBody>
       </Card>

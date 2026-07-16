@@ -21,6 +21,7 @@ import {
   createInvite,
   createManagedCertificateAuthority,
   createNode,
+  createNodeEmergencyCleanupJob,
   createNodeRebootJob,
   createNodeSSHAccessMethod,
   createPkiRoot,
@@ -291,6 +292,8 @@ import type {
   NodeDiagnostics,
   NodeDiagnosticsAction,
   NodeDiagnosticResult,
+  NodeEmergencyCleanupInput,
+  NodeEmergencyCleanupResult,
   NodeEntity,
   NodeInventorySnapshot,
   NodeJobEnvelope,
@@ -429,6 +432,23 @@ function invalidateNodeRebootQueries(queryClient: ReturnType<typeof useQueryClie
   void queryClient.invalidateQueries({ queryKey: ['node-diagnostics', nodeId] });
   if (job?.id) {
     void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+  }
+}
+
+function invalidateNodeEmergencyCleanupQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  nodeId: string,
+  result?: NodeEmergencyCleanupResult,
+) {
+  void queryClient.invalidateQueries({ queryKey: ['nodes'] });
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  void queryClient.invalidateQueries({ queryKey: ['node', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-diagnostics', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-stale-rotation-preview', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-service-discovery-summary', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['instances'] });
+  if (result?.job?.id) {
+    void queryClient.invalidateQueries({ queryKey: ['job', result.job.id] });
   }
 }
 
@@ -767,6 +787,16 @@ export function useCreateNodeRebootJob() {
   return useMutation<Job, Error, { nodeId: string; input: NodeRebootInput }>({
     mutationFn: ({ nodeId, input }) => createNodeRebootJob(nodeId, input),
     onSuccess: (job, variables) => invalidateNodeRebootQueries(queryClient, variables.nodeId, job),
+    retry: false,
+    gcTime: 0,
+  });
+}
+
+export function useCreateNodeEmergencyCleanupJob() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeEmergencyCleanupResult, Error, { nodeId: string; input: NodeEmergencyCleanupInput }>({
+    mutationFn: ({ nodeId, input }) => createNodeEmergencyCleanupJob(nodeId, input),
+    onSuccess: (result, variables) => invalidateNodeEmergencyCleanupQueries(queryClient, variables.nodeId, result),
     retry: false,
     gcTime: 0,
   });

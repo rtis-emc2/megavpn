@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from './client';
 import {
   downloadNodeBootstrapBundle,
+  createNodeEmergencyCleanupJob,
   createNodeRebootJob,
   createEnrollmentToken,
   extractEnrollmentTokenSecret,
@@ -476,5 +477,141 @@ describe('node reboot endpoint', () => {
   it('preserves APIError on backend conflicts without faking a queued job', async () => {
     await expect(createNodeRebootJob('node/one', { confirmation: 'Edge One', reason: 'return conflict' })).rejects.toBeInstanceOf(APIError);
     expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node%2Fone/reboot')).toHaveLength(1);
+  });
+});
+
+describe('node Emergency Cleanup endpoint', () => {
+  const calls: FetchCall[] = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://megavpn.test');
+      const method = String(init?.method || 'GET').toUpperCase();
+      const path = `${url.pathname}${url.search}`;
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      calls.push({
+        method,
+        path,
+        body,
+        headers: trackedHeaders(init?.headers),
+        credentials: init?.credentials,
+        cache: init?.cache,
+      });
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node%2Fone/emergency-cleanup') {
+        if (body?.reason === 'return conflict') {
+          return json({ code: 'node_emergency_cleanup_conflict', error: 'raw target path token_hash command output' }, 409);
+        }
+        return json({
+          status: 'queued',
+          message: 'emergency cleanup job queued',
+          job: {
+            id: 'job-cleanup-1',
+            type: 'node.emergency_cleanup',
+            status: 'queued',
+            scope_type: 'node',
+            scope_id: 'node/one',
+            node_id: 'node/one',
+            created_at: '2026-07-16T08:00:00Z',
+          },
+          plan_summary: {
+            cleanup_scope: body?.cleanup_scope,
+            include_agent: body?.include_agent,
+            instance_target_count: 2,
+            service_counts: { openvpn: 1, xray: 1 },
+            node_runtime_cleanup: body?.cleanup_scope === 'full_node',
+            agent_removal_requested: body?.include_agent,
+          },
+        }, 202);
+      }
+      return json({ error: `unhandled ${method} ${url.pathname}` }, 404);
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('sends the exact services-only POST contract to the encoded endpoint', async () => {
+    const result = await createNodeEmergencyCleanupJob('node/one', {
+      cleanup_scope: 'services_only',
+      include_agent: false,
+      confirmation: 'Edge One',
+      reason: 'maintenance window',
+      acknowledge_destructive_cleanup: true,
+      acknowledge_agent_removal: false,
+    });
+
+    expect(result).toMatchObject({
+      status: 'queued',
+      job: { id: 'job-cleanup-1', type: 'node.emergency_cleanup', status: 'queued' },
+      plan_summary: { cleanup_scope: 'services_only', include_agent: false, agent_removal_requested: false },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/v1/nodes/node%2Fone/emergency-cleanup',
+      credentials: 'include',
+      body: {
+        cleanup_scope: 'services_only',
+        include_agent: false,
+        confirmation: 'Edge One',
+        reason: 'maintenance window',
+        acknowledge_destructive_cleanup: true,
+        acknowledge_agent_removal: false,
+      },
+    });
+    expect(Object.keys(calls[0].body || {}).sort()).toEqual([
+      'acknowledge_agent_removal',
+      'acknowledge_destructive_cleanup',
+      'cleanup_scope',
+      'confirmation',
+      'include_agent',
+      'reason',
+    ]);
+    for (const forbidden of ['node_id', 'instances', 'targets', 'paths', 'units', 'commands', 'diagnostics', 'plan']) {
+      expect(calls[0].body).not.toHaveProperty(forbidden);
+    }
+    expect(calls[0].headers['x-megavpn-csrf']).toBe('1');
+    expect(calls.some((call) => call.path.endsWith('/reboot'))).toBe(false);
+    expect(calls.some((call) => call.path.endsWith('/agent-identity/revoke'))).toBe(false);
+    expect(calls.some((call) => call.path.includes('clear-stale-rotation'))).toBe(false);
+  });
+
+  it('preserves full-node agent-removal fields and typed API errors', async () => {
+    const result = await createNodeEmergencyCleanupJob('node/one', {
+      cleanup_scope: 'full_node',
+      include_agent: true,
+      confirmation: 'Edge One',
+      reason: 'controlled recovery',
+      acknowledge_destructive_cleanup: true,
+      acknowledge_agent_removal: true,
+    });
+    expect(result.plan_summary).toEqual({
+      cleanup_scope: 'full_node',
+      include_agent: true,
+      instance_target_count: 2,
+      service_counts: { openvpn: 1, xray: 1 },
+      node_runtime_cleanup: true,
+      agent_removal_requested: true,
+    });
+    expect(calls[0].body).toMatchObject({
+      cleanup_scope: 'full_node',
+      include_agent: true,
+      acknowledge_agent_removal: true,
+    });
+
+    await expect(createNodeEmergencyCleanupJob('node/one', {
+      cleanup_scope: 'services_only',
+      include_agent: false,
+      confirmation: 'Edge One',
+      reason: 'return conflict',
+      acknowledge_destructive_cleanup: true,
+      acknowledge_agent_removal: false,
+    })).rejects.toBeInstanceOf(APIError);
+    expect(calls.filter((call) => call.path.endsWith('/emergency-cleanup'))).toHaveLength(2);
   });
 });

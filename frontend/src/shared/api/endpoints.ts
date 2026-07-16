@@ -116,6 +116,8 @@ import type {
   HostKeyScanResult,
   NodeAgentIdentityRevokeInput,
   NodeAgentIdentityRevokeResult,
+  NodeEmergencyCleanupInput,
+  NodeEmergencyCleanupResult,
   NodeCapability,
   NodeCapabilityDrift,
   NodeCapabilityInstallEvent,
@@ -414,6 +416,17 @@ export function createNodeRebootJob(nodeId: string, input: NodeRebootInput): Pro
   return sendJSON<Job>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/reboot`, 'POST', {
     confirmation: input.confirmation,
     reason: input.reason,
+  });
+}
+
+export function createNodeEmergencyCleanupJob(nodeId: string, input: NodeEmergencyCleanupInput): Promise<NodeEmergencyCleanupResult> {
+  return sendJSON<NodeEmergencyCleanupResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/emergency-cleanup`, 'POST', {
+    cleanup_scope: input.cleanup_scope,
+    include_agent: input.include_agent,
+    confirmation: input.confirmation,
+    reason: input.reason,
+    acknowledge_destructive_cleanup: input.acknowledge_destructive_cleanup,
+    acknowledge_agent_removal: input.acknowledge_agent_removal,
   });
 }
 

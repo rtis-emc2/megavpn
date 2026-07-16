@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from 'vitest';
-import type { EnrollmentToken, EnrollmentTokenIssueResult, Job, NodeAgentIdentityRevokeInput, NodeAgentIdentityRevokeResult, NodeRebootInput, NodeStaleRotationCandidate, NodeStaleRotationPreview } from './types';
+import type { EnrollmentToken, EnrollmentTokenIssueResult, Job, NodeAgentIdentityRevokeInput, NodeAgentIdentityRevokeResult, NodeEmergencyCleanupInput, NodeEmergencyCleanupPlanSummary, NodeEmergencyCleanupResult, NodeEmergencyCleanupScope, NodeRebootInput, NodeStaleRotationCandidate, NodeStaleRotationPreview } from './types';
 
 describe('enrollment token API types', () => {
   it('keeps safe list tokens separate from secret-bearing issue responses', () => {
@@ -78,5 +78,45 @@ describe('node reboot API types', () => {
     expectTypeOf<Job>().toHaveProperty('scope_id');
     expectTypeOf<Job>().toHaveProperty('node_id');
     expectTypeOf<Job>().toHaveProperty('created_at');
+  });
+});
+
+describe('node Emergency Cleanup API types', () => {
+  it('keeps exact scope, request, plan summary and response wrapper contracts', () => {
+    expectTypeOf<NodeEmergencyCleanupScope>().toEqualTypeOf<'services_only' | 'full_node'>();
+    expectTypeOf<NodeEmergencyCleanupInput>().toEqualTypeOf<{
+      cleanup_scope: NodeEmergencyCleanupScope;
+      include_agent: boolean;
+      confirmation: string;
+      reason: string;
+      acknowledge_destructive_cleanup: boolean;
+      acknowledge_agent_removal: boolean;
+    }>();
+    expectTypeOf<NodeEmergencyCleanupInput>().not.toHaveProperty('node_id');
+    expectTypeOf<NodeEmergencyCleanupInput>().not.toHaveProperty('instances');
+    expectTypeOf<NodeEmergencyCleanupInput>().not.toHaveProperty('paths');
+    expectTypeOf<NodeEmergencyCleanupInput>().not.toHaveProperty('units');
+    expectTypeOf<NodeEmergencyCleanupInput>().not.toHaveProperty('commands');
+
+    expectTypeOf<NodeEmergencyCleanupPlanSummary>().toEqualTypeOf<{
+      cleanup_scope: NodeEmergencyCleanupScope;
+      include_agent: boolean;
+      instance_target_count: number;
+      service_counts: Record<string, number>;
+      node_runtime_cleanup: boolean;
+      agent_removal_requested: boolean;
+    }>();
+    expectTypeOf<NodeEmergencyCleanupPlanSummary>().not.toHaveProperty('targets');
+    expectTypeOf<NodeEmergencyCleanupPlanSummary>().not.toHaveProperty('managed_paths');
+    expectTypeOf<NodeEmergencyCleanupPlanSummary>().not.toHaveProperty('systemd_units');
+
+    expectTypeOf<NodeEmergencyCleanupResult>().toEqualTypeOf<{
+      status: string;
+      message: string;
+      job: Job;
+      plan_summary: NodeEmergencyCleanupPlanSummary;
+    }>();
+    expectTypeOf<NodeEmergencyCleanupResult>().not.toHaveProperty('node');
+    expectTypeOf<NodeEmergencyCleanupResult>().not.toHaveProperty('diagnostics');
   });
 });
