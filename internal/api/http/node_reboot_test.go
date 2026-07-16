@@ -195,8 +195,8 @@ func TestCreateNodeRebootReturnsRedactedQueuedJob(t *testing.T) {
 	if payload.ID != "job-1" || payload.Type != "node.reboot" || payload.Status != "queued" || payload.NodeID == nil || *payload.NodeID != "node-1" {
 		t.Fatalf("unexpected job response: %#v", payload)
 	}
-	if payload.Payload["agent_token"] != redactedValue || payload.Payload["agent_token_hash"] != redactedValue {
-		t.Fatalf("sensitive payload fields not redacted: %#v", payload.Payload)
+	if payload.Payload != nil || payload.Result != nil || strings.Contains(body, `"payload"`) || strings.Contains(body, `"result"`) || strings.Contains(body, `"locked_by"`) {
+		t.Fatalf("operator reboot response exposed internal job state: %s", body)
 	}
 }
 

@@ -210,7 +210,7 @@ func TestCreateNodeEmergencyCleanupReturnsQueuedRedactedResponse(t *testing.T) {
 		t.Fatalf("actor user id = %#v", store.input.ActorUserID)
 	}
 	body := rec.Body.String()
-	for _, forbidden := range []string{"must-redact", "completed", "cleaned", "agent removed", "private_key", "secret_ref", "config_content"} {
+	for _, forbidden := range []string{"must-redact", "completed", "cleaned", "agent removed", "private_key", "secret_ref", "config_content", `"payload"`, `"result"`, `"instances"`, `"systemd_unit"`, `"locked_by"`} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("response leaked or overclaimed %q: %s", forbidden, body)
 		}

@@ -1362,7 +1362,7 @@ func (s *Server) createNodeEmergencyCleanupJob(w nethttp.ResponseWriter, r *neth
 	writeSensitiveJSON(w, nethttp.StatusAccepted, response{
 		"status":       "queued",
 		"message":      "emergency cleanup job queued",
-		"job":          redactedJob(result.Job),
+		"job":          operatorLifecycleJobMetadata(result.Job),
 		"plan_summary": result.PlanSummary,
 	})
 }
@@ -1392,7 +1392,7 @@ func (s *Server) createNodeRebootJob(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeNodeRebootError(w, err)
 		return
 	}
-	writeSensitiveJSON(w, nethttp.StatusAccepted, redactedJob(job))
+	writeSensitiveJSON(w, nethttp.StatusAccepted, operatorLifecycleJobMetadata(job))
 }
 
 func (s *Server) reconcileNodeRuntime(w nethttp.ResponseWriter, r *nethttp.Request) {

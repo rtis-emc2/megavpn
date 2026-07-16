@@ -2,9 +2,40 @@ package http
 
 import (
 	"strings"
+	"time"
 
 	"github.com/rtis-emc2/megavpn/internal/domain"
 )
+
+type operatorJobMetadata struct {
+	ID         string     `json:"id"`
+	Type       string     `json:"type"`
+	ScopeType  string     `json:"scope_type"`
+	Status     string     `json:"status"`
+	ScopeID    *string    `json:"scope_id"`
+	NodeID     *string    `json:"node_id"`
+	InstanceID *string    `json:"instance_id"`
+	Priority   int        `json:"priority"`
+	CreatedAt  time.Time  `json:"created_at"`
+	StartedAt  *time.Time `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+}
+
+func operatorLifecycleJobMetadata(job domain.Job) operatorJobMetadata {
+	return operatorJobMetadata{
+		ID:         job.ID,
+		Type:       job.Type,
+		ScopeType:  job.ScopeType,
+		Status:     job.Status,
+		ScopeID:    job.ScopeID,
+		NodeID:     job.NodeID,
+		InstanceID: job.InstanceID,
+		Priority:   job.Priority,
+		CreatedAt:  job.CreatedAt,
+		StartedAt:  job.StartedAt,
+		FinishedAt: job.FinishedAt,
+	}
+}
 
 const redactedValue = "[redacted]"
 const nodeBootstrapBundleSecretRefKey = "agent_bootstrapenv_secret_ref_id"

@@ -182,3 +182,11 @@ run_json_checked \
   'TestPostgresIntegrationRevokeNodeAgentIdentityRejectsOldSignedAgentHTTP' \
   'postgres-agent-identity-revoke-http' \
   TestPostgresIntegrationRevokeNodeAgentIdentityRejectsOldSignedAgentHTTP
+
+run_json_checked \
+  ./internal/api/http \
+  'TestPostgresIntegrationNodeLifecycleRebootEmergencyCleanup' \
+  'postgres-node-lifecycle-reboot-cleanup-http' \
+  TestPostgresIntegrationNodeLifecycleRebootEmergencyCleanupHTTP \
+  TestPostgresIntegrationNodeLifecycleRebootEmergencyCleanupConflictHTTP \
+  TestPostgresIntegrationNodeLifecycleRebootEmergencyCleanupRedactionHTTP
