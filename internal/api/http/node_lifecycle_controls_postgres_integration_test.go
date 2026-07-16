@@ -342,6 +342,12 @@ func executeNodeLifecycleHTTPSequence(t *testing.T, fixture nodeLifecycleHTTPFix
 	assertLifecycleNodeAndAgentPreserved(t, fixture, beforeNode, beforeAgentHash)
 	assertHTTPPostgresNodeHeartbeatEquals(t, fixture.ctx, fixture.pool, fixture.node.ID, fixture.heartbeatAt)
 
+	var cleanupNode domain.Node
+	maintenanceRec := sendOperatorJSON(t, fixture.handler, nethttp.MethodPost, "/api/v1/nodes/"+fixture.node.ID+"/maintenance/enable", fixture.adminToken, true, nil, &cleanupNode)
+	if maintenanceRec.Code != nethttp.StatusOK || cleanupNode.Status != "maintenance" {
+		t.Fatalf("maintenance enable before cleanup status/state = %d/%q, want 200/maintenance", maintenanceRec.Code, cleanupNode.Status)
+	}
+
 	instance := createNodeLifecycleManagedInstance(t, fixture)
 	var instanceStatusBefore string
 	var instanceEnabledBefore bool
@@ -396,7 +402,7 @@ func executeNodeLifecycleHTTPSequence(t *testing.T, fixture nodeLifecycleHTTPFix
 	assertLifecycleTerminalJob(t, fixture, cleanupResponse.Job.ID, cleanupResultPayload)
 	assertHTTPPostgresCount(t, fixture.ctx, fixture.pool, `select count(*) from resource_locks where job_id=$1`, 0, cleanupResponse.Job.ID)
 	assertHTTPPostgresCount(t, fixture.ctx, fixture.pool, `select count(*) from instances where id=$1 and status='deleted' and enabled=false`, 1, instance.ID)
-	assertLifecycleNodeAndAgentPreserved(t, fixture, beforeNode, beforeAgentHash)
+	assertLifecycleNodeAndAgentPreserved(t, fixture, cleanupNode, beforeAgentHash)
 	assertHTTPPostgresNodeHeartbeatEquals(t, fixture.ctx, fixture.pool, fixture.node.ID, fixture.heartbeatAt)
 	assertHTTPPostgresCount(t, fixture.ctx, fixture.pool, `select count(*) from node_inventory_snapshots where node_id=$1`, fixture.inventoryCount, fixture.node.ID)
 
