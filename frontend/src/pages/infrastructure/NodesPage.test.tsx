@@ -405,6 +405,58 @@ describe('NodesPage', () => {
     return dialog;
   }
 
+  async function verifyEmergencyCleanupBackendError(item: {
+    status: number;
+    code: string;
+    text: string;
+    clearsConfirmation?: boolean;
+    planInvalid?: boolean;
+  }) {
+    setEmergencyCleanupEligibleState();
+    actionErrors.emergencyCleanup = item.status;
+    emergencyCleanupErrorCode = item.code;
+
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Configure Emergency Cleanup' }));
+    const dialog = await completeEmergencyCleanupDialog();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Queue Emergency Cleanup' }));
+
+    expect(await within(dialog).findByText(new RegExp(item.text))).toBeInTheDocument();
+    expect(activeDialog()).toBe(dialog);
+    await waitFor(() => expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/emergency-cleanup')).toHaveLength(1));
+    expect(within(dialog).getByLabelText('Cleanup scope')).toHaveValue('services_only');
+    expect(within(dialog).getByLabelText('Operator reason')).toHaveValue('maintenance window');
+    if (item.clearsConfirmation) {
+      await waitFor(() => expect(within(dialog).getByLabelText('Typed node name')).toHaveValue(''));
+    } else {
+      expect(within(dialog).getByLabelText('Typed node name')).toHaveValue('Edge One');
+    }
+    expect(within(dialog).getByLabelText(/I understand that this queues destructive managed-resource cleanup/)).toBeChecked();
+    if (item.planInvalid) {
+      expect(within(dialog).queryByRole('button', { name: /force|bypass/i })).not.toBeInTheDocument();
+    }
+
+    const rendered = dialog.textContent || '';
+    for (const forbidden of [
+      'invalid cleanup request Authorization: Bearer raw',
+      'node.bootstrap permission required secret_ref raw',
+      'node not found token_hash raw',
+      'cleanup conflict target path /etc/private command output',
+      'unsafe plan systemd unit private_key raw',
+      'rate limited token raw',
+      'store failed target payload raw',
+      'service unavailable configuration raw',
+    ]) expect(rendered).not.toContain(forbidden);
+    expect(screen.queryByText('Emergency Cleanup job queued.')).not.toBeInTheDocument();
+    expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/emergency-cleanup')).toHaveLength(1);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/maintenance/enable')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/reboot')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/agent-identity/revoke')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/diagnostics/clear-stale-rotation')).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/enrollment-token')).toBe(false);
+  }
+
   async function completeStaleRotationClearDialog() {
     const dialog = activeDialog();
     await userEvent.type(within(dialog).getByLabelText('Exact node name confirmation'), 'Edge One');
@@ -1784,37 +1836,21 @@ describe('NodesPage', () => {
     }
   });
 
-  it('maps Emergency Cleanup backend errors safely and keeps correctable requests open', async () => {
-    setEmergencyCleanupEligibleState();
-    await openNode();
-    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
-    const cases = [
-      { status: 400, code: 'node_emergency_cleanup_request_invalid', text: 'Invalid Emergency Cleanup request.' },
-      { status: 403, code: 'forbidden', text: 'node.bootstrap permission is required to queue Emergency Cleanup.' },
-      { status: 404, code: 'node_emergency_cleanup_node_not_found', text: 'Node no longer exists.' },
-      { status: 409, code: 'node_emergency_cleanup_maintenance_required', text: 'Backend requires maintenance mode.' },
-      { status: 409, code: 'node_emergency_cleanup_agent_missing', text: 'Backend reports that the active agent identity is missing.' },
-      { status: 409, code: 'node_emergency_cleanup_agent_unavailable', text: 'Backend reports that the agent channel is unavailable.' },
-      { status: 409, code: 'node_emergency_cleanup_conflict', text: 'Another active node operation prevents Emergency Cleanup.' },
-      { status: 422, code: 'node_emergency_cleanup_plan_invalid', text: 'The backend could not create a safe executable cleanup plan' },
-      { status: 429, code: 'rate_limited', text: 'Emergency Cleanup queueing was rate limited.' },
-      { status: 500, code: 'node_emergency_cleanup_internal_error', text: 'Emergency Cleanup queueing is unavailable or failed server-side.' },
-    ];
-    for (const item of cases) {
-      actionErrors.emergencyCleanup = item.status;
-      emergencyCleanupErrorCode = item.code;
-      await userEvent.click(screen.getByRole('button', { name: 'Configure Emergency Cleanup' }));
-      const dialog = await completeEmergencyCleanupDialog();
-      await userEvent.click(within(dialog).getByRole('button', { name: 'Queue Emergency Cleanup' }));
-      expect(await within(activeDialog()).findByText(new RegExp(item.text))).toBeInTheDocument();
-      expect(activeDialog()).not.toHaveTextContent('Authorization: Bearer raw');
-      expect(activeDialog()).not.toHaveTextContent('token_hash raw');
-      expect(activeDialog()).not.toHaveTextContent('/etc/private');
-      expect(activeDialog()).not.toHaveTextContent('private_key raw');
-      expect(screen.queryByText('Emergency Cleanup job queued.')).not.toBeInTheDocument();
-      await userEvent.click(within(activeDialog()).getByRole('button', { name: 'Cancel' }));
-      actionErrors.emergencyCleanup = 0;
-    }
+  it.each([
+    { label: '400 invalid request', status: 400, code: 'node_emergency_cleanup_request_invalid', text: 'Invalid Emergency Cleanup request.' },
+    { label: '403 permission failure', status: 403, code: 'forbidden', text: 'node.bootstrap permission is required to queue Emergency Cleanup.' },
+    { label: '404 node not found', status: 404, code: 'node_emergency_cleanup_node_not_found', text: 'Node no longer exists.' },
+    { label: '409 confirmation mismatch', status: 409, code: 'node_emergency_cleanup_confirmation_mismatch', text: 'Backend rejected the confirmation.', clearsConfirmation: true },
+    { label: '409 maintenance required', status: 409, code: 'node_emergency_cleanup_maintenance_required', text: 'Backend requires maintenance mode.' },
+    { label: '409 agent missing', status: 409, code: 'node_emergency_cleanup_agent_missing', text: 'Backend reports that the active agent identity is missing.' },
+    { label: '409 agent unavailable', status: 409, code: 'node_emergency_cleanup_agent_unavailable', text: 'Backend reports that the agent channel is unavailable.' },
+    { label: '409 active operation conflict', status: 409, code: 'node_emergency_cleanup_conflict', text: 'Another active node operation prevents Emergency Cleanup.' },
+    { label: '422 cleanup plan invalid', status: 422, code: 'node_emergency_cleanup_plan_invalid', text: 'The backend could not create a safe executable cleanup plan', planInvalid: true },
+    { label: '429 rate limited', status: 429, code: 'rate_limited', text: 'Emergency Cleanup queueing was rate limited.' },
+    { label: '500 internal error', status: 500, code: 'node_emergency_cleanup_internal_error', text: 'Emergency Cleanup queueing is unavailable or failed server-side.' },
+    { label: '503 service unavailable', status: 503, code: 'node_emergency_cleanup_internal_error', text: 'Emergency Cleanup queueing is unavailable or failed server-side.' },
+  ])('maps Emergency Cleanup backend errors safely: $label', async (item) => {
+    await verifyEmergencyCleanupBackendError(item);
   });
 
   it('does not expose Emergency Cleanup outside maintenance mode', async () => {
