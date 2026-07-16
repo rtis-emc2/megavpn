@@ -322,6 +322,12 @@ describe('NodesPage', () => {
   let emergencyCleanupErrorCode: string;
   let delayEmergencyCleanupResponse: boolean;
   let resolveEmergencyCleanupResponse: (() => void) | null;
+  let staleRotationClearResponseNodeId: string;
+  let staleRotationClearActiveIdentityPreserved: boolean;
+  let staleRotationClearReturnedJobIds: string[];
+  let staleRotationClearErrorCode: string;
+  let delayStaleRotationClearResponse: boolean;
+  let resolveStaleRotationClearResponse: (() => void) | null;
   let manualBundleRevealContent: string;
   let manualBundleDownloadContent: string;
   let emptyEnrollmentIssueResponse: boolean;
@@ -399,6 +405,14 @@ describe('NodesPage', () => {
     return dialog;
   }
 
+  async function completeStaleRotationClearDialog() {
+    const dialog = activeDialog();
+    await userEvent.type(within(dialog).getByLabelText('Exact node name confirmation'), 'Edge One');
+    await userEvent.type(within(dialog).getByLabelText('Operator reason'), 'reviewed stale rotation');
+    await userEvent.click(within(dialog).getByLabelText(/all listed stale rotation jobs will be cancelled/));
+    return dialog;
+  }
+
   beforeEach(async () => {
     calls.length = 0;
     actionErrors = {};
@@ -433,6 +447,12 @@ describe('NodesPage', () => {
     emergencyCleanupErrorCode = 'node_emergency_cleanup_conflict';
     delayEmergencyCleanupResponse = false;
     resolveEmergencyCleanupResponse = null;
+    staleRotationClearResponseNodeId = 'node-1';
+    staleRotationClearActiveIdentityPreserved = true;
+    staleRotationClearReturnedJobIds = ['job-stale-rotation-1'];
+    staleRotationClearErrorCode = 'node_stale_rotation_preview_changed';
+    delayStaleRotationClearResponse = false;
+    resolveStaleRotationClearResponse = null;
     manualBundleRevealContent = '';
     manualBundleDownloadContent = '';
     emptyEnrollmentIssueResponse = false;
@@ -827,6 +847,56 @@ describe('NodesPage', () => {
           },
         }, 202);
       }
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/diagnostics/clear-stale-rotation') {
+        if (delayStaleRotationClearResponse) {
+          await new Promise<void>((resolve) => {
+            resolveStaleRotationClearResponse = resolve;
+          });
+        }
+        const status = actionErrors.staleRotationClear;
+        if (status) {
+          const messages: Record<number, { code: string; error: string }> = {
+            400: { code: 'node_stale_rotation_request_invalid', error: 'invalid request Authorization: Bearer raw' },
+            403: { code: 'forbidden', error: 'node.bootstrap permission required token_hash raw' },
+            404: { code: 'node_stale_rotation_node_not_found', error: 'node missing secret_ref raw' },
+            409: { code: staleRotationClearErrorCode, error: 'preview conflict token_hash raw backend payload' },
+            429: { code: 'rate_limited', error: 'rate limited token raw' },
+            500: { code: 'node_stale_rotation_internal_error', error: 'store failed private_key raw' },
+            503: { code: 'node_stale_rotation_internal_error', error: 'service unavailable credential raw' },
+          };
+          if (status === 409 && staleRotationClearErrorCode === 'node_stale_rotation_preview_changed') {
+            currentStaleRotationPreview = {
+              ...currentStaleRotationPreview,
+              evaluated_at: '2026-07-09T08:20:00Z',
+              candidates: [{
+                ...currentStaleRotationPreview.candidates[0],
+                job_id: 'job-stale-rotation-refreshed',
+              }],
+            };
+          }
+          if (status === 409 && staleRotationClearErrorCode === 'node_stale_rotation_not_found') {
+            currentStaleRotationPreview = { ...currentStaleRotationPreview, stale_rotation_detected: false, candidates: [] };
+          }
+          const payload = messages[status] || { code: 'node_stale_rotation_internal_error', error: 'clear failed' };
+          return json(payload, status);
+        }
+        const returnedJobIds = [...staleRotationClearReturnedJobIds];
+        currentStaleRotationPreview = { ...currentStaleRotationPreview, stale_rotation_detected: false, candidates: [] };
+        return json({
+          status: 'cleared',
+          node_id: staleRotationClearResponseNodeId,
+          cleared_count: returnedJobIds.length,
+          cleared_jobs: returnedJobIds.map((jobId) => ({
+            job_id: jobId,
+            previous_status: 'running',
+            status: 'cancelled',
+            stale_reason: 'unclaimed_without_agent_progress',
+            finished_at: '2026-07-16T09:00:00Z',
+          })),
+          pending_rotation_state_cleared: true,
+          active_agent_identity_preserved: staleRotationClearActiveIdentityPreserved,
+        });
+      }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/agent-token/rotate') return json(job('job-agent-rotate', 'node.agent.rotate_token'), 202);
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/ssh/sessions') {
         return json({ session_id: 'ssh-session-ticket', node_id: 'node-1', expires_at: '2026-08-10T08:06:30Z', endpoint: { server_side_proxy_only: true } }, 201);
@@ -1180,7 +1250,7 @@ describe('NodesPage', () => {
     expect(screen.getByRole('button', { name: /queue reboot/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /revoke agent identity/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /emergency cleanup/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /clear stale rotation/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear stale rotation state' })).toBeEnabled();
   });
 
   it('does not fetch stale rotation preview without node.read permission', async () => {
@@ -1200,6 +1270,140 @@ describe('NodesPage', () => {
     expect(screen.queryByText('Unclaimed rotation without agent progress.')).not.toBeInTheDocument();
     expect(screen.queryByText('job-stal...')).not.toBeInTheDocument();
     expect(screen.queryByText('node-previous')).not.toBeInTheDocument();
+  });
+
+  it('clears the complete backend-safe stale rotation set once and renders only validated safe evidence', async () => {
+    const storageSet = vi.spyOn(Storage.prototype, 'setItem');
+    currentStaleRotationPreview = {
+      ...currentStaleRotationPreview,
+      candidates: [
+        currentStaleRotationPreview.candidates[0],
+        {
+          ...currentStaleRotationPreview.candidates[0],
+          job_id: 'job-unsafe-rotation-2',
+          stale_reason: 'evidence_ambiguous',
+          safe_to_clear: false,
+        },
+      ],
+    };
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Clear stale rotation state' }));
+    const dialog = await completeStaleRotationClearDialog();
+
+    expect(dialog).toHaveTextContent('preserve the active agent identity');
+    expect(dialog).toHaveTextContent('preserve the current active agent token');
+    expect(dialog).toHaveTextContent('Unsafe or ambiguous candidates not included');
+    await userEvent.dblClick(within(dialog).getByRole('button', { name: 'Clear stale rotation state' }));
+
+    await waitFor(() => expect(calls.filter((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/diagnostics/clear-stale-rotation')).toHaveLength(1));
+    const clearCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/diagnostics/clear-stale-rotation');
+    expect(clearCall?.body).toEqual({
+      confirmation: 'Edge One',
+      reason: 'reviewed stale rotation',
+      acknowledge_cancel_rotation: true,
+      expected_job_ids: ['job-stale-rotation-1'],
+    });
+    expect(Object.keys(clearCall?.body || {}).sort()).toEqual(['acknowledge_cancel_rotation', 'confirmation', 'expected_job_ids', 'reason']);
+    expect(clearCall?.body).not.toHaveProperty('node_id');
+    expect(clearCall?.body).not.toHaveProperty('evaluated_at');
+    expect(clearCall?.body).not.toHaveProperty('candidates');
+    expect(JSON.stringify(clearCall?.body)).not.toContain('job-unsafe-rotation-2');
+    expect(clearCall?.headers['x-megavpn-csrf']).toBe('1');
+
+    expect((await screen.findAllByText('Stale token-rotation state cleared.')).length).toBeGreaterThan(0);
+    expect(screen.getByText('The active agent identity was preserved.')).toBeInTheDocument();
+    expect(screen.getByText('This operation cancelled stale rotation jobs. It did not rotate or issue a new token.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Cleared stale rotation jobs' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Clear stale token rotation' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Lifecycle' })).toHaveAttribute('aria-selected', 'true');
+    expect(calls.some((call) => call.method === 'POST' && call.path.endsWith('/reboot'))).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path.endsWith('/emergency-cleanup'))).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path.includes('agent-identity/revoke'))).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path.endsWith('/agent-token/rotate'))).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path.includes('/enrollment-token'))).toBe(false);
+    expect(calls.some((call) => call.method === 'POST' && call.path.endsWith('/bootstrap'))).toBe(false);
+    expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
+    expect(document.body.textContent || '').not.toMatch(/active token rotated|new token issued|connectivity restored|token_hash|request_payload|result_payload/i);
+    expect(storageSet).not.toHaveBeenCalled();
+  });
+
+  it('invalidates confirmation and acknowledgement when explicit refresh changes the safe expected set', async () => {
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Clear stale rotation state' }));
+    const dialog = await completeStaleRotationClearDialog();
+    currentStaleRotationPreview = {
+      ...currentStaleRotationPreview,
+      evaluated_at: '2026-07-09T08:30:00Z',
+      candidates: [{ ...currentStaleRotationPreview.candidates[0], job_id: 'job-stale-rotation-refreshed' }],
+    };
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Refresh preview' }));
+
+    await within(dialog).findByText('Stale rotation evidence changed. Review the refreshed candidates and confirm again.');
+    expect(within(dialog).getByLabelText('Exact node name confirmation')).toHaveValue('');
+    expect(within(dialog).getByLabelText('Operator reason')).toHaveValue('reviewed stale rotation');
+    expect(within(dialog).getByLabelText(/all listed stale rotation jobs will be cancelled/)).not.toBeChecked();
+    expect(within(dialog).getAllByText('job-stal...').length).toBeGreaterThan(0);
+    expect(within(dialog).getByRole('button', { name: 'Clear stale rotation state' })).toBeDisabled();
+    expect(calls.some((call) => call.method === 'POST' && call.path.includes('clear-stale-rotation'))).toBe(false);
+  });
+
+  it('rejects a clear response unless active identity and exact job ownership are preserved', async () => {
+    staleRotationClearActiveIdentityPreserved = false;
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Clear stale rotation state' }));
+    const dialog = await completeStaleRotationClearDialog();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Clear stale rotation state' }));
+
+    expect(await screen.findByText('Backend returned an unexpected cleanup result. Success was not accepted; node, diagnostics, preview and Jobs are being refreshed.')).toBeInTheDocument();
+    expect(screen.queryByText('The active agent identity was preserved.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Cleared stale rotation jobs' })).not.toBeInTheDocument();
+  });
+
+  it('maps stale clear conflicts safely, refreshes changed evidence and never retries automatically', async () => {
+    actionErrors.staleRotationClear = 409;
+    staleRotationClearErrorCode = 'node_stale_rotation_preview_changed';
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Clear stale rotation state' }));
+    const dialog = await completeStaleRotationClearDialog();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Clear stale rotation state' }));
+
+    expect(await within(dialog).findByText('Stale rotation evidence changed. Review the refreshed candidates and submit a new explicit request.')).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByLabelText('Exact node name confirmation')).toHaveValue(''));
+    expect(within(dialog).getByLabelText(/all listed stale rotation jobs will be cancelled/)).not.toBeChecked();
+    expect(document.body).not.toHaveTextContent('preview conflict token_hash raw backend payload');
+    expect(calls.filter((call) => call.method === 'POST' && call.path.includes('clear-stale-rotation'))).toHaveLength(1);
+    expect(screen.queryByText('Stale token-rotation state cleared.')).not.toBeInTheDocument();
+  });
+
+  it('keeps the preview read-only without node.bootstrap and never calls the mutation', async () => {
+    await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    expect(await screen.findByText('node.bootstrap permission is required to clear stale rotation state. The preview remains read-only.')).toBeInTheDocument();
+    expect(screen.getAllByText('Unclaimed rotation without agent progress.').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Clear stale rotation state' })).not.toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'POST' && call.path.includes('clear-stale-rotation'))).toBe(false);
+  });
+
+  it('ignores a stale clear response after the drawer closes', async () => {
+    delayStaleRotationClearResponse = true;
+    await openNode();
+    await userEvent.click(screen.getByRole('tab', { name: 'Lifecycle' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Clear stale rotation state' }));
+    const dialog = await completeStaleRotationClearDialog();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Clear stale rotation state' }));
+    await waitFor(() => expect(resolveStaleRotationClearResponse).not.toBeNull());
+    expect(screen.getAllByText('job-stal...').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Stale token-rotation state cleared.')).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]);
+    resolveStaleRotationClearResponse?.();
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Clear stale token rotation' })).not.toBeInTheDocument());
+    expect(screen.queryByText('Stale token-rotation state cleared.')).not.toBeInTheDocument();
+    expect(screen.queryByText('The active agent identity was preserved.')).not.toBeInTheDocument();
   });
 
   it('revokes agent identity through the dedicated dialog without legacy or adjacent destructive calls', async () => {

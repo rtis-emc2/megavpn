@@ -147,6 +147,8 @@ import type {
   NodeRetireResult,
   NodeSSHAccessMethodCreateInput,
   NodeSSHAccessMethodCreateResult,
+  NodeStaleRotationClearInput,
+  NodeStaleRotationClearResult,
   NodeStaleRotationPreview,
   NodeUpdateInput,
   ReadyStatus,
@@ -403,6 +405,15 @@ export function getNodeDiagnostics(nodeId: string): Promise<NodeDiagnostics> {
 
 export function getNodeStaleRotationPreview(nodeId: string): Promise<NodeStaleRotationPreview> {
   return apiRequest<NodeStaleRotationPreview>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/diagnostics/stale-rotation`);
+}
+
+export function clearNodeStaleRotation(nodeId: string, input: NodeStaleRotationClearInput): Promise<NodeStaleRotationClearResult> {
+  return sendJSON<NodeStaleRotationClearResult>(`/api/v1/nodes/${encodeURIComponent(nodeId)}/diagnostics/clear-stale-rotation`, 'POST', {
+    confirmation: input.confirmation,
+    reason: input.reason,
+    acknowledge_cancel_rotation: input.acknowledge_cancel_rotation,
+    expected_job_ids: input.expected_job_ids,
+  });
 }
 
 export function revokeNodeAgentIdentity(nodeId: string, input: NodeAgentIdentityRevokeInput): Promise<NodeAgentIdentityRevokeResult> {

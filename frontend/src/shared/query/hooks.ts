@@ -12,6 +12,7 @@ import {
   buildClientArtifact,
   cleanupClientConfigs,
   cleanupRoutePolicy,
+  clearNodeStaleRotation,
   createClient,
   createClientRoute,
   applyNodeFirewall,
@@ -305,6 +306,8 @@ import type {
   NodeRetireResult,
   NodeSSHAccessMethodCreateInput,
   NodeSSHAccessMethodCreateResult,
+  NodeStaleRotationClearInput,
+  NodeStaleRotationClearResult,
   NodeStaleRotationPreview,
   NodeUpdateInput,
   PkiRoot,
@@ -450,6 +453,14 @@ function invalidateNodeEmergencyCleanupQueries(
   if (result?.job?.id) {
     void queryClient.invalidateQueries({ queryKey: ['job', result.job.id] });
   }
+}
+
+function invalidateNodeStaleRotationClearQueries(queryClient: ReturnType<typeof useQueryClient>, nodeId: string) {
+  void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  void queryClient.invalidateQueries({ queryKey: ['node', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-diagnostics', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-agent-state', nodeId] });
+  void queryClient.invalidateQueries({ queryKey: ['node-stale-rotation-preview', nodeId] });
 }
 
 function invalidateJobsFromResult(queryClient: ReturnType<typeof useQueryClient>, result: unknown) {
@@ -797,6 +808,16 @@ export function useCreateNodeEmergencyCleanupJob() {
   return useMutation<NodeEmergencyCleanupResult, Error, { nodeId: string; input: NodeEmergencyCleanupInput }>({
     mutationFn: ({ nodeId, input }) => createNodeEmergencyCleanupJob(nodeId, input),
     onSuccess: (result, variables) => invalidateNodeEmergencyCleanupQueries(queryClient, variables.nodeId, result),
+    retry: false,
+    gcTime: 0,
+  });
+}
+
+export function useClearNodeStaleRotation() {
+  const queryClient = useQueryClient();
+  return useMutation<NodeStaleRotationClearResult, Error, { nodeId: string; input: NodeStaleRotationClearInput }>({
+    mutationFn: ({ nodeId, input }) => clearNodeStaleRotation(nodeId, input),
+    onSuccess: (_result, variables) => invalidateNodeStaleRotationClearQueries(queryClient, variables.nodeId),
     retry: false,
     gcTime: 0,
   });

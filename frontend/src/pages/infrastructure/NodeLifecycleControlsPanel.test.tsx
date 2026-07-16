@@ -52,6 +52,7 @@ function renderPanel(overrides: Partial<ComponentProps<typeof NodeLifecycleContr
   const onOpenRevokeDialog = vi.fn();
   const onOpenRebootDialog = vi.fn();
   const onOpenEmergencyCleanupDialog = vi.fn();
+  const onOpenStaleRotationClearDialog = vi.fn();
   const result = render(
     <NodeLifecycleControlsPanel
       node={node}
@@ -66,14 +67,16 @@ function renderPanel(overrides: Partial<ComponentProps<typeof NodeLifecycleContr
       revokePending={false}
       rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
       onOpenRevokeDialog={onOpenRevokeDialog}
       onOpenRebootDialog={onOpenRebootDialog}
       onOpenEmergencyCleanupDialog={onOpenEmergencyCleanupDialog}
+      onOpenStaleRotationClearDialog={onOpenStaleRotationClearDialog}
       onRefreshStaleRotationPreview={onRefreshStaleRotationPreview}
       {...overrides}
     />,
   );
-  return { onOpenEmergencyCleanupDialog, onOpenRebootDialog, onOpenRevokeDialog, onRefreshStaleRotationPreview, rerender: result.rerender };
+  return { onOpenEmergencyCleanupDialog, onOpenRebootDialog, onOpenRevokeDialog, onOpenStaleRotationClearDialog, onRefreshStaleRotationPreview, rerender: result.rerender, unmount: result.unmount };
 }
 
 describe('NodeLifecycleControlsPanel', () => {
@@ -100,7 +103,7 @@ describe('NodeLifecycleControlsPanel', () => {
     expect(screen.getByRole('heading', { name: 'Emergency Cleanup' })).toBeInTheDocument();
     expect(screen.getByText('Emergency Cleanup requires the node to already be in maintenance mode. Use the existing maintenance control first.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /configure emergency cleanup/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /clear/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear stale rotation state' })).toBeEnabled();
   });
 
   it('uses safe permission, loading, empty and error states', () => {
@@ -118,9 +121,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -140,9 +145,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -162,9 +169,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -185,9 +194,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -205,10 +216,43 @@ describe('NodeLifecycleControlsPanel', () => {
 
     expect(screen.getAllByText('Backend returned an unrecognized stale-rotation reason.').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Unrecognized backend reason').length).toBeGreaterThan(0);
+    expect(screen.getByText('A backend-safe candidate has an unrecognized reason. Cleanup is disabled until the contract is reviewed.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear stale rotation state' })).not.toBeInTheDocument();
     const table = screen.getByRole('table');
     expect(within(table).getAllByText('Yes').length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole('button', { name: 'Refresh preview' }));
     expect(onRefreshStaleRotationPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers the exact backend-safe remediation without maintenance or online-channel gating', async () => {
+    const onOpenStaleRotationClearDialog = vi.fn();
+    renderPanel({
+      node: { ...node, status: 'offline' },
+      diagnostics: { ...diagnostics, communication_state: 'offline' },
+      onOpenStaleRotationClearDialog,
+    });
+
+    const button = screen.getByRole('button', { name: 'Clear stale rotation state' });
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+    expect(onOpenStaleRotationClearDialog).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps preview readable but hides mutation without permission or a safe complete set', () => {
+    const first = renderPanel({ canBootstrapNode: false });
+    expect(screen.getAllByText('Claimed rotation without result while agent is inactive.').length).toBeGreaterThan(0);
+    expect(screen.getByText('node.bootstrap permission is required to clear stale rotation state. The preview remains read-only.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear stale rotation state' })).not.toBeInTheDocument();
+    first.unmount();
+
+    renderPanel({
+      staleRotationPreview: {
+        ...preview,
+        candidates: [{ ...preview.candidates[0], safe_to_clear: false, stale_reason: 'evidence_ambiguous' }],
+      },
+    });
+    expect(screen.getByText('The backend currently reports no safe stale-rotation candidates. No cleanup action is available.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear stale rotation state' })).not.toBeInTheDocument();
   });
 
   it('gates node reboot by permission, identity, channel and terminal states', async () => {
@@ -230,9 +274,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -253,9 +299,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -276,9 +324,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -299,9 +349,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -322,9 +374,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -345,9 +399,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -363,7 +419,7 @@ describe('NodeLifecycleControlsPanel', () => {
     expect(onOpenEmergencyCleanupDialog).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: 'Queue reboot' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Revoke agent identity' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /clear stale rotation/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear stale rotation state' })).toBeEnabled();
 
     const rerenderPanel = (overrides: {
       node?: NodeDetail;
@@ -384,9 +440,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
         emergencyCleanupPending={false}
+        staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -437,9 +495,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -460,9 +520,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );
@@ -483,9 +545,11 @@ describe('NodeLifecycleControlsPanel', () => {
         revokePending={false}
         rebootPending={false}
       emergencyCleanupPending={false}
+      staleRotationClearPending={false}
         onOpenRevokeDialog={vi.fn()}
         onOpenRebootDialog={vi.fn()}
         onOpenEmergencyCleanupDialog={vi.fn()}
+        onOpenStaleRotationClearDialog={vi.fn()}
         onRefreshStaleRotationPreview={vi.fn()}
       />,
     );

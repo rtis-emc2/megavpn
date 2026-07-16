@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from './client';
 import {
+  clearNodeStaleRotation,
   downloadNodeBootstrapBundle,
   createNodeEmergencyCleanupJob,
   createNodeRebootJob,
@@ -282,6 +283,102 @@ describe('node stale rotation preview endpoint', () => {
     expect(calls[0].headers['x-megavpn-csrf']).toBeUndefined();
     expect(calls.some((call) => call.method === 'POST')).toBe(false);
     expect(calls.some((call) => call.path.includes('clear-stale-rotation'))).toBe(false);
+  });
+});
+
+describe('node stale rotation clear endpoint', () => {
+  const calls: FetchCall[] = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://megavpn.test');
+      const method = String(init?.method || 'GET').toUpperCase();
+      const path = `${url.pathname}${url.search}`;
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      calls.push({ method, path, body, headers: trackedHeaders(init?.headers), credentials: init?.credentials, cache: init?.cache });
+      if (method === 'POST' && url.pathname === '/api/v1/nodes/node%2Fone/diagnostics/clear-stale-rotation') {
+        if (body?.reason === 'return conflict') {
+          return json({ code: 'node_stale_rotation_preview_changed', error: 'token_hash raw backend response' }, 409);
+        }
+        return json({
+          status: 'cleared',
+          node_id: 'node/one',
+          cleared_count: 1,
+          cleared_jobs: [{
+            job_id: 'job-safe-1',
+            previous_status: 'running',
+            status: 'cancelled',
+            stale_reason: 'claimed_without_result_and_agent_inactive',
+            finished_at: '2026-07-16T08:10:00Z',
+          }],
+          pending_rotation_state_cleared: true,
+          active_agent_identity_preserved: true,
+        });
+      }
+      return json({ error: `unhandled ${method} ${url.pathname}` }, 404);
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('sends exactly the four contract fields to the encoded POST path and returns the unwrapped result', async () => {
+    const result = await clearNodeStaleRotation('node/one', {
+      confirmation: 'Edge One',
+      reason: 'operator reviewed state',
+      acknowledge_cancel_rotation: true,
+      expected_job_ids: ['job-safe-1'],
+    });
+
+    expect(result).toEqual({
+      status: 'cleared',
+      node_id: 'node/one',
+      cleared_count: 1,
+      cleared_jobs: [{
+        job_id: 'job-safe-1',
+        previous_status: 'running',
+        status: 'cancelled',
+        stale_reason: 'claimed_without_result_and_agent_inactive',
+        finished_at: '2026-07-16T08:10:00Z',
+      }],
+      pending_rotation_state_cleared: true,
+      active_agent_identity_preserved: true,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/v1/nodes/node%2Fone/diagnostics/clear-stale-rotation',
+      body: {
+        confirmation: 'Edge One',
+        reason: 'operator reviewed state',
+        acknowledge_cancel_rotation: true,
+        expected_job_ids: ['job-safe-1'],
+      },
+      credentials: 'include',
+    });
+    expect(Object.keys(calls[0].body || {}).sort()).toEqual(['acknowledge_cancel_rotation', 'confirmation', 'expected_job_ids', 'reason']);
+    for (const absent of ['node_id', 'evaluated_at', 'stale_reason', 'candidates', 'safe_to_clear', 'token', 'token_hash']) {
+      expect(calls[0].body).not.toHaveProperty(absent);
+    }
+    expect(calls[0].headers['x-megavpn-csrf']).toBe('1');
+    expect(calls.some((call) => call.path.endsWith('/reboot'))).toBe(false);
+    expect(calls.some((call) => call.path.endsWith('/emergency-cleanup'))).toBe(false);
+    expect(calls.some((call) => call.path.includes('agent-identity/revoke'))).toBe(false);
+  });
+
+  it('preserves typed APIError and does not transform a conflict into success', async () => {
+    await expect(clearNodeStaleRotation('node/one', {
+      confirmation: 'Edge One',
+      reason: 'return conflict',
+      acknowledge_cancel_rotation: true,
+      expected_job_ids: ['job-safe-1'],
+    })).rejects.toMatchObject({ status: 409 });
+    expect(calls.filter((call) => call.path.includes('clear-stale-rotation'))).toHaveLength(1);
   });
 });
 

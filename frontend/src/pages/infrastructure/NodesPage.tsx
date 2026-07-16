@@ -29,12 +29,14 @@ import type {
   NodeRebootInput,
   NodeServiceDiscovery,
   NodeServiceInstaller,
+  NodeStaleRotationClearInput,
   NodeStaleRotationPreview,
 } from '../../shared/api/types';
 import { hasPermission } from '../../shared/permissions/permissions';
 import {
   useAcceptNodeHostKey,
   useBootstrapNode,
+  useClearNodeStaleRotation,
   useCreateNode,
   useCreateEnrollmentToken,
   useCreateNodeEmergencyCleanupJob,
@@ -98,12 +100,20 @@ import {
 import { NodeAgentIdentityRevokeDialog } from './NodeAgentIdentityRevokeDialog';
 import { NodeRebootDialog } from './NodeRebootDialog';
 import { NodeEmergencyCleanupDialog } from './NodeEmergencyCleanupDialog';
+import { NodeStaleRotationClearDialog } from './NodeStaleRotationClearDialog';
 import {
   deriveNodeEmergencyCleanupActionState,
   nodeEmergencyCleanupExpectedConfirmation,
   validateQueuedNodeEmergencyCleanupResult,
   type SafeQueuedNodeEmergencyCleanupResult,
 } from './nodeEmergencyCleanup';
+import {
+  deriveNodeStaleRotationClearContext,
+  nodeStaleRotationExpectedConfirmation,
+  validateNodeStaleRotationClearResult,
+  type SafeNodeStaleRotationClearResult,
+} from './nodeStaleRotationClear';
+import { describeStaleRotationReason } from './nodeLifecycleControls';
 
 type NodeTab = 'overview' | 'runtime' | 'onboarding' | 'inventory' | 'capabilities' | 'diagnostics' | 'discovery' | 'bootstrap' | 'security' | 'terminal' | 'lifecycle' | 'jobs';
 
@@ -161,6 +171,16 @@ type NodeEmergencyCleanupTarget = {
 };
 
 type QueuedNodeEmergencyCleanupResult = SafeQueuedNodeEmergencyCleanupResult & {
+  nodeId: string;
+};
+
+type NodeStaleRotationClearTarget = {
+  nodeId: string;
+  confirmationName: string;
+  fingerprint: string;
+};
+
+type ClearedNodeStaleRotationResult = SafeNodeStaleRotationClearResult & {
   nodeId: string;
 };
 
@@ -657,10 +677,13 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const [queuedNodeRebootJob, setQueuedNodeRebootJob] = useState<SafeQueuedNodeRebootJob | null>(null);
   const [emergencyCleanupTarget, setEmergencyCleanupTarget] = useState<NodeEmergencyCleanupTarget | null>(null);
   const [queuedEmergencyCleanup, setQueuedEmergencyCleanup] = useState<QueuedNodeEmergencyCleanupResult | null>(null);
+  const [staleRotationClearTarget, setStaleRotationClearTarget] = useState<NodeStaleRotationClearTarget | null>(null);
+  const [clearedStaleRotation, setClearedStaleRotation] = useState<ClearedNodeStaleRotationResult | null>(null);
   const secretRequestRef = useRef(0);
   const agentRevokeRequestRef = useRef(0);
   const nodeRebootRequestRef = useRef(0);
   const emergencyCleanupRequestRef = useRef(0);
+  const staleRotationClearRequestRef = useRef(0);
   const selectedNodeIdRef = useRef(nodeId);
   const canBootstrapRef = useRef(canBootstrapNodes);
   const cachedOnboardingNode = queryClient.getQueryData<NodeDetail>(['node', nodeId]) || node;
@@ -711,9 +734,11 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const revokeAgentIdentity = useRevokeNodeAgentIdentity();
   const createRebootJob = useCreateNodeRebootJob();
   const createEmergencyCleanupJob = useCreateNodeEmergencyCleanupJob();
+  const clearStaleRotation = useClearNodeStaleRotation();
   const resetAgentIdentityRevoke = revokeAgentIdentity.reset;
   const resetNodeReboot = createRebootJob.reset;
   const resetEmergencyCleanup = createEmergencyCleanupJob.reset;
+  const resetStaleRotationClear = clearStaleRotation.reset;
   const current = detail.data || node;
   const busy = maintenance.isPending
     || syncInventory.isPending
@@ -737,7 +762,8 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     || forceRetire.isPending
     || revokeAgentIdentity.isPending
     || createRebootJob.isPending
-    || createEmergencyCleanupJob.isPending;
+    || createEmergencyCleanupJob.isPending
+    || clearStaleRotation.isPending;
 
   useEffect(() => {
     selectedNodeIdRef.current = nodeId;
@@ -745,6 +771,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     agentRevokeRequestRef.current += 1;
     nodeRebootRequestRef.current += 1;
     emergencyCleanupRequestRef.current += 1;
+    staleRotationClearRequestRef.current += 1;
     const timeout = window.setTimeout(() => {
       setOneTimePanel(null);
       setAgentRevokeNodeId(null);
@@ -752,15 +779,18 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       setQueuedNodeRebootJob(null);
       setEmergencyCleanupTarget(null);
       setQueuedEmergencyCleanup(null);
+      setStaleRotationClearTarget(null);
+      setClearedStaleRotation(null);
       resetAgentIdentityRevoke();
       resetNodeReboot();
       resetEmergencyCleanup();
+      resetStaleRotationClear();
       setGuidedBootstrapJobIds([]);
       setGuidedBootstrapRunIds([]);
       setGuidedInventoryJobIds([]);
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [nodeId, resetAgentIdentityRevoke, resetEmergencyCleanup, resetNodeReboot]);
+  }, [nodeId, resetAgentIdentityRevoke, resetEmergencyCleanup, resetNodeReboot, resetStaleRotationClear]);
 
   useEffect(() => {
     canBootstrapRef.current = canBootstrapNodes;
@@ -768,17 +798,20 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       secretRequestRef.current += 1;
       nodeRebootRequestRef.current += 1;
       emergencyCleanupRequestRef.current += 1;
+      staleRotationClearRequestRef.current += 1;
       const timeout = window.setTimeout(() => {
         setOneTimePanel(null);
         setNodeRebootNodeId(null);
         setEmergencyCleanupTarget(null);
+        setStaleRotationClearTarget(null);
         resetNodeReboot();
         resetEmergencyCleanup();
+        resetStaleRotationClear();
       }, 0);
       return () => window.clearTimeout(timeout);
     }
     return undefined;
-  }, [canBootstrapNodes, resetEmergencyCleanup, resetNodeReboot]);
+  }, [canBootstrapNodes, resetEmergencyCleanup, resetNodeReboot, resetStaleRotationClear]);
 
   useEffect(() => {
     if (!open) {
@@ -786,6 +819,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       agentRevokeRequestRef.current += 1;
       nodeRebootRequestRef.current += 1;
       emergencyCleanupRequestRef.current += 1;
+      staleRotationClearRequestRef.current += 1;
       const timeout = window.setTimeout(() => {
         setOneTimePanel(null);
         setAgentRevokeNodeId(null);
@@ -793,9 +827,12 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
         setQueuedNodeRebootJob(null);
         setEmergencyCleanupTarget(null);
         setQueuedEmergencyCleanup(null);
+        setStaleRotationClearTarget(null);
+        setClearedStaleRotation(null);
         resetAgentIdentityRevoke();
         resetNodeReboot();
         resetEmergencyCleanup();
+        resetStaleRotationClear();
         setGuidedBootstrapJobIds([]);
         setGuidedBootstrapRunIds([]);
         setGuidedInventoryJobIds([]);
@@ -803,7 +840,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
       return () => window.clearTimeout(timeout);
     }
     return undefined;
-  }, [open, resetAgentIdentityRevoke, resetEmergencyCleanup, resetNodeReboot]);
+  }, [open, resetAgentIdentityRevoke, resetEmergencyCleanup, resetNodeReboot, resetStaleRotationClear]);
 
   useEffect(() => {
     if (inventory.data?.id && guidedInventoryJobIds.length) {
@@ -815,7 +852,18 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
 
   useEffect(() => () => {
     secretRequestRef.current += 1;
+    staleRotationClearRequestRef.current += 1;
   }, []);
+
+  useEffect(() => {
+    if (canReadNodes) return undefined;
+    staleRotationClearRequestRef.current += 1;
+    const timeout = window.setTimeout(() => {
+      setStaleRotationClearTarget(null);
+      resetStaleRotationClear();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [canReadNodes, resetStaleRotationClear]);
 
   useEffect(() => {
     if (!oneTimePanel?.expiresAt) return undefined;
@@ -896,6 +944,34 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     emergencyCleanupRequestRef.current += 1;
     setEmergencyCleanupTarget(null);
     resetEmergencyCleanup();
+  };
+
+  const openStaleRotationClearDialog = () => {
+    if (
+      !current
+      || !canReadNodes
+      || !canBootstrapNodes
+      || !lifecycleDataCurrent
+      || staleRotationPreview.isLoading
+      || staleRotationPreview.isFetching
+      || staleRotationPreview.isError
+    ) return;
+    const preview = staleRotationPreview.data?.node_id === current.id ? staleRotationPreview.data : undefined;
+    const context = deriveNodeStaleRotationClearContext(current.id, preview);
+    if (!context.valid) return;
+    staleRotationClearRequestRef.current += 1;
+    resetStaleRotationClear();
+    setStaleRotationClearTarget({
+      nodeId: current.id,
+      confirmationName: nodeStaleRotationExpectedConfirmation(current),
+      fingerprint: context.context.fingerprint,
+    });
+  };
+
+  const closeStaleRotationClearDialog = () => {
+    staleRotationClearRequestRef.current += 1;
+    setStaleRotationClearTarget(null);
+    resetStaleRotationClear();
   };
 
   const submitAgentIdentityRevoke = async (input: NodeAgentIdentityRevokeInput) => {
@@ -1006,6 +1082,68 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
         if (error.status === 422) {
           void queryClient.invalidateQueries({ queryKey: ['instances'] });
         }
+      }
+      throw error;
+    }
+  };
+
+  const submitStaleRotationClear = async (input: NodeStaleRotationClearInput, fingerprint: string) => {
+    const target = staleRotationClearTarget;
+    if (
+      !target
+      || target.nodeId !== current?.id
+      || selectedNodeIdRef.current !== target.nodeId
+      || !canReadNodes
+      || !canBootstrapNodes
+      || !lifecycleDataCurrent
+      || staleRotationPreview.isLoading
+      || staleRotationPreview.isFetching
+      || staleRotationPreview.isError
+      || input.confirmation !== target.confirmationName
+    ) return;
+
+    const preview = staleRotationPreview.data?.node_id === target.nodeId ? staleRotationPreview.data : undefined;
+    const context = deriveNodeStaleRotationClearContext(target.nodeId, preview);
+    if (!context.valid || context.context.fingerprint !== fingerprint) return;
+    if (
+      input.expected_job_ids.length !== context.context.expectedJobIds.length
+      || input.expected_job_ids.some((jobID, index) => jobID !== context.context.expectedJobIds[index])
+    ) return;
+
+    const requestId = staleRotationClearRequestRef.current + 1;
+    staleRotationClearRequestRef.current = requestId;
+    try {
+      const result = await clearStaleRotation.mutateAsync({ nodeId: target.nodeId, input });
+      const safeResult = validateNodeStaleRotationClearResult(result, target.nodeId, input.expected_job_ids);
+      if (
+        staleRotationClearRequestRef.current !== requestId
+        || selectedNodeIdRef.current !== target.nodeId
+        || current?.id !== target.nodeId
+      ) return;
+      if (!safeResult) {
+        setNotice(t('nodes.lifecycleControls.staleRotationClear.errors.contractMismatch'));
+        void detail.refetch();
+        void diagnostics.refetch();
+        void staleRotationPreview.refetch();
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        return;
+      }
+      closeStaleRotationClearDialog();
+      setActiveTab('lifecycle');
+      setClearedStaleRotation({ ...safeResult, nodeId: target.nodeId });
+      setNotice(t('nodes.lifecycleControls.staleRotationClear.success'));
+      void detail.refetch();
+      void diagnostics.refetch();
+      void staleRotationPreview.refetch();
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    } catch (error) {
+      if (error instanceof APIError) {
+        if ([403, 404, 409, 500, 503].includes(error.status)) {
+          void detail.refetch();
+          void diagnostics.refetch();
+          void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        }
+        if (error.status === 409) void staleRotationPreview.refetch();
       }
       throw error;
     }
@@ -1258,6 +1396,10 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
     ? { ...current, name: emergencyCleanupTarget.confirmationName }
     : undefined;
   const currentQueuedEmergencyCleanup = queuedEmergencyCleanup?.nodeId === current?.id ? queuedEmergencyCleanup : null;
+  const staleRotationClearDialogNode = current && staleRotationClearTarget?.nodeId === current.id
+    ? { ...current, name: staleRotationClearTarget.confirmationName }
+    : undefined;
+  const currentClearedStaleRotation = clearedStaleRotation?.nodeId === current?.id ? clearedStaleRotation : null;
 
   return (
     <Drawer title={nodeLabel(current)} open={open} onClose={onClose}>
@@ -1418,11 +1560,14 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 revokePending={revokeAgentIdentity.isPending}
                 rebootPending={createRebootJob.isPending}
                 emergencyCleanupPending={createEmergencyCleanupJob.isPending}
+                staleRotationClearPending={clearStaleRotation.isPending}
                 queuedNodeRebootJob={currentQueuedNodeRebootJob}
                 queuedEmergencyCleanup={currentQueuedEmergencyCleanup}
+                clearedStaleRotation={currentClearedStaleRotation}
                 onOpenAgentIdentityRevoke={openAgentIdentityRevokeDialog}
                 onOpenNodeReboot={openNodeRebootDialog}
                 onOpenEmergencyCleanup={openEmergencyCleanupDialog}
+                onOpenStaleRotationClear={openStaleRotationClearDialog}
                 onOpenJobs={() => setActiveTab('jobs')}
                 onRefreshStaleRotationPreview={() => void staleRotationPreview.refetch()}
               />
@@ -1482,6 +1627,26 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 canBootstrapNode={canBootstrapNodes}
                 onCancel={closeEmergencyCleanupDialog}
                 onConfirm={submitEmergencyCleanup}
+              />
+            ) : null}
+            {staleRotationClearDialogNode && staleRotationClearTarget ? (
+              <NodeStaleRotationClearDialog
+                open
+                node={staleRotationClearDialogNode}
+                preview={currentStaleRotationPreview}
+                capturedFingerprint={staleRotationClearTarget.fingerprint}
+                previewFetching={staleRotationPreview.isLoading || staleRotationPreview.isFetching}
+                previewError={staleRotationPreview.isError ? staleRotationPreview.error : undefined}
+                pending={clearStaleRotation.isPending}
+                mutationError={clearStaleRotation.error}
+                canBootstrapNode={canBootstrapNodes}
+                lifecycleDataCurrent={lifecycleDataCurrent}
+                onRefreshPreview={() => {
+                  resetStaleRotationClear();
+                  return staleRotationPreview.refetch();
+                }}
+                onCancel={closeStaleRotationClearDialog}
+                onConfirm={submitStaleRotationClear}
               />
             ) : null}
           </div>
@@ -2580,11 +2745,14 @@ function LifecycleTab({
   revokePending,
   rebootPending,
   emergencyCleanupPending,
+  staleRotationClearPending,
   queuedNodeRebootJob,
   queuedEmergencyCleanup,
+  clearedStaleRotation,
   onOpenAgentIdentityRevoke,
   onOpenNodeReboot,
   onOpenEmergencyCleanup,
+  onOpenStaleRotationClear,
   onOpenJobs,
   onRefreshStaleRotationPreview,
 }: {
@@ -2602,11 +2770,14 @@ function LifecycleTab({
   revokePending: boolean;
   rebootPending: boolean;
   emergencyCleanupPending: boolean;
+  staleRotationClearPending: boolean;
   queuedNodeRebootJob?: SafeQueuedNodeRebootJob | null;
   queuedEmergencyCleanup?: QueuedNodeEmergencyCleanupResult | null;
+  clearedStaleRotation?: ClearedNodeStaleRotationResult | null;
   onOpenAgentIdentityRevoke: () => void;
   onOpenNodeReboot: () => void;
   onOpenEmergencyCleanup: () => void;
+  onOpenStaleRotationClear: () => void;
   onOpenJobs: () => void;
   onRefreshStaleRotationPreview: () => void;
 }) {
@@ -2631,9 +2802,11 @@ function LifecycleTab({
         revokePending={revokePending}
         rebootPending={rebootPending}
         emergencyCleanupPending={emergencyCleanupPending}
+        staleRotationClearPending={staleRotationClearPending}
         onOpenRevokeDialog={onOpenAgentIdentityRevoke}
         onOpenRebootDialog={onOpenNodeReboot}
         onOpenEmergencyCleanupDialog={onOpenEmergencyCleanup}
+        onOpenStaleRotationClearDialog={onOpenStaleRotationClear}
         onRefreshStaleRotationPreview={onRefreshStaleRotationPreview}
       />
       {queuedNodeRebootJob ? (
@@ -2703,6 +2876,42 @@ function LifecycleTab({
               <p className="muted">{t('nodes.lifecycleControls.emergencyCleanup.planSummaryBoundary')}</p>
               <Toolbar>
                 <Button type="button" onClick={onOpenJobs}>{t('nodes.lifecycleControls.emergencyCleanup.openJobs')}</Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
+      {clearedStaleRotation ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <Toolbar>
+                <StatusBadge status="cancelled" />
+                <Badge>{t('nodes.lifecycleControls.staleRotationClear.success')}</Badge>
+              </Toolbar>
+              <p className="muted">{t('nodes.lifecycleControls.staleRotationClear.tokenNotRotated')}</p>
+              <div role="status" className="inline-panel">
+                {t('nodes.lifecycleControls.staleRotationClear.activeIdentityPreserved')}
+              </div>
+              <div className="definition-grid">
+                <span>{t('nodes.lifecycleControls.staleRotationClear.clearedCount')}</span>
+                <strong>{clearedStaleRotation.clearedCount}</strong>
+                <span>{t('nodes.lifecycleControls.staleRotationClear.pendingStateCleared')}</span>
+                <strong>{clearedStaleRotation.pendingRotationStateCleared ? t('common.yes') : t('common.no')}</strong>
+              </div>
+              <DataTable
+                rows={[...clearedStaleRotation.clearedJobs]}
+                title={t('nodes.lifecycleControls.staleRotationClear.resultTitle')}
+                columns={[
+                  { key: 'job', header: t('nodes.lifecycleControls.staleRotationClear.jobId'), render: (row) => <code>{shortID(row.job_id)}</code> },
+                  { key: 'previous', header: t('nodes.lifecycleControls.staleRotationClear.previousStatus'), render: (row) => <StatusBadge status={row.previous_status} /> },
+                  { key: 'final', header: t('nodes.lifecycleControls.staleRotationClear.finalStatus'), render: (row) => <StatusBadge status={row.status} /> },
+                  { key: 'reason', header: t('nodes.lifecycleControls.reason'), render: (row) => t(describeStaleRotationReason(row.stale_reason).labelKey) },
+                  { key: 'finished', header: t('nodes.lifecycleControls.staleRotationClear.finishedAt'), render: (row) => fmt.date(row.finished_at) },
+                ]}
+              />
+              <Toolbar>
+                <Button type="button" onClick={onOpenJobs}>{t('nodes.lifecycleControls.staleRotationClear.openJobs')}</Button>
               </Toolbar>
             </div>
           </CardBody>

@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from 'vitest';
-import type { EnrollmentToken, EnrollmentTokenIssueResult, Job, NodeAgentIdentityRevokeInput, NodeAgentIdentityRevokeResult, NodeEmergencyCleanupInput, NodeEmergencyCleanupPlanSummary, NodeEmergencyCleanupResult, NodeEmergencyCleanupScope, NodeRebootInput, NodeStaleRotationCandidate, NodeStaleRotationPreview } from './types';
+import type { EnrollmentToken, EnrollmentTokenIssueResult, Job, NodeAgentIdentityRevokeInput, NodeAgentIdentityRevokeResult, NodeEmergencyCleanupInput, NodeEmergencyCleanupPlanSummary, NodeEmergencyCleanupResult, NodeEmergencyCleanupScope, NodeRebootInput, NodeStaleRotationCandidate, NodeStaleRotationClearInput, NodeStaleRotationClearResult, NodeStaleRotationClearedJob, NodeStaleRotationPreview } from './types';
 
 describe('enrollment token API types', () => {
   it('keeps safe list tokens separate from secret-bearing issue responses', () => {
@@ -32,6 +32,40 @@ describe('node stale rotation preview API types', () => {
       stale_reason: string;
       safe_to_clear: boolean;
     }>();
+  });
+});
+
+describe('node stale rotation clear API types', () => {
+  it('keeps the exact request, cleared-job and unwrapped result contracts', () => {
+    expectTypeOf<NodeStaleRotationClearInput>().toEqualTypeOf<{
+      confirmation: string;
+      reason: string;
+      acknowledge_cancel_rotation: boolean;
+      expected_job_ids: string[];
+    }>();
+    expectTypeOf<NodeStaleRotationClearInput>().not.toHaveProperty('node_id');
+    expectTypeOf<NodeStaleRotationClearInput>().not.toHaveProperty('evaluated_at');
+    expectTypeOf<NodeStaleRotationClearInput>().not.toHaveProperty('candidates');
+
+    expectTypeOf<NodeStaleRotationClearedJob>().toEqualTypeOf<{
+      job_id: string;
+      previous_status: string;
+      status: string;
+      stale_reason: string;
+      finished_at: string;
+    }>();
+    expectTypeOf<NodeStaleRotationClearResult>().toEqualTypeOf<{
+      status: string;
+      node_id: string;
+      cleared_count: number;
+      cleared_jobs: NodeStaleRotationClearedJob[];
+      pending_rotation_state_cleared: boolean;
+      active_agent_identity_preserved: boolean;
+    }>();
+    expectTypeOf<NodeStaleRotationClearResult>().not.toHaveProperty('job');
+    expectTypeOf<NodeStaleRotationClearResult>().not.toHaveProperty('result');
+    expectTypeOf<NodeStaleRotationClearResult>().not.toHaveProperty('token');
+    expectTypeOf<NodeStaleRotationClearResult>().not.toHaveProperty('token_hash');
   });
 });
 

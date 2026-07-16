@@ -1,4 +1,4 @@
-import { RefreshCw, RotateCcw, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { Eraser, RefreshCw, RotateCcw, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { NodeDetail, NodeDiagnostics, NodeStaleRotationCandidate, NodeStaleRotationPreview } from '../../shared/api/types';
 import { Badge, Button, Card, CardBody, DataTable, EmptyState, LoadingSkeleton, StatusBadge, Toolbar } from '../../shared/ui';
@@ -14,6 +14,7 @@ import {
   type NodeLifecycleSeverity,
 } from './nodeLifecycleControls';
 import { deriveNodeEmergencyCleanupActionState } from './nodeEmergencyCleanup';
+import { deriveNodeStaleRotationClearContext } from './nodeStaleRotationClear';
 
 type NodeLifecycleControlsPanelProps = {
   node: NodeDetail;
@@ -28,9 +29,11 @@ type NodeLifecycleControlsPanelProps = {
   revokePending: boolean;
   rebootPending: boolean;
   emergencyCleanupPending: boolean;
+  staleRotationClearPending: boolean;
   onOpenRevokeDialog: () => void;
   onOpenRebootDialog: () => void;
   onOpenEmergencyCleanupDialog: () => void;
+  onOpenStaleRotationClearDialog: () => void;
   onRefreshStaleRotationPreview: () => void;
 };
 
@@ -69,9 +72,11 @@ export function NodeLifecycleControlsPanel({
   revokePending,
   rebootPending,
   emergencyCleanupPending,
+  staleRotationClearPending,
   onOpenRevokeDialog,
   onOpenRebootDialog,
   onOpenEmergencyCleanupDialog,
+  onOpenStaleRotationClearDialog,
   onRefreshStaleRotationPreview,
 }: NodeLifecycleControlsPanelProps) {
   const { t } = useTranslation();
@@ -86,6 +91,23 @@ export function NodeLifecycleControlsPanel({
   const rebootState = deriveNodeRebootActionState({ node, diagnostics, canBootstrapNode, lifecycleDataCurrent });
   const emergencyCleanupState = deriveNodeEmergencyCleanupActionState({ node, diagnostics, canBootstrapNode, lifecycleDataCurrent });
   const communicationState = normalizeLifecycleStatus(diagnostics?.communication_state || node.agent_channel_status || '');
+  const staleRotationClearContext = deriveNodeStaleRotationClearContext(node.id, staleRotationPreview);
+  const staleRotationClearBlockedKey = !canReadNode
+    ? 'nodes.lifecycleControls.staleRotationClear.errors.previewPermissionRequired'
+    : !canBootstrapNode
+      ? 'nodes.lifecycleControls.staleRotationClear.errors.permissionRequired'
+      : !lifecycleDataCurrent
+        ? 'nodes.lifecycleControls.staleRotationClear.errors.lifecycleDataStale'
+        : staleRotationPreviewLoading || staleRotationPreviewFetching
+          ? 'nodes.lifecycleControls.staleRotationClear.errors.previewLoading'
+          : staleRotationPreviewError
+            ? 'nodes.lifecycleControls.staleRotationClear.errors.previewUnavailable'
+            : !staleRotationClearContext.valid
+              ? staleRotationClearContext.errorKey
+              : '';
+  const staleRotationClearAvailable = !staleRotationClearBlockedKey && staleRotationClearContext.valid;
+  const backendSafeCount = candidates.filter((candidate) => candidate.safe_to_clear === true).length;
+  const excludedCount = candidates.length - backendSafeCount;
 
   return (
     <div className="page-stack">
@@ -113,10 +135,6 @@ export function NodeLifecycleControlsPanel({
               <strong>{model.staleRotation.backendSafeCandidateCount}</strong>
               <span>{t('nodes.lifecycleControls.evaluatedAt')}</span>
               <strong>{fmt.date(model.staleRotation.evaluatedAt)}</strong>
-            </div>
-            <div className="inline-panel" aria-label={t('nodes.lifecycleControls.deferredActionsLabel')}>
-              <strong>{t('nodes.lifecycleControls.deferredActionsTitle')}</strong>
-              <span className="muted">{t('nodes.lifecycleControls.deferredActionsBody')}</span>
             </div>
           </div>
         </CardBody>
@@ -278,6 +296,9 @@ export function NodeLifecycleControlsPanel({
             {canReadNode && staleRotationPreview && !candidates.length ? (
               <EmptyState title={t('nodes.lifecycleControls.noCandidatesTitle')} body={t('nodes.lifecycleControls.noCandidatesBody')} />
             ) : null}
+            {staleRotationClearBlockedKey ? (
+              <div role="alert" className="error-state-inline">{t(staleRotationClearBlockedKey)}</div>
+            ) : null}
             {canReadNode && staleRotationPreview && candidates.length ? (
               <>
                 <div className="definition-grid" aria-live="polite">
@@ -285,6 +306,8 @@ export function NodeLifecycleControlsPanel({
                   <span>{t('nodes.lifecycleControls.tokenRotationStatus')}</span><strong>{lifecycleStatusValue(staleRotationPreview.token_rotation_status)}</strong>
                   <span>{t('nodes.lifecycleControls.candidateCount')}</span><strong>{candidates.length}</strong>
                   <span>{t('nodes.lifecycleControls.unknownReasons')}</span><strong>{model.staleRotation.unknownReasonCount}</strong>
+                  <span>{t('nodes.lifecycleControls.staleRotationClear.safeCandidateCount')}</span><strong>{backendSafeCount}</strong>
+                  <span>{t('nodes.lifecycleControls.staleRotationClear.excludedCandidateCount')}</span><strong>{excludedCount}</strong>
                 </div>
                 <DataTable<NodeStaleRotationCandidate>
                   rows={candidates}
@@ -303,6 +326,20 @@ export function NodeLifecycleControlsPanel({
                     { key: 'poll', header: t('nodes.lifecycleControls.lastPollAt'), render: (row) => fmt.date(row.last_poll_at) },
                   ]}
                 />
+                <Toolbar>
+                  {staleRotationClearAvailable ? (
+                    <Button
+                      variant="danger"
+                      icon={<Eraser size={16} />}
+                      disabled={staleRotationClearPending || staleRotationPreviewFetching}
+                      onClick={onOpenStaleRotationClearDialog}
+                    >
+                      {staleRotationClearPending
+                        ? t('nodes.lifecycleControls.staleRotationClear.pending')
+                        : t('nodes.lifecycleControls.staleRotationClear.buttonLabel')}
+                    </Button>
+                  ) : null}
+                </Toolbar>
               </>
             ) : null}
           </div>

@@ -195,6 +195,30 @@ export type NodeStaleRotationPreview = {
   candidates: NodeStaleRotationCandidate[];
 };
 
+export type NodeStaleRotationClearInput = {
+  confirmation: string;
+  reason: string;
+  acknowledge_cancel_rotation: boolean;
+  expected_job_ids: string[];
+};
+
+export type NodeStaleRotationClearedJob = {
+  job_id: string;
+  previous_status: string;
+  status: string;
+  stale_reason: string;
+  finished_at: string;
+};
+
+export type NodeStaleRotationClearResult = {
+  status: string;
+  node_id: string;
+  cleared_count: number;
+  cleared_jobs: NodeStaleRotationClearedJob[];
+  pending_rotation_state_cleared: boolean;
+  active_agent_identity_preserved: boolean;
+};
+
 export type NodeAgentIdentityRevokeInput = {
   confirmation: string;
   reason: string;
