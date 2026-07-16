@@ -30,7 +30,7 @@ func (s *Server) rotateNodeAgentToken(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeErr(w, 409, err.Error())
 		return
 	}
-	writeJSON(w, 202, redactedJob(jobRecord))
+	writeSensitiveJSON(w, 202, operatorLifecycleJobMetadata(jobRecord))
 }
 
 func (s *Server) rotateNodeEnrollmentToken(w nethttp.ResponseWriter, r *nethttp.Request) {

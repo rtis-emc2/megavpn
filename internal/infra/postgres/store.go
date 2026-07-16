@@ -2898,8 +2898,14 @@ func (s *Store) hydrateAgentJobSecrets(ctx context.Context, nodeID string, job *
 	if refNodeID := strings.TrimSpace(stringify(ref.Meta["node_id"])); refNodeID != "" && refNodeID != strings.TrimSpace(nodeID) {
 		return errors.New("new agent token secret ref node mismatch")
 	}
-	job.Payload["new_agent_token"] = strings.TrimSpace(string(rawToken))
+	setAgentRotationExecutionMaterial(job, strings.TrimSpace(string(rawToken)))
 	return nil
+}
+
+func setAgentRotationExecutionMaterial(job *domain.Job, token string) {
+	job.Payload["new_agent_token"] = token
+	delete(job.Payload, "new_agent_token_secret_ref_id")
+	delete(job.Payload, "new_agent_token_hash")
 }
 
 func (s *Store) claimJob(ctx context.Context, owner, where string, args []any) (domain.Job, bool, error) {

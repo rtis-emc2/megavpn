@@ -190,3 +190,11 @@ run_json_checked \
   TestPostgresIntegrationNodeLifecycleRebootEmergencyCleanupHTTP \
   TestPostgresIntegrationNodeLifecycleRebootEmergencyCleanupConflictHTTP \
   TestPostgresIntegrationNodeLifecycleRebootEmergencyCleanupRedactionHTTP
+
+run_json_checked \
+  ./internal/api/http \
+  'TestPostgresIntegrationNodeLifecycleStaleRotation' \
+  'postgres-node-lifecycle-stale-revoke-http' \
+  TestPostgresIntegrationNodeLifecycleStaleRotationClearRevokeHTTP \
+  TestPostgresIntegrationNodeLifecycleStaleRotationPreviewChangedHTTP \
+  TestPostgresIntegrationNodeLifecycleStaleRotationClearRevokeRedactionHTTP
