@@ -188,6 +188,12 @@ func (c *client) execute(ctx context.Context, j job, st *agentState) (string, ma
 		return c.probeBackhaul(ctx, j, *st)
 	case "node.backhaul.cleanup":
 		return c.cleanupBackhaul(ctx, j, *st)
+	case "node.external_egress.apply":
+		return c.applyExternalEgress(ctx, j, *st)
+	case "node.external_egress.probe":
+		return c.probeExternalEgress(ctx, j, *st)
+	case "node.external_egress.cleanup":
+		return c.cleanupExternalEgress(ctx, j, *st)
 	case "node.route_policy.apply":
 		return c.applyRoutePolicy(ctx, j, *st)
 	case "node.route_policy.cleanup":

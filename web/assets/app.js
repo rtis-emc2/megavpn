@@ -503,6 +503,24 @@
   });
   if (!backhaulPage) throw new Error('MegaVPNBackhaulPage is not loaded');
 
+  const externalEgressPage = window.MegaVPNExternalEgressPage?.create?.({
+    state,
+    setTitle,
+    el,
+    statusTag,
+    escapeHTML,
+    formatDate,
+    hasPermission,
+    requestJSON,
+    sendJSON,
+    refresh,
+    openModal,
+    closeModal,
+    renderActionResponse,
+    openActionOutcomeModal,
+  });
+  if (!externalEgressPage) throw new Error('MegaVPNExternalEgressPage is not loaded');
+
   const nodesPage = window.MegaVPNNodesPage?.create?.({
     state,
     setTitle,
@@ -591,6 +609,7 @@
     jobWorkflows,
     artifactsPage,
     backhaulPage,
+    externalEgressPage,
     certificatesPage,
     revisionsPage,
     opsPages,

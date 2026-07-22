@@ -997,6 +997,85 @@ func TestBuildXrayServerConfigAddsGroupSpecificRemoteEgressOutbound(t *testing.T
 	}
 }
 
+func TestBuildXrayServerConfigPreservesExternalEgressMarkForSelectedGroup(t *testing.T) {
+	const (
+		providerTag  = "external-egress-provider-users"
+		providerMark = 0x4d590123
+	)
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "default",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "88888888-8888-4888-8888-888888888888",
+				"email":       "direct-user",
+				"vless_group": "default",
+			},
+			map[string]any{
+				"id":          "99999999-9999-4999-8999-999999999999",
+				"email":       "provider-user",
+				"vless_group": "provider-users",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{"key": "default", "label": "Default access", "outbound_tag": "direct"},
+			map[string]any{
+				"key":          "provider-users",
+				"label":        "Provider users",
+				"egress_mode":  "external_provider",
+				"outbound_tag": providerTag,
+				"outbound": map[string]any{
+					"tag":      providerTag,
+					"protocol": "freedom",
+					"settings": map[string]any{"domainStrategy": "UseIP"},
+					"streamSettings": map[string]any{
+						"sockopt": map[string]any{"mark": providerMark},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	var providerOutbound map[string]any
+	for _, item := range cfg["outbounds"].([]any) {
+		outbound, _ := item.(map[string]any)
+		if stringify(outbound["tag"]) == providerTag {
+			providerOutbound = outbound
+			break
+		}
+	}
+	if providerOutbound == nil {
+		t.Fatalf("provider outbound %q missing from %#v", providerTag, cfg["outbounds"])
+	}
+	stream, _ := providerOutbound["streamSettings"].(map[string]any)
+	sockopt, _ := stream["sockopt"].(map[string]any)
+	if got := firstIntValue(sockopt["mark"]); got != providerMark {
+		t.Fatalf("provider outbound mark = %#x, want %#x", got, providerMark)
+	}
+
+	routing := cfg["routing"].(map[string]any)
+	rules := routing["rules"].([]any)
+	providerUsers := []any(nil)
+	for _, item := range rules {
+		rule, _ := item.(map[string]any)
+		if stringify(rule["outboundTag"]) == providerTag {
+			providerUsers, _ = rule["user"].([]any)
+			break
+		}
+	}
+	if len(providerUsers) != 1 || stringify(providerUsers[0]) != "provider-user" {
+		t.Fatalf("provider route users = %#v, want only provider-user", providerUsers)
+	}
+}
+
 func TestBuildXrayServerConfigAddsInstanceOnlyVLESSGroup(t *testing.T) {
 	cfg, err := buildXrayServerConfig(domain.Instance{
 		Name:         "edge-vless",

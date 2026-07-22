@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `7.1.1.0`
+**Release:** `7.1.1.1`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -36,6 +36,7 @@ Start here:
 - [Traffic accounting](docs/TRAFFIC_ACCOUNTING.md)
 - [Client access groups](docs/ACCESS_GROUPS.md)
 - [VLESS access groups](docs/VLESS_GROUPS.md)
+- [External provider egress](docs/EXTERNAL_EGRESS.md)
 - [Self-testing](docs/SELF_TESTING.md)
 - [Roadmap and technical specification](ROADMAP_V1_AND_TZ.md)
 
@@ -57,10 +58,10 @@ infrastructure:
 
 ## Current Release Status
 
-Current release: `7.1.1.0`.
+Current release: `7.1.1.1`.
 
 The release notes and stabilization baseline are maintained in
-[docs/releases/7.1.1.0.md](docs/releases/7.1.1.0.md). Release readiness gates
+[docs/releases/7.1.1.1.md](docs/releases/7.1.1.1.md). Release readiness gates
 are documented in [docs/RELEASE_GATES.md](docs/RELEASE_GATES.md).
 
 ## Component Model

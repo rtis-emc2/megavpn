@@ -1,6 +1,6 @@
 # Threat Model
 
-**Release:** `7.1.1.0`
+**Release:** `7.1.1.1`
 
 ## Scope
 
@@ -41,6 +41,7 @@ MegaVPN consists of:
 - Secret master key and encrypted `secret_refs`.
 - Platform certificates and service PKI roots.
 - VPN service private keys, PSKs, account passwords and generated client bundles.
+- External-provider client configs, account credentials, certificates and private keys.
 - VLESS subscription tokens and generated client profile URLs.
 - Job/audit history.
 - PostgreSQL database and artifact root backups.
@@ -60,6 +61,9 @@ MegaVPN consists of:
 | Supply-chain compromise of remote installer | Xray remote install requires pinned script SHA-256; otherwise fail closed |
 | Runtime binary substitution | Runtime artifacts are stored under a control-plane artifact root and installed only after hash verification and service/path allowlist checks |
 | Accidental direct breakout from ingress VLESS | Xray egress is resolved at instance level; generated configs add a default outbound via managed backhaul when the node role requires remote egress |
+| Malicious external-provider configuration | Provider files are untrusted input. OpenVPN scripts, plugins, management sockets, external file references and log/status hooks are rejected; WireGuard hooks and `SaveConfig` are rejected. Runtime files are generated under a deployment-specific managed directory. |
+| External-provider secret disclosure | Imported configurations and separate credentials are encrypted through `secret_refs`, omitted from profile reads and hydrated only when the assigned node claims an apply job. Probe and cleanup jobs never receive provider secrets. |
+| External tunnel captures node traffic | External egress uses a dedicated Xray socket mark, `ip rule` and routing table. The node main table is not changed, and only members of an explicitly assigned client access group receive the marked outbound. A high-metric unreachable route prevents marked traffic from falling through to the main table when the provider interface fails. |
 | Unsafe node cleanup | Cleanup jobs must remain scoped to managed instance/backhaul units and operator confirmation must name the target node |
 | Subscription URL leakage | Treat subscription tokens as bearer credentials; use per-client rotation, expiry, audit and `Cache-Control: no-store` |
 | Secret loss | Backup DB/artifacts separately from master key; master key rotation and sealed copy required |
@@ -69,6 +73,7 @@ MegaVPN consists of:
 - A root-running node agent is intentionally privileged. Production deployments must restrict which operators can queue apply/capability jobs.
 - Package-manager capability installs write broadly to the node OS. Use manual-present strategy or pre-baked images where policy forbids runtime package installation.
 - IPsec/L2TP and some Xray/backhaul profiles can be materialize-only until their full runtime validation is completed.
+- External-egress probe confirms local unit/interface/rule/route state; it does not provide end-to-end provider reachability or SLA validation.
 - Public share links are bearer URLs. Hashing protects database disclosure, not recipients forwarding a live URL.
 - The topology map exposes operational metadata derived from public node IPs. External GeoIP providers will see those public IPs; regulated deployments should use an internal GeoIP endpoint or disable lookup with `MEGAVPN_GEOIP_LOOKUP_URL_TEMPLATE=disabled`.
 - A full repository-wide security scan requires delegated worker coverage. Parent-agent-only scans are useful but must not be treated as exhaustive release evidence.

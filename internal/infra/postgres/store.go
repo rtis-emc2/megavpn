@@ -2237,7 +2237,7 @@ func (s *Store) CancelJob(ctx context.Context, jobID string) (domain.Job, error)
 }
 
 func (s *Store) ClaimJob(ctx context.Context, workerID string) (domain.Job, bool, error) {
-	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.reboot','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','node.route_policy.cleanup','node.firewall.preview','node.firewall.apply','node.firewall.observe','node.firewall.disable','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`, nil)
+	return s.claimJob(ctx, workerID, `type not in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.reboot','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.external_egress.apply','node.external_egress.probe','node.external_egress.cleanup','node.route_policy.apply','node.route_policy.cleanup','node.firewall.preview','node.firewall.apply','node.firewall.observe','node.firewall.disable','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`, nil)
 }
 
 func (s *Store) RecoverStaleJobLeases(ctx context.Context) (int, error) {
@@ -2401,6 +2401,9 @@ func (s *Store) applyJobCompletionSideEffects(ctx context.Context, idv, jobType,
 
 	if strings.HasPrefix(jobType, "node.firewall.") {
 		return s.ApplyFirewallJobResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
+	}
+	if strings.HasPrefix(jobType, "node.external_egress.") {
+		return s.ApplyExternalEgressJobResult(ctx, domain.Job{ID: idv, Type: jobType, ScopeID: scopeID, Payload: payload, Result: result}, status, result)
 	}
 
 	if status == "succeeded" {
@@ -2870,7 +2873,7 @@ func (s *Store) AgentNextJob(ctx context.Context, nodeRef string) (domain.Job, b
 	if err := s.db.QueryRow(ctx, `select id from nodes where (id::text=$1 or name=$1) and status <> 'retired'`, nodeRef).Scan(&nodeID); err != nil {
 		return domain.Job{}, false, err
 	}
-	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.reboot','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.route_policy.apply','node.route_policy.cleanup','node.firewall.preview','node.firewall.apply','node.firewall.observe','node.firewall.disable','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`
+	where := `node_id=$1 and type in ('node.inventory','node.inventory.sync','node.services.discover','node.capability.install','node.capability.verify','node.channel.probe','node.agent.rotate_token','node.emergency_cleanup','node.reboot','node.backhaul.apply','node.backhaul.probe','node.backhaul.cleanup','node.external_egress.apply','node.external_egress.probe','node.external_egress.cleanup','node.route_policy.apply','node.route_policy.cleanup','node.firewall.preview','node.firewall.apply','node.firewall.observe','node.firewall.disable','instance.restart','instance.apply','instance.start','instance.stop','instance.enable','instance.disable','instance.diagnose','instance.delete')`
 	job, ok, err := s.claimJob(ctx, "agent:"+nodeID, where, []any{nodeID})
 	if err != nil || !ok {
 		return job, ok, err
@@ -2882,7 +2885,13 @@ func (s *Store) AgentNextJob(ctx context.Context, nodeRef string) (domain.Job, b
 }
 
 func (s *Store) hydrateAgentJobSecrets(ctx context.Context, nodeID string, job *domain.Job) error {
-	if job == nil || job.Type != "node.agent.rotate_token" {
+	if job == nil {
+		return nil
+	}
+	if strings.HasPrefix(job.Type, "node.external_egress.") {
+		return s.hydrateExternalEgressJobSecrets(ctx, nodeID, job)
+	}
+	if job.Type != "node.agent.rotate_token" {
 		return nil
 	}
 	if strings.TrimSpace(stringify(job.Payload["new_agent_token"])) != "" {
@@ -2900,6 +2909,78 @@ func (s *Store) hydrateAgentJobSecrets(ctx context.Context, nodeID string, job *
 		return errors.New("new agent token secret ref node mismatch")
 	}
 	job.Payload["new_agent_token"] = strings.TrimSpace(string(rawToken))
+	return nil
+}
+
+func (s *Store) hydrateExternalEgressJobSecrets(ctx context.Context, nodeID string, job *domain.Job) error {
+	deploymentID := strings.TrimSpace(stringify(job.Payload["deployment_id"]))
+	requestedProfileID := strings.TrimSpace(stringify(job.Payload["profile_id"]))
+	if deploymentID == "" || requestedProfileID == "" {
+		return errors.New("external egress job identity is incomplete")
+	}
+	var profileID, protocol, transport, interfaceName, routingTable, endpointHost string
+	var routeMetric, fwmark, endpointPort int
+	if err := s.db.QueryRow(ctx, `select d.profile_id::text,p.protocol,p.transport,d.interface_name,d.routing_table,
+		d.route_metric,d.fwmark,p.endpoint_host,coalesce(p.endpoint_port,0)
+		from external_egress_deployments d join external_egress_profiles p on p.id=d.profile_id
+		where d.id=$1 and d.node_id=$2 and d.status <> 'deleted'`, deploymentID, nodeID).Scan(
+		&profileID, &protocol, &transport, &interfaceName, &routingTable,
+		&routeMetric, &fwmark, &endpointHost, &endpointPort,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("external egress deployment does not belong to this node")
+		}
+		return err
+	}
+	if profileID != requestedProfileID {
+		return errors.New("external egress job profile does not match its deployment")
+	}
+	job.Payload["node_id"] = nodeID
+	job.Payload["profile_id"] = profileID
+	job.Payload["protocol"] = protocol
+	job.Payload["transport"] = transport
+	job.Payload["interface_name"] = interfaceName
+	job.Payload["routing_table"] = routingTable
+	job.Payload["route_metric"] = routeMetric
+	job.Payload["fwmark"] = fwmark
+	job.Payload["endpoint_host"] = endpointHost
+	job.Payload["endpoint_port"] = endpointPort
+	if job.Type != "node.external_egress.apply" {
+		delete(job.Payload, "secret_refs")
+		delete(job.Payload, "secrets")
+		return nil
+	}
+	rawRefs, err := s.externalEgressSecretRefs(ctx, profileID)
+	if err != nil {
+		return err
+	}
+	if len(rawRefs) == 0 {
+		return errors.New("external egress profile has no secret references")
+	}
+	if len(rawRefs) > len(externalEgressSecretTypes) {
+		return errors.New("external egress secret reference set is too large")
+	}
+	secrets := make(map[string]any, len(rawRefs))
+	for rawPurpose, rawRefID := range rawRefs {
+		purpose := strings.ToLower(strings.TrimSpace(rawPurpose))
+		if _, ok := externalEgressSecretTypes[purpose]; !ok {
+			return fmt.Errorf("unsupported external egress secret purpose %q", purpose)
+		}
+		refID := strings.TrimSpace(stringify(rawRefID))
+		if refID == "" {
+			return fmt.Errorf("external egress secret ref %q is empty", purpose)
+		}
+		ref, value, err := s.ResolveSecretValue(ctx, refID)
+		if err != nil {
+			return fmt.Errorf("resolve external egress secret %q: %w", purpose, err)
+		}
+		if strings.TrimSpace(stringify(ref.Meta["external_egress_profile_id"])) != profileID || strings.TrimSpace(stringify(ref.Meta["purpose"])) != purpose {
+			return fmt.Errorf("external egress secret %q metadata mismatch", purpose)
+		}
+		secrets[purpose] = string(value)
+	}
+	job.Payload["secrets"] = secrets
+	job.Payload["secret_refs"] = rawRefs
 	return nil
 }
 
@@ -3250,7 +3331,7 @@ func jobLockTarget(j domain.Job) (resourceType string, resourceID string, lockKi
 
 func jobLeaseDurationForType(jobType string) time.Duration {
 	switch jobType {
-	case "node.capability.install", "node.emergency_cleanup", "node.reboot", "node.backhaul.apply", "instance.apply", "instance.delete":
+	case "node.capability.install", "node.emergency_cleanup", "node.reboot", "node.backhaul.apply", "node.external_egress.apply", "node.external_egress.cleanup", "instance.apply", "instance.delete":
 		return longNodeJobLeaseDuration
 	default:
 		return jobLeaseDuration

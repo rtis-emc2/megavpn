@@ -168,6 +168,52 @@ func TestNormalizeNodeRebootRejectsEmptyConfirmation(t *testing.T) {
 	}
 }
 
+func TestNormalizeExternalEgressApply(t *testing.T) {
+	payload, err := Normalize("node.external_egress.apply", map[string]any{
+		"node_id": "node-1", "profile_id": "profile-1", "deployment_id": "deployment-1",
+		"protocol": "ovpn", "interface_name": "mgev0123456789", "routing_table": "40123",
+		"route_metric": 100, "fwmark": 0x4d590123, "secret_refs": map[string]any{"config": "secret-1"},
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if payload["protocol"] != "openvpn" {
+		t.Fatalf("protocol = %v, want openvpn", payload["protocol"])
+	}
+}
+
+func TestNormalizeExternalEgressRejectsPlannedRuntime(t *testing.T) {
+	_, err := Normalize("node.external_egress.apply", map[string]any{
+		"node_id": "node-1", "profile_id": "profile-1", "deployment_id": "deployment-1",
+		"protocol": "l2tp_ipsec", "interface_name": "mgev0123456789", "routing_table": "40123",
+	})
+	if err == nil {
+		t.Fatal("expected planned runtime protocol to be rejected")
+	}
+}
+
+func TestNormalizeExternalEgressRejectsUnsafeRoutingValues(t *testing.T) {
+	base := map[string]any{
+		"node_id": "node-1", "profile_id": "profile-1", "deployment_id": "deployment-1",
+		"protocol": "openvpn", "interface_name": "mgev0123456789", "routing_table": "40123",
+		"route_metric": 100, "fwmark": 0x4d590123,
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"main table":     func(payload map[string]any) { payload["routing_table"] = "254" },
+		"missing mark":   func(payload map[string]any) { delete(payload, "fwmark") },
+		"foreign mark":   func(payload map[string]any) { payload["fwmark"] = 1 },
+		"invalid metric": func(payload map[string]any) { payload["route_metric"] = 0 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload := cloneMap(base)
+			mutate(payload)
+			if _, err := Normalize("node.external_egress.apply", payload); err == nil {
+				t.Fatal("expected unsafe routing payload to be rejected")
+			}
+		})
+	}
+}
+
 func TestNormalizeControlPlaneTLSApply(t *testing.T) {
 	payload, err := Normalize("platform.control_plane_tls.apply", map[string]any{
 		"public_base_url": "https://control.example.com:58765",

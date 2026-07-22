@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.1.1.0`
+**Релиз:** `7.1.1.1`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -375,6 +375,12 @@ catalog. Ручной CIDR используйте только как осозн
 активные allocations блокируют удаление pool.
 
 ## 12. Managed backhaul
+
+Подключение к внешнему VPN/proxy-провайдеру является отдельным workflow. Чтобы
+направить через провайдера только участников выбранной access group, используйте
+`External egress` и инструкцию [Выход через внешний VPN/proxy-провайдер](EXTERNAL_EGRESS_RU.md).
+Provider client config не нужно импортировать как Backhaul или входящий Manual
+instance.
 
 Backhaul нужен, когда вход находится на ingress node, а выход трафика должен
 быть через egress node.
