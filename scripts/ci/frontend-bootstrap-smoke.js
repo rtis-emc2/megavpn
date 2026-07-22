@@ -267,6 +267,7 @@ const windowObject = {
   console,
   URL,
   URLSearchParams,
+  AbortController,
   FormData: class FormData {},
   fetch: fetchMock,
   setTimeout,
@@ -306,6 +307,7 @@ const context = vm.createContext({
   console,
   URL,
   URLSearchParams,
+  AbortController,
   FormData: windowObject.FormData,
   fetch: fetchMock,
   setTimeout,
@@ -373,6 +375,46 @@ async function main() {
   assert.strictEqual(router.autoRefreshEnabledForCurrentPage(), false, 'service pack form must not auto-refresh');
   routerState.instancesView = 'manual';
   assert.strictEqual(router.autoRefreshEnabledForCurrentPage(), false, 'manual instance form must not auto-refresh');
+
+  const resolveImportFormat = windowObject.MegaVPNExternalEgressPage?.resolveImportFormat;
+  assert.strictEqual(typeof resolveImportFormat, 'function', 'external egress import format helper must be exported');
+  assert.strictEqual(resolveImportFormat('vless', '{"address":"vpn.example.com"}'), 'json');
+  assert.strictEqual(resolveImportFormat('vless', '', 'json'), 'json', 'profile edit must retain its stored import format');
+  assert.strictEqual(resolveImportFormat('l2tp_ipsec', 'server=vpn.example.com'), 'key_value');
+  assert.strictEqual(resolveImportFormat('socks5'), 'structured', 'planned structured protocols must not be rewritten as URL imports');
+
+  const pendingCoreRequests = [];
+  const loaderState = {
+    authUser: { id: 'operator' },
+    trafficExportFilters: {},
+    controlPlaneTLSSettings: null,
+  };
+  let progressRenders = 0;
+  const loader = windowObject.MegaVPNCoreLoader.create({
+    state: loaderState,
+    fetchJSON: (requestPath, fallback, options) => new Promise((resolve) => {
+      pendingCoreRequests.push({ requestPath, fallback, options, resolve });
+    }),
+    hasPermission: () => true,
+    updateReadyPill: () => {},
+    renderNotice: () => {},
+    renderProgress: () => { progressRenders += 1; },
+  });
+  const coreLoad = loader.loadCore();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(pendingCoreRequests.length, 2, 'readiness requests should start together');
+  for (const request of pendingCoreRequests.slice(0, 2)) request.resolve(request.fallback);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(pendingCoreRequests.length, 7, 'only five critical authenticated requests should start before first render');
+  for (const request of pendingCoreRequests.slice(2, 7)) request.resolve(request.fallback);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(progressRenders, 1, 'initial dashboard should render after critical requests finish');
+  assert.ok(pendingCoreRequests.length >= 25, 'secondary inventory requests should start after first render');
+  for (const request of pendingCoreRequests.slice(2)) {
+    assert.ok(request.options?.signal, `core request ${request.requestPath} must be abortable`);
+    request.resolve(request.fallback);
+  }
+  await coreLoad;
 
   console.log(`frontend bootstrap smoke ok: ${scripts.length} assets`);
 }

@@ -883,7 +883,7 @@ func ubuntuPackageEnableUnits(capabilityCode string, units ...string) []string {
 
 func shouldPreventPackageServiceAutostart(capabilityCode string) bool {
 	switch normalizeCapabilityCode(capabilityCode) {
-	case driver.Shadowsocks:
+	case driver.Shadowsocks, driver.XL2TPD:
 		return true
 	default:
 		return false

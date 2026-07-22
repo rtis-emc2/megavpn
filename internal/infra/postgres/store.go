@@ -1272,6 +1272,11 @@ func (s *Store) createInstanceWithOptions(ctx context.Context, x domain.Instance
 			x.Spec["interface_name"] = driver.WireGuardInterfaceName(firstString(x.Slug, x.Name, x.ID))
 		}
 	}
+	if x.ServiceCode == driver.XL2TPD {
+		if err := s.ensureXL2TPDServerNodeAvailable(ctx, x.NodeID); err != nil {
+			return x, err
+		}
+	}
 	if x.SystemdUnit == "" {
 		x.SystemdUnit = serviceDefaultSystemdUnit(x.ServiceCode, x.Slug)
 		if x.ServiceCode == driver.WireGuard {
@@ -1342,6 +1347,22 @@ func (s *Store) createInstanceWithOptions(ctx context.Context, x domain.Instance
 	}
 	_, _ = s.CreateAudit(ctx, "system", "instance.create", "instance", &x.ID, "instance created")
 	return x, nil
+}
+
+func (s *Store) ensureXL2TPDServerNodeAvailable(ctx context.Context, nodeID string) error {
+	var externalClientExists bool
+	if err := s.db.QueryRow(ctx, `select exists(
+		select 1 from external_egress_deployments d
+		join external_egress_profiles p on p.id=d.profile_id
+		where d.node_id=$1 and d.desired_status='active' and d.status<>'deleted'
+		and p.protocol='l2tp_ipsec' and p.status<>'deleted'
+	)`, nodeID).Scan(&externalClientExists); err != nil {
+		return fmt.Errorf("check L2TP/IPsec external egress conflict: %w", err)
+	}
+	if externalClientExists {
+		return fmt.Errorf("XL2TPD server instance cannot share a node with an active L2TP/IPsec external egress deployment")
+	}
+	return nil
 }
 
 func (s *Store) DiscardInstanceDraft(ctx context.Context, instanceID string) error {
@@ -1449,6 +1470,16 @@ func (s *Store) UpdateInstanceStatus(ctx context.Context, instanceID, action str
 	op, ok := driver.OperationFor(x.ServiceCode, action)
 	if !ok || op.JobType == "" || !op.AgentExecutable {
 		return domain.Job{}, fmt.Errorf("unsupported instance action %q for service %s", action, x.ServiceCode)
+	}
+	if x.ServiceCode == driver.XL2TPD && in(action,
+		driver.OperationApply,
+		driver.OperationStart,
+		driver.OperationEnable,
+		driver.OperationRestart,
+	) {
+		if err := s.ensureXL2TPDServerNodeAvailable(ctx, x.NodeID); err != nil {
+			return domain.Job{}, err
+		}
 	}
 	jobType := op.JobType
 	status := x.Status

@@ -39,6 +39,38 @@ func TestValidateExternalEgressRuntimeProfileRequirements(t *testing.T) {
 			purposes:  map[string]bool{"config": true},
 			wantError: "0.0.0.0/0",
 		},
+		{
+			name: "Shadowsocks separate password is present", protocol: "shadowsocks",
+			config:   `{"server":"ss.example.com","server_port":8388,"method":"aes-256-gcm"}`,
+			purposes: map[string]bool{"config": true, "password": true},
+		},
+		{
+			name: "Shadowsocks password is missing", protocol: "shadowsocks",
+			config:    `{"server":"ss.example.com","server_port":8388,"method":"aes-256-gcm"}`,
+			purposes:  map[string]bool{"config": true},
+			wantError: "password",
+		},
+		{
+			name: "VLESS embedded UUID is present", protocol: "vless",
+			config:   "vless://123e4567-e89b-42d3-a456-426614174002@edge.example.com:443?security=tls&sni=edge.example.com&type=tcp",
+			purposes: map[string]bool{"config": true},
+		},
+		{
+			name: "VLESS separate UUID is present", protocol: "vless",
+			config:   `{"server":"edge.example.com","port":443,"security":"tls","sni":"edge.example.com"}`,
+			purposes: map[string]bool{"config": true, "uuid": true},
+		},
+		{
+			name: "L2TP IPsec separate credentials are present", protocol: "l2tp_ipsec",
+			config:   "server=l2tp.example.com\nremote_id=@l2tp.example.com\n",
+			purposes: map[string]bool{"config": true, "username": true, "password": true, "preshared_key": true},
+		},
+		{
+			name: "L2TP IPsec PSK is missing", protocol: "l2tp_ipsec",
+			config:    "server=l2tp.example.com\nusername=user\npassword=pass\n",
+			purposes:  map[string]bool{"config": true},
+			wantError: "preshared_key",
+		},
 	}
 
 	for _, test := range tests {
@@ -54,6 +86,40 @@ func TestValidateExternalEgressRuntimeProfileRequirements(t *testing.T) {
 				t.Fatalf("validateExternalEgressRuntimeProfile() error = %v, want substring %q", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestExternalEgressRuntimeMetadataRequiresReplacementConfig(t *testing.T) {
+	existing := domain.ExternalEgressProfile{
+		Transport: "tls", ImportFormat: "url", EndpointHost: "vpn.example.com", EndpointPort: 443,
+	}
+	unchanged := domain.ExternalEgressProfileInput{
+		Transport: "tls", ImportFormat: "url", EndpointHost: "vpn.example.com", EndpointPort: 443,
+	}
+	if externalEgressRuntimeMetadataChanged(unchanged, existing) {
+		t.Fatal("unchanged runtime metadata reported as changed")
+	}
+	changed := unchanged
+	changed.EndpointHost = "other.example.com"
+	if !externalEgressRuntimeMetadataChanged(changed, existing) {
+		t.Fatal("changed endpoint was not detected")
+	}
+}
+
+func TestEnsureExternalEgressIPsecIncludesIsIdempotent(t *testing.T) {
+	config, secrets, err := ensureExternalEgressIPsecIncludes("config setup\n", "%any %any : PSK \"secret\"\n")
+	if err != nil {
+		t.Fatalf("ensureExternalEgressIPsecIncludes returned error: %v", err)
+	}
+	config, secrets, err = ensureExternalEgressIPsecIncludes(config, secrets)
+	if err != nil {
+		t.Fatalf("second ensureExternalEgressIPsecIncludes returned error: %v", err)
+	}
+	if strings.Count(config, "include /etc/megavpn/external-egress/*/ipsec.conf") != 1 {
+		t.Fatalf("IPsec config include is not idempotent:\n%s", config)
+	}
+	if strings.Count(secrets, "include /etc/megavpn/external-egress/*/ipsec.secrets") != 1 {
+		t.Fatalf("IPsec secrets include is not idempotent:\n%s", secrets)
 	}
 }
 
@@ -123,5 +189,31 @@ func TestApplyExternalEgressGroupRoutingSpecMarksOnlySelectedGroup(t *testing.T)
 	egress := selectedGroup["egress"].(map[string]any)
 	if egress["external_egress_profile_id"] != profile.ID || egress["deployment_id"] != deployment.ID {
 		t.Fatalf("selected group external egress metadata = %#v", egress)
+	}
+}
+
+func TestApplyExternalEgressGroupRoutingSpecUsesLoopbackProxyForVLESS(t *testing.T) {
+	t.Parallel()
+	spec := map[string]any{"vless_groups": []any{map[string]any{"key": "provider_users", "outbound_tag": "direct"}}}
+	group := domain.ClientAccessGroup{GroupKey: "provider_users"}
+	profile := domain.ExternalEgressProfile{ID: "123e4567-e89b-42d3-a456-426614174000", Protocol: "vless"}
+	deployment := domain.ExternalEgressDeployment{
+		ID: "123e4567-e89b-42d3-a456-426614174001", RoutingTable: "40123",
+		InterfaceName: "mgev0123456789", FWMark: 0x4d590123,
+	}
+
+	next, changed, err := applyExternalEgressGroupRoutingSpec(spec, group, profile, deployment)
+	if err != nil || !changed {
+		t.Fatalf("applyExternalEgressGroupRoutingSpec() changed=%t error=%v", changed, err)
+	}
+	item := next["vless_groups"].([]any)[0].(map[string]any)
+	outbound := item["outbound"].(map[string]any)
+	if outbound["protocol"] != "socks" || outbound["streamSettings"] != nil {
+		t.Fatalf("proxy external egress outbound = %#v", outbound)
+	}
+	servers := outbound["settings"].(map[string]any)["servers"].([]any)
+	server := servers[0].(map[string]any)
+	if server["address"] != "127.0.0.1" || server["port"] != 20123 {
+		t.Fatalf("loopback proxy server = %#v", server)
 	}
 }

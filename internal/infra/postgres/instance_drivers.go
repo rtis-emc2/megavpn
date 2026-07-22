@@ -1155,7 +1155,7 @@ func buildIPSecServerConfig(instance domain.Instance, spec map[string]any, psk s
 		if !strings.HasSuffix(secrets, "\n") {
 			secrets += "\n"
 		}
-		return raw, secrets, nil
+		return ensureExternalEgressIPsecIncludes(raw, secrets)
 	}
 	if psk == "" {
 		return "", "", fmt.Errorf("ipsec psk is required")
@@ -1200,7 +1200,19 @@ func buildIPSecServerConfig(instance domain.Instance, spec map[string]any, psk s
 	} else if !strings.HasSuffix(secrets, "\n") {
 		secrets += "\n"
 	}
-	return strings.Join(lines, "\n") + "\n", secrets, nil
+	return ensureExternalEgressIPsecIncludes(strings.Join(lines, "\n")+"\n", secrets)
+}
+
+func ensureExternalEgressIPsecIncludes(config, secrets string) (string, string, error) {
+	const configInclude = "include /etc/megavpn/external-egress/*/ipsec.conf"
+	const secretsInclude = "include /etc/megavpn/external-egress/*/ipsec.secrets"
+	if !strings.Contains(config, configInclude) {
+		config = strings.TrimRight(config, "\n") + "\n\n" + configInclude + "\n"
+	}
+	if !strings.Contains(secrets, secretsInclude) {
+		secrets = strings.TrimRight(secrets, "\n") + "\n\n" + secretsInclude + "\n"
+	}
+	return config, secrets, nil
 }
 
 func buildXL2TPDServerConfig(instance domain.Instance, spec map[string]any) (string, string, string, error) {

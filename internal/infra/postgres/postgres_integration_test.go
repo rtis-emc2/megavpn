@@ -15,6 +15,7 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
 	secretstore "github.com/rtis-emc2/megavpn/internal/secrets"
+	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
 func TestPostgresIntegrationExternalEgressJobIdempotency(t *testing.T) {
@@ -96,6 +97,70 @@ func TestPostgresIntegrationExternalEgressJobIdempotency(t *testing.T) {
 	}
 	if _, err := store.db.Exec(ctx, `update external_egress_profiles set status='disabled' where id=$1`, profile.ID); err == nil {
 		t.Fatal("expected database lifecycle guard to reject disabling a deployed profile")
+	}
+}
+
+func TestPostgresIntegrationL2TPExternalEgressRejectsXL2TPDServerConflict(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte(strings.Repeat("22", 32)), 0o600); err != nil {
+		t.Fatalf("write test master key: %v", err)
+	}
+	secretSvc, err := secretstore.LoadFromFile(keyPath, "integration-test")
+	if err != nil {
+		t.Fatalf("load test secret service: %v", err)
+	}
+	store.SetSecretService(secretSvc)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name: "l2tp-conflict-" + suffix, Kind: "remote", Role: "ingress", Status: "online",
+		Address: "192.0.2.21", OSFamily: "linux", OSVersion: "ubuntu-24.04", Architecture: "amd64",
+		ExecutionMode: "agent_managed", AgentStatus: "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	profile, err := store.CreateExternalEgressProfile(ctx, domain.ExternalEgressProfileInput{
+		ProfileKey: "l2tp_" + suffix, DisplayName: "L2TP " + suffix, Protocol: "l2tp_ipsec",
+		Status: "active", ImportFormat: "key_value", Secrets: map[string]string{
+			"config": "server=l2tp.example.com\n", "username": "provider-user",
+			"password": "provider-pass", "preshared_key": "provider-psk",
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("create L2TP profile: %v", err)
+	}
+	serverID := id.New()
+	if _, err := store.db.Exec(ctx, `insert into instances(
+		id,node_id,service_definition_id,name,slug,systemd_unit,status,enabled,endpoint_host,endpoint_port,created_at,updated_at
+	) values($1,$2,(select id from service_definitions where code='xl2tpd'),'L2TP server',$3,'xl2tpd.service','active',true,'',1701,now(),now())`,
+		serverID, node.ID, "l2tp-server-"+suffix); err != nil {
+		t.Fatalf("insert XL2TPD server instance: %v", err)
+	}
+	if _, err := store.CreateExternalEgressDeployment(ctx, profile.ID, domain.ExternalEgressDeploymentInput{
+		NodeID: node.ID, RoutingTable: "auto", RouteMetric: 100,
+	}); err == nil || !strings.Contains(err.Error(), "cannot share a node") {
+		t.Fatalf("deployment conflict error = %v", err)
+	}
+	if _, err := store.db.Exec(ctx, `update instances set status='disabled',enabled=false where id=$1`, serverID); err != nil {
+		t.Fatalf("disable XL2TPD server instance: %v", err)
+	}
+	if _, err := store.CreateExternalEgressDeployment(ctx, profile.ID, domain.ExternalEgressDeploymentInput{
+		NodeID: node.ID, RoutingTable: "auto", RouteMetric: 100,
+	}); err != nil {
+		t.Fatalf("create L2TP deployment while server is disabled: %v", err)
+	}
+	if _, err := store.UpdateInstanceStatus(ctx, serverID, driver.OperationEnable); err == nil || !strings.Contains(err.Error(), "cannot share a node") {
+		t.Fatalf("instance re-enable conflict error = %v", err)
+	}
+	if _, err := store.db.Exec(ctx, `update instances set status='active',enabled=true where id=$1`, serverID); err == nil || !strings.Contains(err.Error(), "cannot share a node") {
+		t.Fatalf("database instance re-enable conflict error = %v", err)
+	}
+	if _, err := store.CreateInstanceDraft(ctx, domain.Instance{
+		NodeID: node.ID, ServiceCode: "xl2tpd", Name: "replacement L2TP server", Slug: "replacement-l2tp-" + suffix,
+	}); err == nil || !strings.Contains(err.Error(), "cannot share a node") {
+		t.Fatalf("instance conflict error = %v", err)
 	}
 }
 

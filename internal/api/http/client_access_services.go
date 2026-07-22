@@ -63,7 +63,7 @@ func clientAccessServiceCatalog() []domain.ClientAccessService {
 		{
 			ServiceCode:         "l2tp",
 			DisplayName:         "L2TP / IPsec",
-			Description:         "Combined client access service backed by IPsec and XL2TPD runtime components. Group materialization is planned.",
+			Description:         "Native inbound L2TP/IPsec client-group materialization is planned. External L2TP/IPsec provider egress is runtime-ready and is assigned through VLESS group policy.",
 			Category:            "vpn",
 			Implemented:         true,
 			SupportsGroups:      false,
@@ -89,7 +89,7 @@ func clientAccessServiceCatalog() []domain.ClientAccessService {
 		{
 			ServiceCode:         "shadowsocks",
 			DisplayName:         "Shadowsocks",
-			Description:         "Shadowsocks runtime support exists. Client access group materialization is planned.",
+			Description:         "Native inbound Shadowsocks client-group materialization is planned. External Shadowsocks provider egress is runtime-ready and is assigned through VLESS group policy.",
 			Category:            "proxy",
 			Implemented:         true,
 			SupportsGroups:      false,

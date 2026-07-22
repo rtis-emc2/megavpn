@@ -171,6 +171,9 @@ func (s *Store) UpdateExternalEgressProfile(ctx context.Context, profileID strin
 	if strings.TrimSpace(input.Protocol) == "" {
 		input.Protocol = existing.Protocol
 	}
+	if strings.TrimSpace(input.Transport) == "" {
+		input.Transport = existing.Transport
+	}
 	if strings.TrimSpace(input.Status) == "" {
 		input.Status = existing.Status
 	}
@@ -192,6 +195,9 @@ func (s *Store) UpdateExternalEgressProfile(ctx context.Context, profileID strin
 	}
 	if normalized.Protocol != existing.Protocol {
 		return domain.ExternalEgressProfile{}, fmt.Errorf("external egress protocol cannot be changed; create a new profile")
+	}
+	if normalized.Secrets["config"] == "" && externalEgressRuntimeMetadataChanged(normalized, existing) {
+		return domain.ExternalEgressProfile{}, fmt.Errorf("endpoint, transport and import format can change only with a replacement provider config")
 	}
 	if existing.Status == "active" && normalized.Status != "active" {
 		var activeGroups, liveDeployments int
@@ -248,6 +254,13 @@ func (s *Store) UpdateExternalEgressProfile(ctx context.Context, profileID strin
 	}
 	_, _ = s.CreateAudit(ctx, "system", "external_egress.profile.update", "external_egress", &profileID, "external egress profile updated")
 	return s.GetExternalEgressProfile(ctx, profileID)
+}
+
+func externalEgressRuntimeMetadataChanged(input domain.ExternalEgressProfileInput, existing domain.ExternalEgressProfile) bool {
+	return input.Transport != existing.Transport ||
+		input.ImportFormat != existing.ImportFormat ||
+		input.EndpointHost != existing.EndpointHost ||
+		input.EndpointPort != existing.EndpointPort
 }
 
 func (s *Store) DeleteExternalEgressProfile(ctx context.Context, profileID string, userID *string) (domain.ExternalEgressProfile, error) {
@@ -421,6 +434,24 @@ func validateExternalEgressRuntimeProfile(protocol string, config []byte, purpos
 			return fmt.Errorf("active WireGuard external egress profile requires AllowedIPs to contain 0.0.0.0/0")
 		}
 		required = preview.RequiredSecrets
+	case "shadowsocks":
+		preview, err := externalegress.ParseShadowsocks(config)
+		if err != nil {
+			return err
+		}
+		required = preview.RequiredSecrets
+	case "vless":
+		preview, err := externalegress.ParseVLESS(config)
+		if err != nil {
+			return err
+		}
+		required = preview.RequiredSecrets
+	case "l2tp_ipsec":
+		preview, err := externalegress.ParseL2TPIPsec(config)
+		if err != nil {
+			return err
+		}
+		required = preview.RequiredSecrets
 	default:
 		return fmt.Errorf("protocol %s runtime is not available", protocol)
 	}
@@ -431,11 +462,35 @@ func validateExternalEgressRuntimeProfile(protocol string, config []byte, purpos
 			}
 			continue
 		}
+		if purposes["config"] && externalEgressConfigContainsPurpose(protocol, config, purpose) {
+			continue
+		}
 		if !purposes[purpose] {
 			return fmt.Errorf("active %s profile requires secret %q", protocol, purpose)
 		}
 	}
 	return nil
+}
+
+func externalEgressConfigContainsPurpose(protocol string, config []byte, purpose string) bool {
+	switch protocol {
+	case "shadowsocks":
+		preview, err := externalegress.ParseShadowsocks(config)
+		return err == nil && purpose == "password" && preview.HasPassword
+	case "vless":
+		preview, err := externalegress.ParseVLESS(config)
+		return err == nil && purpose == "uuid" && preview.HasCredential
+	case "l2tp_ipsec":
+		preview, err := externalegress.ParseL2TPIPsec(config)
+		if err != nil {
+			return false
+		}
+		return (purpose == "username" && preview.HasUsername) ||
+			(purpose == "password" && preview.HasPassword) ||
+			(purpose == "preshared_key" && preview.HasPSK)
+	default:
+		return false
+	}
 }
 
 func normalizeExternalEgressProfileInput(input domain.ExternalEgressProfileInput, create bool) (domain.ExternalEgressProfileInput, error) {
@@ -509,6 +564,24 @@ func normalizeExternalEgressProfileInput(input domain.ExternalEgressProfileInput
 				return input, err
 			}
 			input.Transport, input.EndpointHost, input.EndpointPort = "udp", preview.EndpointHost, preview.EndpointPort
+		case "shadowsocks":
+			preview, err := externalegress.ParseShadowsocks([]byte(configValue))
+			if err != nil {
+				return input, err
+			}
+			input.Transport, input.EndpointHost, input.EndpointPort = preview.Transport, preview.EndpointHost, preview.EndpointPort
+		case "vless":
+			preview, err := externalegress.ParseVLESS([]byte(configValue))
+			if err != nil {
+				return input, err
+			}
+			input.Transport, input.EndpointHost, input.EndpointPort = preview.Transport, preview.EndpointHost, preview.EndpointPort
+		case "l2tp_ipsec":
+			preview, err := externalegress.ParseL2TPIPsec([]byte(configValue))
+			if err != nil {
+				return input, err
+			}
+			input.Transport, input.EndpointHost, input.EndpointPort = preview.Transport, preview.EndpointHost, preview.EndpointPort
 		}
 	}
 	if input.Status == "active" && def.RuntimeSupport == externalegress.RuntimeReady && configValue == "" && create {
@@ -565,6 +638,29 @@ func (s *Store) CreateExternalEgressDeployment(ctx context.Context, profileID st
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1,0))`, node.ID); err != nil {
 		return domain.ExternalEgressDeployment{}, err
+	}
+	if profile.Protocol == "l2tp_ipsec" {
+		var existing int
+		if err := tx.QueryRow(ctx, `select count(*) from external_egress_deployments d
+			join external_egress_profiles p on p.id=d.profile_id
+			where d.node_id=$1 and d.profile_id<>$2 and p.protocol='l2tp_ipsec'
+			and d.desired_status='active' and d.status<>'deleted'`, node.ID, profile.ID).Scan(&existing); err != nil {
+			return domain.ExternalEgressDeployment{}, err
+		}
+		if existing > 0 {
+			return domain.ExternalEgressDeployment{}, fmt.Errorf("only one active L2TP/IPsec external egress deployment is supported per node")
+		}
+		var serverInstanceExists bool
+		if err := tx.QueryRow(ctx, `select exists(
+			select 1 from instances i
+			join service_definitions sd on sd.id=i.service_definition_id
+			where i.node_id=$1 and i.enabled=true and i.status<>'deleted' and sd.code='xl2tpd'
+		)`, node.ID).Scan(&serverInstanceExists); err != nil {
+			return domain.ExternalEgressDeployment{}, err
+		}
+		if serverInstanceExists {
+			return domain.ExternalEgressDeployment{}, fmt.Errorf("L2TP/IPsec external egress cannot share a node with a managed XL2TPD server instance")
+		}
 	}
 
 	deploymentID := ""
@@ -768,6 +864,13 @@ func (s *Store) createExternalEgressJob(ctx context.Context, deploymentID, jobTy
 		"fwmark":      deployment.FWMark,
 		"secret_refs": secretRefs,
 	}
+	if externalEgressUsesLoopbackProxy(profile.Protocol) {
+		port, portErr := externalEgressLoopbackPort(deployment.RoutingTable)
+		if portErr != nil {
+			return domain.Job{}, portErr
+		}
+		payload["proxy_port"] = port
+	}
 	job, payloadJSON, err := normalizeJobForInsert(domain.Job{Type: jobType, ScopeType: "external_egress", ScopeID: &deployment.ID, NodeID: &deployment.NodeID, Priority: 45, Payload: payload})
 	if err != nil {
 		return domain.Job{}, err
@@ -916,13 +1019,26 @@ func applyExternalEgressGroupRoutingSpec(spec map[string]any, group domain.Clien
 			continue
 		}
 		item["outbound_tag"] = outboundTag
-		item["outbound"] = map[string]any{
-			"tag":      outboundTag,
-			"protocol": "freedom",
-			"settings": map[string]any{"domainStrategy": "UseIP"},
-			"streamSettings": map[string]any{
-				"sockopt": map[string]any{"mark": deployment.FWMark},
-			},
+		if externalEgressUsesLoopbackProxy(profile.Protocol) {
+			port, err := externalEgressLoopbackPort(deployment.RoutingTable)
+			if err != nil {
+				return nil, false, err
+			}
+			item["outbound"] = map[string]any{
+				"tag": outboundTag, "protocol": "socks",
+				"settings": map[string]any{"servers": []any{
+					map[string]any{"address": "127.0.0.1", "port": port},
+				}},
+			}
+		} else {
+			item["outbound"] = map[string]any{
+				"tag":      outboundTag,
+				"protocol": "freedom",
+				"settings": map[string]any{"domainStrategy": "UseIP"},
+				"streamSettings": map[string]any{
+					"sockopt": map[string]any{"mark": deployment.FWMark},
+				},
+			}
 		}
 		item["egress"] = map[string]any{
 			"mode":                       "external_egress",
@@ -944,6 +1060,18 @@ func applyExternalEgressGroupRoutingSpec(spec map[string]any, group domain.Clien
 		return next, false, nil
 	}
 	return next, true, nil
+}
+
+func externalEgressUsesLoopbackProxy(protocol string) bool {
+	return protocol == "vless" || protocol == "shadowsocks"
+}
+
+func externalEgressLoopbackPort(routingTable string) (int, error) {
+	table, err := strconv.Atoi(strings.TrimSpace(routingTable))
+	if err != nil || table < 40000 || table > 48999 {
+		return 0, fmt.Errorf("external egress routing table is invalid")
+	}
+	return 20000 + table - 40000, nil
 }
 
 func allocateExternalEgressNodeResources(ctx context.Context, tx pgx.Tx, profileID, nodeID string, requestedTable int) (string, int, int, error) {

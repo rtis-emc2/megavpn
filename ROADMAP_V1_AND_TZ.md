@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.1.1`
+**Release:** `7.1.1.2`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.1.1`
+**Code baseline:** RTIS MegaVPN `7.1.1.2`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,19 +23,19 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.1.1` continues the production-hardening line after the firewall,
+`7.1.1.2` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate, VLESS provisioning-sync, traffic-accounting collector
 coverage, firewall apply hardening and lost-node lifecycle releases. This
-release focuses on service-pack rollout idempotency: repeated submits for the
-same node, endpoint host, service and listen port reuse existing components
-instead of creating suffixed duplicate runtime instances. The preceding
-`7.1.0.28` hotfix made agent-handled job wait states explicit in Jobs UI, and
-`7.1.0.27` repaired the VLESS client identity provisioning SQL cast after
-stabilizing node replacement: issued client UUIDs are stored as client-level
-service identities, backfilled from existing access metadata and reused when
-replacement ingress instances are provisioned. The codebase already has a
-working control-plane foundation:
+release makes L2TP over IPsec, VLESS and Shadowsocks external-provider egress
+runtime-ready for explicitly selected global client access groups. It also
+splits initial console loading into a critical first render followed by bounded
+secondary inventory requests. Provider routes remain isolated from the node
+main table; unselected clients and ordinary node processes keep their existing
+routing path. The preceding hardening releases made service-pack rollout
+idempotent, stabilized client-level VLESS identities across ingress replacement
+and made agent-handled job wait states explicit in Jobs UI. The codebase already
+has a working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.

@@ -1,6 +1,6 @@
 # External Provider Egress
 
-**Release:** `7.1.1.1`
+**Release:** `7.1.1.2`
 
 External egress profiles connect selected client access groups to a commercial
 or third-party VPN/proxy provider. They do not replace managed Backhaul and they
@@ -22,12 +22,18 @@ the profile must be deployed on every node containing an Xray/VLESS instance in
 the group scope.
 
 ```text
-Selected client
+Selected client with an L3 provider
   -> global VLESS access group
   -> dedicated Xray outbound with a managed fwmark
   -> dedicated ip rule and routing table
-  -> external OpenVPN or WireGuard interface
+  -> external OpenVPN, WireGuard or L2TP/IPsec interface
   -> provider egress
+
+Selected client with a proxy provider
+  -> global VLESS access group
+  -> dedicated Xray SOCKS outbound
+  -> loopback-only SOCKS inbound of the provider Xray process
+  -> external VLESS or Shadowsocks provider
 
 Unselected client or node process
   -> normal Xray policy / main node routing table
@@ -44,10 +50,10 @@ The node main routing table is not modified. There is no managed
 | WireGuard | `wg-quick` `.conf`, inline or separate private key | Ready | Allowed |
 | SOCKS5 | Structured profile | Preview | Draft only |
 | HTTP CONNECT / HTTPS proxy | Structured profile | Preview | Draft only |
-| Shadowsocks | URL/JSON/structured catalog entry | Preview | Draft only |
-| VLESS | URL/JSON/structured catalog entry | Preview | Draft only |
+| Shadowsocks | SIP002 URL or strict JSON | Ready | Allowed |
+| VLESS | URI or strict JSON; TLS/REALITY is mandatory | Ready | Allowed |
 | L2TP | Structured catalog entry | Planned; intentionally unsafe without IPsec | Draft only |
-| L2TP over IPsec | Structured catalog entry | Planned | Draft only |
+| L2TP over IPsec | Strict key/value or JSON plus PSK and user credentials | Ready | Allowed |
 | IKEv2/IPsec | Structured/mobileconfig catalog entry | Planned | Draft only |
 | Trojan | URL/JSON/structured catalog entry | Planned | Draft only |
 | Hysteria 2 | URL/YAML/structured catalog entry | Planned | Draft only |
@@ -92,20 +98,52 @@ Runtime-ready WireGuard external egress requires `AllowedIPs` to contain
 `0.0.0.0/0`. MegaVPN replaces `Table` with its dedicated managed table and
 ignores provider DNS changes.
 
+### L2TP over IPsec
+
+Use either strict `key=value` input or a JSON object. Supported fields are the
+provider server, remote identity, username, password, pre-shared key, IKE
+proposal and ESP proposal. The profile requires both the IPsec PSK and L2TP
+username/password. Unknown fields, non-string JSON values, control characters
+and invalid endpoint/identity values are rejected.
+
+The node driver uses strongSwan, `xl2tpd` and `pppd`, assigns a deterministic
+managed PPP interface and never installs the provider default route in the
+main table. Only one active external L2TP/IPsec deployment is allowed per node
+because `xl2tpd` and UDP/1701 are node-scoped resources. The same node cannot
+host a managed XL2TPD server instance; agent preflight also blocks apply when
+an unmanaged process already listens on UDP/1701. Certificate-based provider
+authentication is not advertised by this release.
+
+### VLESS
+
+Paste a standard `vless://` URI or strict JSON. UUID can be embedded in the
+URI/JSON or stored separately as the `uuid` secret. The provider connection
+must use TLS or REALITY; plaintext VLESS and `allowInsecure` are rejected.
+Supported transports are TCP, WebSocket, gRPC, HTTP Upgrade and XHTTP, subject
+to transport/security compatibility validation. Provider public key, short ID,
+SNI, fingerprint, path/host and service name are parsed into managed Xray
+configuration.
+
+### Shadowsocks
+
+Paste a SIP002 `ss://` URI or strict JSON. Password can be embedded or stored
+as a separate secret. Only Xray-compatible AEAD/2022 ciphers accepted by the
+catalog are allowed. SIP003 plugins and arbitrary plugin options are rejected;
+provider configs cannot execute node-local commands.
+
 ### Structured Draft Profiles
 
-For preview/planned protocols, operators can store endpoint, port, transport,
-username/password, UUID, PSK and certificate/private-key material as a draft.
-Secrets are encrypted, but the profile cannot be applied until a hardened
-runtime driver is released.
+For the remaining preview/planned protocols, operators can store structured
+metadata and encrypted secrets as a draft. The profile cannot be applied until
+a hardened runtime driver is released.
 
 ## Operator Workflow
 
 1. Open `External egress`.
 2. Select `New profile`.
 3. Choose the provider protocol.
-4. For OpenVPN or WireGuard, paste/select the provider config and run
-   `Preview import`.
+4. Paste/select the provider config and run `Preview import`. Runtime-ready
+   imports are OpenVPN, WireGuard, L2TP/IPsec, VLESS and Shadowsocks.
 5. Add separate credentials or certificate material when the preview reports a
    required secret.
 6. Save the profile as `active`. Non-ready protocols remain `draft`.
@@ -128,7 +166,7 @@ unhealthy.
 
 ## Routing And Isolation Model
 
-Each deployment receives values unique on its node:
+Each L3 deployment receives values unique on its node:
 
 - interface name in the `mgev*` namespace;
 - routing table in `40000..48999`;
@@ -145,6 +183,12 @@ group policy is installed. If the provider interface disappears, marked group
 traffic fails closed instead of falling through to the node main table. An
 explicit deployment cleanup removes the policy rule and its dedicated table.
 
+VLESS and Shadowsocks deployments use a separate Xray process with a SOCKS
+inbound bound strictly to `127.0.0.1` on a deterministic managed port. The
+selected access-group outbound connects to that loopback listener. These proxy
+deployments do not receive an `ip rule`, do not alter the main table and fail
+closed when the provider process or listener is unavailable.
+
 ## Security Model
 
 - Provider configurations and credentials are encrypted in `secret_refs`.
@@ -156,8 +200,8 @@ explicit deployment cleanup removes the policy rule and its dedicated table.
 - Agent-managed files use mode `0600`; route scripts use `0700`.
 - Deployment IDs, interface names, route tables and marks are validated again by
   the agent.
-- Apply automatically verifies or installs the required OpenVPN/WireGuard OS
-  runtime before stopping an existing deployment.
+- Apply automatically verifies or installs the required OpenVPN, WireGuard,
+  strongSwan/xl2tpd/pppd or Xray runtime before replacing a deployment.
 - API apply/probe/cleanup operations require both node write and access-group
   policy permissions.
 
@@ -178,15 +222,18 @@ systemctl status megavpn-external-egress-<deployment-id-without-dashes>.service 
 ip link show
 ip rule show
 ip route show table <40000-48999>
+journalctl -u strongswan-starter -u strongswan -u xl2tpd -n 200 --no-pager
+ss -lntp | grep '127.0.0.1:'
 journalctl -u megavpn-external-egress-<deployment-id-without-dashes>.service -n 200 --no-pager
 ```
 
 Expected state:
 
 - the managed unit is active;
-- the `mgev*` interface exists;
-- the dedicated table contains a default route through that interface;
-- `ip rule` contains the deployment fwmark and table;
+- an L3 deployment has its `mgev*`/managed PPP interface, dedicated default
+  route and matching fwmark `ip rule`;
+- a VLESS/Shadowsocks deployment listens only on its assigned `127.0.0.1` SOCKS
+  port and has no provider route in the main table;
 - the main table has not acquired a provider default route.
 
 ## Failure And Rollback

@@ -1,6 +1,6 @@
 # Выход через внешний VPN/Proxy-провайдер
 
-**Релиз:** `7.1.1.1`
+**Релиз:** `7.1.1.2`
 
 External egress profile подключает выбранные группы клиентов к коммерческому
 или стороннему VPN/proxy-провайдеру. Он не заменяет managed Backhaul и не
@@ -21,12 +21,18 @@ Client access group один раз ссылается на профиль, но
 развернут на каждой node, где находится Xray/VLESS instance из scope группы.
 
 ```text
-Выбранный клиент
+Выбранный клиент с L3-провайдером
   -> глобальная VLESS access group
   -> отдельный Xray outbound с managed fwmark
   -> отдельные ip rule и routing table
-  -> внешний OpenVPN/WireGuard interface
+  -> внешний OpenVPN/WireGuard/L2TP over IPsec interface
   -> egress провайдера
+
+Выбранный клиент с proxy-провайдером
+  -> глобальная VLESS access group
+  -> отдельный Xray SOCKS outbound
+  -> loopback-only SOCKS inbound provider Xray-процесса
+  -> внешний VLESS или Shadowsocks provider
 
 Другой клиент или процесс node
   -> обычная Xray policy / main routing table node
@@ -43,10 +49,10 @@ route `0.0.0.0/0` в таблицу `main`.
 | WireGuard | `wg-quick` `.conf`, inline или отдельный private key | Готов | Разрешена |
 | SOCKS5 | Structured profile | Preview | Только draft |
 | HTTP CONNECT / HTTPS proxy | Structured profile | Preview | Только draft |
-| Shadowsocks | URL/JSON/structured catalog entry | Preview | Только draft |
-| VLESS | URL/JSON/structured catalog entry | Preview | Только draft |
+| Shadowsocks | SIP002 URL или strict JSON | Готов | Разрешена |
+| VLESS | URI или strict JSON; TLS/REALITY обязателен | Готов | Разрешена |
 | L2TP | Structured catalog entry | Planned; без IPsec небезопасен | Только draft |
-| L2TP over IPsec | Structured catalog entry | Planned | Только draft |
+| L2TP over IPsec | Strict key/value или JSON плюс PSK и user credentials | Готов | Разрешена |
 | IKEv2/IPsec | Structured/mobileconfig catalog entry | Planned | Только draft |
 | Trojan | URL/JSON/structured catalog entry | Planned | Только draft |
 | Hysteria 2 | URL/YAML/structured catalog entry | Planned | Только draft |
@@ -88,19 +94,51 @@ Provider `.conf` может содержать private key, либо ключ в
 MegaVPN заменяет `Table` на отдельную managed table и не применяет provider DNS
 настройки к node.
 
+### L2TP over IPsec
+
+Используйте strict `key=value` либо JSON object. Поддерживаются provider server,
+remote identity, username, password, pre-shared key, IKE proposal и ESP
+proposal. Для активации обязательны IPsec PSK и L2TP username/password.
+Неизвестные поля, нестроковые JSON values, управляющие символы и некорректные
+endpoint/identity отклоняются.
+
+Node driver использует strongSwan, `xl2tpd` и `pppd`, назначает детерминированный
+managed PPP interface и не устанавливает provider default route в main table.
+На одной node разрешен один active external L2TP/IPsec deployment, поскольку
+`xl2tpd` и UDP/1701 являются node-scoped ресурсами. Эта же node не может
+одновременно содержать managed XL2TPD server instance; agent preflight также
+блокирует apply, если UDP/1701 уже занят unmanaged-процессом.
+Certificate-аутентификация у провайдера в этом релизе не заявлена.
+
+### VLESS
+
+Вставьте стандартный `vless://` URI либо strict JSON. UUID может находиться в
+URI/JSON либо храниться отдельно как secret `uuid`. Provider connection должен
+использовать TLS или REALITY; plaintext VLESS и `allowInsecure` отклоняются.
+Поддерживаются TCP, WebSocket, gRPC, HTTP Upgrade и XHTTP с проверкой
+совместимости transport/security. Public key, short ID, SNI, fingerprint,
+path/host и service name переносятся в managed Xray config.
+
+### Shadowsocks
+
+Вставьте SIP002 `ss://` URI либо strict JSON. Password может быть встроен или
+храниться отдельным secret. Разрешены только поддерживаемые Xray AEAD/2022
+ciphers. SIP003 plugins и произвольные plugin options отклоняются: provider
+config не может запускать локальные команды на node.
+
 ### Structured draft profiles
 
-Для preview/planned протоколов можно сохранить endpoint, port, transport,
-login/password, UUID, PSK, certificate/private key как draft. Secrets шифруются,
-но профиль нельзя применить до выпуска hardened runtime driver.
+Для остальных preview/planned протоколов можно сохранить structured metadata и
+encrypted secrets как draft. Профиль нельзя применить до выпуска hardened
+runtime driver.
 
 ## Операторский workflow
 
 1. Откройте `External egress`.
 2. Нажмите `New profile`.
 3. Выберите протокол провайдера.
-4. Для OpenVPN/WireGuard вставьте или выберите provider config и выполните
-   `Preview import`.
+4. Вставьте или выберите provider config и выполните `Preview import`.
+   Runtime-ready imports: OpenVPN, WireGuard, L2TP/IPsec, VLESS и Shadowsocks.
 5. Добавьте отдельные credentials/certificate material, если preview показывает
    required secret.
 6. Сохраните готовый профиль как `active`. Неготовые протоколы остаются `draft`.
@@ -123,7 +161,7 @@ Materialization работает fail-closed: отсутствующий или 
 
 ## Модель маршрутизации
 
-Каждый deployment получает уникальные на своей node значения:
+Каждый L3 deployment получает уникальные на своей node значения:
 
 - interface в namespace `mgev*`;
 - routing table из диапазона `40000..48999`;
@@ -139,6 +177,12 @@ Cleanup удаляет точное правило mark/table и очищает 
 группы блокируется, а не продолжает lookup через main table node. Только явный
 deployment `Cleanup` удаляет policy rule и dedicated table.
 
+VLESS и Shadowsocks deployment используют отдельный Xray-процесс с SOCKS
+inbound, привязанным строго к `127.0.0.1` на детерминированном managed port.
+Outbound выбранной access group подключается к этому loopback listener. Такие
+proxy deployments не получают `ip rule`, не меняют main table и fail closed,
+если provider process или listener недоступен.
+
 ## Security model
 
 - Provider configs и credentials шифруются в `secret_refs`.
@@ -149,8 +193,8 @@ deployment `Cleanup` удаляет policy rule и dedicated table.
 - При ротации superseded encrypted secret удаляется транзакционно.
 - Managed files имеют mode `0600`, route scripts - `0700`.
 - Agent повторно валидирует deployment ID, interface, table и mark.
-- Apply сначала проверяет либо устанавливает OpenVPN/WireGuard runtime package и
-  только затем останавливает существующий deployment.
+- Apply сначала проверяет либо устанавливает OpenVPN, WireGuard,
+  strongSwan/xl2tpd/pppd или Xray runtime и только затем заменяет deployment.
 - Apply/probe/cleanup API требуют одновременно node write и access-group policy
   permissions.
 
@@ -171,15 +215,18 @@ systemctl status megavpn-external-egress-<deployment-id-без-дефисов>.s
 ip link show
 ip rule show
 ip route show table <40000-48999>
+journalctl -u strongswan-starter -u strongswan -u xl2tpd -n 200 --no-pager
+ss -lntp | grep '127.0.0.1:'
 journalctl -u megavpn-external-egress-<deployment-id-без-дефисов>.service -n 200 --no-pager
 ```
 
 Ожидаемое состояние:
 
 - managed unit активен;
-- interface `mgev*` существует;
-- dedicated table содержит default route через этот interface;
-- `ip rule` содержит mark и table deployment;
+- L3 deployment имеет `mgev*`/managed PPP interface, dedicated default route и
+  соответствующий fwmark `ip rule`;
+- VLESS/Shadowsocks deployment слушает только назначенный `127.0.0.1` SOCKS
+  port и не создает provider route в main table;
 - в main table не появился provider default route.
 
 ## Ошибки и rollback

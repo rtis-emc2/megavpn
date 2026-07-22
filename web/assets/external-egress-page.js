@@ -1,6 +1,17 @@
 (function (window) {
   'use strict';
 
+  function resolveImportFormat(protocol, raw = '', existingFormat = '') {
+    const selectedProtocol = String(protocol || '').trim().toLowerCase();
+    const content = String(raw || '').trim();
+    if (!content && String(existingFormat || '').trim()) return String(existingFormat).trim().toLowerCase();
+    if (selectedProtocol === 'openvpn') return 'ovpn';
+    if (selectedProtocol === 'wireguard') return 'conf';
+    if (selectedProtocol === 'l2tp_ipsec') return content.startsWith('{') ? 'json' : 'key_value';
+    if (selectedProtocol === 'vless' || selectedProtocol === 'shadowsocks') return content.startsWith('{') ? 'json' : 'url';
+    return 'structured';
+  }
+
   function createExternalEgressPage(ctx = {}) {
     const {
       state, setTitle, el, statusTag, escapeHTML, formatDate, hasPermission,
@@ -89,9 +100,9 @@
           </div>
           <div class="external-egress-flow" aria-label="External egress traffic flow">
             <div><span>1</span><strong>Client group</strong><small>global membership</small></div>
-            <i>→</i><div><span>2</span><strong>Xray outbound</strong><small>dedicated fwmark</small></div>
-            <i>→</i><div><span>3</span><strong>Policy table</strong><small>main table unchanged</small></div>
-            <i>→</i><div><span>4</span><strong>Provider tunnel</strong><small>OpenVPN or WireGuard</small></div>
+            <i>→</i><div><span>2</span><strong>Xray outbound</strong><small>group-specific route</small></div>
+            <i>→</i><div><span>3</span><strong>Isolated runtime</strong><small>local proxy or policy table</small></div>
+            <i>→</i><div><span>4</span><strong>Provider gateway</strong><small>L2TP/IPsec, VLESS, Shadowsocks, OpenVPN or WireGuard</small></div>
           </div>
         </section>
         <section class="table-card">
@@ -138,7 +149,7 @@
           <div class="field full"><label>Transport</label><input id="externalEgressTransport" name="transport" value="${escapeHTML(profile?.transport || '')}" placeholder="udp, tcp, tls or quic"></div>
           <div class="field full" id="externalEgressImportFields">
             <label>Provider client configuration</label>
-            <input id="externalEgressConfigFile" type="file" accept=".ovpn,.conf,.txt">
+            <input id="externalEgressConfigFile" type="file" accept=".ovpn,.conf,.txt,.json">
             <textarea id="externalEgressConfigText" rows="8" placeholder="Paste the complete provider client configuration"></textarea>
             <div class="field-hint">Preview validates the file and fills the endpoint fields. The original configuration is encrypted and is never returned by the API.</div>
           </div>
@@ -149,9 +160,9 @@
           <div class="field external-egress-protocol-field" data-protocols="vless"><label>Client UUID</label><input name="uuid" autocomplete="off" placeholder="VLESS UUID"></div>
           <div class="field external-egress-protocol-field" data-protocols="wireguard,l2tp_ipsec,ikev2"><label>Pre-shared key</label><input name="preshared_key" type="password" autocomplete="new-password" placeholder="Provider PSK"></div>
           <details class="field full" id="externalEgressCertificateFields"><summary>Certificate and key material</summary><div class="form-grid external-egress-secret-grid">
-            <div class="field external-egress-protocol-field" data-protocols="openvpn,l2tp_ipsec,ikev2,vless,trojan,hysteria2"><label>CA certificate</label><textarea name="ca_certificate" rows="4" placeholder="PEM"></textarea></div>
-            <div class="field external-egress-protocol-field" data-protocols="openvpn,l2tp_ipsec,ikev2,vless,trojan,hysteria2"><label>Client certificate</label><textarea name="certificate" rows="4" placeholder="PEM"></textarea></div>
-            <div class="field external-egress-protocol-field" data-protocols="openvpn,wireguard,l2tp_ipsec,ikev2,vless,trojan,hysteria2"><label>Private key</label><textarea name="private_key" rows="4" placeholder="PEM or WireGuard private key"></textarea></div>
+            <div class="field external-egress-protocol-field" data-protocols="openvpn,ikev2,trojan,hysteria2"><label>CA certificate</label><textarea name="ca_certificate" rows="4" placeholder="PEM"></textarea></div>
+            <div class="field external-egress-protocol-field" data-protocols="openvpn,ikev2,trojan,hysteria2"><label>Client certificate</label><textarea name="certificate" rows="4" placeholder="PEM"></textarea></div>
+            <div class="field external-egress-protocol-field" data-protocols="openvpn,wireguard,ikev2,trojan,hysteria2"><label>Private key</label><textarea name="private_key" rows="4" placeholder="PEM or WireGuard private key"></textarea></div>
             <div class="field external-egress-protocol-field" data-protocols="openvpn"><label>TLS auth key</label><textarea name="tls_auth_key" rows="4" placeholder="OpenVPN tls-auth static key"></textarea></div>
             <div class="field external-egress-protocol-field" data-protocols="openvpn"><label>TLS crypt key</label><textarea name="tls_crypt_key" rows="4" placeholder="OpenVPN tls-crypt static key"></textarea></div>
           </div></details>
@@ -162,7 +173,7 @@
           </div>
         </form><div id="externalEgressProfileResult" class="form-result"></div>`, { size: 'large' });
       let previewedContent = '';
-      const importedProtocols = new Set(['openvpn', 'wireguard']);
+      const importedProtocols = new Set(['openvpn', 'wireguard', 'l2tp_ipsec', 'vless', 'shadowsocks']);
       const content = async () => {
         const file = document.getElementById('externalEgressConfigFile')?.files?.[0];
         if (file) return file.text();
@@ -186,9 +197,16 @@
         const previewButton = document.getElementById('externalEgressPreviewBtn');
         if (previewButton) previewButton.hidden = !imported;
         const connectionHint = document.getElementById('externalEgressConnectionHint');
-        if (connectionHint) connectionHint.textContent = imported
-          ? 'Import and validate the provider configuration before activation.'
-          : 'This protocol is catalogued for structured preview only; runtime deployment remains blocked.';
+        if (connectionHint) {
+          const hints = {
+            l2tp_ipsec: 'Paste server=<host> and optional remote_id=<identity>, or a JSON object. Add username, password and PSK below.',
+            vless: 'Paste a secure vless:// URL or JSON profile. TLS or REALITY is mandatory.',
+            shadowsocks: 'Paste an ss:// URL or JSON profile. Legacy ciphers and plugins are rejected.',
+          };
+          connectionHint.textContent = imported
+            ? (hints[selectedProtocol] || 'Import and validate the provider configuration before activation.')
+            : 'This protocol is catalogued for structured preview only; runtime deployment remains blocked.';
+        }
         ['externalEgressEndpointHost', 'externalEgressEndpointPort', 'externalEgressTransport'].forEach((id) => {
           const field = document.getElementById(id);
           if (field) field.readOnly = imported;
@@ -217,7 +235,7 @@
           const raw = await content();
           if (!raw) throw new Error('Select or paste a provider configuration first.');
           const selectedProtocol = String(document.getElementById('externalEgressProtocol')?.value || protocol);
-          const data = await sendJSON('/api/v1/external-egress/import:preview', 'POST', { protocol: selectedProtocol, format: selectedProtocol === 'openvpn' ? 'ovpn' : 'conf', content: raw });
+          const data = await sendJSON('/api/v1/external-egress/import:preview', 'POST', { protocol: selectedProtocol, format: resolveImportFormat(selectedProtocol, raw), content: raw });
           previewedContent = raw;
           const host = document.getElementById('externalEgressEndpointHost');
           const port = document.getElementById('externalEgressEndpointPort');
@@ -247,15 +265,15 @@
           const secrets = {};
           if (raw) secrets.config = raw;
           ['username', 'password', 'uuid', 'preshared_key', 'ca_certificate', 'certificate', 'private_key', 'tls_auth_key', 'tls_crypt_key'].forEach((key) => {
-            const value = String(form.get(key) || '').trim();
-            if (value) secrets[key] = value;
+            const value = String(form.get(key) || '');
+            if (value.trim()) secrets[key] = value;
           });
           const payload = {
             profile_key: String(form.get('profile_key') || '').trim(), display_name: String(form.get('display_name') || '').trim(),
             description: String(form.get('description') || '').trim(), protocol: selectedProtocol, status,
             endpoint_host: String(form.get('endpoint_host') || '').trim(), endpoint_port: Number(form.get('endpoint_port') || 0),
             transport: String(form.get('transport') || '').trim(),
-            import_format: selectedProtocol === 'openvpn' ? 'ovpn' : selectedProtocol === 'wireguard' ? 'conf' : 'structured',
+            import_format: resolveImportFormat(selectedProtocol, raw, profile?.import_format),
             config_json: {}, secrets,
           };
           const data = await sendJSON(isEdit ? `/api/v1/external-egress/profiles/${encodeURIComponent(profile.id)}` : '/api/v1/external-egress/profiles', isEdit ? 'PATCH' : 'POST', payload);
@@ -270,10 +288,23 @@
     function openDeployModal(profile) {
       if (!profile) return;
       const existing = new Set((profile.deployments || []).filter((item) => item.status !== 'deleted').map((item) => item.node_id));
-      const options = (state.nodes || []).filter((node) => node.status !== 'retired').map((node) => `<option value="${escapeHTML(node.id)}"${existing.has(node.id) ? ' disabled' : ''}>${escapeHTML(node.name || node.id)} · ${escapeHTML(node.role || 'node')}${existing.has(node.id) ? ' · already deployed' : ''}</option>`).join('');
+      const l2tpReserved = new Set(
+        (state.externalEgressProfiles || [])
+          .filter((item) => item.protocol === 'l2tp_ipsec')
+          .flatMap((item) => (item.deployments || []).filter((deployment) => deployment.status !== 'deleted').map((deployment) => deployment.node_id)),
+      );
+      const l2tpServerNodes = new Set(
+        (state.instances || [])
+          .filter((item) => item.service_code === 'xl2tpd' && item.status !== 'deleted' && item.enabled !== false)
+          .map((item) => item.node_id),
+      );
+      const options = (state.nodes || []).filter((node) => node.status !== 'retired').map((node) => {
+        const reserved = existing.has(node.id) || (profile.protocol === 'l2tp_ipsec' && (l2tpReserved.has(node.id) || l2tpServerNodes.has(node.id)));
+        return `<option value="${escapeHTML(node.id)}"${reserved ? ' disabled' : ''}>${escapeHTML(node.name || node.id)} · ${escapeHTML(node.role || 'node')}${reserved ? ' · UDP/1701 runtime already reserved' : ''}</option>`;
+      }).join('');
       openModal(`Deploy: ${profile.display_name}`, 'Materialize provider tunnel on a runtime node', `
         <form id="externalEgressDeployForm" class="form-grid">
-          <div class="field full"><label>Runtime node</label><select name="node_id" required><option value="">Select node</option>${options}</select><div class="field-hint">Deploy on every node that hosts a VLESS instance used by a group assigned to this profile.</div></div>
+          <div class="field full"><label>Runtime node</label><select name="node_id" required><option value="">Select node</option>${options}</select><div class="field-hint">Deploy on every node that hosts a VLESS instance used by a group assigned to this profile.${profile.protocol === 'l2tp_ipsec' ? ' One managed L2TP/IPsec provider runtime is allowed per node.' : ''}</div></div>
           <div class="field"><label>Routing table</label><input name="routing_table" value="auto" readonly></div>
           <div class="field"><label>Route metric</label><input name="route_metric" type="number" min="1" max="32767" value="100"></div>
           <div class="field full modal-actions"><button class="primary-btn" type="submit">Deploy and apply</button><button class="secondary-btn" id="externalEgressDeployCancel" type="button">Cancel</button></div>
@@ -332,5 +363,5 @@
     return { render };
   }
 
-  window.MegaVPNExternalEgressPage = { create: createExternalEgressPage };
+  window.MegaVPNExternalEgressPage = { create: createExternalEgressPage, resolveImportFormat };
 })(window);
