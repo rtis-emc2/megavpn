@@ -182,7 +182,7 @@
       if (state.page === 'clients' && Number(state.vlessMembersInteractionLockUntil || 0) > Date.now()) return false;
       if (state.page === 'clients' && document.querySelector('#clientAccessGroupMembersPanel')) return false;
       if (state.page === 'clients' && document.activeElement?.closest?.('#clientAccessGroupMembersPanel')) return false;
-      if (state.page === 'instances' && state.instancesView === 'create-pack') return false;
+      if (state.page === 'instances' && (state.instancesView === 'create-pack' || state.instancesView === 'manual')) return false;
       return autoRefreshPages.has(state.page);
     }
 

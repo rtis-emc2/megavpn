@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const assert = require('assert');
 const vm = require('vm');
 
 const rootDir = path.resolve(__dirname, '..', '..');
@@ -345,6 +346,34 @@ async function main() {
   if (!windowObject.__MegaVPNBootReady) {
     throw new Error('frontend bootstrap did not reach __MegaVPNBootReady');
   }
+
+  const routerState = {
+    page: 'instances',
+    instancesView: 'list',
+    authUser: { id: 'operator' },
+  };
+  const router = windowObject.MegaVPNAppRouter.create({
+    state: routerState,
+    el: elementForID,
+    setShellMode: () => {},
+    renderNav: () => {},
+    renderAuthSlot: () => {},
+    renderNotice: () => {},
+    setTitle: () => {},
+    escapeHTML: (value) => String(value ?? ''),
+    authWorkflows: {},
+    nodeWorkflows: {},
+    nodeMapPage: { render: () => {} },
+    instanceWorkflows: { renderInstanceManagePage: () => {} },
+    firewallPage: { render: () => {} },
+    trafficPage: { render: () => {} },
+  });
+  assert.strictEqual(router.autoRefreshEnabledForCurrentPage(), true, 'instance list should auto-refresh');
+  routerState.instancesView = 'create-pack';
+  assert.strictEqual(router.autoRefreshEnabledForCurrentPage(), false, 'service pack form must not auto-refresh');
+  routerState.instancesView = 'manual';
+  assert.strictEqual(router.autoRefreshEnabledForCurrentPage(), false, 'manual instance form must not auto-refresh');
+
   console.log(`frontend bootstrap smoke ok: ${scripts.length} assets`);
 }
 
