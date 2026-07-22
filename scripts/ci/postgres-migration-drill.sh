@@ -102,6 +102,9 @@ critical_tables=(
   firewall_revisions
   firewall_node_state
   traffic_accounting_samples
+  external_egress_profiles
+  external_egress_profile_secrets
+  external_egress_deployments
 )
 
 critical_indexes=(
@@ -127,6 +130,9 @@ critical_indexes=(
   firewall_address_entries_active_value_idx
   firewall_policies_node_idx
   firewall_rules_policy_priority_idx
+  external_egress_profiles_status_protocol_idx
+  external_egress_deployments_node_status_idx
+  client_access_groups_external_egress_idx
 )
 
 table_sql=""
@@ -221,6 +227,21 @@ fi
 firewall_seed_groups="$(psql_value "select count(*) from firewall_address_lists where key in ('trusted_operators','vpn_client_sources','backhaul_sources','public_service_sources','blocked_destinations') and status <> 'deleted';")"
 if [[ "$firewall_seed_groups" -lt 5 ]]; then
   die "firewall semantic/default address groups missing after migrations; found $firewall_seed_groups"
+fi
+
+external_egress_columns="$(psql_value "select count(*) from information_schema.columns where table_schema=current_schema() and table_name='external_egress_deployments' and column_name in ('interface_name','routing_table','fwmark','route_metric','health_json');")"
+if [[ "$external_egress_columns" != "5" ]]; then
+  die "external_egress_deployments isolation columns are required; found $external_egress_columns"
+fi
+
+plaintext_external_secret_columns="$(psql_value "select count(*) from information_schema.columns where table_schema=current_schema() and table_name='external_egress_profiles' and column_name in ('password','private_key','preshared_key','config');")"
+if [[ "$plaintext_external_secret_columns" != "0" ]]; then
+  die "external_egress_profiles must not contain plaintext provider secret columns"
+fi
+
+external_egress_guard_triggers="$(psql_value "select count(*) from information_schema.triggers where trigger_schema=current_schema() and trigger_name in ('client_access_groups_external_egress_guard','external_egress_deployments_profile_guard','external_egress_profiles_lifecycle_guard');")"
+if [[ "$external_egress_guard_triggers" != "3" ]]; then
+  die "external egress lifecycle guard triggers are required; found $external_egress_guard_triggers"
 fi
 
 if [[ "$RUN_BACKUP_RESTORE" == "auto" ]]; then

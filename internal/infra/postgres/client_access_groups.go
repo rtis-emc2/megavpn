@@ -33,6 +33,7 @@ func (s *Store) ListClientAccessGroups(ctx context.Context, serviceCode string) 
 			coalesce(cag.description,''),
 			cag.status,
 			cag.policy_json,
+			cag.external_egress_profile_id::text,
 			cag.scope_mode,
 			cag.auto_apply_new_instances,
 			coalesce(count(m.id) filter(where m.status in ('active','disabled')),0)::int,
@@ -61,7 +62,7 @@ func (s *Store) ListClientAccessGroups(ctx context.Context, serviceCode string) 
 		return nil, err
 	}
 	for i := range groups {
-		instances, resolveErr := s.resolveClientAccessGroupInstances(ctx, groups[i])
+		instances, resolveErr := s.resolveClientAccessGroupExistingInstances(ctx, groups[i])
 		if resolveErr == nil {
 			groups[i].AffectedInstances = len(instances)
 		}
@@ -78,7 +79,7 @@ func (s *Store) GetClientAccessGroup(ctx context.Context, groupID string) (domai
 	if err != nil {
 		return domain.ClientAccessGroup{}, err
 	}
-	instances, resolveErr := s.resolveClientAccessGroupInstances(ctx, group)
+	instances, resolveErr := s.resolveClientAccessGroupExistingInstances(ctx, group)
 	if resolveErr == nil {
 		group.AffectedInstances = len(instances)
 	}
@@ -91,11 +92,21 @@ func (s *Store) CreateClientAccessGroup(ctx context.Context, input domain.Client
 		return domain.ClientAccessGroup{}, err
 	}
 	groupID := id.New()
+	if err := s.validateClientAccessGroupExternalEgress(ctx, normalized.ExternalEgressProfileID); err != nil {
+		return domain.ClientAccessGroup{}, err
+	}
+	prospective := domain.ClientAccessGroup{
+		ID: groupID, ServiceCode: normalized.ServiceCode, Status: normalized.Status,
+		ScopeMode: normalized.ScopeMode, ExternalEgressProfileID: normalized.ExternalEgressProfileID,
+	}
+	if err := s.validateClientAccessGroupExternalEgressDeployments(ctx, prospective); err != nil {
+		return domain.ClientAccessGroup{}, err
+	}
 	row := s.db.QueryRow(ctx, `insert into client_access_groups(
-			id,service_code,group_key,display_name,description,status,policy_json,
+			id,service_code,group_key,display_name,description,status,policy_json,external_egress_profile_id,
 			scope_mode,auto_apply_new_instances,created_by,updated_by,created_at,updated_at
-		) values($1,$2,$3,$4,$5,$6,$7,$8,$9,nullif($10,'')::uuid,nullif($10,'')::uuid,now(),now())
-		returning id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,
+		) values($1,$2,$3,$4,$5,$6,$7,nullif($8,'')::uuid,$9,$10,nullif($11,'')::uuid,nullif($11,'')::uuid,now(),now())
+		returning id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,external_egress_profile_id::text,
 			scope_mode,auto_apply_new_instances,0::int,0::int,0::int,0::int,0::int,0::int,0::int,created_at,updated_at,deleted_at`,
 		groupID,
 		normalized.ServiceCode,
@@ -104,6 +115,7 @@ func (s *Store) CreateClientAccessGroup(ctx context.Context, input domain.Client
 		normalized.Description,
 		normalized.Status,
 		normalized.PolicyJSON,
+		derefOptionalString(normalized.ExternalEgressProfileID),
 		normalized.ScopeMode,
 		normalized.autoApplyValue(),
 		derefUserID(userID),
@@ -127,7 +139,7 @@ func (s *Store) UpdateClientAccessGroup(ctx context.Context, groupID string, inp
 	if strings.EqualFold(existing.Status, "deleted") || existing.DeletedAt != nil {
 		return domain.ClientAccessGroup{}, fmt.Errorf("client access group is deleted")
 	}
-	previousInstances, err := s.resolveClientAccessGroupInstances(ctx, existing)
+	previousInstances, err := s.resolveClientAccessGroupExistingInstances(ctx, existing)
 	if err != nil {
 		return domain.ClientAccessGroup{}, err
 	}
@@ -150,25 +162,41 @@ func (s *Store) UpdateClientAccessGroup(ctx context.Context, groupID string, inp
 	if len(strings.TrimSpace(string(input.PolicyJSON))) == 0 {
 		input.PolicyJSON = existing.PolicyJSON
 	}
+	if input.ExternalEgressProfileID == nil {
+		input.ExternalEgressProfileID = existing.ExternalEgressProfileID
+	}
 	normalized, err := normalizeClientAccessGroupInput(input, false)
 	if err != nil {
+		return domain.ClientAccessGroup{}, err
+	}
+	if err := s.validateClientAccessGroupExternalEgress(ctx, normalized.ExternalEgressProfileID); err != nil {
+		return domain.ClientAccessGroup{}, err
+	}
+	prospective := existing
+	prospective.ServiceCode = normalized.ServiceCode
+	prospective.Status = normalized.Status
+	prospective.ScopeMode = normalized.ScopeMode
+	prospective.ExternalEgressProfileID = normalized.ExternalEgressProfileID
+	if err := s.validateClientAccessGroupExternalEgressDeployments(ctx, prospective); err != nil {
 		return domain.ClientAccessGroup{}, err
 	}
 	runtimeChanged := !strings.EqualFold(existing.Status, normalized.Status) ||
 		!strings.EqualFold(existing.ScopeMode, normalized.ScopeMode) ||
 		existing.AutoApplyNewInstances != normalized.autoApplyValue() ||
+		derefOptionalString(existing.ExternalEgressProfileID) != derefOptionalString(normalized.ExternalEgressProfileID) ||
 		strings.TrimSpace(string(existing.PolicyJSON)) != strings.TrimSpace(string(normalized.PolicyJSON))
 	row := s.db.QueryRow(ctx, `update client_access_groups
 		set display_name=$2,
 			description=$3,
 			status=$4,
 			policy_json=$5,
-			scope_mode=$6,
-			auto_apply_new_instances=$7,
-			updated_by=nullif($8,'')::uuid,
+			external_egress_profile_id=nullif($6,'')::uuid,
+			scope_mode=$7,
+			auto_apply_new_instances=$8,
+			updated_by=nullif($9,'')::uuid,
 			updated_at=now()
 		where id=$1 and deleted_at is null
-		returning id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,
+		returning id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,external_egress_profile_id::text,
 			scope_mode,auto_apply_new_instances,
 			(select count(*)::int from client_access_group_memberships m where m.group_id=client_access_groups.id and m.status in ('active','disabled')),
 			(select count(*)::int from client_access_group_memberships m where m.group_id=client_access_groups.id and m.status='active'),
@@ -183,6 +211,7 @@ func (s *Store) UpdateClientAccessGroup(ctx context.Context, groupID string, inp
 		normalized.Description,
 		normalized.Status,
 		normalized.PolicyJSON,
+		derefOptionalString(normalized.ExternalEgressProfileID),
 		normalized.ScopeMode,
 		normalized.autoApplyValue(),
 		derefUserID(userID),
@@ -215,14 +244,24 @@ func (s *Store) SetClientAccessGroupStatus(ctx context.Context, groupID, status 
 	if err != nil {
 		return domain.ClientAccessGroup{}, err
 	}
-	previousInstances, err := s.resolveClientAccessGroupInstances(ctx, existing)
+	if status == "active" {
+		if err := s.validateClientAccessGroupExternalEgress(ctx, existing.ExternalEgressProfileID); err != nil {
+			return domain.ClientAccessGroup{}, err
+		}
+		prospective := existing
+		prospective.Status = status
+		if err := s.validateClientAccessGroupExternalEgressDeployments(ctx, prospective); err != nil {
+			return domain.ClientAccessGroup{}, err
+		}
+	}
+	previousInstances, err := s.resolveClientAccessGroupExistingInstances(ctx, existing)
 	if err != nil {
 		return domain.ClientAccessGroup{}, err
 	}
 	row := s.db.QueryRow(ctx, `update client_access_groups
 		set status=$2, updated_by=nullif($3,'')::uuid, updated_at=now()
 		where id=$1 and deleted_at is null
-		returning id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,
+		returning id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,external_egress_profile_id::text,
 			scope_mode,auto_apply_new_instances,
 			(select count(*)::int from client_access_group_memberships m where m.group_id=client_access_groups.id and m.status in ('active','disabled')),
 			(select count(*)::int from client_access_group_memberships m where m.group_id=client_access_groups.id and m.status='active'),
@@ -259,14 +298,14 @@ func (s *Store) DeleteClientAccessGroupSoft(ctx context.Context, groupID string,
 	if err != nil {
 		return domain.ClientAccessGroup{}, err
 	}
-	previousInstances, err := s.resolveClientAccessGroupInstances(ctx, existing)
+	previousInstances, err := s.resolveClientAccessGroupExistingInstances(ctx, existing)
 	if err != nil {
 		return domain.ClientAccessGroup{}, err
 	}
 	row := s.db.QueryRow(ctx, `update client_access_groups
 		set status='deleted', deleted_at=coalesce(deleted_at, now()), updated_by=nullif($2,'')::uuid, updated_at=now()
 		where id=$1
-		returning id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,
+		returning id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,external_egress_profile_id::text,
 			scope_mode,auto_apply_new_instances,
 			(select count(*)::int from client_access_group_memberships m where m.group_id=client_access_groups.id and m.status in ('active','disabled')),
 			(select count(*)::int from client_access_group_memberships m where m.group_id=client_access_groups.id and m.status='active'),
@@ -440,7 +479,7 @@ func (s *Store) RemoveClientAccessGroupMember(ctx context.Context, groupID, clie
 		result.SkippedExisting = 1
 		return result, nil
 	}
-	instances, err := s.resolveClientAccessGroupInstances(ctx, group)
+	instances, err := s.resolveClientAccessGroupExistingInstances(ctx, group)
 	if err != nil {
 		return domain.ClientAccessGroupMembershipResult{}, err
 	}
@@ -496,7 +535,7 @@ func (s *Store) GetClientAccessGroupScope(ctx context.Context, groupID string) (
 	if err := rows.Err(); err != nil {
 		return domain.ClientAccessGroupScope{}, err
 	}
-	instances, resolveErr := s.resolveClientAccessGroupInstances(ctx, group)
+	instances, resolveErr := s.resolveClientAccessGroupExistingInstances(ctx, group)
 	if resolveErr == nil {
 		scope.AffectedInstances = len(instances)
 	}
@@ -508,11 +547,24 @@ func (s *Store) UpdateClientAccessGroupScope(ctx context.Context, groupID string
 	if err != nil {
 		return domain.ClientAccessGroupScope{}, err
 	}
-	previousInstances, err := s.resolveClientAccessGroupInstances(ctx, group)
+	previousInstances, err := s.resolveClientAccessGroupExistingInstances(ctx, group)
 	if err != nil {
 		return domain.ClientAccessGroupScope{}, err
 	}
 	scope.ScopeMode = normalizeClientAccessGroupScopeMode(firstString(scope.ScopeMode, group.ScopeMode))
+	prospective := group
+	prospective.ScopeMode = scope.ScopeMode
+	include := make(map[string]struct{}, len(scope.IncludeInstanceIDs))
+	for _, instanceID := range uniqueStrings(scope.IncludeInstanceIDs) {
+		include[strings.TrimSpace(instanceID)] = struct{}{}
+	}
+	exclude := make(map[string]struct{}, len(scope.ExcludeInstanceIDs))
+	for _, instanceID := range uniqueStrings(scope.ExcludeInstanceIDs) {
+		exclude[strings.TrimSpace(instanceID)] = struct{}{}
+	}
+	if err := s.validateClientAccessGroupExternalEgressDeploymentsForScope(ctx, prospective, include, exclude); err != nil {
+		return domain.ClientAccessGroupScope{}, err
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return domain.ClientAccessGroupScope{}, err
@@ -579,7 +631,10 @@ func (s *Store) PreviewClientAccessGroupSync(ctx context.Context, groupID string
 	if err != nil {
 		return domain.ClientAccessGroupSyncPreview{}, err
 	}
-	instances, err := s.resolveClientAccessGroupInstances(ctx, group)
+	if err := s.validateClientAccessGroupExternalEgressDeployments(ctx, group); err != nil {
+		return domain.ClientAccessGroupSyncPreview{}, err
+	}
+	instances, err := s.resolveClientAccessGroupExistingInstances(ctx, group)
 	if err != nil {
 		return domain.ClientAccessGroupSyncPreview{}, err
 	}
@@ -721,6 +776,7 @@ func (s *Store) ListClientAccessGroupsForClient(ctx context.Context, clientID st
 			coalesce(cag.description,''),
 			cag.status,
 			cag.policy_json,
+			cag.external_egress_profile_id::text,
 			cag.scope_mode,
 			cag.auto_apply_new_instances,
 			(select count(*)::int from client_access_group_memberships m where m.group_id=cag.id and m.status in ('active','disabled')),
@@ -811,7 +867,15 @@ func (s *Store) bulkClientAccessGroupMembers(ctx context.Context, groupID string
 		}
 		return domain.ClientAccessGroupMembershipResult{}, fmt.Errorf("at least one client is required")
 	}
-	instances, err := s.resolveClientAccessGroupInstances(ctx, group)
+	var instances []domain.Instance
+	if req.DryRun {
+		if err := s.validateClientAccessGroupExternalEgressDeployments(ctx, group); err != nil {
+			return domain.ClientAccessGroupMembershipResult{}, err
+		}
+		instances, err = s.resolveClientAccessGroupExistingInstances(ctx, group)
+	} else {
+		instances, err = s.resolveClientAccessGroupInstances(ctx, group)
+	}
 	if err != nil {
 		return domain.ClientAccessGroupMembershipResult{}, err
 	}
@@ -1076,21 +1140,36 @@ func (s *Store) disableClientAccessGroupMaterialization(ctx context.Context, gro
 }
 
 func (s *Store) resolveClientAccessGroupInstances(ctx context.Context, group domain.ClientAccessGroup) ([]domain.Instance, error) {
+	return s.resolveClientAccessGroupInstancesWithExternalRouting(ctx, group, true)
+}
+
+func (s *Store) resolveClientAccessGroupExistingInstances(ctx context.Context, group domain.ClientAccessGroup) ([]domain.Instance, error) {
+	return s.resolveClientAccessGroupInstancesWithExternalRouting(ctx, group, false)
+}
+
+func (s *Store) resolveClientAccessGroupInstancesWithExternalRouting(ctx context.Context, group domain.ClientAccessGroup, requireExternalRouting bool) ([]domain.Instance, error) {
 	if strings.EqualFold(group.Status, "deleted") || group.DeletedAt != nil {
 		return nil, nil
 	}
 	switch normalizeClientAccessGroupServiceCode(group.ServiceCode) {
 	case "vless":
-		return s.resolveVLESSAccessGroupInstances(ctx, group)
+		return s.resolveVLESSAccessGroupInstances(ctx, group, requireExternalRouting)
 	default:
 		return nil, nil
 	}
 }
 
-func (s *Store) resolveVLESSAccessGroupInstances(ctx context.Context, group domain.ClientAccessGroup) ([]domain.Instance, error) {
+func (s *Store) resolveVLESSAccessGroupInstances(ctx context.Context, group domain.ClientAccessGroup, requireExternalRouting bool) ([]domain.Instance, error) {
 	candidates, err := s.listXrayVLESSGroupSyncInstances(ctx)
 	if err != nil {
 		return nil, err
+	}
+	var catalog vlessGroupCatalogSnapshot
+	if !requireExternalRouting {
+		catalog, err = s.loadVLESSGroupCatalogSnapshot(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	include, exclude, err := s.clientAccessGroupScopeSets(ctx, group.ID)
 	if err != nil {
@@ -1109,9 +1188,20 @@ func (s *Store) resolveVLESSAccessGroupInstances(ctx context.Context, group doma
 				continue
 			}
 		}
-		spec, err := s.ensureXrayProvisioningGroups(ctx, instance.ID, instance.Spec)
+		var spec map[string]any
+		if requireExternalRouting {
+			spec, err = s.ensureXrayProvisioningGroups(ctx, instance.ID, instance.Spec)
+		} else {
+			spec, _, err = s.syncXrayVLESSGroupCatalogSpec(ctx, instance, instance.Spec, catalog)
+		}
 		if err != nil {
 			return nil, err
+		}
+		if requireExternalRouting && group.ExternalEgressProfileID != nil {
+			spec, err = s.ensureExternalEgressGroupRouting(ctx, instance, group, spec)
+			if err != nil {
+				return nil, err
+			}
 		}
 		instance.Spec = spec
 		for _, candidate := range xrayVLESSGroups(spec) {
@@ -1334,17 +1424,18 @@ func (s *Store) clientAccessGroupDesiredHash(ctx context.Context, group domain.C
 		return "", err
 	}
 	payload := map[string]any{
-		"group_id":     group.ID,
-		"service_code": group.ServiceCode,
-		"group_key":    group.GroupKey,
-		"status":       group.Status,
-		"policy_json":  json.RawMessage(group.PolicyJSON),
-		"scope_mode":   group.ScopeMode,
-		"auto_apply":   group.AutoApplyNewInstances,
-		"include":      scope.IncludeInstanceIDs,
-		"exclude":      scope.ExcludeInstanceIDs,
-		"members":      memberIDs,
-		"instances":    instanceIDs,
+		"group_id":                   group.ID,
+		"service_code":               group.ServiceCode,
+		"group_key":                  group.GroupKey,
+		"status":                     group.Status,
+		"policy_json":                json.RawMessage(group.PolicyJSON),
+		"external_egress_profile_id": derefOptionalString(group.ExternalEgressProfileID),
+		"scope_mode":                 group.ScopeMode,
+		"auto_apply":                 group.AutoApplyNewInstances,
+		"include":                    scope.IncludeInstanceIDs,
+		"exclude":                    scope.ExcludeInstanceIDs,
+		"members":                    memberIDs,
+		"instances":                  instanceIDs,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -1602,7 +1693,7 @@ func (s *Store) getClientAccessGroup(ctx context.Context, groupID string) (domai
 		return domain.ClientAccessGroup{}, domain.ErrClientAccessGroupNotFound
 	}
 	row := s.db.QueryRow(ctx, `select
-			id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,
+			id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,external_egress_profile_id::text,
 			scope_mode,auto_apply_new_instances,
 			(select count(*)::int from client_access_group_memberships m where m.group_id=client_access_groups.id and m.status in ('active','disabled')),
 			(select count(*)::int from client_access_group_memberships m where m.group_id=client_access_groups.id and m.status='active'),
@@ -1625,7 +1716,7 @@ func (s *Store) getClientAccessGroupByServiceKey(ctx context.Context, serviceCod
 	serviceCode = normalizeClientAccessGroupServiceCode(serviceCode)
 	groupKey = normalizeVLESSGroupTemplateKey(groupKey)
 	row := s.db.QueryRow(ctx, `select
-			id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,
+			id::text,service_code,group_key,display_name,coalesce(description,''),status,policy_json,external_egress_profile_id::text,
 			scope_mode,auto_apply_new_instances,
 			(select count(*)::int from client_access_group_memberships m where m.group_id=client_access_groups.id and m.status in ('active','disabled')),
 			(select count(*)::int from client_access_group_memberships m where m.group_id=client_access_groups.id and m.status='active'),
@@ -1708,6 +1799,7 @@ func scanClientAccessGroup(row clientAccessGroupRowScanner) (domain.ClientAccess
 		&group.Description,
 		&group.Status,
 		&policyRaw,
+		&group.ExternalEgressProfileID,
 		&group.ScopeMode,
 		&group.AutoApplyNewInstances,
 		&group.MemberCount,
@@ -1819,6 +1911,103 @@ func normalizeClientAccessGroupInput(input domain.ClientAccessGroupInput, create
 		return out, fmt.Errorf("new access group cannot be created as deleted")
 	}
 	return out, nil
+}
+
+func (s *Store) validateClientAccessGroupExternalEgress(ctx context.Context, profileID *string) error {
+	value := derefOptionalString(profileID)
+	if value == "" {
+		return nil
+	}
+	profile, err := s.GetExternalEgressProfile(ctx, value)
+	if err != nil {
+		if errors.Is(err, domain.ErrExternalEgressProfileNotFound) {
+			return fmt.Errorf("external egress profile not found")
+		}
+		return err
+	}
+	if profile.Status != "active" {
+		return fmt.Errorf("external egress profile %q is not active", profile.DisplayName)
+	}
+	if profile.RuntimeSupport != "ready" {
+		return fmt.Errorf("external egress protocol %s runtime is %s", profile.Protocol, profile.RuntimeSupport)
+	}
+	return nil
+}
+
+func (s *Store) validateClientAccessGroupExternalEgressDeployments(ctx context.Context, group domain.ClientAccessGroup) error {
+	include, exclude, err := s.clientAccessGroupScopeSets(ctx, group.ID)
+	if err != nil {
+		return err
+	}
+	return s.validateClientAccessGroupExternalEgressDeploymentsForScope(ctx, group, include, exclude)
+}
+
+func (s *Store) validateClientAccessGroupExternalEgressDeploymentsForScope(ctx context.Context, group domain.ClientAccessGroup, include, exclude map[string]struct{}) error {
+	profileID := derefOptionalString(group.ExternalEgressProfileID)
+	if profileID == "" || !strings.EqualFold(group.Status, "active") {
+		return nil
+	}
+	if normalizeClientAccessGroupServiceCode(group.ServiceCode) != "vless" {
+		return fmt.Errorf("external egress profiles currently support VLESS client access groups only")
+	}
+	instances, err := s.listXrayVLESSGroupSyncInstances(ctx)
+	if err != nil {
+		return err
+	}
+	requiredNodes := map[string]struct{}{}
+	for _, instance := range instances {
+		switch normalizeClientAccessGroupScopeMode(group.ScopeMode) {
+		case "selected_instances":
+			if _, ok := include[instance.ID]; !ok {
+				continue
+			}
+		case "all_except_selected":
+			if _, blocked := exclude[instance.ID]; blocked {
+				continue
+			}
+		}
+		requiredNodes[instance.NodeID] = struct{}{}
+	}
+	if len(requiredNodes) == 0 {
+		return nil
+	}
+	rows, err := s.db.Query(ctx, `select node_id::text from external_egress_deployments
+		where profile_id=$1 and desired_status='active' and status='active'`, profileID)
+	if err != nil {
+		return err
+	}
+	deployedNodes := map[string]struct{}{}
+	for rows.Next() {
+		var nodeID string
+		if err := rows.Scan(&nodeID); err != nil {
+			rows.Close()
+			return err
+		}
+		deployedNodes[nodeID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	missing := make([]string, 0)
+	for nodeID := range requiredNodes {
+		if _, ok := deployedNodes[nodeID]; !ok {
+			missing = append(missing, nodeID)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("external egress profile must be active on every node in the group scope; missing nodes: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func derefOptionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func normalizeClientAccessGroupServiceCode(value string) string {

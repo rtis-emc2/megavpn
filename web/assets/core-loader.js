@@ -35,6 +35,8 @@
       state.shareLinks = [];
       state.backhaulLinks = [];
       state.backhaulDrivers = [];
+      state.externalEgressProfiles = [];
+      state.externalEgressCatalog = [];
       state.servicesCatalog = [];
       state.servicePacks = [];
       state.servicePackCatalog = [];
@@ -175,6 +177,9 @@
       const shareLinks = await fetchJSON('/api/v1/share-links', []);
       const backhaulLinks = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul-links', []) : [];
       const backhaulDrivers = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul/drivers', []) : [];
+      const canReadExternalEgress = hasPermission('node.read') && hasPermission('access_group.read');
+      const externalEgressProfiles = canReadExternalEgress ? await fetchJSON('/api/v1/external-egress/profiles', []) : [];
+      const externalEgressCatalog = canReadExternalEgress ? await fetchJSON('/api/v1/external-egress/catalog', []) : [];
       const servicesCatalog = await fetchJSON('/api/v1/services', []);
       const servicePacks = await fetchJSON('/api/v1/service-packs', []);
       const vlessGroupTemplates = await fetchJSON('/api/v1/vless-groups', []);
@@ -227,6 +232,8 @@
       state.shareLinks = Array.isArray(shareLinks) ? shareLinks : [];
       state.backhaulLinks = Array.isArray(backhaulLinks) ? backhaulLinks : [];
       state.backhaulDrivers = Array.isArray(backhaulDrivers) ? backhaulDrivers : [];
+      state.externalEgressProfiles = Array.isArray(externalEgressProfiles) ? externalEgressProfiles : [];
+      state.externalEgressCatalog = Array.isArray(externalEgressCatalog) ? externalEgressCatalog : [];
       state.servicesCatalog = Array.isArray(servicesCatalog) ? servicesCatalog : [];
       state.clientAccessServices = Array.isArray(clientAccessServices) ? clientAccessServices : [];
       state.servicePackCatalog = normalizeServicePackList(servicePackCatalog);

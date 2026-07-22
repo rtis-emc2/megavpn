@@ -9,6 +9,8 @@ import (
 var ErrServicePackNotFound = errors.New("service pack not found")
 var ErrVLESSGroupTemplateNotFound = errors.New("vless group template not found")
 var ErrClientAccessGroupNotFound = errors.New("client access group not found")
+var ErrExternalEgressProfileNotFound = errors.New("external egress profile not found")
+var ErrExternalEgressDeploymentNotFound = errors.New("external egress deployment not found")
 
 type Node struct {
 	ID                   string     `json:"id"`
@@ -365,36 +367,114 @@ type VLESSGroupMembershipResult struct {
 }
 
 type ClientAccessGroup struct {
-	ID                    string          `json:"id"`
-	ServiceCode           string          `json:"service_code"`
-	GroupKey              string          `json:"group_key"`
-	DisplayName           string          `json:"display_name"`
-	Description           string          `json:"description"`
-	Status                string          `json:"status"`
-	PolicyJSON            json.RawMessage `json:"policy_json,omitempty"`
-	ScopeMode             string          `json:"scope_mode"`
-	AutoApplyNewInstances bool            `json:"auto_apply_new_instances"`
-	MemberCount           int             `json:"member_count,omitempty"`
-	ActiveMemberCount     int             `json:"active_member_count,omitempty"`
-	DisabledMemberCount   int             `json:"disabled_member_count,omitempty"`
-	AffectedInstances     int             `json:"affected_instances,omitempty"`
-	PendingSyncCount      int             `json:"pending_sync_count,omitempty"`
-	FailedSyncCount       int             `json:"failed_sync_count,omitempty"`
-	AppliedSyncCount      int             `json:"applied_sync_count,omitempty"`
-	CreatedAt             time.Time       `json:"created_at"`
-	UpdatedAt             time.Time       `json:"updated_at"`
-	DeletedAt             *time.Time      `json:"deleted_at,omitempty"`
+	ID                      string          `json:"id"`
+	ServiceCode             string          `json:"service_code"`
+	GroupKey                string          `json:"group_key"`
+	DisplayName             string          `json:"display_name"`
+	Description             string          `json:"description"`
+	Status                  string          `json:"status"`
+	PolicyJSON              json.RawMessage `json:"policy_json,omitempty"`
+	ExternalEgressProfileID *string         `json:"external_egress_profile_id,omitempty"`
+	ScopeMode               string          `json:"scope_mode"`
+	AutoApplyNewInstances   bool            `json:"auto_apply_new_instances"`
+	MemberCount             int             `json:"member_count,omitempty"`
+	ActiveMemberCount       int             `json:"active_member_count,omitempty"`
+	DisabledMemberCount     int             `json:"disabled_member_count,omitempty"`
+	AffectedInstances       int             `json:"affected_instances,omitempty"`
+	PendingSyncCount        int             `json:"pending_sync_count,omitempty"`
+	FailedSyncCount         int             `json:"failed_sync_count,omitempty"`
+	AppliedSyncCount        int             `json:"applied_sync_count,omitempty"`
+	CreatedAt               time.Time       `json:"created_at"`
+	UpdatedAt               time.Time       `json:"updated_at"`
+	DeletedAt               *time.Time      `json:"deleted_at,omitempty"`
 }
 
 type ClientAccessGroupInput struct {
-	ServiceCode           string          `json:"service_code"`
-	GroupKey              string          `json:"group_key"`
-	DisplayName           string          `json:"display_name"`
-	Description           string          `json:"description"`
-	Status                string          `json:"status"`
-	PolicyJSON            json.RawMessage `json:"policy_json,omitempty"`
-	ScopeMode             string          `json:"scope_mode"`
-	AutoApplyNewInstances *bool           `json:"auto_apply_new_instances,omitempty"`
+	ServiceCode             string          `json:"service_code"`
+	GroupKey                string          `json:"group_key"`
+	DisplayName             string          `json:"display_name"`
+	Description             string          `json:"description"`
+	Status                  string          `json:"status"`
+	PolicyJSON              json.RawMessage `json:"policy_json,omitempty"`
+	ExternalEgressProfileID *string         `json:"external_egress_profile_id,omitempty"`
+	ScopeMode               string          `json:"scope_mode"`
+	AutoApplyNewInstances   *bool           `json:"auto_apply_new_instances,omitempty"`
+}
+
+type ExternalEgressProfile struct {
+	ID             string                     `json:"id"`
+	ProfileKey     string                     `json:"profile_key"`
+	DisplayName    string                     `json:"display_name"`
+	Description    string                     `json:"description"`
+	Protocol       string                     `json:"protocol"`
+	Transport      string                     `json:"transport"`
+	RuntimeSupport string                     `json:"runtime_support"`
+	Status         string                     `json:"status"`
+	ImportFormat   string                     `json:"import_format"`
+	EndpointHost   string                     `json:"endpoint_host"`
+	EndpointPort   int                        `json:"endpoint_port,omitempty"`
+	ConfigJSON     json.RawMessage            `json:"config_json,omitempty"`
+	SecretPurposes []string                   `json:"secret_purposes,omitempty"`
+	Deployments    []ExternalEgressDeployment `json:"deployments,omitempty"`
+	CreatedAt      time.Time                  `json:"created_at"`
+	UpdatedAt      time.Time                  `json:"updated_at"`
+	DeletedAt      *time.Time                 `json:"deleted_at,omitempty"`
+}
+
+type ExternalEgressProfileInput struct {
+	ProfileKey   string            `json:"profile_key"`
+	DisplayName  string            `json:"display_name"`
+	Description  string            `json:"description"`
+	Protocol     string            `json:"protocol"`
+	Transport    string            `json:"transport"`
+	Status       string            `json:"status"`
+	ImportFormat string            `json:"import_format"`
+	EndpointHost string            `json:"endpoint_host"`
+	EndpointPort int               `json:"endpoint_port,omitempty"`
+	ConfigJSON   json.RawMessage   `json:"config_json,omitempty"`
+	Secrets      map[string]string `json:"secrets,omitempty"`
+}
+
+type ExternalEgressImportPreview struct {
+	Protocol        string          `json:"protocol"`
+	Transport       string          `json:"transport"`
+	EndpointHost    string          `json:"endpoint_host"`
+	EndpointPort    int             `json:"endpoint_port,omitempty"`
+	RuntimeSupport  string          `json:"runtime_support"`
+	ImportFormat    string          `json:"import_format"`
+	RequiredSecrets []string        `json:"required_secrets,omitempty"`
+	InlineBlocks    []string        `json:"inline_blocks,omitempty"`
+	Warnings        []string        `json:"warnings,omitempty"`
+	Normalized      json.RawMessage `json:"normalized,omitempty"`
+}
+
+type ExternalEgressDeployment struct {
+	ID            string          `json:"id"`
+	ProfileID     string          `json:"profile_id"`
+	NodeID        string          `json:"node_id"`
+	NodeName      string          `json:"node_name,omitempty"`
+	DesiredStatus string          `json:"desired_status"`
+	Status        string          `json:"status"`
+	InterfaceName string          `json:"interface_name"`
+	RoutingTable  string          `json:"routing_table"`
+	FWMark        int             `json:"fwmark"`
+	RouteMetric   int             `json:"route_metric"`
+	ConfigJSON    json.RawMessage `json:"config_json,omitempty"`
+	HealthJSON    json.RawMessage `json:"health_json,omitempty"`
+	LastJobID     *string         `json:"last_job_id,omitempty"`
+	LastError     string          `json:"last_error,omitempty"`
+	AppliedAt     *time.Time      `json:"applied_at,omitempty"`
+	ObservedAt    *time.Time      `json:"observed_at,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+type ExternalEgressDeploymentInput struct {
+	NodeID        string          `json:"node_id"`
+	DesiredStatus string          `json:"desired_status"`
+	RoutingTable  string          `json:"routing_table"`
+	RouteMetric   int             `json:"route_metric"`
+	ConfigJSON    json.RawMessage `json:"config_json,omitempty"`
 }
 
 type ClientAccessGroupMember struct {

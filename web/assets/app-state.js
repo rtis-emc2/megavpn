@@ -40,6 +40,8 @@
       shareLinks: [],
       backhaulLinks: [],
       backhaulDrivers: [],
+      externalEgressProfiles: [],
+      externalEgressCatalog: [],
       servicesCatalog: [],
       servicePacks: [],
       servicePackCatalog: [],

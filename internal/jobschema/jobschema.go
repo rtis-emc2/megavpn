@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/rtis-emc2/megavpn/internal/backhaul"
+	"github.com/rtis-emc2/megavpn/internal/externalegress"
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
@@ -323,6 +324,62 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 			return nil, err
 		} else if ok {
 			normalized["directories"] = directories
+		}
+	case "node.external_egress.apply", "node.external_egress.probe", "node.external_egress.cleanup":
+		for _, key := range []string{"node_id", "profile_id", "deployment_id", "protocol", "interface_name", "routing_table"} {
+			value, err := requireString(payload, key)
+			if err != nil {
+				return nil, err
+			}
+			normalized[key] = value
+		}
+		protocol := externalegress.NormalizeProtocol(stringifyAny(normalized["protocol"]))
+		definition, ok := externalegress.Definition(protocol)
+		if !ok {
+			return nil, validationf("payload.protocol is unsupported")
+		}
+		if definition.RuntimeSupport != externalegress.RuntimeReady {
+			return nil, validationf("payload.protocol runtime is not ready")
+		}
+		normalized["protocol"] = protocol
+		trimOptionalStrings(normalized, payload, "transport", "endpoint_host")
+		for _, key := range []string{"route_metric", "fwmark"} {
+			if value, ok, err := optionalInt(payload, key); err != nil {
+				return nil, err
+			} else if ok {
+				normalized[key] = value
+			} else {
+				return nil, validationf("payload.%s is required", key)
+			}
+		}
+		if value, ok, err := optionalInt(payload, "endpoint_port"); err != nil {
+			return nil, err
+		} else if ok {
+			if value < 1 || value > 65535 {
+				return nil, validationf("payload.endpoint_port is invalid")
+			}
+			normalized["endpoint_port"] = value
+		}
+		table, err := strconv.Atoi(stringifyAny(normalized["routing_table"]))
+		if err != nil || table < 40000 || table > 48999 {
+			return nil, validationf("payload.routing_table is outside the managed range")
+		}
+		metric := normalized["route_metric"].(int)
+		if metric < 1 || metric > 32767 {
+			return nil, validationf("payload.route_metric is invalid")
+		}
+		mark := normalized["fwmark"].(int)
+		if mark < 0x4d590000 || mark > 0x4d59ffff {
+			return nil, validationf("payload.fwmark is outside the managed range")
+		}
+		if rawRefs, exists := payload["secret_refs"]; exists {
+			refs, ok := rawRefs.(map[string]any)
+			if !ok {
+				return nil, validationf("payload.secret_refs must be an object")
+			}
+			normalized["secret_refs"] = refs
+		} else {
+			normalized["secret_refs"] = map[string]any{}
 		}
 	case "node.route_policy.apply":
 		nodeID, err := requireString(payload, "node_id")

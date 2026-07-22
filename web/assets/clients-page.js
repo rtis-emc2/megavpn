@@ -542,6 +542,11 @@
     }
 
     function accessGroupRouteLabel(group) {
+      const externalProfileID = String(group?.external_egress_profile_id || '').trim();
+      if (externalProfileID) {
+        const profile = (state.externalEgressProfiles || []).find((item) => item.id === externalProfileID);
+        return profile ? `external: ${profile.display_name || profile.profile_key}` : 'external egress profile';
+      }
       const policy = accessGroupPolicy(group);
       const mode = String(policy.access_mode || policy.egress_mode || '').trim();
       if (mode === 'egress_node') {
@@ -553,6 +558,18 @@
       if (mode === 'block') return 'blocked';
       if (policy.ad_block === true) return 'default + ad blocking';
       return 'default route';
+    }
+
+    function externalEgressProfileOptions(selectedID = '') {
+      const options = ['<option value="">Use group route policy</option>'];
+      (state.externalEgressProfiles || [])
+        .filter((profile) => profile.status === 'active' && profile.runtime_support === 'ready')
+        .forEach((profile) => {
+          const selected = profile.id === selectedID ? ' selected' : '';
+          const deployments = (profile.deployments || []).filter((item) => item.status === 'active').length;
+          options.push(`<option value="${escapeHTML(profile.id)}"${selected}>${escapeHTML(profile.display_name || profile.profile_key)} · ${escapeHTML(profile.protocol)} · ${deployments} active nodes</option>`);
+        });
+      return options.join('');
     }
 
     function accessGroupScopeLabel(group) {
@@ -701,14 +718,18 @@
           <div class="field"><label>Status</label><select name="status"><option value="active"${String(group?.status || 'active') === 'active' ? ' selected' : ''}>active</option><option value="disabled"${String(group?.status || '') === 'disabled' ? ' selected' : ''}>disabled</option></select></div>
           <div class="field full"><label>Description</label><input name="description" value="${escapeHTML(group?.description || '')}" placeholder="Operator note" /></div>
           <div class="field full" id="accessGroupServiceNotice">${renderAccessGroupServiceNotice(service)}</div>
-          <div class="field"><label>Route mode</label><select name="access_mode">
-            ${['instance_default','local_breakout','egress_node','instance_only','block'].map((mode) => `<option value="${escapeHTML(mode)}"${String(policy.access_mode || 'instance_default') === mode ? ' selected' : ''}>${escapeHTML(mode)}</option>`).join('')}
-          </select></div>
-          <div class="field"><label>Egress node</label><select name="egress_node_id">${egressNodeOptions(String(policy.egress_node_id || ''))}</select></div>
-          <div class="field"><label>Outbound tag</label><input name="outbound_tag" value="${escapeHTML(policy.outbound_tag || 'direct')}" /></div>
+          <div class="field full" id="accessGroupExternalEgressField"><label>External provider gateway</label><select id="accessGroupExternalEgressProfile" name="external_egress_profile_id">${externalEgressProfileOptions(String(group?.external_egress_profile_id || ''))}</select><div class="field-hint">Optional. Only members of this group use the selected provider tunnel. Deploy the profile on every runtime node in the group scope first.</div></div>
+          <div class="field full callout info" id="accessGroupExternalRouteNotice" hidden><strong>External gateway routing is active</strong><span>The provider gateway replaces the normal route mode for this group. Ad blocking remains optional.</span></div>
+          <div class="field full form-grid" id="accessGroupRoutePolicyFields">
+            <div class="field"><label>Route mode</label><select name="access_mode">
+              ${['instance_default','local_breakout','egress_node','instance_only','block'].map((mode) => `<option value="${escapeHTML(mode)}"${String(policy.access_mode || 'instance_default') === mode ? ' selected' : ''}>${escapeHTML(mode)}</option>`).join('')}
+            </select></div>
+            <div class="field"><label>Egress node</label><select name="egress_node_id">${egressNodeOptions(String(policy.egress_node_id || ''))}</select></div>
+            <div class="field full"><label>Outbound tag</label><input name="outbound_tag" value="${escapeHTML(policy.outbound_tag || 'direct')}" /></div>
+          </div>
           <label class="checkbox-field"><input type="checkbox" name="ad_block"${policy.ad_block ? ' checked' : ''} /> Block managed ad domains</label>
           <div class="field full"><p class="field-hint">Runtime scope is managed with the Scope action in the group list.</p></div>
-          <div class="field full inline-actions">
+          <div class="field full modal-actions">
             <button class="primary-btn" id="accessGroupEditorSubmitBtn" type="submit"${serviceEnabled ? '' : ' disabled'}>${isEdit ? 'Save group' : 'Create group'}</button>
             <button class="secondary-btn" type="button" id="accessGroupEditorCancelBtn">Cancel</button>
           </div>
@@ -716,6 +737,7 @@
         <div id="accessGroupEditorResult" class="form-result"></div>`, { size: 'large' });
       document.getElementById('accessGroupEditorCancelBtn')?.addEventListener('click', closeModal);
       bindAccessGroupEditorService();
+      bindAccessGroupExternalEgress();
       document.getElementById('accessGroupEditorForm')?.addEventListener('submit', (event) => submitAccessGroupEditor(event, group));
     }
 
@@ -748,15 +770,32 @@
       sync();
     }
 
+    function bindAccessGroupExternalEgress() {
+      const select = document.getElementById('accessGroupExternalEgressProfile');
+      const fields = document.getElementById('accessGroupRoutePolicyFields');
+      const notice = document.getElementById('accessGroupExternalRouteNotice');
+      const sync = () => {
+        const external = Boolean(String(select?.value || '').trim());
+        fields?.querySelectorAll('input, select, textarea').forEach((field) => {
+          field.disabled = external;
+        });
+        if (fields) fields.hidden = external;
+        if (notice) notice.hidden = !external;
+      };
+      select?.addEventListener('change', sync);
+      sync();
+    }
+
     async function submitAccessGroupEditor(event, group) {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
-      const accessMode = String(form.get('access_mode') || 'instance_default');
+      const externalProfileID = String(form.get('external_egress_profile_id') || '').trim();
+      const accessMode = externalProfileID ? 'instance_default' : String(form.get('access_mode') || 'instance_default');
       const policy = {
         access_mode: accessMode,
         egress_mode: accessMode === 'block' ? 'block' : (accessMode === 'egress_node' ? 'egress_node' : accessMode === 'local_breakout' ? 'local_breakout' : 'default'),
-        egress_node_id: String(form.get('egress_node_id') || '').trim(),
-        outbound_tag: String(form.get('outbound_tag') || 'direct').trim() || 'direct',
+        egress_node_id: externalProfileID ? '' : String(form.get('egress_node_id') || '').trim(),
+        outbound_tag: externalProfileID ? 'direct' : (String(form.get('outbound_tag') || 'direct').trim() || 'direct'),
         ad_block: Boolean(form.get('ad_block')),
         rules: Boolean(form.get('ad_block')) ? [{ type: 'field', domain: ['geosite:category-ads-all'], outbound_tag: 'block' }] : [],
         extra_rules: [],
@@ -770,6 +809,7 @@
         policy_json: policy,
         scope_mode: group?.scope_mode || 'all_active_instances',
         auto_apply_new_instances: group?.auto_apply_new_instances === false ? false : true,
+        external_egress_profile_id: externalProfileID,
       };
       const target = document.getElementById('accessGroupEditorResult');
       if (target) target.innerHTML = '<span class="tag warn">saving</span>';

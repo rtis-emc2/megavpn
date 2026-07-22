@@ -1,6 +1,6 @@
 # Firewall Policy Catalog
 
-**Release:** `7.1.1.0`
+**Release:** `7.1.1.1`
 
 Firewall is the managed policy workspace for node and control-plane boundaries.
 It is intentionally modeled as a catalog before apply: operators prepare address

@@ -26,6 +26,7 @@
       jobWorkflows,
       artifactsPage,
       backhaulPage,
+      externalEgressPage,
       certificatesPage,
       revisionsPage,
       opsPages,
@@ -62,6 +63,7 @@
       'traffic',
       'clients',
       'backhaul',
+      'externalEgress',
     ]);
 
     const menuPageKeys = new Set(
@@ -86,6 +88,7 @@
       'artifacts',
       'shareLinks',
       'backhaul',
+      'externalEgress',
       'certificates',
       'revisions',
       'telemetry',
@@ -122,6 +125,7 @@
       if (state.page === 'artifacts') return artifactsPage.renderArtifacts();
       if (state.page === 'shareLinks') return artifactsPage.renderShareLinks();
       if (state.page === 'backhaul') return backhaulPage.render();
+      if (state.page === 'externalEgress') return externalEgressPage.render();
       if (state.page === 'certificates') return certificatesPage.render();
       if (state.page === 'revisions') return revisionsPage.render();
       if (state.page === 'telemetry') return opsPages.renderTelemetry();
@@ -176,6 +180,8 @@
     }
 
     function autoRefreshEnabledForCurrentPage() {
+      if (document.body.classList.contains('modal-open')) return false;
+      if (document.activeElement?.matches?.('input, select, textarea, [contenteditable="true"]')) return false;
       if (state.page === 'nodeManage' && state.nodeTerminalActive) return false;
       if (state.page === 'nodeManage' && state.nodeManageDirty) return false;
       if (state.page === 'instanceManage' && state.instanceManageDirty) return false;

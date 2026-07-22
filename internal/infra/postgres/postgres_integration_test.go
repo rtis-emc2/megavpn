@@ -14,7 +14,90 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/backhaul"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
+	secretstore "github.com/rtis-emc2/megavpn/internal/secrets"
 )
+
+func TestPostgresIntegrationExternalEgressJobIdempotency(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+	keyPath := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyPath, []byte(strings.Repeat("11", 32)), 0o600); err != nil {
+		t.Fatalf("write test master key: %v", err)
+	}
+	secretSvc, err := secretstore.LoadFromFile(keyPath, "integration-test")
+	if err != nil {
+		t.Fatalf("load test secret service: %v", err)
+	}
+	store.SetSecretService(secretSvc)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name: "external-egress-" + suffix, Kind: "remote", Role: "ingress", Status: "online",
+		Address: "192.0.2.20", OSFamily: "linux", OSVersion: "ubuntu-24.04", Architecture: "amd64",
+		ExecutionMode: "agent_managed", AgentStatus: "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	profile, err := store.CreateExternalEgressProfile(ctx, domain.ExternalEgressProfileInput{
+		ProfileKey: "provider_" + suffix, DisplayName: "Provider " + suffix, Protocol: "openvpn",
+		Status: "active", ImportFormat: "ovpn", Secrets: map[string]string{
+			"config": "client\ndev tun\nproto udp\nremote vpn.example.com 1194\n",
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("create profile: %v", err)
+	}
+	deployment, err := store.CreateExternalEgressDeployment(ctx, profile.ID, domain.ExternalEgressDeploymentInput{
+		NodeID: node.ID, RoutingTable: "auto", RouteMetric: 100,
+	})
+	if err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	first, err := store.CreateExternalEgressApplyJob(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("create first apply job: %v", err)
+	}
+	second, err := store.CreateExternalEgressApplyJob(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("create idempotent apply job: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("duplicate apply created job %s; want existing job %s", second.ID, first.ID)
+	}
+	if _, err := store.CreateExternalEgressCleanupJob(ctx, deployment.ID); err == nil || !strings.Contains(err.Error(), "already has active job") {
+		t.Fatalf("conflicting cleanup error = %v, want active-job conflict", err)
+	}
+	var activeJobs int
+	if err := store.db.QueryRow(ctx, `select count(*) from jobs where scope_type='external_egress' and scope_id=$1 and status in ('queued','running','retrying')`, deployment.ID).Scan(&activeJobs); err != nil {
+		t.Fatalf("count active jobs: %v", err)
+	}
+	if activeJobs != 1 {
+		t.Fatalf("active external egress jobs = %d, want 1", activeJobs)
+	}
+	if _, err := store.db.Exec(ctx, `update jobs set status='succeeded',finished_at=now(),locked_by=null,locked_until=null where id=$1`, first.ID); err != nil {
+		t.Fatalf("finish first external egress job: %v", err)
+	}
+	if _, err := store.db.Exec(ctx, `delete from resource_locks where job_id=$1`, first.ID); err != nil {
+		t.Fatalf("release first external egress job lock: %v", err)
+	}
+	newer, err := store.CreateExternalEgressProbeJob(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("create newer external egress probe job: %v", err)
+	}
+	if err := store.ApplyExternalEgressJobResult(ctx, first, "succeeded", map[string]any{"health": map[string]any{"status": "active"}}); err != nil {
+		t.Fatalf("apply stale external egress result: %v", err)
+	}
+	var deploymentStatus, lastJobID string
+	if err := store.db.QueryRow(ctx, `select status,last_job_id::text from external_egress_deployments where id=$1`, deployment.ID).Scan(&deploymentStatus, &lastJobID); err != nil {
+		t.Fatalf("read external egress deployment after stale result: %v", err)
+	}
+	if lastJobID != newer.ID || deploymentStatus != "queued" {
+		t.Fatalf("stale result overwrote newer job: status=%s last_job_id=%s, want queued/%s", deploymentStatus, lastJobID, newer.ID)
+	}
+	if _, err := store.db.Exec(ctx, `update external_egress_profiles set status='disabled' where id=$1`, profile.ID); err == nil {
+		t.Fatal("expected database lifecycle guard to reject disabling a deployed profile")
+	}
+}
 
 func TestPostgresIntegrationJobsLocksProvisioningAccessRoutes(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
@@ -1168,6 +1251,25 @@ func TestPostgresIntegrationClientAccessGroupsVLESSBulkMaterialization(t *testin
 	}
 	outUSASF := clientAccessGroupByKey(t, ctx, store, "vless", "out_usa_sf")
 	defaultGroup := clientAccessGroupByKey(t, ctx, store, "vless", "default")
+
+	var revisionsBeforePreview int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from instance_revisions where instance_id in ($1,$2)`, instanceA.ID, instanceB.ID).Scan(&revisionsBeforePreview); err != nil {
+		t.Fatalf("count revisions before access group preview: %v", err)
+	}
+	preview, err := store.PreviewClientAccessGroupSync(ctx, outUSASF.ID)
+	if err != nil {
+		t.Fatalf("preview access group sync: %v", err)
+	}
+	if preview.AffectedInstances != 2 {
+		t.Fatalf("preview affected instances = %d, want 2", preview.AffectedInstances)
+	}
+	var revisionsAfterPreview int
+	if err := store.db.QueryRow(ctx, `select count(*)::int from instance_revisions where instance_id in ($1,$2)`, instanceA.ID, instanceB.ID).Scan(&revisionsAfterPreview); err != nil {
+		t.Fatalf("count revisions after access group preview: %v", err)
+	}
+	if revisionsAfterPreview != revisionsBeforePreview {
+		t.Fatalf("read-only access group preview created %d instance revisions", revisionsAfterPreview-revisionsBeforePreview)
+	}
 
 	clientIDs := make([]string, 0, 1000)
 	for i := 0; i < 1000; i++ {

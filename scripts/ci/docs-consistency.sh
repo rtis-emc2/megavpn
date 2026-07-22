@@ -40,6 +40,8 @@ required_release_artifacts=(
   docs/VLESS_GROUPS_RU.md
   docs/VLESS_SUBSCRIPTIONS.md
   docs/VLESS_SUBSCRIPTIONS_RU.md
+  docs/EXTERNAL_EGRESS.md
+  docs/EXTERNAL_EGRESS_RU.md
   "docs/SECURITY_REVIEW_${code_version}.md"
   deploy/env/megavpn.production.env.example
   deploy/env/megavpn-agent.production.env.example

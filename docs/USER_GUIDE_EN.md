@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.1.1.0`
+**Release:** `7.1.1.1`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -375,6 +375,11 @@ catalog. Use manual CIDR only as an intentional override; active allocations
 lock pool deletion.
 
 ## 12. Managed Backhaul
+
+External provider VPN/proxy connectivity is a separate workflow. To route only
+selected access-group members through a provider, use `External egress` and
+follow [External Provider Egress](EXTERNAL_EGRESS.md). Do not import a provider
+client config as Backhaul or as an inbound Manual instance.
 
 Backhaul is required when the ingress node accepts traffic but traffic must exit
 through an egress node.

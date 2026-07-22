@@ -16,6 +16,7 @@
       ]],
       ['Provisioning', [
         ['backhaul', 'Backhaul', '⇄'],
+        ['externalEgress', 'External egress', '↗'],
         ['addressPools', 'Address pools', '▦'],
         ['artifacts', 'Artifacts', '▤'],
         ['shareLinks', 'Share links', '↗'],
