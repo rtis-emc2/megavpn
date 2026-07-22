@@ -8,6 +8,7 @@
       hasPermission,
       updateReadyPill,
       renderNotice,
+      renderProgress,
     } = ctx;
     if (
       !state ||
@@ -155,55 +156,98 @@
       return `/api/v1/traffic/accounting?${params.toString()}`;
     }
 
+    async function fetchCoreJSON(path, fallback) {
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const timeoutID = controller ? window.setTimeout(() => controller.abort(), 12000) : null;
+      try {
+        return await fetchJSON(path, fallback, controller ? { signal: controller.signal } : {});
+      } finally {
+        if (timeoutID !== null) window.clearTimeout(timeoutID);
+      }
+    }
+
     async function loadCore() {
-      state.ready = await fetchJSON('/api/v1/ready', { status: 'not_ready' });
-      state.versionInfo = await fetchJSON('/api/v1/version', null);
+      [state.ready, state.versionInfo] = await Promise.all([
+        fetchCoreJSON('/api/v1/ready', { status: 'not_ready' }),
+        fetchCoreJSON('/api/v1/version', null),
+      ]);
       if (!state.authUser) {
         resetAuthenticatedState();
         updateReadyPill();
         renderNotice();
         return;
       }
-      state.dashboard = await fetchJSON('/api/v1/dashboard', null);
-      const nodes = await fetchJSON('/api/v1/nodes', []);
-      const instances = await fetchJSON('/api/v1/instances', []);
-      const instanceRuntimeStates = hasPermission('instance.read') ? await fetchJSON('/api/v1/instances/runtime-states', []) : [];
-      const addressPools = hasPermission('instance.read') ? await fetchJSON('/api/v1/address-pools', { spaces: [], allocations: [] }) : { spaces: [], allocations: [] };
-      const firewallInventory = hasPermission('firewall.read') ? await fetchJSON('/api/v1/firewall', { address_lists: [], entries: [], policies: [], rules: [], node_states: [] }) : { address_lists: [], entries: [], policies: [], rules: [], node_states: [] };
-      const trafficAccounting = hasPermission('traffic.read') ? await fetchJSON(trafficAccountingPath(), { summary: { retention_days: 180 }, samples: [], collectors: [], clients: [] }) : { summary: { retention_days: 180 }, samples: [], collectors: [], clients: [] };
-      const clients = await fetchJSON('/api/v1/clients', []);
-      const jobs = await fetchJSON('/api/v1/jobs?limit=50', []);
-      const artifacts = await fetchJSON('/api/v1/artifacts', []);
-      const shareLinks = await fetchJSON('/api/v1/share-links', []);
-      const backhaulLinks = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul-links', []) : [];
-      const backhaulDrivers = hasPermission('node.read') ? await fetchJSON('/api/v1/backhaul/drivers', []) : [];
       const canReadExternalEgress = hasPermission('node.read') && hasPermission('access_group.read');
-      const externalEgressProfiles = canReadExternalEgress ? await fetchJSON('/api/v1/external-egress/profiles', []) : [];
-      const externalEgressCatalog = canReadExternalEgress ? await fetchJSON('/api/v1/external-egress/catalog', []) : [];
-      const servicesCatalog = await fetchJSON('/api/v1/services', []);
-      const servicePacks = await fetchJSON('/api/v1/service-packs', []);
-      const vlessGroupTemplates = await fetchJSON('/api/v1/vless-groups', []);
-      const clientAccessServices = hasPermission('access_group.read')
-        ? await fetchJSON('/api/v1/client-access-services', [])
-        : [];
-      const clientAccessGroups = hasPermission('access_group.read')
-        ? await fetchJSON('/api/v1/client-access-groups', [])
-        : [];
-      const clientAccessGroupMigrationConflicts = hasPermission('access_group.read')
-        ? await fetchJSON('/api/v1/client-access-groups/migration-conflicts?limit=50', [])
-        : [];
-      const serviceCapabilitiesByNode = hasPermission('node.read') ? await fetchJSON('/api/v1/nodes/capabilities', {}) : {};
-      const servicePackCatalog = hasPermission('settings.manage')
-        ? await fetchJSON('/api/v1/service-packs?include_inactive=1', servicePacks)
+      const canReadInstances = hasPermission('instance.read');
+      const canReadNodes = hasPermission('node.read');
+      const canReadAccessGroups = hasPermission('access_group.read');
+      const canManageSettings = hasPermission('settings.manage');
+      const emptyFirewall = { address_lists: [], entries: [], policies: [], rules: [], node_states: [] };
+      const emptyTraffic = { summary: { retention_days: 180 }, samples: [], collectors: [], clients: [] };
+      const shouldRenderProgress = !state.dashboard && typeof renderProgress === 'function';
+      const criticalRequests = [
+        fetchCoreJSON('/api/v1/dashboard', null),
+        fetchCoreJSON('/api/v1/nodes', []),
+        fetchCoreJSON('/api/v1/instances', []),
+        fetchCoreJSON('/api/v1/clients', []),
+        fetchCoreJSON('/api/v1/jobs?limit=50', []),
+      ];
+      const loadRemaining = () => [
+        canReadInstances ? fetchCoreJSON('/api/v1/instances/runtime-states', []) : Promise.resolve([]),
+        canReadInstances ? fetchCoreJSON('/api/v1/address-pools', { spaces: [], allocations: [] }) : Promise.resolve({ spaces: [], allocations: [] }),
+        hasPermission('firewall.read') ? fetchCoreJSON('/api/v1/firewall', emptyFirewall) : Promise.resolve(emptyFirewall),
+        hasPermission('traffic.read') ? fetchCoreJSON(trafficAccountingPath(), emptyTraffic) : Promise.resolve(emptyTraffic),
+        fetchCoreJSON('/api/v1/artifacts', []),
+        fetchCoreJSON('/api/v1/share-links', []),
+        canReadNodes ? fetchCoreJSON('/api/v1/backhaul-links', []) : Promise.resolve([]),
+        canReadNodes ? fetchCoreJSON('/api/v1/backhaul/drivers', []) : Promise.resolve([]),
+        canReadExternalEgress ? fetchCoreJSON('/api/v1/external-egress/profiles', []) : Promise.resolve([]),
+        canReadExternalEgress ? fetchCoreJSON('/api/v1/external-egress/catalog', []) : Promise.resolve([]),
+        fetchCoreJSON('/api/v1/services', []),
+        fetchCoreJSON('/api/v1/service-packs', []),
+        fetchCoreJSON('/api/v1/vless-groups', []),
+        canReadAccessGroups ? fetchCoreJSON('/api/v1/client-access-services', []) : Promise.resolve([]),
+        canReadAccessGroups ? fetchCoreJSON('/api/v1/client-access-groups', []) : Promise.resolve([]),
+        canReadAccessGroups ? fetchCoreJSON('/api/v1/client-access-groups/migration-conflicts?limit=50', []) : Promise.resolve([]),
+        canReadNodes ? fetchCoreJSON('/api/v1/nodes/capabilities', {}) : Promise.resolve({}),
+        canManageSettings ? fetchCoreJSON('/api/v1/service-packs?include_inactive=1', []) : Promise.resolve([]),
+        canManageSettings ? fetchCoreJSON('/api/v1/vless-groups?include_inactive=1', []) : Promise.resolve([]),
+        fetchCoreJSON('/api/v1/services/installers', []),
+        hasPermission('binary_repository.read') ? fetchCoreJSON('/api/v1/binary-artifacts', []) : Promise.resolve([]),
+        (canReadInstances || canManageSettings) ? fetchCoreJSON('/api/v1/platform/certificates', []) : Promise.resolve([]),
+        canReadInstances ? fetchCoreJSON('/api/v1/platform/pki-roots', []) : Promise.resolve([]),
+        canManageSettings ? fetchCoreJSON('/api/v1/settings/control-plane-tls', null) : Promise.resolve(state.controlPlaneTLSSettings),
+      ];
+      let remainingRequests = shouldRenderProgress ? null : loadRemaining();
+      const [dashboard, nodes, instances, clients, jobs] = await Promise.all(criticalRequests);
+      if (shouldRenderProgress) {
+        state.dashboard = dashboard;
+        state.nodes = Array.isArray(nodes) ? nodes.filter((node) => node.status !== 'retired') : [];
+        state.instances = Array.isArray(instances) ? instances : [];
+        state.clients = Array.isArray(clients) ? clients : [];
+        state.jobs = Array.isArray(jobs) ? jobs : [];
+        persistSelectedIDs();
+        updateReadyPill();
+        renderNotice();
+        renderProgress();
+        remainingRequests = loadRemaining();
+      }
+      const [
+        instanceRuntimeStates, addressPools, firewallInventory, trafficAccounting, artifacts,
+        shareLinks, backhaulLinks, backhaulDrivers, externalEgressProfiles,
+        externalEgressCatalog, servicesCatalog, servicePacks, vlessGroupTemplates,
+        clientAccessServices, clientAccessGroups, clientAccessGroupMigrationConflicts,
+        serviceCapabilitiesByNode, servicePackCatalogResponse, vlessGroupCatalogResponse,
+        serviceInstallers, binaryArtifacts, platformCertificates, platformPKIRoots,
+        controlPlaneTLSSettings,
+      ] = await Promise.all(remainingRequests);
+      const servicePackCatalog = canManageSettings && Array.isArray(servicePackCatalogResponse) && servicePackCatalogResponse.length
+        ? servicePackCatalogResponse
         : servicePacks;
-      const vlessGroupCatalog = hasPermission('settings.manage')
-        ? await fetchJSON('/api/v1/vless-groups?include_inactive=1', vlessGroupTemplates)
+      const vlessGroupCatalog = canManageSettings && Array.isArray(vlessGroupCatalogResponse) && vlessGroupCatalogResponse.length
+        ? vlessGroupCatalogResponse
         : vlessGroupTemplates;
-      const serviceInstallers = await fetchJSON('/api/v1/services/installers', []);
-      const binaryArtifacts = hasPermission('binary_repository.read') ? await fetchJSON('/api/v1/binary-artifacts', []) : [];
-      const platformCertificates = (hasPermission('instance.read') || hasPermission('settings.manage')) ? await fetchJSON('/api/v1/platform/certificates', []) : [];
-      const platformPKIRoots = hasPermission('instance.read') ? await fetchJSON('/api/v1/platform/pki-roots', []) : [];
-      const controlPlaneTLSSettings = hasPermission('settings.manage') ? await fetchJSON('/api/v1/settings/control-plane-tls', null) : state.controlPlaneTLSSettings;
+      state.dashboard = dashboard;
       state.nodes = Array.isArray(nodes) ? nodes.filter((node) => node.status !== 'retired') : [];
       state.instances = Array.isArray(instances) ? instances : [];
       state.instanceRuntimeStates = Array.isArray(instanceRuntimeStates) ? instanceRuntimeStates : [];

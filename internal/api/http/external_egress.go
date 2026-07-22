@@ -60,6 +60,30 @@ func (s *Server) previewExternalEgressImport(w nethttp.ResponseWriter, r *nethtt
 			preview.Warnings = parsed.Warnings
 			normalized = parsed
 		}
+	case "shadowsocks":
+		var parsed externalegress.ShadowsocksPreview
+		parsed, err = externalegress.ParseShadowsocks([]byte(req.Content))
+		if err == nil {
+			preview.Transport, preview.EndpointHost, preview.EndpointPort = parsed.Transport, parsed.EndpointHost, parsed.EndpointPort
+			preview.RequiredSecrets, preview.Warnings = parsed.RequiredSecrets, parsed.Warnings
+			normalized = parsed
+		}
+	case "vless":
+		var parsed externalegress.VLESSPreview
+		parsed, err = externalegress.ParseVLESS([]byte(req.Content))
+		if err == nil {
+			preview.Transport, preview.EndpointHost, preview.EndpointPort = parsed.Transport, parsed.EndpointHost, parsed.EndpointPort
+			preview.RequiredSecrets, preview.Warnings = parsed.RequiredSecrets, parsed.Warnings
+			normalized = parsed
+		}
+	case "l2tp_ipsec":
+		var parsed externalegress.L2TPIPsecPreview
+		parsed, err = externalegress.ParseL2TPIPsec([]byte(req.Content))
+		if err == nil {
+			preview.Transport, preview.EndpointHost, preview.EndpointPort = parsed.Transport, parsed.EndpointHost, parsed.EndpointPort
+			preview.RequiredSecrets, preview.Warnings = parsed.RequiredSecrets, parsed.Warnings
+			normalized = parsed
+		}
 	default:
 		err = errors.New("this protocol currently supports structured profile creation only")
 	}

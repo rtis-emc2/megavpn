@@ -1,6 +1,6 @@
 # Threat Model
 
-**Release:** `7.1.1.1`
+**Release:** `7.1.1.2`
 
 ## Scope
 
@@ -61,9 +61,9 @@ MegaVPN consists of:
 | Supply-chain compromise of remote installer | Xray remote install requires pinned script SHA-256; otherwise fail closed |
 | Runtime binary substitution | Runtime artifacts are stored under a control-plane artifact root and installed only after hash verification and service/path allowlist checks |
 | Accidental direct breakout from ingress VLESS | Xray egress is resolved at instance level; generated configs add a default outbound via managed backhaul when the node role requires remote egress |
-| Malicious external-provider configuration | Provider files are untrusted input. OpenVPN scripts, plugins, management sockets, external file references and log/status hooks are rejected; WireGuard hooks and `SaveConfig` are rejected. Runtime files are generated under a deployment-specific managed directory. |
+| Malicious external-provider configuration | Provider files are untrusted input. OpenVPN scripts, plugins, management sockets, external file references and log/status hooks are rejected; WireGuard hooks and `SaveConfig` are rejected; VLESS/Shadowsocks unknown fields, insecure transport and plugins are rejected; L2TP/IPsec input uses a strict field allowlist. Runtime files are generated under a deployment-specific managed directory. |
 | External-provider secret disclosure | Imported configurations and separate credentials are encrypted through `secret_refs`, omitted from profile reads and hydrated only when the assigned node claims an apply job. Probe and cleanup jobs never receive provider secrets. |
-| External tunnel captures node traffic | External egress uses a dedicated Xray socket mark, `ip rule` and routing table. The node main table is not changed, and only members of an explicitly assigned client access group receive the marked outbound. A high-metric unreachable route prevents marked traffic from falling through to the main table when the provider interface fails. |
+| External tunnel captures node traffic | OpenVPN, WireGuard and L2TP/IPsec use a dedicated Xray socket mark, `ip rule` and routing table. VLESS/Shadowsocks use a loopback-only managed SOCKS listener selected by the group outbound. The node main table is not changed, and only members of an explicitly assigned client access group receive the provider outbound. L3 profiles retain a high-metric unreachable fallback. |
 | Unsafe node cleanup | Cleanup jobs must remain scoped to managed instance/backhaul units and operator confirmation must name the target node |
 | Subscription URL leakage | Treat subscription tokens as bearer credentials; use per-client rotation, expiry, audit and `Cache-Control: no-store` |
 | Secret loss | Backup DB/artifacts separately from master key; master key rotation and sealed copy required |
@@ -72,7 +72,8 @@ MegaVPN consists of:
 
 - A root-running node agent is intentionally privileged. Production deployments must restrict which operators can queue apply/capability jobs.
 - Package-manager capability installs write broadly to the node OS. Use manual-present strategy or pre-baked images where policy forbids runtime package installation.
-- IPsec/L2TP and some Xray/backhaul profiles can be materialize-only until their full runtime validation is completed.
+- Unencrypted L2TP remains intentionally blocked. L2TP/IPsec currently supports PSK plus username/password and one active external client deployment per node; certificate-authenticated provider variants require a future driver revision.
+- VLESS/Shadowsocks provider listeners are root-owned and loopback-only. They do not capture node traffic, but a privileged process on the node can intentionally connect to the local listener; node-root compromise remains outside this isolation boundary.
 - External-egress probe confirms local unit/interface/rule/route state; it does not provide end-to-end provider reachability or SLA validation.
 - Public share links are bearer URLs. Hashing protects database disclosure, not recipients forwarding a live URL.
 - The topology map exposes operational metadata derived from public node IPs. External GeoIP providers will see those public IPs; regulated deployments should use an internal GeoIP endpoint or disable lookup with `MEGAVPN_GEOIP_LOOKUP_URL_TEMPLATE=disabled`.

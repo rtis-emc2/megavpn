@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -91,6 +92,125 @@ func TestRenderManagedWireGuardConfigInjectsSeparatePrivateKey(t *testing.T) {
 	}
 	if !strings.Contains(config, "PrivateKey = separate-private-key") {
 		t.Fatalf("separate private key was not injected:\n%s", config)
+	}
+}
+
+func TestRenderManagedShadowsocksXrayConfigUsesLoopbackOnly(t *testing.T) {
+	payload := validExternalEgressPayload("shadowsocks", `{"server":"ss.example.com","server_port":8388,"method":"aes-256-gcm"}`)
+	payload.ProxyPort = externalEgressProxyPort(payload.RoutingTable)
+	payload.Secrets["password"] = "provider-secret"
+	config, err := renderManagedShadowsocksXrayConfig(payload)
+	if err != nil {
+		t.Fatalf("renderManagedShadowsocksXrayConfig returned error: %v", err)
+	}
+	if !strings.Contains(config, `"listen": "127.0.0.1"`) || !strings.Contains(config, `"port": 20123`) {
+		t.Fatalf("Shadowsocks loopback proxy is missing:\n%s", config)
+	}
+	if strings.Contains(config, `"listen": "0.0.0.0"`) {
+		t.Fatalf("Shadowsocks proxy exposed a public listener:\n%s", config)
+	}
+}
+
+func TestRenderManagedVLESSXrayConfigPreservesSecureTransport(t *testing.T) {
+	payload := validExternalEgressPayload("vless", "vless://123e4567-e89b-42d3-a456-426614174002@edge.example.com:443?security=tls&sni=edge.example.com&type=ws&path=%2Fprovider&host=edge.example.com")
+	payload.ProxyPort = externalEgressProxyPort(payload.RoutingTable)
+	config, err := renderManagedVLESSXrayConfig(payload)
+	if err != nil {
+		t.Fatalf("renderManagedVLESSXrayConfig returned error: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(config), &parsed); err != nil {
+		t.Fatalf("rendered VLESS config is not JSON: %v", err)
+	}
+	if !strings.Contains(config, `"serverName": "edge.example.com"`) || !strings.Contains(config, `"allowInsecure": false`) || !strings.Contains(config, `"path": "/provider"`) {
+		t.Fatalf("VLESS secure transport was not preserved:\n%s", config)
+	}
+}
+
+func TestRenderManagedL2TPIPsecConfigIsolatesDefaultRoute(t *testing.T) {
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\nremote_id=@l2tp.example.com\n")
+	payload.Secrets["username"] = "provider-user"
+	payload.Secrets["password"] = "provider-pass"
+	payload.Secrets["preshared_key"] = "provider-psk"
+	ipsecConfig, ipsecSecrets, xl2tpConfig, pppOptions, err := renderManagedL2TPIPsecConfig(payload)
+	if err != nil {
+		t.Fatalf("renderManagedL2TPIPsecConfig returned error: %v", err)
+	}
+	for _, required := range []string{"type=transport", "right=l2tp.example.com", "auto=add"} {
+		if !strings.Contains(ipsecConfig, required) {
+			t.Fatalf("IPsec config is missing %q:\n%s", required, ipsecConfig)
+		}
+	}
+	if !strings.Contains(ipsecSecrets, `PSK "provider-psk"`) || !strings.Contains(xl2tpConfig, "autodial = yes") {
+		t.Fatalf("L2TP/IPsec managed files are incomplete")
+	}
+	if !strings.Contains(pppOptions, "nodefaultroute") || !strings.Contains(pppOptions, "ifname mgev0123456789") {
+		t.Fatalf("PPP options do not isolate node routing:\n%s", pppOptions)
+	}
+}
+
+func TestRenderManagedL2TPIPsecConfigPreservesSeparateSecretWhitespace(t *testing.T) {
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
+	payload.Secrets["username"] = "provider-user"
+	payload.Secrets["password"] = " password with spaces "
+	payload.Secrets["preshared_key"] = " psk with spaces "
+	_, ipsecSecrets, _, pppOptions, err := renderManagedL2TPIPsecConfig(payload)
+	if err != nil {
+		t.Fatalf("renderManagedL2TPIPsecConfig returned error: %v", err)
+	}
+	if !strings.Contains(ipsecSecrets, `PSK " psk with spaces "`) || !strings.Contains(pppOptions, `password " password with spaces "`) {
+		t.Fatalf("separate secret whitespace was changed: secrets=%q ppp=%q", ipsecSecrets, pppOptions)
+	}
+}
+
+func TestRenderManagedL2TPIPsecConfigRejectsControlCharacters(t *testing.T) {
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
+	payload.Secrets["username"] = "provider-user"
+	payload.Secrets["password"] = "provider\tpass"
+	payload.Secrets["preshared_key"] = "provider-psk"
+	if _, _, _, _, err := renderManagedL2TPIPsecConfig(payload); err == nil {
+		t.Fatal("expected a control character in an L2TP secret to be rejected")
+	}
+}
+
+func TestRenderExternalEgressRuntimeOmitsPolicyRuleForLoopbackProxy(t *testing.T) {
+	payload := validExternalEgressPayload("shadowsocks", `{"server":"ss.example.com","server_port":8388,"method":"aes-256-gcm","password":"secret"}`)
+	payload.ProxyPort = externalEgressProxyPort(payload.RoutingTable)
+	config, err := renderManagedShadowsocksXrayConfig(payload)
+	if err != nil {
+		t.Fatalf("renderManagedShadowsocksXrayConfig returned error: %v", err)
+	}
+	files := []managedFileSpec{{Path: externalEgressManagedDir(payload) + "/config.json", Content: config, Mode: "0600"}}
+	unit := renderExternalEgressUnit(payload, "", "/usr/bin/xray run -config "+files[0].Path, nil)
+	if strings.Contains(unit, "ExecStartPost=") {
+		t.Fatalf("loopback proxy unit unexpectedly applies a routing table:\n%s", unit)
+	}
+	if err := validateExternalEgressManagedArtifacts(payload, files, externalEgressUnitPath(payload)); err != nil {
+		t.Fatalf("loopback proxy artifacts were rejected: %v", err)
+	}
+}
+
+func TestExternalEgressLoopbackPortListeningRejectsWildcard(t *testing.T) {
+	if !externalEgressLoopbackPortListening("LISTEN 0 4096 127.0.0.1:20123 0.0.0.0:*", 20123) {
+		t.Fatal("loopback listener was not detected")
+	}
+	if externalEgressLoopbackPortListening("LISTEN 0 4096 0.0.0.0:20123 0.0.0.0:*", 20123) {
+		t.Fatal("wildcard listener was accepted as a loopback proxy")
+	}
+}
+
+func TestExternalEgressUDPPortListeningDetectsL2TPConflicts(t *testing.T) {
+	for _, output := range []string{
+		"UNCONN 0 0 0.0.0.0:1701 0.0.0.0:*",
+		"UNCONN 0 0 [::]:1701 [::]:*",
+		"UNCONN 0 0 192.0.2.10:1701 0.0.0.0:*",
+	} {
+		if !externalEgressUDPPortListening(output, 1701) {
+			t.Fatalf("L2TP listener was not detected in %q", output)
+		}
+	}
+	if externalEgressUDPPortListening("UNCONN 0 0 0.0.0.0:1194 0.0.0.0:*", 1701) {
+		t.Fatal("unrelated UDP listener was reported as an L2TP conflict")
 	}
 }
 

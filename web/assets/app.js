@@ -176,6 +176,7 @@
     hasPermission,
     updateReadyPill,
     renderNotice,
+    renderProgress: () => render(),
   });
   if (!coreLoader) throw new Error('MegaVPNCoreLoader is not loaded');
   const { loadCore } = coreLoader;

@@ -285,6 +285,9 @@ func TestPackageServiceAutostartPreventionSelection(t *testing.T) {
 	if !shouldPreventPackageServiceAutostart("shadowsocks") {
 		t.Fatal("expected Shadowsocks package install to block distro service autostart")
 	}
+	if !shouldPreventPackageServiceAutostart("xl2tpd") {
+		t.Fatal("expected XL2TPD package install to block distro service autostart")
+	}
 	if shouldPreventPackageServiceAutostart("openvpn") {
 		t.Fatal("did not expect OpenVPN package install to block distro service autostart")
 	}
