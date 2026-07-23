@@ -24,6 +24,10 @@
       const lifecycle = String(node?.status || '').trim().toLowerCase();
       const agent = String(node?.agent_status || '').trim().toLowerCase();
       if (lifecycle === 'bootstrapping' && agent === 'starting') return 'awaiting heartbeat';
+      if (agent === 'online' || agent === 'degraded') {
+        const heartbeat = nodeHeartbeatStatus(node);
+        return heartbeat === 'unknown' ? 'unknown' : heartbeat;
+      }
       return agent || 'unknown';
     }
 
@@ -66,7 +70,7 @@
     }
 
     function nodeHeartbeatStatus(node) {
-      const heartbeat = node?.last_heartbeat_at;
+      const heartbeat = node?.last_heartbeat_at || node?.agent_last_seen_at;
       if (!heartbeat) return 'unknown';
       const diffMs = Date.now() - new Date(heartbeat).getTime();
       if (!Number.isFinite(diffMs)) return 'unknown';

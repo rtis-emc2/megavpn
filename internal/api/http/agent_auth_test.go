@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -22,6 +23,10 @@ func (agentAuthTestStore) ValidateAgentToken(_ context.Context, nodeID, token st
 
 func (agentAuthTestStore) ValidateAgentTokenForJob(_ context.Context, jobID, token string) bool {
 	return jobID == "job-1" && token == "node-token"
+}
+
+func (agentAuthTestStore) RecordAgentAuthFailure(_ context.Context, _, _ string) error {
+	return nil
 }
 
 func TestAuthorizeAgentBootstrapRequiresConfiguredToken(t *testing.T) {
@@ -88,6 +93,50 @@ func TestAgentSignatureRejectsUnsignedWhenEnforced(t *testing.T) {
 	s := &Server{store: agentAuthTestStore{}, agentSignatureEnforce: true}
 	if s.authorizeAgentNode(req, "node-1") {
 		t.Fatal("unsigned agent request should be rejected when enforcement is enabled")
+	}
+}
+
+func TestAgentHeartbeatUnauthorizedResponseIsSigned(t *testing.T) {
+	body := []byte(`{"node_id":"node-1","name":"node-1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/agent/heartbeat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer stale-node-token")
+	signTestAgentRequest(req, "stale-node-token", body)
+	rr := httptest.NewRecorder()
+
+	s := &Server{
+		store:                 agentAuthTestStore{},
+		agentSignatureEnforce: true,
+		agentSignatureWindow:  time.Minute,
+		agentSignatureReplay:  newAgentSignatureReplayCache(time.Minute),
+	}
+	s.agentHeartbeat(rr, req)
+
+	resp := rr.Result()
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read unauthorized heartbeat response: %v", err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+	if bytes.Contains(responseBody, []byte("stale-node-token")) {
+		t.Fatal("unauthorized response must not echo the presented agent token")
+	}
+	err = agentauth.Verify(
+		"stale-node-token",
+		"RESPONSE",
+		req.URL.RequestURI(),
+		resp.Header.Get(agentauth.HeaderTimestamp),
+		resp.Header.Get(agentauth.HeaderNonce),
+		resp.Header.Get(agentauth.HeaderBodyHash),
+		resp.Header.Get(agentauth.HeaderSignature),
+		responseBody,
+		time.Now().UTC(),
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("unauthorized heartbeat response signature error = %v, want nil", err)
 	}
 }
 

@@ -194,6 +194,7 @@
     renderActionResponse,
     stringValue,
     hasPermission,
+    nodeAgentChannelStatus,
   });
   if (!jobWorkflows) throw new Error('MegaVPNJobWorkflows is not loaded');
 

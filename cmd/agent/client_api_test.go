@@ -74,6 +74,32 @@ func TestNextJobRejectsUnsignedOKResponse(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unsigned agent response rejected") {
 		t.Fatalf("nextJob unsigned 200 error = %v, want unsigned response rejection", err)
 	}
+	if !strings.Contains(err.Error(), `status=200`) || !strings.Contains(err.Error(), `body="{\"id\":\"job-1\"`) {
+		t.Fatalf("nextJob unsigned 200 error = %v, want status and bounded body diagnostics", err)
+	}
+}
+
+func TestPostReportsUnsignedErrorStatusAndBody(t *testing.T) {
+	t.Parallel()
+
+	c := newClient("https://control.example", "stale-agent-token", "")
+	c.http = httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+			Body:       io.NopCloser(bytes.NewReader([]byte("{\"error\":\"agent unauthorized\"}\n"))),
+		}, nil
+	})
+
+	err := c.heartbeat(context.Background(), "node-1", "node-1")
+	if err == nil {
+		t.Fatal("heartbeat error = nil, want unsigned response rejection")
+	}
+	for _, want := range []string{"unsigned agent response rejected", "status=401", "agent unauthorized"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("heartbeat error = %v, want %q", err, want)
+		}
+	}
 }
 
 func TestNextJobRejectsUnsignedNoContentResponse(t *testing.T) {

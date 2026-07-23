@@ -206,7 +206,7 @@ func (c client) readSignedResponseBody(req *http.Request, resp *http.Response, r
 	}
 	if !responseHasAgentSignature(resp) {
 		if requireSignature {
-			return nil, errors.New("unsigned agent response rejected")
+			return nil, unsignedAgentResponseError(resp, body)
 		}
 		return body, nil
 	}
@@ -236,6 +236,24 @@ func (c client) readSignedResponseBody(req *http.Request, resp *http.Response, r
 		return nil, errors.New("agent response signature replay rejected")
 	}
 	return body, nil
+}
+
+func unsignedAgentResponseError(resp *http.Response, body []byte) error {
+	statusCode := 0
+	contentType := ""
+	if resp != nil {
+		statusCode = resp.StatusCode
+		contentType = strings.TrimSpace(resp.Header.Get("Content-Type"))
+	}
+	preview := strings.Join(strings.Fields(string(body)), " ")
+	const maxPreviewBytes = 256
+	if len(preview) > maxPreviewBytes {
+		preview = preview[:maxPreviewBytes] + "..."
+	}
+	if preview == "" {
+		return fmt.Errorf("unsigned agent response rejected: status=%d content_type=%q", statusCode, contentType)
+	}
+	return fmt.Errorf("unsigned agent response rejected: status=%d content_type=%q body=%q", statusCode, contentType, preview)
 }
 
 func responseHasAgentSignature(resp *http.Response) bool {

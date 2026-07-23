@@ -152,6 +152,10 @@ func writeSignedAgentJSON(w nethttp.ResponseWriter, r *nethttp.Request, token st
 	_, _ = w.Write(body)
 }
 
+func writeSignedAgentError(w nethttp.ResponseWriter, r *nethttp.Request, code int, message string) {
+	writeSignedAgentJSON(w, r, bearerToken(r), code, response{"error": message})
+}
+
 func writeSignedAgentNoContent(w nethttp.ResponseWriter, r *nethttp.Request, token string) {
 	if strings.TrimSpace(token) == "" {
 		w.WriteHeader(nethttp.StatusNoContent)

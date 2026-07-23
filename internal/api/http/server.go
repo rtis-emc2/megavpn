@@ -2161,12 +2161,12 @@ func (s *Server) agentRegister(w nethttp.ResponseWriter, r *nethttp.Request) {
 func (s *Server) agentHeartbeat(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req agentHeartbeatReq
 	if !decode(r, &req) {
-		writeErr(w, 400, "invalid agent heartbeat payload")
+		writeSignedAgentError(w, r, 400, "invalid agent heartbeat payload")
 		return
 	}
 	if !s.authorizeAgentNode(r, req.NodeID) {
 		_ = s.store.RecordAgentAuthFailure(r.Context(), req.NodeID, "heartbeat unauthorized")
-		writeErr(w, 401, "agent unauthorized")
+		writeSignedAgentError(w, r, 401, "agent unauthorized")
 		return
 	}
 	var err error
@@ -2176,7 +2176,7 @@ func (s *Server) agentHeartbeat(w nethttp.ResponseWriter, r *nethttp.Request) {
 		err = s.store.HeartbeatWithVersion(r.Context(), req.Name, req.AgentVersion, req.ProtocolVersion)
 	}
 	if err != nil {
-		writeErr(w, 404, "node not registered")
+		writeSignedAgentError(w, r, 404, "node not registered")
 		return
 	}
 	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"status": "ok", "time": time.Now().UTC().Format(time.RFC3339)})
@@ -2184,17 +2184,17 @@ func (s *Server) agentHeartbeat(w nethttp.ResponseWriter, r *nethttp.Request) {
 func (s *Server) agentInventory(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req agentInventoryReq
 	if !decode(r, &req) || req.NodeID == "" || req.Inventory == nil {
-		writeErr(w, 400, "invalid inventory payload")
+		writeSignedAgentError(w, r, 400, "invalid inventory payload")
 		return
 	}
 	if !s.authorizeAgentNode(r, req.NodeID) {
 		_ = s.store.RecordAgentAuthFailure(r.Context(), req.NodeID, "inventory unauthorized")
-		writeErr(w, 401, "agent unauthorized")
+		writeSignedAgentError(w, r, 401, "agent unauthorized")
 		return
 	}
 	snap, caps, err := s.store.SubmitNodeInventory(r.Context(), req.NodeID, req.Inventory)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeSignedAgentError(w, r, 500, err.Error())
 		return
 	}
 	_ = s.store.RecordAgentInventorySync(r.Context(), req.NodeID, req.Source)
@@ -2207,18 +2207,18 @@ func (s *Server) agentRuntimeTargets(w nethttp.ResponseWriter, r *nethttp.Reques
 		nodeRef = strings.TrimSpace(r.URL.Query().Get("node"))
 	}
 	if nodeRef == "" {
-		writeErr(w, 400, "node_id is required")
+		writeSignedAgentError(w, r, 400, "node_id is required")
 		return
 	}
 	if !s.authorizeAgentNode(r, nodeRef) {
 		_ = s.store.RecordAgentAuthFailure(r.Context(), nodeRef, "runtime targets unauthorized")
-		writeErr(w, 401, "agent unauthorized")
+		writeSignedAgentError(w, r, 401, "agent unauthorized")
 		return
 	}
 	targets, err := s.store.ListAgentInstanceRuntimeTargets(r.Context(), nodeRef)
 	if err != nil {
 		s.log.Error("agent runtime targets failed", "node_id", nodeRef, "error", err)
-		writeErr(w, 500, "list runtime targets failed")
+		writeSignedAgentError(w, r, 500, "list runtime targets failed")
 		return
 	}
 	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"targets": targets})
@@ -2227,19 +2227,19 @@ func (s *Server) agentRuntimeTargets(w nethttp.ResponseWriter, r *nethttp.Reques
 func (s *Server) agentRuntimeReport(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req agentRuntimeReportReq
 	if !decode(r, &req) || strings.TrimSpace(req.NodeID) == "" {
-		writeErr(w, 400, "invalid runtime report payload")
+		writeSignedAgentError(w, r, 400, "invalid runtime report payload")
 		return
 	}
 	req.NodeID = strings.TrimSpace(req.NodeID)
 	if !s.authorizeAgentNode(r, req.NodeID) {
 		_ = s.store.RecordAgentAuthFailure(r.Context(), req.NodeID, "runtime report unauthorized")
-		writeErr(w, 401, "agent unauthorized")
+		writeSignedAgentError(w, r, 401, "agent unauthorized")
 		return
 	}
 	states, err := s.store.SubmitAgentInstanceRuntimeReports(r.Context(), req.NodeID, req.Reports)
 	if err != nil {
 		s.log.Error("agent runtime report failed", "node_id", req.NodeID, "reports", len(req.Reports), "error", err)
-		writeErr(w, 500, "submit runtime report failed")
+		writeSignedAgentError(w, r, 500, "submit runtime report failed")
 		return
 	}
 	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"status": "accepted", "states": states})
@@ -2248,19 +2248,19 @@ func (s *Server) agentRuntimeReport(w nethttp.ResponseWriter, r *nethttp.Request
 func (s *Server) agentTrafficAccountingReport(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req agentTrafficAccountingReq
 	if !decode(r, &req) || strings.TrimSpace(req.NodeID) == "" {
-		writeErr(w, 400, "invalid traffic accounting payload")
+		writeSignedAgentError(w, r, 400, "invalid traffic accounting payload")
 		return
 	}
 	req.NodeID = strings.TrimSpace(req.NodeID)
 	if !s.authorizeAgentNode(r, req.NodeID) {
 		_ = s.store.RecordAgentAuthFailure(r.Context(), req.NodeID, "traffic accounting unauthorized")
-		writeErr(w, 401, "agent unauthorized")
+		writeSignedAgentError(w, r, 401, "agent unauthorized")
 		return
 	}
 	result, err := s.store.SubmitAgentTrafficAccountingSamples(r.Context(), req.NodeID, req.Samples)
 	if err != nil {
 		s.log.Error("agent traffic accounting report failed", "node_id", req.NodeID, "samples", len(req.Samples), "error", err)
-		writeErr(w, 500, "submit traffic accounting failed")
+		writeSignedAgentError(w, r, 500, "submit traffic accounting failed")
 		return
 	}
 	writeSignedAgentJSON(w, r, bearerToken(r), 200, result)
@@ -2273,13 +2273,13 @@ func (s *Server) agentNextJob(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	if !s.authorizeAgentNode(r, nodeRef) {
 		_ = s.store.RecordAgentAuthFailure(r.Context(), nodeRef, "job poll unauthorized")
-		writeErr(w, 401, "agent unauthorized")
+		writeSignedAgentError(w, r, 401, "agent unauthorized")
 		return
 	}
 	_ = s.store.TouchAgentJobPoll(r.Context(), nodeRef)
 	j, ok, err := s.store.AgentNextJob(r.Context(), nodeRef)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeSignedAgentError(w, r, 500, err.Error())
 		return
 	}
 	if !ok {
@@ -2297,12 +2297,12 @@ func (s *Server) agentJobResult(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if meta, err := s.store.GetJob(r.Context(), idv); err == nil && meta.NodeID != nil {
 			_ = s.store.RecordAgentAuthFailure(r.Context(), *meta.NodeID, "job result unauthorized")
 		}
-		writeErr(w, 401, "agent unauthorized")
+		writeSignedAgentError(w, r, 401, "agent unauthorized")
 		return
 	}
 	var req agentResultReq
 	if !decode(r, &req) || req.Status == "" {
-		writeErr(w, 400, "invalid result payload")
+		writeSignedAgentError(w, r, 400, "invalid result payload")
 		return
 	}
 	if req.Status != "succeeded" {
@@ -2314,7 +2314,7 @@ func (s *Server) agentJobResult(w nethttp.ResponseWriter, r *nethttp.Request) {
 		owner = "agent:" + strings.TrimSpace(*jobMeta.NodeID)
 	}
 	if err := s.store.CompleteAgentJob(r.Context(), idv, owner, req.Status, req.Result); err != nil {
-		writeErr(w, 500, err.Error())
+		writeSignedAgentError(w, r, 500, err.Error())
 		return
 	}
 	if jobMeta.NodeID != nil {

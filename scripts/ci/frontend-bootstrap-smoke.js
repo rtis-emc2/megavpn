@@ -383,6 +383,22 @@ async function main() {
   assert.strictEqual(resolveImportFormat('l2tp_ipsec', 'server=vpn.example.com'), 'key_value');
   assert.strictEqual(resolveImportFormat('socks5'), 'structured', 'planned structured protocols must not be rewritten as URL imports');
 
+  const nodeUI = windowObject.MegaVPNNodeUI.create({
+    nodeExecutionModes: {},
+    escapeHTML: (value) => String(value ?? ''),
+    formatDate: (value) => String(value ?? ''),
+    formatRelativeDate: (value) => String(value ?? ''),
+  });
+  assert.strictEqual(
+    nodeUI.nodeAgentChannelStatus({
+      status: 'online',
+      agent_status: 'online',
+      last_heartbeat_at: '2020-01-01T00:00:00Z',
+    }),
+    'offline',
+    'persisted online status must not override a stale heartbeat',
+  );
+
   const executionTargetForJobType = windowObject.MegaVPNJobWorkflows?.executionTargetForJobType;
   assert.strictEqual(typeof executionTargetForJobType, 'function', 'job execution target helper must be exported');
   assert.strictEqual(executionTargetForJobType('node.external_egress.apply'), 'agent');
@@ -442,12 +458,18 @@ async function main() {
     renderActionResponse: () => '',
     stringValue: (value) => String(value ?? ''),
     hasPermission: () => true,
+    nodeAgentChannelStatus: () => 'offline',
   });
   jobWorkflows.renderJobs();
   assert.match(
     elementForID('content').innerHTML,
     /waiting for node agent; no agent sync after job was queued/,
     'queued external egress jobs must report the missing agent sync',
+  );
+  assert.match(
+    elementForID('content').innerHTML,
+    /agent offline/,
+    'stale agent heartbeat must not be rendered as an online channel',
   );
   assert.doesNotMatch(
     elementForID('content').innerHTML,

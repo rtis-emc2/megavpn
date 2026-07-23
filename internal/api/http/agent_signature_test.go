@@ -79,6 +79,40 @@ func TestWriteSignedAgentNoContent(t *testing.T) {
 	}
 }
 
+func TestWriteSignedAgentErrorUsesPresentedToken(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(nethttp.MethodPost, "/agent/heartbeat", nil)
+	req.Header.Set("Authorization", "Bearer stale-agent-token")
+	rr := httptest.NewRecorder()
+	writeSignedAgentError(rr, req, nethttp.StatusUnauthorized, "agent unauthorized")
+
+	resp := rr.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read signed error body: %v", err)
+	}
+	if resp.StatusCode != nethttp.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+	err = agentauth.Verify(
+		"stale-agent-token",
+		"RESPONSE",
+		req.URL.RequestURI(),
+		resp.Header.Get(agentauth.HeaderTimestamp),
+		resp.Header.Get(agentauth.HeaderNonce),
+		resp.Header.Get(agentauth.HeaderBodyHash),
+		resp.Header.Get(agentauth.HeaderSignature),
+		body,
+		time.Now().UTC(),
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("signed agent error verification error = %v, want nil", err)
+	}
+}
+
 func TestSetSignedAgentResponseHeadersUsesProvidedBodyHash(t *testing.T) {
 	t.Parallel()
 

@@ -25,6 +25,7 @@
       renderActionResponse,
       stringValue,
       hasPermission,
+      nodeAgentChannelStatus,
     } = ctx;
 
     if (
@@ -38,7 +39,8 @@
       typeof formatDate !== 'function' ||
       typeof renderActionResponse !== 'function' ||
       typeof stringValue !== 'function' ||
-      typeof hasPermission !== 'function'
+      typeof hasPermission !== 'function' ||
+      typeof nodeAgentChannelStatus !== 'function'
     ) {
       throw new Error('MegaVPNJobWorkflows requires workflow dependencies');
     }
@@ -115,7 +117,7 @@
       if (!node) return '';
       const parts = [
         node.name || shortToken(node.id, 8, 4),
-        node.agent_status ? `agent ${node.agent_status}` : '',
+        `agent ${nodeAgentChannelStatus(node)}`,
         node.status ? `node ${node.status}` : '',
       ];
       const lastSeen = node.agent_last_seen_at || node.last_heartbeat_at;
