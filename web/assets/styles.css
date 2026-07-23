@@ -106,6 +106,32 @@
 .external-egress-profile-form {
   align-items: start;
 }
+.external-egress-protocol-panel,
+.external-egress-auth-material {
+  max-width: none;
+  padding: 0;
+}
+.external-egress-import-control {
+  gap: 10px;
+}
+.external-egress-import-control input[type="file"] {
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.external-egress-auth-selector {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.field label .optional {
+  margin-left: 5px;
+  color: var(--muted-2);
+  font-weight: 400;
+}
 .external-egress-form-heading {
   display: flex;
   align-items: baseline;

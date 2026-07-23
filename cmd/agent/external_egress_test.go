@@ -1,9 +1,16 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 )
 
 func validExternalEgressPayload(protocol, config string) externalEgressJobPayload {
@@ -163,6 +170,53 @@ func TestRenderManagedL2TPIPsecConfigPreservesSeparateSecretWhitespace(t *testin
 	}
 }
 
+func TestRenderManagedL2TPIPsecConfigSupportsCertificateAuthentication(t *testing.T) {
+	caPEM, certificatePEM, privateKeyPEM := testL2TPIPsecCertificateMaterial(t)
+	payload := validExternalEgressPayload("l2tp_ipsec", `{"server":"l2tp.example.com","remote_id":"gateway.example.com","auth_method":"certificate"}`)
+	payload.Secrets["username"] = "provider-user"
+	payload.Secrets["password"] = "provider-pass"
+	payload.Secrets["ca_certificate"] = caPEM
+	payload.Secrets["certificate"] = certificatePEM
+	payload.Secrets["private_key"] = privateKeyPEM
+
+	ipsecConfig, ipsecSecrets, _, _, err := renderManagedL2TPIPsecConfig(payload)
+	if err != nil {
+		t.Fatalf("renderManagedL2TPIPsecConfig returned error: %v", err)
+	}
+	for _, required := range []string{"leftauth=pubkey", "rightauth=pubkey", "leftcert=/etc/ipsec.d/certs/megavpn-", "rightca="} {
+		if !strings.Contains(ipsecConfig, required) {
+			t.Fatalf("certificate IPsec config is missing %q:\n%s", required, ipsecConfig)
+		}
+	}
+	if !strings.Contains(ipsecSecrets, ": RSA /etc/ipsec.d/private/megavpn-") || strings.Contains(ipsecSecrets, "PSK") {
+		t.Fatalf("certificate IPsec secrets are invalid:\n%s", ipsecSecrets)
+	}
+	material, err := renderManagedL2TPIPsecCertificateMaterial(payload)
+	if err != nil {
+		t.Fatalf("render certificate material: %v", err)
+	}
+	if len(material.Files) != 3 {
+		t.Fatalf("certificate material files = %d, want 3", len(material.Files))
+	}
+}
+
+func TestRenderManagedL2TPIPsecConfigRejectsMismatchedPrivateKey(t *testing.T) {
+	caPEM, certificatePEM, _ := testL2TPIPsecCertificateMaterial(t)
+	otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate mismatched key: %v", err)
+	}
+	payload := validExternalEgressPayload("l2tp_ipsec", `{"server":"l2tp.example.com","auth_method":"certificate"}`)
+	payload.Secrets["username"] = "provider-user"
+	payload.Secrets["password"] = "provider-pass"
+	payload.Secrets["ca_certificate"] = caPEM
+	payload.Secrets["certificate"] = certificatePEM
+	payload.Secrets["private_key"] = string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(otherKey)}))
+	if _, _, _, _, err := renderManagedL2TPIPsecConfig(payload); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("mismatched private key error = %v", err)
+	}
+}
+
 func TestRenderManagedL2TPIPsecConfigRejectsControlCharacters(t *testing.T) {
 	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
 	payload.Secrets["username"] = "provider-user"
@@ -171,6 +225,42 @@ func TestRenderManagedL2TPIPsecConfigRejectsControlCharacters(t *testing.T) {
 	if _, _, _, _, err := renderManagedL2TPIPsecConfig(payload); err == nil {
 		t.Fatal("expected a control character in an L2TP secret to be rejected")
 	}
+}
+
+func testL2TPIPsecCertificateMaterial(t *testing.T) (string, string, string) {
+	t.Helper()
+	now := time.Now().UTC()
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Test L2TP CA"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+		IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create CA certificate: %v", err)
+	}
+	clientKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+	clientTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "client.example.com"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caTemplate, &clientKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create client certificate: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})),
+		string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientDER})),
+		string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(clientKey)}))
 }
 
 func TestRenderExternalEgressRuntimeOmitsPolicyRuleForLoopbackProxy(t *testing.T) {

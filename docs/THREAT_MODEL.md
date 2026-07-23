@@ -1,6 +1,6 @@
 # Threat Model
 
-**Release:** `7.1.1.2`
+**Release:** `7.1.1.3`
 
 ## Scope
 
@@ -72,7 +72,7 @@ MegaVPN consists of:
 
 - A root-running node agent is intentionally privileged. Production deployments must restrict which operators can queue apply/capability jobs.
 - Package-manager capability installs write broadly to the node OS. Use manual-present strategy or pre-baked images where policy forbids runtime package installation.
-- Unencrypted L2TP remains intentionally blocked. L2TP/IPsec currently supports PSK plus username/password and one active external client deployment per node; certificate-authenticated provider variants require a future driver revision.
+- Unencrypted L2TP remains intentionally blocked. L2TP/IPsec supports PSK or validated certificate authentication plus username/password and one active external client deployment per node.
 - VLESS/Shadowsocks provider listeners are root-owned and loopback-only. They do not capture node traffic, but a privileged process on the node can intentionally connect to the local listener; node-root compromise remains outside this isolation boundary.
 - External-egress probe confirms local unit/interface/rule/route state; it does not provide end-to-end provider reachability or SLA validation.
 - Public share links are bearer URLs. Hashing protects database disclosure, not recipients forwarding a live URL.
