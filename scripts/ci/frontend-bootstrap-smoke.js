@@ -383,6 +383,27 @@ async function main() {
   assert.strictEqual(resolveImportFormat('l2tp_ipsec', 'server=vpn.example.com'), 'key_value');
   assert.strictEqual(resolveImportFormat('socks5'), 'structured', 'planned structured protocols must not be rewritten as URL imports');
 
+  const shellUI = windowObject.MegaVPNShellUI.create({
+    state: {},
+    navGroups: [],
+    el: elementForID,
+    setPage: () => {},
+    getLogoutHandler: () => null,
+    statusTag: () => '',
+    escapeHTML: (value) => String(value ?? ''),
+    renderActionResponse: () => '',
+  });
+  const formEnhancer = windowObject.MegaVPNFormEnhancer;
+  windowObject.MegaVPNFormEnhancer = null;
+  shellUI.openModal('Large form', 'UI regression', '<form></form>', { size: 'large' });
+  assert.strictEqual(
+    document.querySelector('.modal').classList.contains('modal-wide'),
+    true,
+    'large modal size must use the wide layout',
+  );
+  shellUI.closeModal();
+  windowObject.MegaVPNFormEnhancer = formEnhancer;
+
   const nodeUI = windowObject.MegaVPNNodeUI.create({
     nodeExecutionModes: {},
     escapeHTML: (value) => String(value ?? ''),

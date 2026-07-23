@@ -1,6 +1,6 @@
 # External Provider Egress
 
-**Release:** `7.1.1.11`
+**Release:** `7.1.1.12`
 
 External egress profiles connect selected client access groups to a commercial
 or third-party VPN/proxy provider. They do not replace managed Backhaul and they

@@ -1,6 +1,6 @@
 # Client Access Groups
 
-**Релиз:** `7.1.1.11`
+**Релиз:** `7.1.1.12`
 
 English companion: [ACCESS_GROUPS.md](ACCESS_GROUPS.md).
 

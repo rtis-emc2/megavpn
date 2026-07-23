@@ -104,17 +104,70 @@
 }
 .external-egress-secret-grid { margin-top: 14px; }
 .external-egress-profile-form {
+  display: flex;
+  min-height: min(620px, calc(100dvh - 154px));
+  flex-direction: column;
+}
+.external-egress-profile-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.7fr) minmax(0, 1.55fr);
   align-items: start;
+  gap: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.external-egress-profile-basics {
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: 2px 22px 20px 0;
+  border-right: 1px solid var(--line);
+}
+.external-egress-provider-section {
+  min-width: 0;
+  padding: 2px 0 20px 22px;
+}
+.external-egress-basics-grid {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.external-egress-managed-key-note {
+  margin: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 .external-egress-protocol-panel,
 .external-egress-auth-material {
+  width: 100%;
   max-width: none;
   padding: 0;
 }
 .external-egress-import-control {
   gap: 10px;
 }
+.external-egress-file-picker {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.85fr) minmax(0, 1.15fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.external-egress-file-picker > span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
 .external-egress-import-control input[type="file"] {
+  min-width: 0;
+  max-width: 100%;
   min-height: 44px;
   padding: 9px 12px;
   border: 1px dashed var(--line-strong);
@@ -141,10 +194,19 @@
   padding-top: 16px;
   border-top: 1px solid var(--line);
 }
-.external-egress-form-heading:first-child {
+.external-egress-profile-basics > .external-egress-form-heading,
+.external-egress-protocol-panel > .external-egress-form-heading:first-child {
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
+}
+.external-egress-profile-basics > .external-egress-form-heading {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+}
+.external-egress-profile-basics > .external-egress-form-heading span {
+  text-align: left;
 }
 .external-egress-form-heading strong { font-size: 15px; }
 .external-egress-form-heading span {
@@ -160,15 +222,139 @@
   cursor: pointer;
   font-weight: 700;
 }
+.external-egress-profile-form details {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.external-egress-profile-result:empty {
+  display: none;
+}
+.external-egress-profile-result {
+  flex: 0 0 auto;
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.external-egress-form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 14px 0 0;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.06);
+}
+.external-egress-actions-spacer {
+  flex: 1 1 auto;
+}
 @media (max-width: 1500px) {
   .external-egress-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .external-egress-flow > i { display: none; }
   .external-egress-deployment { grid-template-columns: 1fr; }
 }
+@media (max-width: 1180px) {
+  .external-egress-profile-layout {
+    grid-template-columns: minmax(210px, 0.62fr) minmax(0, 1.38fr);
+  }
+  .external-egress-file-picker {
+    grid-template-columns: 1fr;
+  }
+  .external-egress-table-wrap {
+    overflow: visible;
+    padding: 12px;
+    background: var(--panel-2);
+  }
+  .external-egress-table,
+  .external-egress-table tbody,
+  .external-egress-table tr,
+  .external-egress-table td {
+    display: block;
+    width: 100%;
+  }
+  .table-wrap table.external-egress-table {
+    min-width: 0;
+    table-layout: auto;
+  }
+  .external-egress-table thead {
+    display: none;
+  }
+  .external-egress-table tr {
+    margin-bottom: 12px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+  }
+  .external-egress-table tr:last-child {
+    margin-bottom: 0;
+  }
+  .external-egress-table td {
+    display: grid;
+    grid-template-columns: minmax(120px, 0.34fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .external-egress-table td:last-child {
+    border-bottom: 0;
+  }
+  .external-egress-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1.35;
+    text-transform: uppercase;
+  }
+  .external-egress-table td[colspan]::before {
+    content: none;
+  }
+}
+@media (max-width: 980px) {
+  .external-egress-profile-form {
+    min-height: 0;
+  }
+  .external-egress-profile-layout {
+    grid-template-columns: 1fr;
+  }
+  .external-egress-profile-basics {
+    position: static;
+    padding: 0 0 20px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .external-egress-basics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .external-egress-provider-section {
+    padding: 20px 0;
+  }
+}
 @media (max-width: 720px) {
   .external-egress-flow { grid-template-columns: 1fr; }
   .external-egress-form-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
   .external-egress-form-heading span { text-align: left; }
+  .external-egress-basics-grid {
+    grid-template-columns: 1fr;
+  }
+  .external-egress-table td {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .external-egress-import-control textarea {
+    min-height: 180px;
+  }
+  .external-egress-actions-spacer {
+    display: none;
+  }
+  .external-egress-form-actions {
+    padding: 12px 0 0;
+  }
 }
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }

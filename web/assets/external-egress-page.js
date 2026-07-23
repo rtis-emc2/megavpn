@@ -68,13 +68,13 @@
       if (!profiles.length) return '<tr><td colspan="7"><div class="empty">No external egress profiles yet.</div></td></tr>';
       return profiles.map((profile) => `
         <tr>
-          <td><strong>${escapeHTML(profile.display_name || protocolLabel(profile.protocol))}</strong>${profile.description ? `<div class="timeline-meta">${escapeHTML(profile.description)}</div>` : ''}</td>
-          <td><strong>${escapeHTML(protocolLabel(profile.protocol))}</strong><div class="timeline-meta">${escapeHTML(profile.transport || 'n/a')}</div></td>
-          <td>${statusTag(profile.status || 'unknown')}</td>
-          <td><code>${escapeHTML(endpoint(profile))}</code></td>
-          <td>${(profile.secret_purposes || []).map((purpose) => `<span class="tag">${escapeHTML(purpose)}</span>`).join(' ') || '<span class="tag">none</span>'}</td>
-          <td><div class="external-egress-deployments">${deploymentRows(profile)}</div></td>
-          <td>
+          <td data-label="Profile"><strong>${escapeHTML(profile.display_name || protocolLabel(profile.protocol))}</strong>${profile.description ? `<div class="timeline-meta">${escapeHTML(profile.description)}</div>` : ''}</td>
+          <td data-label="Protocol"><strong>${escapeHTML(protocolLabel(profile.protocol))}</strong><div class="timeline-meta">${escapeHTML(profile.transport || 'n/a')}</div></td>
+          <td data-label="Status">${statusTag(profile.status || 'unknown')}</td>
+          <td data-label="Endpoint"><code>${escapeHTML(endpoint(profile))}</code></td>
+          <td data-label="Secrets">${(profile.secret_purposes || []).map((purpose) => `<span class="tag">${escapeHTML(purpose)}</span>`).join(' ') || '<span class="tag">none</span>'}</td>
+          <td data-label="Node deployments"><div class="external-egress-deployments">${deploymentRows(profile)}</div></td>
+          <td data-label="Actions">
             <div class="table-actions compact-actions">
               <button class="primary-btn external-egress-deploy-btn" type="button" data-profile-id="${escapeHTML(profile.id)}"${canManage() && profile.status === 'active' && profile.runtime_support === 'ready' ? '' : ' disabled'}>Deploy</button>
               <button class="secondary-btn external-egress-edit-btn" type="button" data-profile-id="${escapeHTML(profile.id)}"${canManage() && profile.runtime_support === 'ready' ? '' : ' disabled'}>Edit</button>
@@ -108,7 +108,7 @@
         </section>
         <section class="table-card">
           <div class="table-head"><div><h2>Profiles and deployments</h2><p class="table-subtitle">A profile stores encrypted provider credentials. A deployment materializes it on one node. Profile changes mark existing deployments pending until Apply completes.</p></div><span class="tag">${escapeHTML(String((state.externalEgressProfiles || []).length))} profiles</span></div>
-          <div class="table-wrap"><table class="external-egress-table"><thead><tr><th>Profile</th><th>Protocol</th><th>Status</th><th>Endpoint</th><th>Secrets</th><th>Node deployments</th><th>Actions</th></tr></thead><tbody>${profileRows()}</tbody></table></div>
+          <div class="table-wrap external-egress-table-wrap"><table class="external-egress-table"><thead><tr><th>Profile</th><th>Protocol</th><th>Status</th><th>Endpoint</th><th>Secrets</th><th>Node deployments</th><th>Actions</th></tr></thead><tbody>${profileRows()}</tbody></table></div>
         </section>
         <section class="table-card">
           <div class="table-head"><div><h2>Available protocols</h2><p class="table-subtitle">Every protocol shown here can be configured and deployed on a managed node.</p></div></div>
@@ -151,7 +151,7 @@
         vless: 'Paste a secure vless:// URL or JSON client profile',
         shadowsocks: 'Paste an ss:// URL or JSON client profile',
       };
-      const existingHint = profile ? '<div class="field-hint">Leave empty to keep the encrypted provider configuration already stored.</div>' : '';
+      const existingHint = profile ? '<div class="field-hint">Leave both inputs empty to keep the encrypted provider configuration already stored.</div>' : '';
       let credentials = '';
       if (protocol === 'openvpn') {
         credentials = `
@@ -172,11 +172,14 @@
         credentials = `<div class="field full"><label>Password <span class="optional">only when omitted from profile</span></label><input name="password" type="password" autocomplete="new-password" placeholder="${profile ? 'Leave empty to keep the current password' : 'Shadowsocks password'}"></div>`;
       }
       return `
-        <div class="field full external-egress-form-heading"><strong>Provider configuration</strong><span>The endpoint and transport are read from the provider profile.</span></div>
+        <div class="field full external-egress-form-heading"><strong>${escapeHTML(protocolLabel(protocol))} connection</strong><span>The endpoint and transport are read from the imported client profile.</span></div>
         <div class="field full external-egress-import-control">
-          <label>Client configuration${profile ? ' replacement' : ''}</label>
-          <input id="externalEgressConfigFile" type="file" accept="${fileTypes}">
-          <textarea id="externalEgressConfigText" rows="8" placeholder="${escapeHTML(placeholders[protocol] || 'Paste provider configuration')}"></textarea>
+          <label>Provider client configuration${profile ? ' replacement' : ''}</label>
+          <div class="external-egress-file-picker">
+            <input id="externalEgressConfigFile" type="file" accept="${fileTypes}">
+            <span>Upload a provider file, or paste the complete configuration below.</span>
+          </div>
+          <textarea id="externalEgressConfigText" name="config_text" rows="8" spellcheck="false" placeholder="${escapeHTML(placeholders[protocol] || 'Paste provider configuration')}"></textarea>
           ${existingHint}
         </div>
         ${credentials}`;
@@ -222,22 +225,63 @@
         esp_proposal: String(existingL2TPConfig.esp_proposal || defaultL2TPESP).trim(),
       };
       openModal(isEdit ? `Edit profile: ${profile.display_name}` : 'New external egress profile', 'Provider gateway', `
-        <form id="externalEgressProfileForm" class="form-grid external-egress-profile-form">
-          <div class="field full external-egress-form-heading"><strong>Profile</strong><span>The internal profile key is generated and managed by the platform.</span></div>
-          <div class="field"><label>Name</label><input name="display_name" required value="${escapeHTML(profile?.display_name || '')}" placeholder="Provider USA East"></div>
-          <div class="field"><label>Protocol</label><select name="protocol" id="externalEgressProtocol"${isEdit ? ' disabled' : ''}>${protocolOptions(initialProtocol)}</select>${isEdit ? `<input type="hidden" name="protocol_fixed" value="${escapeHTML(initialProtocol)}">` : ''}</div>
-          <div class="field"><label>Profile availability</label><select name="status"><option value="active"${profile?.status === 'active' || !profile ? ' selected' : ''}>Enabled</option><option value="draft"${profile?.status === 'draft' ? ' selected' : ''}>Draft</option><option value="disabled"${profile?.status === 'disabled' ? ' selected' : ''}>Disabled</option></select></div>
-          <div class="field"><label>Description <span class="optional">optional</span></label><input name="description" value="${escapeHTML(profile?.description || '')}" placeholder="Provider, region, account owner"></div>
-          <div class="field full form-grid external-egress-protocol-panel" id="externalEgressProtocolPanel"></div>
-          <div class="field full modal-actions">
+        <form id="externalEgressProfileForm" class="external-egress-profile-form">
+          <div class="external-egress-profile-layout">
+            <section class="external-egress-profile-basics" aria-labelledby="externalEgressProfileBasicsTitle">
+              <div class="external-egress-form-heading">
+                <strong id="externalEgressProfileBasicsTitle">Profile</strong>
+                <span>Name, protocol and operator-facing status.</span>
+              </div>
+              <div class="external-egress-basics-grid">
+                <div class="field"><label>Name</label><input name="display_name" required value="${escapeHTML(profile?.display_name || '')}" placeholder="Provider USA East"></div>
+                <div class="field"><label>Protocol</label><select name="protocol" id="externalEgressProtocol"${isEdit ? ' disabled' : ''}>${protocolOptions(initialProtocol)}</select>${isEdit ? `<input type="hidden" name="protocol_fixed" value="${escapeHTML(initialProtocol)}">` : ''}</div>
+                <div class="field"><label>Availability</label><select name="status"><option value="active"${profile?.status === 'active' || !profile ? ' selected' : ''}>Enabled</option><option value="draft"${profile?.status === 'draft' ? ' selected' : ''}>Draft</option><option value="disabled"${profile?.status === 'disabled' ? ' selected' : ''}>Disabled</option></select></div>
+                <div class="field"><label>Description <span class="optional">optional</span></label><textarea name="description" rows="3" placeholder="Provider, region, account owner">${escapeHTML(profile?.description || '')}</textarea></div>
+              </div>
+              <p class="external-egress-managed-key-note">The internal profile key is generated and maintained by the platform.</p>
+            </section>
+            <section class="external-egress-provider-section" aria-label="Provider connection settings">
+              <div class="form-grid external-egress-protocol-panel" id="externalEgressProtocolPanel"></div>
+            </section>
+          </div>
+          <div id="externalEgressProfileResult" class="form-result external-egress-profile-result" aria-live="polite"></div>
+          <div class="modal-actions external-egress-form-actions">
+            <button class="secondary-btn" id="externalEgressCancelBtn" type="button">Cancel</button>
+            <span class="external-egress-actions-spacer" aria-hidden="true"></span>
             <button class="secondary-btn" id="externalEgressValidateBtn" type="button">Validate settings</button>
             <button class="primary-btn" type="submit">${isEdit ? 'Save changes' : 'Create profile'}</button>
-            <button class="secondary-btn" id="externalEgressCancelBtn" type="button">Cancel</button>
           </div>
-        </form><div id="externalEgressProfileResult" class="form-result"></div>`, { size: 'large' });
+        </form>`, { size: 'large' });
 
       const l2tpDrafts = { psk: {}, certificate: {} };
+      const protocolDrafts = {};
+      let renderedProtocol = '';
       const selectedProtocol = () => String(document.getElementById('externalEgressProtocol')?.value || initialProtocol);
+      const captureProtocolDraft = (protocol) => {
+        const panel = document.getElementById('externalEgressProtocolPanel');
+        if (!panel || !protocol) return;
+        const draft = {};
+        panel.querySelectorAll('input[name]:not([type="file"]), textarea[name], select[name]').forEach((input) => {
+          draft[input.name] = input.value;
+        });
+        protocolDrafts[protocol] = draft;
+        if (protocol === 'l2tp_ipsec') {
+          const authMode = String(document.getElementById('externalEgressL2TPAuth')?.value || 'psk');
+          ['preshared_key', 'ca_certificate', 'certificate', 'private_key'].forEach((name) => {
+            const input = panel.querySelector(`[name="${name}"]`);
+            if (input) l2tpDrafts[authMode][name] = input.value;
+          });
+        }
+      };
+      const restoreProtocolDraft = (protocol) => {
+        const panel = document.getElementById('externalEgressProtocolPanel');
+        const draft = protocolDrafts[protocol];
+        if (!panel || !draft) return;
+        Object.entries(draft).forEach(([name, value]) => {
+          const input = panel.querySelector(`[name="${name}"]`);
+          if (input && input.type !== 'file') input.value = value;
+        });
+      };
       const renderL2TPAuthMaterial = (capture = false) => {
         const mode = String(document.getElementById('externalEgressL2TPAuth')?.value || 'psk');
         const target = document.getElementById('externalEgressL2TPAuthMaterial');
@@ -274,8 +318,14 @@
         const protocol = selectedProtocol();
         const panel = document.getElementById('externalEgressProtocolPanel');
         if (!panel) return;
+        captureProtocolDraft(renderedProtocol);
         panel.innerHTML = protocol === 'l2tp_ipsec' ? l2tpFields(profile) : importFields(protocol, profile);
-        if (protocol === 'l2tp_ipsec') bindL2TPAuth();
+        restoreProtocolDraft(protocol);
+        if (protocol === 'l2tp_ipsec') {
+          bindL2TPAuth();
+          restoreProtocolDraft(protocol);
+        }
+        renderedProtocol = protocol;
         const result = document.getElementById('externalEgressProfileResult');
         if (result) result.innerHTML = '';
       };

@@ -142,7 +142,7 @@
       window.MegaVPNFormEnhancer?.enhance?.(modalBody);
       if (modal) {
         modal.classList.remove('modal-wide', 'modal-compact', 'modal-full');
-        modal.classList.toggle('modal-wide', Boolean(options.wide));
+        modal.classList.toggle('modal-wide', Boolean(options.wide) || options.size === 'large');
         modal.classList.toggle('modal-compact', options.size === 'compact');
         modal.classList.toggle('modal-full', options.size === 'full');
         modal.dataset.variant = String(options.variant || '').trim();
