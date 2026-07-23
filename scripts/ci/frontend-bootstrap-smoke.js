@@ -383,6 +383,80 @@ async function main() {
   assert.strictEqual(resolveImportFormat('l2tp_ipsec', 'server=vpn.example.com'), 'key_value');
   assert.strictEqual(resolveImportFormat('socks5'), 'structured', 'planned structured protocols must not be rewritten as URL imports');
 
+  const executionTargetForJobType = windowObject.MegaVPNJobWorkflows?.executionTargetForJobType;
+  assert.strictEqual(typeof executionTargetForJobType, 'function', 'job execution target helper must be exported');
+  assert.strictEqual(executionTargetForJobType('node.external_egress.apply'), 'agent');
+  assert.strictEqual(executionTargetForJobType('node.external_egress.probe'), 'agent');
+  assert.strictEqual(executionTargetForJobType('node.external_egress.cleanup'), 'agent');
+  assert.strictEqual(executionTargetForJobType('instance.apply'), 'agent');
+  assert.strictEqual(executionTargetForJobType('node.bootstrap'), 'worker');
+  assert.strictEqual(executionTargetForJobType('client.provision'), 'worker');
+
+  const queuedAt = '2026-07-23T11:18:17Z';
+  const jobWorkflowState = {
+    jobsTab: 'active',
+    jobsSearch: '',
+    jobsSort: 'newest',
+    jobs: [{
+      id: 'a000ffe4-f450-486f-b393-93cbf856b3c3',
+      type: 'node.external_egress.apply',
+      scope_type: 'external_egress',
+      scope_id: '38fdafed-754e-4e5e-8bde-f546e05674f3',
+      node_id: 'node-3',
+      status: 'queued',
+      payload: {},
+      result: {},
+      created_at: queuedAt,
+    }],
+    nodes: [{
+      id: 'node-3',
+      name: 'ingress-node3',
+      status: 'online',
+      agent_status: 'online',
+      agent_last_seen_at: '2026-07-23T11:16:55Z',
+    }],
+  };
+  const jobWorkflows = windowObject.MegaVPNJobWorkflows.create({
+    state: jobWorkflowState,
+    setTitle: () => {},
+    el: elementForID,
+    requestJSON: async () => ({}),
+    fetchJSON: async () => ({}),
+    statusTag: () => '',
+    escapeHTML: (value) => String(value ?? ''),
+    formatDate: (value) => String(value ?? ''),
+    renderActionResponse: () => '',
+    stringValue: (value) => String(value ?? ''),
+  });
+  jobWorkflows.renderJobs();
+  assert.match(
+    elementForID('content').innerHTML,
+    /waiting for node agent; no agent sync after job was queued/,
+    'queued external egress jobs must report the missing agent sync',
+  );
+  assert.doesNotMatch(
+    elementForID('content').innerHTML,
+    /waiting for control-plane worker/,
+    'external egress jobs must never be attributed to the control-plane worker',
+  );
+  jobWorkflowState.jobs.push({
+    id: 'b111ffe4-f450-486f-b393-93cbf856b3c4',
+    type: 'node.capability.install',
+    scope_type: 'node',
+    scope_id: 'node-3',
+    node_id: 'node-3',
+    status: 'running',
+    payload: {},
+    result: {},
+    created_at: '2026-07-23T11:17:00Z',
+  });
+  jobWorkflows.renderJobs();
+  assert.match(
+    elementForID('content').innerHTML,
+    /waiting for node agent; node is executing node\.capability\.install/,
+    'queued agent jobs must identify an active same-node blocker',
+  );
+
   const pendingCoreRequests = [];
   const loaderState = {
     authUser: { id: 'operator' },

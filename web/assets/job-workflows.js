@@ -1,6 +1,13 @@
 (function (window) {
   'use strict';
 
+  function executionTargetForJobType(value) {
+    const jobType = String(value || '').trim();
+    if (jobType === 'node.bootstrap') return 'worker';
+    if (jobType.startsWith('node.') || jobType.startsWith('instance.')) return 'agent';
+    return 'worker';
+  }
+
   function createJobWorkflows(ctx = {}) {
     const {
       state,
@@ -79,37 +86,8 @@
       ].filter(Boolean).join(' · ');
     }
 
-    const agentJobTypes = new Set([
-      'node.inventory',
-      'node.inventory.sync',
-      'node.services.discover',
-      'node.capability.install',
-      'node.capability.verify',
-      'node.channel.probe',
-      'node.agent.rotate_token',
-      'node.emergency_cleanup',
-      'node.reboot',
-      'node.backhaul.apply',
-      'node.backhaul.probe',
-      'node.backhaul.cleanup',
-      'node.route_policy.apply',
-      'node.route_policy.cleanup',
-      'node.firewall.preview',
-      'node.firewall.apply',
-      'node.firewall.observe',
-      'node.firewall.disable',
-      'instance.restart',
-      'instance.apply',
-      'instance.start',
-      'instance.stop',
-      'instance.enable',
-      'instance.disable',
-      'instance.diagnose',
-      'instance.delete',
-    ]);
-
     function isAgentJob(job) {
-      return agentJobTypes.has(String(job?.type || '').trim());
+      return executionTargetForJobType(job?.type) === 'agent';
     }
 
     function instanceForJob(job) {
@@ -139,9 +117,21 @@
       return parts.filter(Boolean).join(' · ');
     }
 
+    function activeAgentJobOnSameNode(job) {
+      const node = nodeForJob(job);
+      if (!node) return null;
+      return (state.jobs || []).find((candidate) => (
+        candidate.id !== job?.id
+        && String(candidate.status || '').trim().toLowerCase() === 'running'
+        && isAgentJob(candidate)
+        && nodeForJob(candidate)?.id === node.id
+      )) || null;
+    }
+
     function activeJobProgressText(job) {
       const status = String(job?.status || '').trim().toLowerCase();
       if (!['queued', 'running', 'retrying'].includes(status)) return '';
+      const node = nodeForJob(job);
       const context = nodeJobContextText(job);
       if (!isAgentJob(job)) {
         return status === 'running'
@@ -152,6 +142,15 @@
         const lease = job?.locked_until ? ` · lease until ${formatDate(job.locked_until)}` : '';
         const owner = job?.locked_by ? `claimed by ${job.locked_by}` : 'claimed by node agent';
         return `${owner}; waiting for agent result${lease}${context ? ` · ${context}` : ''}`;
+      }
+      const blocker = activeAgentJobOnSameNode(job);
+      if (blocker) {
+        return `waiting for node agent; node is executing ${String(blocker.type || 'another job')} (${shortToken(blocker.id, 8, 4)})${context ? ` · ${context}` : ''}`;
+      }
+      const createdAt = new Date(job?.created_at || 0).getTime();
+      const lastSeenAt = new Date(node?.agent_last_seen_at || node?.last_heartbeat_at || 0).getTime();
+      if (createdAt > 0 && lastSeenAt > 0 && lastSeenAt < createdAt) {
+        return `waiting for node agent; no agent sync after job was queued${context ? ` · ${context}` : ''}`;
       }
       const verb = status === 'retrying' ? 'waiting for node agent retry poll' : 'waiting for node agent poll';
       return `${verb}${context ? ` · ${context}` : ''}`;
@@ -530,5 +529,8 @@
     };
   }
 
-  window.MegaVPNJobWorkflows = { create: createJobWorkflows };
+  window.MegaVPNJobWorkflows = {
+    create: createJobWorkflows,
+    executionTargetForJobType,
+  };
 })(window);
