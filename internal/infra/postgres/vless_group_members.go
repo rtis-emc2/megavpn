@@ -908,7 +908,9 @@ func (s *Store) materializeGlobalVLESSGroupMembershipsForInstance(ctx context.Co
 			return materialized, err
 		}
 		if member.ServiceAccessID != "" {
-			_ = s.markServiceAccessClientAccessGroup(ctx, member.ServiceAccessID, group, hash)
+			if err := s.markServiceAccessClientAccessGroup(ctx, member.ServiceAccessID, group, hash); err != nil {
+				return materialized, fmt.Errorf("mark service access %s for client access group %s: %w", member.ServiceAccessID, group.GroupKey, err)
+			}
 		}
 		if !skipped && (change == "created" || change == "updated") {
 			materialized++

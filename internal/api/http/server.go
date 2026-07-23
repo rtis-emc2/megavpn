@@ -792,14 +792,31 @@ func (s *Server) serveFileIfExists(w nethttp.ResponseWriter, r *nethttp.Request,
 
 func (s *Server) resolveWebAsset(relPath string) (string, bool) {
 	for _, root := range candidateWebRoots(s.webRoot) {
-		absPath := filepath.Clean(filepath.Join(root, relPath))
-		info, err := os.Stat(absPath)
+		rootAbs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		rootReal, err := filepath.EvalSymlinks(rootAbs)
+		if err != nil {
+			continue
+		}
+		absPath := filepath.Clean(filepath.Join(rootReal, relPath))
+		pathReal, err := filepath.EvalSymlinks(absPath)
+		if err != nil || !resolvedPathWithinRoot(pathReal, rootReal) {
+			continue
+		}
+		info, err := os.Stat(pathReal)
 		if err != nil || info.IsDir() {
 			continue
 		}
-		return absPath, true
+		return pathReal, true
 	}
 	return "", false
+}
+
+func resolvedPathWithinRoot(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 func candidateWebRoots(configured string) []string {

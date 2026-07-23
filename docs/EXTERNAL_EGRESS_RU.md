@@ -1,6 +1,6 @@
 # Выход через внешний VPN/Proxy-провайдер
 
-**Релиз:** `7.1.1.10`
+**Релиз:** `7.1.1.11`
 
 External egress profile подключает выбранные группы клиентов к коммерческому
 или стороннему VPN/proxy-провайдеру. Он не заменяет managed Backhaul и не
@@ -242,6 +242,32 @@ command -v ipsec pppd xl2tpd
 sudo dpkg --audit
 ```
 
+Управляемые package-операции выполняются в ограниченном по времени transient
+systemd helper, а не напрямую внутри sandbox долгоживущего agent unit. Helper
+разрешен только для фиксированных команд `apt-get` и `dpkg`, удаляется после
+завершения и сохраняет имя unit и command output в job evidence. Основной
+agent при этом сохраняет свои hardening-ограничения, а доверенные package
+maintainer scripts операционной системы могут корректно завершиться.
+
+При ошибке восстановления job result показывает последние содержательные
+строки `apt`/`dpkg`. Перед изменением provider profile проверяйте полный job
+evidence: недоступный repository, held packages и прерванная package
+transaction относятся к состоянию ОС node, а не к provider credentials.
+
+L2TP/IPsec Apply получает управление UDP/1701 на выбранной provider node. Он
+останавливает системный `xl2tpd.service`, заменяет stale MegaVPN-managed L2TP
+runtime и записывает отдельную XL2TPD/PPP/IPsec конфигурацию deployment.
+Обычный Cleanup и emergency services cleanup удаляют managed unit, policy
+route, runtime directory, временное состояние, MegaVPN certificate files и
+точные глобальные IPsec include directives, когда управляемых L2TP deployment
+больше нет.
+
+`Full node wipe` дополнительно удаляет executable packages `xl2tpd`, `ppp` и
+strongSwan. Ошибка package purge считается ошибкой wipe: агент не удаляет сам
+себя, поэтому оператор может восстановить apt/dpkg и повторить full wipe.
+Обычный deployment cleanup сохраняет packages как повторно используемые node
+capabilities.
+
 Последний `dpkg --audit` не должен показывать unconfigured packages, а все три
 binary должны находиться. После этого повторите `Apply` deployment. При этой
 ошибке package manager не надо удалять profile или менять provider credentials.
@@ -253,6 +279,7 @@ binary должны находиться. После этого повторит
 | Parser отклонил config | На node ничего не меняется | Убрать запрещенные директивы или добавить отдельные managed secrets |
 | Не установился runtime package | Существующий deployment продолжает работать | Исправить OS repositories/capability и повторить apply |
 | `xl2tpd` остался unconfigured | Apply завершается до замены runtime | Восстановить apt/dpkg по инструкции и повторить apply |
+| Full wipe не смог удалить L2TP packages | Wipe завершается ошибкой, agent сохраняется | Восстановить apt/dpkg, проверить job evidence и повторить full wipe |
 | Новый runtime не стартовал | Apply job возвращает stage/output | Проверить journal, исправить profile, повторить apply |
 | Provider interface отключился | Трафик выбранной группы отклоняется dedicated unreachable route | Восстановить provider runtime либо перевести группу на другой active profile |
 | Group ссылается на отсутствующий deployment | Materialization группы блокируется | Deploy/apply profile на каждой scoped node |

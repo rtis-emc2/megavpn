@@ -24,6 +24,13 @@ var (
 	externalEgressUUIDPattern              = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	externalEgressInterfacePattern         = regexp.MustCompile(`^mgev[0-9a-f]{10}$`)
 	resolveExternalEgressCleanupExecutable = resolveExecutable
+	globExternalEgressPaths                = filepath.Glob
+	removeExternalEgressManagedPath        = removeManagedPath
+)
+
+const (
+	externalEgressIPsecConfigInclude  = "include /etc/megavpn/external-egress/*/ipsec.conf"
+	externalEgressIPsecSecretsInclude = "include /etc/megavpn/external-egress/*/ipsec.secrets"
 )
 
 type externalEgressJobPayload struct {
@@ -66,7 +73,12 @@ func (c *client) applyExternalEgress(ctx context.Context, j job, st agentState) 
 	if code, output := runInstallCommand(ctx, "systemctl", "disable", "--now", unitName); code != 0 && !isMissingSystemdUnitOutput(output) && !strings.Contains(strings.ToLower(output), "not loaded") {
 		return "failed", map[string]any{"error": "existing external egress service could not be stopped: " + firstLine(output), "stage": "stop_existing", "unit": unitName}
 	}
+	var l2tpTakeover map[string]any
 	if payload.Protocol == "l2tp_ipsec" {
+		l2tpTakeover, err = prepareExternalEgressL2TPTakeover(ctx, payload)
+		if err != nil {
+			return "failed", map[string]any{"error": err.Error(), "stage": "prepare_l2tp_takeover", "takeover": l2tpTakeover}
+		}
 		code, output := runInstallCommand(ctx, "ss", "-H", "-lun")
 		if code != 0 {
 			return "failed", map[string]any{"error": "cannot verify UDP/1701 availability: " + firstLine(output), "stage": "port_preflight"}
@@ -117,7 +129,76 @@ func (c *client) applyExternalEgress(ctx context.Context, j job, st agentState) 
 			"unit": unitName, "output": truncate(output, 4000),
 		}
 	}
-	return c.probeExternalEgress(ctx, j, st)
+	status, result := c.probeExternalEgress(ctx, j, st)
+	if len(l2tpTakeover) > 0 {
+		result["l2tp_takeover"] = l2tpTakeover
+	}
+	return status, result
+}
+
+func prepareExternalEgressL2TPTakeover(ctx context.Context, payload externalEgressJobPayload) (map[string]any, error) {
+	result := map[string]any{
+		"system_xl2tpd_stopped": false,
+		"stale_deployments":     []string{},
+		"removed_paths":         []string{},
+	}
+	code, output := runInstallCommand(ctx, "systemctl", "disable", "--now", "xl2tpd.service")
+	if code != 0 && !isMissingSystemdUnitOutput(output) {
+		result["system_xl2tpd_output"] = truncate(output, 2000)
+		return result, fmt.Errorf("existing xl2tpd service could not be stopped: %s", firstLine(output))
+	}
+	result["system_xl2tpd_stopped"] = code == 0
+
+	configs, err := globExternalEgressPaths(filepath.Join(externalEgressManagedRoot, "*", "xl2tpd.conf"))
+	if err != nil {
+		return result, fmt.Errorf("discover stale managed L2TP runtimes: %w", err)
+	}
+	staleDeployments := []string{}
+	removedPaths := []string{}
+	for _, configPath := range configs {
+		deploymentID := strings.ToLower(filepath.Base(filepath.Dir(configPath)))
+		if deploymentID == payload.DeploymentID || !externalEgressUUIDPattern.MatchString(deploymentID) {
+			continue
+		}
+		stale := payload
+		stale.DeploymentID = deploymentID
+		unitName := externalEgressUnitName(stale)
+		if stopCode, stopOutput := runInstallCommand(ctx, "systemctl", "disable", "--now", unitName); stopCode != 0 && !isMissingSystemdUnitOutput(stopOutput) {
+			return result, fmt.Errorf("stop stale managed L2TP runtime %s: %s", deploymentID, firstLine(stopOutput))
+		}
+		routeScript := filepath.Join(externalEgressManagedDir(stale), "route-policy.sh")
+		if info, statErr := os.Stat(routeScript); statErr == nil && info.Mode()&0o111 != 0 {
+			if routeCode, routeOutput := runInstallCommand(ctx, routeScript, "cleanup"); routeCode != 0 && !isMissingIPRouteTableOutput(routeOutput) {
+				return result, fmt.Errorf("cleanup stale managed L2TP policy %s: %s", deploymentID, firstLine(routeOutput))
+			}
+		}
+		for _, path := range append(
+			[]string{
+				externalEgressUnitPath(stale),
+				externalEgressManagedDir(stale),
+				externalEgressRuntimeDir(stale),
+			},
+			externalEgressIPsecCertificatePaths(stale)...,
+		) {
+			recursive := path == externalEgressManagedDir(stale) || path == externalEgressRuntimeDir(stale)
+			removed, removeErr := removeExternalEgressManagedPath(path, recursive)
+			if removeErr != nil && !os.IsNotExist(removeErr) {
+				return result, fmt.Errorf("remove stale managed L2TP path %s: %w", path, removeErr)
+			}
+			if removed {
+				removedPaths = append(removedPaths, path)
+			}
+		}
+		staleDeployments = append(staleDeployments, deploymentID)
+	}
+	result["stale_deployments"] = staleDeployments
+	result["removed_paths"] = removedPaths
+	if len(staleDeployments) > 0 {
+		if _, reloadErr := runSystemdDaemonReload(ctx); reloadErr != nil {
+			return result, reloadErr
+		}
+	}
+	return result, nil
 }
 
 func validateExternalEgressRuntimeConfig(payload externalEgressJobPayload) error {
@@ -348,17 +429,23 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 			warnings = append(warnings, err.Error())
 		}
 	}
-	paths := []string{externalEgressUnitPath(payload), externalEgressManagedDir(payload)}
+	paths := []string{externalEgressUnitPath(payload), externalEgressManagedDir(payload), externalEgressRuntimeDir(payload)}
 	for index, path := range paths {
-		if _, err := removeManagedPath(path, index == 1); err != nil && !os.IsNotExist(err) {
+		if _, err := removeManagedPath(path, index > 0); err != nil && !os.IsNotExist(err) {
 			warnings = append(warnings, path+": "+err.Error())
 		}
 	}
 	if payload.Protocol == "l2tp_ipsec" {
+		if code, output := runInstallCommand(ctx, "systemctl", "disable", "--now", "xl2tpd.service"); code != 0 && !isMissingSystemdUnitOutput(output) {
+			warnings = append(warnings, "system xl2tpd stop: "+firstLine(output))
+		}
 		for _, path := range externalEgressIPsecCertificatePaths(payload) {
 			if _, err := removeManagedPath(path, false); err != nil && !os.IsNotExist(err) {
 				warnings = append(warnings, path+": "+err.Error())
 			}
+		}
+		if includeWarnings := cleanupExternalEgressIPsecIncludesIfUnused(); len(includeWarnings) > 0 {
+			warnings = append(warnings, includeWarnings...)
 		}
 		if warning := reloadExternalEgressIPsecAfterCleanup(ctx); warning != "" {
 			warnings = append(warnings, warning)
@@ -373,6 +460,75 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 		return "failed", result
 	}
 	return "succeeded", result
+}
+
+func cleanupExternalEgressIPsecIncludesIfUnused() []string {
+	configs, err := globExternalEgressPaths(filepath.Join(externalEgressManagedRoot, "*", "ipsec.conf"))
+	if err != nil {
+		return []string{"discover managed IPsec configs: " + err.Error()}
+	}
+	if len(configs) > 0 {
+		return nil
+	}
+	warnings := []string{}
+	for path, line := range map[string]string{
+		"/etc/ipsec.conf":    externalEgressIPsecConfigInclude,
+		"/etc/ipsec.secrets": externalEgressIPsecSecretsInclude,
+	} {
+		if _, err := removeExactManagedConfigLine(path, line); err != nil && !os.IsNotExist(err) {
+			warnings = append(warnings, path+": "+err.Error())
+		}
+	}
+	return warnings
+}
+
+func removeExactManagedConfigLine(path, target string) (bool, error) {
+	path = cleanAbsPath(path)
+	target = strings.TrimSpace(target)
+	if path == "" || target == "" {
+		return false, fmt.Errorf("managed config line cleanup requires an absolute path and exact line")
+	}
+	if err := rejectSymlinkPath(path); err != nil {
+		return false, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	next, removed := removeExactManagedConfigLineContent(string(body), target)
+	if !removed {
+		return false, nil
+	}
+	if err := writeManagedFile(managedFileSpec{
+		Path: path, Content: next, Mode: fmt.Sprintf("%04o", info.Mode().Perm()),
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func removeExactManagedConfigLineContent(content, target string) (string, bool) {
+	target = strings.TrimSpace(target)
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	out := make([]string, 0, len(lines))
+	removed := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == target {
+			removed = true
+			continue
+		}
+		out = append(out, line)
+	}
+	if !removed {
+		return content, false
+	}
+	next := strings.Join(out, "\n")
+	next = strings.TrimRight(next, "\n") + "\n"
+	return next, true
 }
 
 func reloadExternalEgressIPsecAfterCleanup(ctx context.Context) string {
@@ -1046,7 +1202,7 @@ func externalEgressIPsecCertificatePaths(payload externalEgressJobPayload) []str
 func renderManagedL2TPIPsecStartScript(payload externalEgressJobPayload, ipsecBinary, xl2tpdBinary, flockBinary string) string {
 	dir := externalEgressManagedDir(payload)
 	connection := externalEgressIPsecConnectionName(payload)
-	runtimeDir := filepath.Join("/run/megavpn/external-egress", strings.ReplaceAll(payload.DeploymentID, "-", ""))
+	runtimeDir := externalEgressRuntimeDir(payload)
 	rereadCAs := ""
 	if preview, err := externalegress.ParseL2TPIPsec([]byte(payload.Secrets["config"])); err == nil && preview.AuthMethod == "certificate" {
 		rereadCAs = ipsecBinary + " rereadcacerts"
@@ -1225,6 +1381,10 @@ func installExternalEgressFailClosedGuard(ctx context.Context, payload externalE
 
 func externalEgressManagedDir(payload externalEgressJobPayload) string {
 	return filepath.Join(externalEgressManagedRoot, payload.DeploymentID)
+}
+
+func externalEgressRuntimeDir(payload externalEgressJobPayload) string {
+	return filepath.Join("/run/megavpn/external-egress", strings.ReplaceAll(payload.DeploymentID, "-", ""))
 }
 
 func externalEgressUnitName(payload externalEgressJobPayload) string {

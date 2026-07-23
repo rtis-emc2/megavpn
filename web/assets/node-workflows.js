@@ -776,7 +776,7 @@ status = ${escapeHTML(node.status || 'n/a')}</div>
       openModal(`Emergency cleanup: ${node.name || 'node'}`, 'Destructive node operation', `
         <section class="card">
           <h2>Clean managed runtime from this node</h2>
-          <p>This queues an agent job that removes product-managed service instances from the selected host. Backhaul transport and route-policy runtime are preserved unless full node wipe is selected.</p>
+          <p>This queues an agent job that removes product-managed service instances from the selected host. Backhaul transport and route-policy runtime are preserved unless full node wipe is selected. Managed L2TP/IPsec runtime, routes, certificates and temporary state are always removed.</p>
           <div class="code-block">node_id = ${escapeHTML(node.id)}
 name = ${escapeHTML(node.name || 'n/a')}
 address = ${escapeHTML(node.address || 'n/a')}
@@ -786,7 +786,7 @@ agent = ${escapeHTML(node.agent_status || 'unknown')}</div>
               <input id="fullNodeCleanupToggle" type="checkbox" />
               <span>
                 <strong>Full node wipe</strong>
-                <small>Also remove managed backhaul state, route-policy runtime and node-level service material. Use only when taking the node out of service.</small>
+                <small>Also remove managed backhaul state, route-policy runtime and node-level service material, then purge XL2TPD, PPP and strongSwan runtime packages. Use only when taking the node out of service.</small>
               </span>
             </label>
             <label class="choice-card full">

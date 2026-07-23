@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const maxRateLimitEntries = 8192
+
 type rateLimiter struct {
 	mu      sync.Mutex
 	entries map[string]rateLimitEntry
@@ -35,8 +37,11 @@ func (l *rateLimiter) allow(key string, limit int, window time.Duration) (bool, 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if len(l.entries) > 4096 {
+	if len(l.entries) >= maxRateLimitEntries {
 		l.gcLocked(now)
+	}
+	if _, exists := l.entries[key]; !exists && len(l.entries) >= maxRateLimitEntries {
+		return false, window
 	}
 
 	entry := l.entries[key]

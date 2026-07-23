@@ -1229,10 +1229,57 @@ func lastFailedInstallCommand(steps []map[string]any) failedInstallCommand {
 			command:    command,
 			exitCode:   &codeCopy,
 			output:     truncate(output, 4000),
-			outputLine: firstLine(output),
+			outputLine: summarizeInstallFailureOutput(output),
 		}
 	}
 	return failedInstallCommand{}
+}
+
+func summarizeInstallFailureOutput(output string) string {
+	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
+	diagnostic := make([]string, 0, 3)
+	for idx := len(lines) - 1; idx >= 0 && len(diagnostic) < 3; idx-- {
+		line := strings.TrimSpace(lines[idx])
+		if line == "" || !installFailureDiagnosticLine(line) {
+			continue
+		}
+		diagnostic = append(diagnostic, line)
+	}
+	if len(diagnostic) == 0 {
+		for idx := len(lines) - 1; idx >= 0; idx-- {
+			if line := strings.TrimSpace(lines[idx]); line != "" {
+				return truncate(line, 800)
+			}
+		}
+		return ""
+	}
+	for left, right := 0, len(diagnostic)-1; left < right; left, right = left+1, right-1 {
+		diagnostic[left], diagnostic[right] = diagnostic[right], diagnostic[left]
+	}
+	return truncate(strings.Join(diagnostic, " | "), 1200)
+}
+
+func installFailureDiagnosticLine(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	for _, marker := range []string{
+		"e:",
+		"error:",
+		"dpkg:",
+		"dependency problem",
+		"unmet dependenc",
+		"held broken package",
+		"not going to be installed",
+		"returned an error code",
+		"operation not permitted",
+		"permission denied",
+		"unable to ",
+		"failed",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func commandLineFromStep(raw any) string {

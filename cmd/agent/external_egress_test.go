@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -286,6 +287,85 @@ func TestReloadExternalEgressIPsecAfterCleanupSkipsMissingRuntime(t *testing.T) 
 
 	if warning := reloadExternalEgressIPsecAfterCleanup(context.Background()); warning != "" {
 		t.Fatalf("missing runtime produced cleanup warning: %q", warning)
+	}
+}
+
+func TestRemoveExactManagedConfigLineContent(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Join([]string{
+		"config setup",
+		"  " + externalEgressIPsecConfigInclude + "  ",
+		"include /etc/ipsec.d/*.conf",
+		"",
+	}, "\n")
+	got, removed := removeExactManagedConfigLineContent(input, externalEgressIPsecConfigInclude)
+	if !removed {
+		t.Fatal("expected managed include to be removed")
+	}
+	if strings.Contains(got, externalEgressIPsecConfigInclude) {
+		t.Fatalf("managed include remains in %q", got)
+	}
+	if !strings.Contains(got, "include /etc/ipsec.d/*.conf") {
+		t.Fatalf("unrelated include was removed from %q", got)
+	}
+	unchanged, removed := removeExactManagedConfigLineContent(got, externalEgressIPsecConfigInclude)
+	if removed || unchanged != got {
+		t.Fatalf("idempotent cleanup changed content: removed=%v content=%q", removed, unchanged)
+	}
+}
+
+func TestPrepareExternalEgressL2TPTakeoverStopsSystemAndStaleManagedRuntime(t *testing.T) {
+	oldRun := runInstallCommand
+	oldGlob := globExternalEgressPaths
+	oldRemove := removeExternalEgressManagedPath
+	t.Cleanup(func() {
+		runInstallCommand = oldRun
+		globExternalEgressPaths = oldGlob
+		removeExternalEgressManagedPath = oldRemove
+	})
+	current := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
+	staleID := "223e4567-e89b-42d3-a456-426614174002"
+	globExternalEgressPaths = func(pattern string) ([]string, error) {
+		if pattern != filepath.Join(externalEgressManagedRoot, "*", "xl2tpd.conf") {
+			t.Fatalf("unexpected glob pattern: %s", pattern)
+		}
+		return []string{
+			filepath.Join(externalEgressManagedRoot, current.DeploymentID, "xl2tpd.conf"),
+			filepath.Join(externalEgressManagedRoot, staleID, "xl2tpd.conf"),
+			filepath.Join(externalEgressManagedRoot, "unsafe", "xl2tpd.conf"),
+		}, nil
+	}
+	removeExternalEgressManagedPath = func(string, bool) (bool, error) {
+		return true, nil
+	}
+	commands := []string{}
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		commands = append(commands, command)
+		return 0, ""
+	}
+
+	result, err := prepareExternalEgressL2TPTakeover(context.Background(), current)
+	if err != nil {
+		t.Fatalf("prepareExternalEgressL2TPTakeover: %v", err)
+	}
+	got := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl disable --now xl2tpd.service",
+		"systemctl disable --now megavpn-external-egress-223e4567e89b42d3a456426614174002.service",
+		"systemctl daemon-reload",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("commands %q do not contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, strings.ReplaceAll(current.DeploymentID, "-", "")+".service") {
+		t.Fatalf("current deployment was treated as stale: %q", got)
+	}
+	stale, _ := result["stale_deployments"].([]string)
+	if len(stale) != 1 || stale[0] != staleID {
+		t.Fatalf("stale deployments = %#v", result["stale_deployments"])
 	}
 }
 

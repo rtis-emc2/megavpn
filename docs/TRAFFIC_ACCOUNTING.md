@@ -1,6 +1,6 @@
 # Traffic Accounting
 
-**Release:** `7.1.1.10`
+**Release:** `7.1.1.11`
 
 Traffic accounting stores aggregate traffic counters for operational audit,
 capacity planning and incident diagnostics. It is not packet capture and it is

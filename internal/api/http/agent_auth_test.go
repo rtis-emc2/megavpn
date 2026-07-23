@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -290,6 +291,22 @@ func TestAgentSignatureRejectsReplay(t *testing.T) {
 	}
 	if s.authorizeAgentNode(req, "node-1") {
 		t.Fatal("replayed signed request should be rejected")
+	}
+}
+
+func TestAgentSignatureReplayCacheFailsClosedAtCapacity(t *testing.T) {
+	cache := newAgentSignatureReplayCache(time.Minute)
+	now := time.Now().UTC()
+	for index := 0; index < maxAgentSignatureReplayEntries; index++ {
+		if !cache.accept(fmt.Sprintf("node:%d", index), now) {
+			t.Fatalf("replay cache rejected entry %d before capacity", index)
+		}
+	}
+	if cache.accept("node:overflow", now) {
+		t.Fatal("replay cache must fail closed at capacity")
+	}
+	if cache.accept("node:0", now) {
+		t.Fatal("replay cache must continue rejecting a replay at capacity")
 	}
 }
 

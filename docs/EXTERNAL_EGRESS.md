@@ -1,6 +1,6 @@
 # External Provider Egress
 
-**Release:** `7.1.1.10`
+**Release:** `7.1.1.11`
 
 External egress profiles connect selected client access groups to a commercial
 or third-party VPN/proxy provider. They do not replace managed Backhaul and they
@@ -248,6 +248,32 @@ command -v ipsec pppd xl2tpd
 sudo dpkg --audit
 ```
 
+Managed package operations run in a bounded transient systemd helper rather
+than directly inside the hardened long-running agent unit. The helper is
+restricted to fixed `apt-get` and `dpkg` command paths, is collected after
+completion and records its unit name and command output in job evidence. This
+keeps the agent sandbox intact while allowing trusted operating-system package
+maintainer scripts to complete.
+
+When package repair fails, the job result includes the last diagnostic
+`apt`/`dpkg` lines. Inspect the complete job evidence before changing the
+provider profile: repository reachability, held packages and an interrupted
+package transaction are node operating-system failures, not provider
+credential failures.
+
+L2TP/IPsec apply owns UDP/1701 on the selected provider node. It stops the
+distribution `xl2tpd.service`, replaces stale MegaVPN-managed L2TP runtime and
+writes a deployment-specific XL2TPD/PPP/IPsec configuration. Normal deployment
+cleanup and emergency services cleanup remove the managed unit, policy route,
+runtime directory, temporary state, MegaVPN certificate files and the exact
+global IPsec include directives when no managed L2TP deployment remains.
+
+`Full node wipe` additionally purges the installed `xl2tpd`, `ppp` and
+strongSwan executable packages. Package purge failure is a hard wipe failure:
+the agent is not self-removed, so the operator can repair apt/dpkg and repeat
+the wipe. Normal deployment cleanup intentionally retains packages as reusable
+node capabilities.
+
 The final `dpkg --audit` must return no unconfigured packages and all three
 executables must resolve. Then run deployment `Apply` again. Do not delete the
 profile or rotate provider credentials for this package-manager failure.
@@ -259,6 +285,7 @@ profile or rotate provider credentials for this package-manager failure.
 | Config parser rejects input | Nothing is deployed | Remove forbidden directives or use separate managed secrets |
 | Runtime package install fails | Existing deployment is left running | Fix OS repositories/capabilities and apply again |
 | `xl2tpd` remains unconfigured | Apply fails before runtime replacement | Repair apt/dpkg with the documented sequence and apply again |
+| Full wipe cannot purge L2TP packages | Wipe fails and agent remains installed | Repair apt/dpkg, verify the job evidence and repeat full wipe |
 | New runtime does not start | Apply job fails and reports stage/output | Inspect unit journal, correct profile, apply again |
 | Provider interface goes down | Selected group traffic is rejected by the dedicated unreachable route | Restore the provider runtime or move the group to another active profile |
 | Group references missing deployment | Group materialization is blocked | Deploy/apply profile on every scoped node |

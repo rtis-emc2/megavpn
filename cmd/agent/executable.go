@@ -46,7 +46,7 @@ func defaultExecutableCandidates(name string) []string {
 		return []string{"/usr/bin/ss-server", "/usr/local/bin/ss-server", "/usr/sbin/ss-server", "/usr/local/sbin/ss-server"}
 	case "squid":
 		return []string{"/usr/sbin/squid", "/usr/bin/squid", "/usr/local/sbin/squid", "/usr/local/bin/squid"}
-	case "ip", "ss", "iptables", "nft", "ipsec", "strongswan", "xl2tpd":
+	case "ip", "ss", "iptables", "nft", "ipsec", "strongswan", "pppd", "xl2tpd":
 		return []string{"/usr/sbin/" + name, "/usr/bin/" + name, "/sbin/" + name, "/bin/" + name, "/usr/local/sbin/" + name, "/usr/local/bin/" + name}
 	default:
 		return nil

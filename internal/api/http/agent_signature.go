@@ -16,6 +16,7 @@ import (
 )
 
 const defaultAgentSignatureWindow = 5 * time.Minute
+const maxAgentSignatureReplayEntries = 65536
 
 var errAgentSignatureReplay = errors.New("agent request signature replay rejected")
 
@@ -51,6 +52,9 @@ func (c *agentSignatureReplayCache) accept(key string, now time.Time) bool {
 		}
 	}
 	if _, ok := c.entries[key]; ok {
+		return false
+	}
+	if len(c.entries) >= maxAgentSignatureReplayEntries {
 		return false
 	}
 	c.entries[key] = now.Add(c.window)

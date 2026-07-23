@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -50,5 +51,26 @@ func TestWithRateLimitRejectsExcessRequests(t *testing.T) {
 	}
 	if second.Header().Get("Retry-After") == "" {
 		t.Fatal("expected Retry-After header")
+	}
+}
+
+func TestRateLimiterBoundsUniqueKeys(t *testing.T) {
+	limiter := newRateLimiter()
+	now := time.Now().UTC()
+	limiter.now = func() time.Time { return now }
+
+	for index := 0; index < maxRateLimitEntries; index++ {
+		if ok, _ := limiter.allow(fmt.Sprintf("key-%d", index), 1, time.Minute); !ok {
+			t.Fatalf("unique key %d unexpectedly rejected", index)
+		}
+	}
+	if ok, retryAfter := limiter.allow("overflow", 1, time.Minute); ok || retryAfter <= 0 {
+		t.Fatalf("new key at capacity must fail closed, ok=%v retry_after=%s", ok, retryAfter)
+	}
+	if ok, _ := limiter.allow("key-0", 2, time.Minute); !ok {
+		t.Fatal("existing key must remain tracked at capacity")
+	}
+	if got := len(limiter.entries); got > maxRateLimitEntries {
+		t.Fatalf("rate limiter entries = %d, max %d", got, maxRateLimitEntries)
 	}
 }

@@ -235,7 +235,10 @@ func (s *Server) resendPlatformUserInvite(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req resendInviteRequest
-	_ = decode(r, &req)
+	if !decodeOptional(r, &req) {
+		writeErr(w, 400, "invalid json")
+		return
+	}
 	settings, err := s.store.GetPlatformMailSettings(r.Context())
 	if err != nil {
 		writeErr(w, 500, "mail settings lookup failed")

@@ -99,6 +99,42 @@ func TestAptInstallFailureResultIncludesLastFailedCommand(t *testing.T) {
 	}
 }
 
+func TestSummarizeInstallFailureOutputUsesDiagnosticTail(t *testing.T) {
+	t.Parallel()
+
+	output := strings.Join([]string{
+		"Reading package lists...",
+		"Building dependency tree...",
+		"dpkg: dependency problems prevent configuration of ppp:",
+		" ppp depends on libpcap0.8t64; however:",
+		"  Package libpcap0.8t64 is not installed.",
+		"dpkg: error processing package ppp (--configure):",
+		" dependency problems - leaving unconfigured",
+		"E: Sub-process /usr/bin/dpkg returned an error code (1)",
+	}, "\n")
+	got := summarizeInstallFailureOutput(output)
+	for _, want := range []string{
+		"dpkg: error processing package ppp",
+		"dependency problems - leaving unconfigured",
+		"E: Sub-process /usr/bin/dpkg returned an error code (1)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary %q does not contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "Reading package lists") {
+		t.Fatalf("summary contains non-diagnostic first line: %q", got)
+	}
+}
+
+func TestSummarizeInstallFailureOutputFallsBackToLastLine(t *testing.T) {
+	t.Parallel()
+
+	if got := summarizeInstallFailureOutput("Reading package lists...\nCustom package manager exit\n"); got != "Custom package manager exit" {
+		t.Fatalf("summary = %q", got)
+	}
+}
+
 func TestAptInstallCommandRetryClassification(t *testing.T) {
 	t.Parallel()
 
