@@ -1,6 +1,6 @@
 # Operations Runbook
 
-**Release:** `7.1.1.4`
+**Release:** `7.1.1.5`
 
 ## Deployment Model
 
@@ -30,6 +30,49 @@ Use:
 6. Confirm `MEGAVPN_AGENT_SIGNATURE_ENFORCE=true`.
 7. Confirm `MEGAVPN_AGENT_ALLOW_AUTO_REGISTER=false`.
 8. Confirm `MEGAVPN_PUBLIC_BASE_URL` exactly matches the public TLS endpoint.
+9. Confirm control-plane, worker and node hosts have synchronized UTC clocks.
+   The signed agent channel rejects requests outside its replay-protection
+   window, and SSH bootstrap blocks nodes whose clock differs by more than two
+   minutes.
+
+## Agent Clock Synchronization
+
+The agent protocol signs requests and responses with a Unix timestamp. A node
+whose clock differs from the control plane by more than five minutes is rejected
+even when its enrollment and agent token are valid. Do not increase the
+signature window or disable signature enforcement to work around clock drift.
+
+Run on the control-plane host and the affected node:
+
+```bash
+date -u +'%s %FT%T.%3NZ'
+timedatectl status
+sudo timedatectl set-ntp true
+sudo systemctl restart systemd-timesyncd
+timedatectl timesync-status
+```
+
+For hosts managed by chrony:
+
+```bash
+sudo chronyc makestep
+chronyc tracking
+```
+
+Compare `date -u +%s` on both hosts. After the clocks converge, restart the node
+agent:
+
+```bash
+sudo systemctl restart megavpn-agent
+sudo journalctl -u megavpn-agent -n 50 --no-pager -l
+```
+
+Pass criteria:
+
+- the UI reports a fresh heartbeat and no newer `auth_failure`;
+- the journal no longer contains `timestamp is outside allowed window`;
+- queued node jobs are claimed without re-enrollment;
+- SSH bootstrap evidence includes `clock_skew_seconds` within two minutes.
 
 ## Repository History Rewrite
 
@@ -56,10 +99,10 @@ git clone --mirror <remote-url> megavpn-history-backup.git
 git status --short
 git checkout --orphan release-clean
 git add -A
-git commit -m "Release 7.1.1.4 clean import"
-git tag -f v7.1.1.4
+git commit -m "Release 7.1.1.5 clean import"
+git tag -f v7.1.1.5
 git push --force-with-lease origin release-clean:main
-git push --force-with-lease origin v7.1.1.4
+git push --force-with-lease origin v7.1.1.5
 ```
 
 Recovery plan:

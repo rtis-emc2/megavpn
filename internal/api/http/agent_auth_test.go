@@ -17,6 +17,11 @@ type agentAuthTestStore struct {
 	Store
 }
 
+type agentAuthFailureRecordingStore struct {
+	agentAuthTestStore
+	reasons []string
+}
+
 func (agentAuthTestStore) ValidateAgentToken(_ context.Context, nodeID, token string) bool {
 	return nodeID == "node-1" && token == "node-token"
 }
@@ -26,6 +31,11 @@ func (agentAuthTestStore) ValidateAgentTokenForJob(_ context.Context, jobID, tok
 }
 
 func (agentAuthTestStore) RecordAgentAuthFailure(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (s *agentAuthFailureRecordingStore) RecordAgentAuthFailure(_ context.Context, _, reason string) error {
+	s.reasons = append(s.reasons, reason)
 	return nil
 }
 
@@ -137,6 +147,65 @@ func TestAgentHeartbeatUnauthorizedResponseIsSigned(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("unauthorized heartbeat response signature error = %v, want nil", err)
+	}
+}
+
+func TestAgentHeartbeatRecordsActionableClockSkewForValidIdentity(t *testing.T) {
+	body := []byte(`{"node_id":"node-1","name":"node-1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/agent/heartbeat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer node-token")
+	timestamp := strconv.FormatInt(time.Now().UTC().Add(-11*time.Minute).Unix(), 10)
+	nonce := agentauth.NewNonce()
+	signature, bodyHash := agentauth.Sign("node-token", req.Method, req.URL.RequestURI(), timestamp, nonce, body)
+	req.Header.Set(agentauth.HeaderTimestamp, timestamp)
+	req.Header.Set(agentauth.HeaderNonce, nonce)
+	req.Header.Set(agentauth.HeaderBodyHash, bodyHash)
+	req.Header.Set(agentauth.HeaderSignature, signature)
+	rr := httptest.NewRecorder()
+	store := &agentAuthFailureRecordingStore{}
+
+	s := &Server{
+		store:                 store,
+		agentSignatureEnforce: true,
+		agentSignatureWindow:  time.Minute,
+		agentSignatureReplay:  newAgentSignatureReplayCache(time.Minute),
+	}
+	s.agentHeartbeat(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	if len(store.reasons) != 1 {
+		t.Fatalf("recorded auth failures = %#v, want one", store.reasons)
+	}
+	for _, want := range []string{"timestamp is outside allowed window", "agent clock is behind", "synchronize NTP"} {
+		if !bytes.Contains([]byte(store.reasons[0]), []byte(want)) {
+			t.Fatalf("recorded auth failure = %q, want %q", store.reasons[0], want)
+		}
+	}
+}
+
+func TestAgentHeartbeatDoesNotLetInvalidTokenChangeNodeDiagnostics(t *testing.T) {
+	body := []byte(`{"node_id":"node-1","name":"node-1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/agent/heartbeat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer attacker-token")
+	signTestAgentRequest(req, "attacker-token", body)
+	rr := httptest.NewRecorder()
+	store := &agentAuthFailureRecordingStore{}
+
+	s := &Server{
+		store:                 store,
+		agentSignatureEnforce: true,
+		agentSignatureWindow:  time.Minute,
+		agentSignatureReplay:  newAgentSignatureReplayCache(time.Minute),
+	}
+	s.agentHeartbeat(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	if len(store.reasons) != 0 {
+		t.Fatalf("invalid token changed node diagnostics: %#v", store.reasons)
 	}
 }
 

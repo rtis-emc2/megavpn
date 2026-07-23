@@ -102,6 +102,22 @@ func TestPostReportsUnsignedErrorStatusAndBody(t *testing.T) {
 	}
 }
 
+func TestSignedResponseClockSkewDiagnosticIsActionable(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	err := describeSignedResponseVerificationFailure(
+		agentauth.ErrTimestampOutdated,
+		strconv.FormatInt(now.Add(11*time.Minute).Unix(), 10),
+		now,
+	)
+	for _, want := range []string{"outside allowed window", "control-plane clock is ahead", "11m0s", "synchronize NTP"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("clock skew diagnostic = %q, want %q", err, want)
+		}
+	}
+}
+
 func TestNextJobRejectsUnsignedNoContentResponse(t *testing.T) {
 	t.Parallel()
 

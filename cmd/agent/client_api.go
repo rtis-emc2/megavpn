@@ -226,7 +226,10 @@ func (c client) readSignedResponseBody(req *http.Request, resp *http.Response, r
 		5*time.Minute,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("agent response signature verification failed: %w", err)
+		return nil, fmt.Errorf(
+			"agent response signature verification failed: %w",
+			describeSignedResponseVerificationFailure(err, resp.Header.Get(agentauth.HeaderTimestamp), time.Now().UTC()),
+		)
 	}
 	if c.responseReplay == nil {
 		c.responseReplay = newResponseReplayCache(5 * time.Minute)
@@ -236,6 +239,31 @@ func (c client) readSignedResponseBody(req *http.Request, resp *http.Response, r
 		return nil, errors.New("agent response signature replay rejected")
 	}
 	return body, nil
+}
+
+func describeSignedResponseVerificationFailure(err error, timestamp string, now time.Time) error {
+	if !errors.Is(err, agentauth.ErrTimestampOutdated) {
+		return err
+	}
+	serverUnix, parseErr := strconv.ParseInt(strings.TrimSpace(timestamp), 10, 64)
+	if parseErr != nil || serverUnix <= 0 {
+		return err
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	skew := time.Unix(serverUnix, 0).UTC().Sub(now)
+	direction := "ahead of"
+	if skew < 0 {
+		direction = "behind"
+		skew = -skew
+	}
+	return fmt.Errorf(
+		"%w: observed control-plane clock is %s local clock by %s; synchronize NTP on both hosts",
+		err,
+		direction,
+		skew.Round(time.Second),
+	)
 }
 
 func unsignedAgentResponseError(resp *http.Response, body []byte) error {

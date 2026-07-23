@@ -2114,14 +2114,28 @@ func (s *Server) authorizeAgentBootstrap(r *nethttp.Request, token string) bool 
 }
 
 func (s *Server) authorizeAgentNode(r *nethttp.Request, nodeID string) bool {
+	result := s.authorizeAgentNodeDetailed(r, nodeID)
+	return result.authorized
+}
+
+type agentNodeAuthorization struct {
+	authorized bool
+	tokenValid bool
+	failure    string
+}
+
+func (s *Server) authorizeAgentNodeDetailed(r *nethttp.Request, nodeID string) agentNodeAuthorization {
 	tok := bearerToken(r)
 	if tok == "" || nodeID == "" {
-		return false
+		return agentNodeAuthorization{failure: "agent token or node identity is missing"}
 	}
-	if s.store != nil && s.store.ValidateAgentToken(r.Context(), nodeID, tok) {
-		return s.verifyAgentSignature(r, "node:"+strings.TrimSpace(nodeID), tok)
+	if s.store == nil || !s.store.ValidateAgentToken(r.Context(), nodeID, tok) {
+		return agentNodeAuthorization{failure: "agent token does not match the active node identity"}
 	}
-	return false
+	if err := s.verifyAgentSignatureError(r, "node:"+strings.TrimSpace(nodeID), tok); err != nil {
+		return agentNodeAuthorization{tokenValid: true, failure: err.Error()}
+	}
+	return agentNodeAuthorization{authorized: true, tokenValid: true}
 }
 
 func (s *Server) authorizeAgentJob(r *nethttp.Request, jobID string) bool {
@@ -2164,9 +2178,12 @@ func (s *Server) agentHeartbeat(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeSignedAgentError(w, r, 400, "invalid agent heartbeat payload")
 		return
 	}
-	if !s.authorizeAgentNode(r, req.NodeID) {
-		_ = s.store.RecordAgentAuthFailure(r.Context(), req.NodeID, "heartbeat unauthorized")
-		writeSignedAgentError(w, r, 401, "agent unauthorized")
+	auth := s.authorizeAgentNodeDetailed(r, req.NodeID)
+	if !auth.authorized {
+		if auth.tokenValid {
+			_ = s.store.RecordAgentAuthFailure(r.Context(), req.NodeID, "heartbeat unauthorized: "+auth.failure)
+		}
+		writeSignedAgentError(w, r, 401, "agent unauthorized: "+auth.failure)
 		return
 	}
 	var err error

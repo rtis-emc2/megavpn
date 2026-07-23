@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,8 @@ type sshSession struct {
 }
 
 const sshKnownHostsPath = "/var/lib/megavpn/ssh/known_hosts"
+
+const bootstrapMaximumClockSkew = 2 * time.Minute
 
 var (
 	bootstrapEnvKeyPattern           = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
@@ -70,17 +73,30 @@ func handleNodeBootstrapJob(ctx context.Context, log bootstrapLogger, store *pos
 	if err := validateControlPlaneReachability(publicBaseURL, node); err != nil {
 		return "failed", map[string]any{"error": err.Error(), "node_id": nodeID, "control_plane_url": publicBaseURL}
 	}
-
-	token, err := store.CreateNodeEnrollmentToken(ctx, nodeID, 24*time.Hour)
-	if err != nil {
-		return "failed", map[string]any{"error": err.Error(), "node_id": nodeID, "stage": "create_enrollment_token"}
-	}
-	agentEnv, bootstrapEnv, err := renderBootstrapEnvFiles(cfg, publicBaseURL, node, token.Token)
-	if err != nil {
+	if _, _, err := renderBootstrapEnvFiles(cfg, publicBaseURL, node, "bootstrap-preflight-token"); err != nil {
 		return "failed", map[string]any{"error": err.Error(), "node_id": nodeID, "stage": "render_bootstrap_env"}
 	}
 
+	var token domain.NodeEnrollmentToken
+	var agentEnv string
+	var bootstrapEnv string
+	issueBootstrapMaterial := func() (string, error) {
+		var issueErr error
+		token, issueErr = store.CreateNodeEnrollmentToken(ctx, nodeID, 24*time.Hour)
+		if issueErr != nil {
+			return "create_enrollment_token", issueErr
+		}
+		agentEnv, bootstrapEnv, issueErr = renderBootstrapEnvFiles(cfg, publicBaseURL, node, token.Token)
+		if issueErr != nil {
+			return "render_bootstrap_env", issueErr
+		}
+		return "", nil
+	}
+
 	if bootstrapMode == "manual_bundle" {
+		if stage, issueErr := issueBootstrapMaterial(); issueErr != nil {
+			return "failed", map[string]any{"error": issueErr.Error(), "node_id": nodeID, "stage": stage}
+		}
 		bootstrapRef, err := store.CreateSecretRef(ctx, "opaque", []byte(bootstrapEnv), map[string]any{
 			"scope":          "node_bootstrap",
 			"node_id":        nodeID,
@@ -128,6 +144,39 @@ func handleNodeBootstrapJob(ctx context.Context, log bootstrapLogger, store *pos
 		return "failed", map[string]any{"error": err.Error(), "node_id": nodeID, "stage": "prepare_ssh"}
 	}
 	defer session.Close()
+
+	clockCheckStarted := time.Now().UTC()
+	remoteClockOutput, err := session.runOutput(ctx, "read remote UTC clock", "date -u +%s")
+	clockCheckFinished := time.Now().UTC()
+	if err != nil {
+		return "failed", map[string]any{
+			"error":   err.Error(),
+			"node_id": nodeID,
+			"stage":   "clock_preflight",
+		}
+	}
+	clockSkew, remoteClock, workerClock, err := validateBootstrapClock(
+		remoteClockOutput,
+		clockCheckStarted,
+		clockCheckFinished,
+		bootstrapMaximumClockSkew,
+	)
+	if err != nil {
+		return "failed", map[string]any{
+			"error":                      err.Error(),
+			"node_id":                    nodeID,
+			"stage":                      "clock_preflight",
+			"clock_skew_seconds":         int64(clockSkew / time.Second),
+			"remote_time_utc":            remoteClock.Format(time.RFC3339),
+			"worker_time_utc":            workerClock.Format(time.RFC3339),
+			"maximum_clock_skew":         bootstrapMaximumClockSkew.String(),
+			"operator_remediation":       "enable NTP on the control-plane and node hosts, verify UTC clocks, then retry bootstrap",
+			"signature_window_unchanged": true,
+		}
+	}
+	if stage, issueErr := issueBootstrapMaterial(); issueErr != nil {
+		return "failed", map[string]any{"error": issueErr.Error(), "node_id": nodeID, "stage": stage}
+	}
 
 	agentBinary, err := resolveBootstrapAsset("megavpn-agent", []string{
 		"/opt/megavpn/bin/megavpn-agent",
@@ -216,18 +265,61 @@ func handleNodeBootstrapJob(ctx context.Context, log bootstrapLogger, store *pos
 
 	log.Info("node bootstrap completed", "node_id", nodeID, "host", method.SSHHost, "bootstrap_mode", bootstrapMode)
 	return "succeeded", map[string]any{
-		"message":           "remote agent bootstrap completed",
-		"node_id":           nodeID,
-		"bootstrap_mode":    bootstrapMode,
-		"reinstall_agent":   reinstallAgent,
-		"force_reenroll":    forceReenroll,
-		"ssh_host":          method.SSHHost,
-		"ssh_user":          method.SSHUser,
-		"control_plane_url": publicBaseURL,
-		"enrollment_hint":   token.TokenHint,
-		"agent_binary":      agentBinary,
-		"agent_unit":        agentUnit,
+		"message":            "remote agent bootstrap completed",
+		"node_id":            nodeID,
+		"bootstrap_mode":     bootstrapMode,
+		"reinstall_agent":    reinstallAgent,
+		"force_reenroll":     forceReenroll,
+		"ssh_host":           method.SSHHost,
+		"ssh_user":           method.SSHUser,
+		"control_plane_url":  publicBaseURL,
+		"enrollment_hint":    token.TokenHint,
+		"agent_binary":       agentBinary,
+		"agent_unit":         agentUnit,
+		"clock_skew_seconds": int64(clockSkew / time.Second),
+		"remote_time_utc":    remoteClock.Format(time.RFC3339),
+		"worker_time_utc":    workerClock.Format(time.RFC3339),
 	}
+}
+
+func validateBootstrapClock(output string, startedAt, finishedAt time.Time, maximumSkew time.Duration) (time.Duration, time.Time, time.Time, error) {
+	if maximumSkew <= 0 {
+		maximumSkew = bootstrapMaximumClockSkew
+	}
+	fields := strings.Fields(strings.TrimSpace(output))
+	if len(fields) == 0 {
+		return 0, time.Time{}, time.Time{}, errors.New("remote clock command returned no timestamp")
+	}
+	remoteUnix, err := strconv.ParseInt(fields[len(fields)-1], 10, 64)
+	if err != nil || remoteUnix <= 0 {
+		return 0, time.Time{}, time.Time{}, fmt.Errorf("remote clock command returned invalid Unix timestamp %q", strings.TrimSpace(output))
+	}
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	if finishedAt.IsZero() || finishedAt.Before(startedAt) {
+		finishedAt = startedAt
+	}
+	workerClock := startedAt.Add(finishedAt.Sub(startedAt) / 2).UTC()
+	remoteClock := time.Unix(remoteUnix, 0).UTC()
+	skew := remoteClock.Sub(workerClock)
+	absoluteSkew := skew
+	if absoluteSkew < 0 {
+		absoluteSkew = -absoluteSkew
+	}
+	if absoluteSkew > maximumSkew {
+		direction := "ahead of"
+		if skew < 0 {
+			direction = "behind"
+		}
+		return skew, remoteClock, workerClock, fmt.Errorf(
+			"remote node clock is %s control-plane worker clock by %s; maximum allowed bootstrap skew is %s; synchronize NTP on both hosts before installing the agent",
+			direction,
+			absoluteSkew.Round(time.Second),
+			maximumSkew,
+		)
+	}
+	return skew, remoteClock, workerClock, nil
 }
 
 func validateControlPlaneReachability(publicBaseURL string, node domain.Node) error {
@@ -361,14 +453,19 @@ func (s *sshSession) Close() {
 }
 
 func (s *sshSession) run(ctx context.Context, step, remoteCmd string) error {
+	_, err := s.runOutput(ctx, step, remoteCmd)
+	return err
+}
+
+func (s *sshSession) runOutput(ctx context.Context, step, remoteCmd string) (string, error) {
 	prog, args := s.commandArgs("ssh", remoteCmd)
 	cmd := exec.CommandContext(ctx, prog, args...)
 	s.applySecretEnv(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s failed: %w: %s", step, err, strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("%s failed: %w: %s", step, err, strings.TrimSpace(string(output)))
 	}
-	return nil
+	return strings.TrimSpace(string(output)), nil
 }
 
 func (s *sshSession) copy(ctx context.Context, localPath, remotePath string) error {

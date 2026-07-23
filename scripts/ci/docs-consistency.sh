@@ -36,6 +36,8 @@ required_release_artifacts=(
   docs/TRAFFIC_ACCOUNTING_RU.md
   docs/NODE_MAP.md
   docs/NODE_MAP_RU.md
+  docs/ACCESS_GROUPS.md
+  docs/ACCESS_GROUPS_RU.md
   docs/VLESS_GROUPS.md
   docs/VLESS_GROUPS_RU.md
   docs/VLESS_SUBSCRIPTIONS.md

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,56 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/config"
 )
+
+func TestValidateBootstrapClockAcceptsSynchronizedNode(t *testing.T) {
+	t.Parallel()
+
+	startedAt := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(200 * time.Millisecond)
+	skew, remoteClock, workerClock, err := validateBootstrapClock(
+		strconv.FormatInt(startedAt.Unix(), 10),
+		startedAt,
+		finishedAt,
+		2*time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("validate synchronized bootstrap clock: %v", err)
+	}
+	if skew > time.Second || skew < -time.Second {
+		t.Fatalf("clock skew = %s, want within one second", skew)
+	}
+	if remoteClock.IsZero() || workerClock.IsZero() {
+		t.Fatal("clock evidence must include remote and worker timestamps")
+	}
+}
+
+func TestValidateBootstrapClockRejectsUnsafeSkew(t *testing.T) {
+	t.Parallel()
+
+	startedAt := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	remoteUnix := startedAt.Add(-11 * time.Minute).Unix()
+	skew, _, _, err := validateBootstrapClock(
+		strconv.FormatInt(remoteUnix, 10),
+		startedAt,
+		startedAt.Add(100*time.Millisecond),
+		2*time.Minute,
+	)
+	if err == nil {
+		t.Fatal("expected unsafe clock skew to block bootstrap")
+	}
+	if skew >= -10*time.Minute || !strings.Contains(err.Error(), "synchronize NTP") {
+		t.Fatalf("clock skew/error = %s / %v, want actionable NTP failure", skew, err)
+	}
+}
+
+func TestValidateBootstrapClockRejectsInvalidTimestamp(t *testing.T) {
+	t.Parallel()
+
+	_, _, _, err := validateBootstrapClock("not-a-timestamp", time.Now(), time.Now(), 2*time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "invalid Unix timestamp") {
+		t.Fatalf("invalid remote timestamp error = %v", err)
+	}
+}
 
 func TestNormalizeSSHPrivateKeyAcceptsEscapedNewlines(t *testing.T) {
 	input := `-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----`

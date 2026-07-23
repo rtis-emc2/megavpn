@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	nethttp "net/http"
 	"strconv"
@@ -15,6 +16,8 @@ import (
 )
 
 const defaultAgentSignatureWindow = 5 * time.Minute
+
+var errAgentSignatureReplay = errors.New("agent request signature replay rejected")
 
 type agentSignatureReplayCache struct {
 	mu      sync.Mutex
@@ -55,19 +58,23 @@ func (c *agentSignatureReplayCache) accept(key string, now time.Time) bool {
 }
 
 func (s *Server) verifyAgentSignature(r *nethttp.Request, scope, token string) bool {
+	return s.verifyAgentSignatureError(r, scope, token) == nil
+}
+
+func (s *Server) verifyAgentSignatureError(r *nethttp.Request, scope, token string) error {
 	if r == nil {
-		return false
+		return errors.New("agent request is nil")
 	}
 	signed := agentRequestHasSignature(r)
 	if !signed && !s.agentSignatureEnforce {
-		return true
+		return nil
 	}
 	body, err := requestBodySnapshot(r)
 	if err != nil {
 		if s.log != nil {
 			s.log.Warn("agent signature body read failed", "scope", scope, "error", err)
 		}
-		return false
+		return fmt.Errorf("read agent request body: %w", err)
 	}
 	now := time.Now().UTC()
 	window := s.agentSignatureWindow
@@ -88,12 +95,13 @@ func (s *Server) verifyAgentSignature(r *nethttp.Request, scope, token string) b
 	)
 	if err != nil {
 		if errors.Is(err, agentauth.ErrUnsigned) && !s.agentSignatureEnforce {
-			return true
+			return nil
 		}
+		err = describeAgentSignatureFailure(err, r.Header.Get(agentauth.HeaderTimestamp), now)
 		if s.log != nil {
 			s.log.Warn("agent signature verification failed", "scope", scope, "error", err)
 		}
-		return false
+		return err
 	}
 	replayKey := strings.TrimSpace(scope) + ":" + strings.TrimSpace(r.Header.Get(agentauth.HeaderNonce))
 	replay := s.agentSignatureReplay
@@ -105,9 +113,40 @@ func (s *Server) verifyAgentSignature(r *nethttp.Request, scope, token string) b
 		if s.log != nil {
 			s.log.Warn("agent signature replay rejected", "scope", scope)
 		}
-		return false
+		return errAgentSignatureReplay
 	}
-	return true
+	return nil
+}
+
+func describeAgentSignatureFailure(err error, timestamp string, now time.Time) error {
+	if !errors.Is(err, agentauth.ErrTimestampOutdated) {
+		return err
+	}
+	issuedUnix, parseErr := strconv.ParseInt(strings.TrimSpace(timestamp), 10, 64)
+	if parseErr != nil || issuedUnix <= 0 {
+		return err
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	skew := now.Sub(time.Unix(issuedUnix, 0).UTC())
+	direction := "ahead of"
+	if skew > 0 {
+		direction = "behind"
+	}
+	return fmt.Errorf(
+		"%w: agent clock is %s control-plane clock by %s; synchronize NTP on both hosts",
+		err,
+		direction,
+		formatClockSkew(skew),
+	)
+}
+
+func formatClockSkew(skew time.Duration) time.Duration {
+	if skew < 0 {
+		skew = -skew
+	}
+	return skew.Round(time.Second)
 }
 
 func agentRequestHasSignature(r *nethttp.Request) bool {

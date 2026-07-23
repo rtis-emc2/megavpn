@@ -1,6 +1,6 @@
 # User Guide
 
-**Release:** `7.1.1.4`
+**Release:** `7.1.1.5`
 
 This document describes the full RTIS MegaVPN operator workflow: installing the
 Control Plane on a clean host, configuring the platform, enrolling nodes,
@@ -304,6 +304,13 @@ Production defaults:
    trusted provisioning record, then save SSH access.
 7. Start bootstrap or enrollment.
 8. Wait for heartbeat: the node should become `online`.
+
+Enable NTP synchronization on the control plane and node before bootstrap. The
+signed agent channel rejects heartbeats when clocks differ by more than five
+minutes, and SSH bootstrap blocks installation when drift exceeds two minutes.
+This is replay protection, not an enrollment failure. Do not widen the signature
+window or disable `MEGAVPN_AGENT_SIGNATURE_ENFORCE`; synchronize clocks and
+restart `megavpn-agent`.
 
 `ssh_host_key_sha256` protects bootstrap from MITM. It must match the real node
 host key fingerprint. Do not bypass this field with an unverified value; a

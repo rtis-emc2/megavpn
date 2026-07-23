@@ -1,6 +1,6 @@
 # Руководство пользователя
 
-**Релиз:** `7.1.1.4`
+**Релиз:** `7.1.1.5`
 
 Документ описывает полный операторский путь RTIS MegaVPN: от установки Control
 Plane на чистый сервер до настройки nodes, runtime capabilities, service
@@ -304,6 +304,13 @@ Production defaults:
    console или provisioning record, затем сохраните SSH access.
 7. Запустите bootstrap или enrollment flow.
 8. Дождитесь heartbeat: node должна перейти в `online`.
+
+До bootstrap включите синхронизацию времени через NTP на Control Plane и node.
+Подписанный agent channel отклоняет heartbeat при расхождении часов более пяти
+минут, а SSH bootstrap заранее блокирует установку при расхождении более двух
+минут. Это защита от replay, а не ошибка enrollment. Не расширяйте окно подписи
+и не отключайте `MEGAVPN_AGENT_SIGNATURE_ENFORCE`; синхронизируйте часы и
+перезапустите `megavpn-agent`.
 
 `ssh_host_key_sha256` защищает bootstrap от MITM. Fingerprint должен
 соответствовать реальному host key node. Не обходите это поле непроверенным
