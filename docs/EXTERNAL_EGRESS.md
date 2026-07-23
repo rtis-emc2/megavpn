@@ -1,6 +1,6 @@
 # External Provider Egress
 
-**Release:** `7.1.1.9`
+**Release:** `7.1.1.10`
 
 External egress profiles connect selected client access groups to a commercial
 or third-party VPN/proxy provider. They do not replace managed Backhaul and they
@@ -232,12 +232,33 @@ Expected state:
   port and has no provider route in the main table;
 - the main table has not acquired a provider default route.
 
+If an L2TP/IPsec apply reports that `dpkg --configure -a` cannot configure
+`xl2tpd`, repair the interrupted package transaction on the affected node:
+
+```bash
+sudo dpkg --audit
+sudo apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 update
+sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+  apt-get -o Dpkg::Lock::Timeout=120 -f install -y
+sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+  dpkg --configure -a
+sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+  apt-get -o Dpkg::Lock::Timeout=120 install -y strongswan ppp xl2tpd
+command -v ipsec pppd xl2tpd
+sudo dpkg --audit
+```
+
+The final `dpkg --audit` must return no unconfigured packages and all three
+executables must resolve. Then run deployment `Apply` again. Do not delete the
+profile or rotate provider credentials for this package-manager failure.
+
 ## Failure And Rollback
 
 | Failure | Behavior | Recovery |
 | --- | --- | --- |
 | Config parser rejects input | Nothing is deployed | Remove forbidden directives or use separate managed secrets |
 | Runtime package install fails | Existing deployment is left running | Fix OS repositories/capabilities and apply again |
+| `xl2tpd` remains unconfigured | Apply fails before runtime replacement | Repair apt/dpkg with the documented sequence and apply again |
 | New runtime does not start | Apply job fails and reports stage/output | Inspect unit journal, correct profile, apply again |
 | Provider interface goes down | Selected group traffic is rejected by the dedicated unreachable route | Restore the provider runtime or move the group to another active profile |
 | Group references missing deployment | Group materialization is blocked | Deploy/apply profile on every scoped node |

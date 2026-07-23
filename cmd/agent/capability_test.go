@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -204,6 +205,73 @@ func TestAptFailureSuggestsRepair(t *testing.T) {
 	}
 	if aptFailureSuggestsRepair("Temporary failure resolving archive.ubuntu.com") {
 		t.Fatal("network resolution failure must not request dpkg repair")
+	}
+}
+
+func TestRepairUbuntuPackageStateContinuesAfterDpkgDependencyFailure(t *testing.T) {
+	oldRun := runInstallCommand
+	t.Cleanup(func() { runInstallCommand = oldRun })
+
+	commands := []string{}
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		commands = append(commands, command)
+		switch len(commands) {
+		case 1:
+			if !strings.Contains(command, "dpkg --configure -a") {
+				t.Fatalf("first repair command = %q", command)
+			}
+			return 1, "dpkg: dependency problems prevent configuration of xl2tpd"
+		case 2:
+			if !strings.Contains(command, "apt-get") || !strings.Contains(command, "-f install -y") {
+				t.Fatalf("second repair command = %q", command)
+			}
+			return 0, "dependencies repaired"
+		case 3:
+			if !strings.Contains(command, "dpkg --configure -a") {
+				t.Fatalf("third repair command = %q", command)
+			}
+			return 0, "xl2tpd configured"
+		default:
+			t.Fatalf("unexpected repair command: %q", command)
+			return 1, "unexpected command"
+		}
+	}
+
+	steps := []map[string]any{}
+	if reason := repairUbuntuPackageState(context.Background(), &steps); reason != "" {
+		t.Fatalf("repairUbuntuPackageState() reason = %q", reason)
+	}
+	if len(commands) != 3 {
+		t.Fatalf("repair commands = %d, want 3", len(commands))
+	}
+	if len(steps) != 4 {
+		t.Fatalf("repair steps = %d, want 4 including continuation evidence", len(steps))
+	}
+	if note := stringify(steps[1]["note"]); !strings.Contains(note, "continuing with apt dependency repair") {
+		t.Fatalf("continuation evidence note = %q", note)
+	}
+}
+
+func TestRepairUbuntuPackageStateReportsDependencyRepairFailure(t *testing.T) {
+	oldRun := runInstallCommand
+	t.Cleanup(func() { runInstallCommand = oldRun })
+
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		if strings.Contains(command, "dpkg --configure -a") {
+			return 1, "dependency problems prevent configuration"
+		}
+		if strings.Contains(command, "apt-get") && strings.Contains(command, "-f install -y") {
+			return 100, "unable to correct dependencies"
+		}
+		t.Fatalf("unexpected repair command: %q", command)
+		return 1, "unexpected command"
+	}
+
+	steps := []map[string]any{}
+	if reason := repairUbuntuPackageState(context.Background(), &steps); reason != "apt dependency repair failed" {
+		t.Fatalf("repairUbuntuPackageState() reason = %q", reason)
 	}
 }
 

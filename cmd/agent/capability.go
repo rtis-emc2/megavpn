@@ -769,11 +769,8 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 		detail := lastFailedInstallCommand(steps)
 		if aptFailureSuggestsRepair(detail.output) {
 			steps = append(steps, map[string]any{"stage": "apt_repair", "reason": detail.outputLine})
-			if !run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "dpkg", "--configure", "-a") {
-				return aptInstallFailureResult(capabilityCode, packageName, "dpkg configure repair failed", steps)
-			}
-			if !run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-f", "install", "-y") {
-				return aptInstallFailureResult(capabilityCode, packageName, "apt dependency repair failed", steps)
+			if reason := repairUbuntuPackageState(ctx, &steps); reason != "" {
+				return aptInstallFailureResult(capabilityCode, packageName, reason, steps)
 			}
 			if !run("env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "UCF_FORCE_CONFFOLD=1", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "install", "-y", packageName) {
 				return aptInstallFailureResult(capabilityCode, packageName, "package install failed after apt repair", steps)
@@ -795,6 +792,8 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 		verify = verifyWireGuard(ctx)
 	case "ipsec":
 		verify = verifyIPsec(ctx)
+	case "ppp":
+		verify = verifyPPP(ctx)
 	case "http_proxy":
 		verify = verifyHTTPProxy(ctx)
 	case "xl2tpd":
@@ -807,6 +806,22 @@ func installUbuntuPackageCapability(ctx context.Context, capabilityCode, package
 	verify["steps"] = steps
 	verify["package"] = packageName
 	return verify
+}
+
+func repairUbuntuPackageState(ctx context.Context, steps *[]map[string]any) string {
+	if !runTrackedInstallCommand(ctx, steps, "env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "dpkg", "--configure", "-a") {
+		*steps = append(*steps, map[string]any{
+			"stage": "apt_repair",
+			"note":  "dpkg configuration is blocked by unresolved dependencies; continuing with apt dependency repair",
+		})
+	}
+	if !runTrackedInstallCommand(ctx, steps, "env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "UCF_FORCE_CONFFOLD=1", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "-f", "install", "-y") {
+		return "apt dependency repair failed"
+	}
+	if !runTrackedInstallCommand(ctx, steps, "env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a", "dpkg", "--configure", "-a") {
+		return "dpkg configure repair failed after dependency repair"
+	}
+	return ""
 }
 
 func runTrackedInstallCommand(ctx context.Context, steps *[]map[string]any, name string, args ...string) bool {
@@ -1333,6 +1348,20 @@ func verifyIPsec(ctx context.Context) map[string]any {
 	return map[string]any{
 		"ok": true, "message": "ipsec capability verified", "version": version, "binary_path": ipsecPath,
 		"systemd_unit": firstKnownUnit("strongswan", "strongswan-starter", "ipsec"), "active_state": active,
+	}
+}
+
+func verifyPPP(ctx context.Context) map[string]any {
+	pppdPath, ok := resolveExecutable("pppd")
+	if !ok {
+		return map[string]any{"ok": false, "message": "pppd binary not found or not executable"}
+	}
+	version := strings.TrimSpace(firstLine(runCombinedOutput(pppdPath, "--version")))
+	if version == "" {
+		return map[string]any{"ok": false, "message": "pppd binary version is unavailable", "binary_path": pppdPath}
+	}
+	return map[string]any{
+		"ok": true, "message": "ppp capability verified", "version": version, "binary_path": pppdPath,
 	}
 }
 

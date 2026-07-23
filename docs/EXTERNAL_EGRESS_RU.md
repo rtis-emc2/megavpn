@@ -1,6 +1,6 @@
 # Выход через внешний VPN/Proxy-провайдер
 
-**Релиз:** `7.1.1.9`
+**Релиз:** `7.1.1.10`
 
 External egress profile подключает выбранные группы клиентов к коммерческому
 или стороннему VPN/proxy-провайдеру. Он не заменяет managed Backhaul и не
@@ -226,12 +226,33 @@ journalctl -u megavpn-external-egress-<deployment-id-без-дефисов>.serv
   port и не создает provider route в main table;
 - в main table не появился provider default route.
 
+Если L2TP/IPsec apply сообщает, что `dpkg --configure -a` не может настроить
+`xl2tpd`, восстановите прерванную package transaction на проблемной node:
+
+```bash
+sudo dpkg --audit
+sudo apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 update
+sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+  apt-get -o Dpkg::Lock::Timeout=120 -f install -y
+sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+  dpkg --configure -a
+sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+  apt-get -o Dpkg::Lock::Timeout=120 install -y strongswan ppp xl2tpd
+command -v ipsec pppd xl2tpd
+sudo dpkg --audit
+```
+
+Последний `dpkg --audit` не должен показывать unconfigured packages, а все три
+binary должны находиться. После этого повторите `Apply` deployment. При этой
+ошибке package manager не надо удалять profile или менять provider credentials.
+
 ## Ошибки и rollback
 
 | Ошибка | Поведение | Восстановление |
 | --- | --- | --- |
 | Parser отклонил config | На node ничего не меняется | Убрать запрещенные директивы или добавить отдельные managed secrets |
 | Не установился runtime package | Существующий deployment продолжает работать | Исправить OS repositories/capability и повторить apply |
+| `xl2tpd` остался unconfigured | Apply завершается до замены runtime | Восстановить apt/dpkg по инструкции и повторить apply |
 | Новый runtime не стартовал | Apply job возвращает stage/output | Проверить journal, исправить profile, повторить apply |
 | Provider interface отключился | Трафик выбранной группы отклоняется dedicated unreachable route | Восстановить provider runtime либо перевести группу на другой active profile |
 | Group ссылается на отсутствующий deployment | Materialization группы блокируется | Deploy/apply profile на каждой scoped node |

@@ -176,6 +176,7 @@ func ensureL2TPIPsecExternalEgressCapability(ctx context.Context) map[string]any
 		hint   string
 	}{
 		{verify: verifyIPsec, code: "ipsec", pkg: "strongswan", hint: "strongswan"},
+		{verify: verifyPPP, code: "ppp", pkg: "ppp", hint: "pppd"},
 		{verify: verifyXL2TPD, code: "xl2tpd", pkg: "xl2tpd", hint: "xl2tpd"},
 	}
 	results := []map[string]any{}
@@ -190,13 +191,6 @@ func ensureL2TPIPsecExternalEgressCapability(ctx context.Context) map[string]any
 				"ok": false, "message": firstNonEmptyAgentString(stringify(result["message"]), check.code+" capability is unavailable"),
 				"components": results,
 			}
-		}
-	}
-	if _, ok := resolveExecutable("pppd"); !ok {
-		result := installUbuntuPackageCapability(ctx, "ppp", "ppp", "pppd", nil)
-		results = append(results, result)
-		if result["ok"] != true {
-			return map[string]any{"ok": false, "message": "pppd capability is unavailable", "components": results}
 		}
 	}
 	if _, ok := resolveExecutable("flock"); !ok {
