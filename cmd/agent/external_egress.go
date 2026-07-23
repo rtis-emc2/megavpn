@@ -21,8 +21,9 @@ import (
 const externalEgressManagedRoot = "/etc/megavpn/external-egress"
 
 var (
-	externalEgressUUIDPattern      = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
-	externalEgressInterfacePattern = regexp.MustCompile(`^mgev[0-9a-f]{10}$`)
+	externalEgressUUIDPattern              = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	externalEgressInterfacePattern         = regexp.MustCompile(`^mgev[0-9a-f]{10}$`)
+	resolveExternalEgressCleanupExecutable = resolveExecutable
 )
 
 type externalEgressJobPayload struct {
@@ -365,9 +366,8 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 				warnings = append(warnings, path+": "+err.Error())
 			}
 		}
-		_, _ = runInstallCommand(ctx, "ipsec", "rereadsecrets")
-		if code, output := runInstallCommand(ctx, "ipsec", "reload"); code != 0 {
-			warnings = append(warnings, "strongSwan reload: "+firstLine(output))
+		if warning := reloadExternalEgressIPsecAfterCleanup(ctx); warning != "" {
+			warnings = append(warnings, warning)
 		}
 	}
 	if _, err := runSystemdDaemonReload(ctx); err != nil {
@@ -379,6 +379,18 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 		return "failed", result
 	}
 	return "succeeded", result
+}
+
+func reloadExternalEgressIPsecAfterCleanup(ctx context.Context) string {
+	ipsecBinary, ok := resolveExternalEgressCleanupExecutable("ipsec")
+	if !ok {
+		return ""
+	}
+	_, _ = runInstallCommand(ctx, ipsecBinary, "rereadsecrets")
+	if code, output := runInstallCommand(ctx, ipsecBinary, "reload"); code != 0 {
+		return "strongSwan reload: " + firstLine(output)
+	}
+	return ""
 }
 
 func decodeExternalEgressJob(j job, st agentState, requireSecrets bool) (externalEgressJobPayload, error) {
@@ -1163,12 +1175,15 @@ func cleanupExternalEgressPolicy(ctx context.Context, payload externalEgressJobP
 	script := filepath.Join(externalEgressManagedDir(payload), "route-policy.sh")
 	if info, err := os.Stat(script); err == nil && info.Mode()&0o111 != 0 {
 		if code, output := runInstallCommand(ctx, script, "cleanup"); code != 0 {
+			if isMissingIPRouteTableOutput(output) {
+				return nil
+			}
 			return fmt.Errorf("external egress policy cleanup failed: %s", firstLine(output))
 		}
 	} else {
 		priority := externalEgressRulePriority(payload.RoutingTable)
 		_, _ = runInstallCommand(ctx, "ip", "rule", "del", "pref", strconv.Itoa(priority), "fwmark", fmt.Sprintf("0x%x", payload.FWMark), "lookup", strconv.Itoa(payload.RoutingTable))
-		if code, output := runInstallCommand(ctx, "ip", "route", "flush", "table", strconv.Itoa(payload.RoutingTable)); code != 0 {
+		if code, output := runInstallCommand(ctx, "ip", "route", "flush", "table", strconv.Itoa(payload.RoutingTable)); code != 0 && !isMissingIPRouteTableOutput(output) {
 			return fmt.Errorf("external egress route cleanup failed: %s", firstLine(output))
 		}
 	}
@@ -1182,13 +1197,19 @@ func cleanupExternalEgressPolicy(ctx context.Context, payload externalEgressJobP
 		return fmt.Errorf("external egress policy rule is still present after cleanup")
 	}
 	code, output = runInstallCommand(ctx, "ip", "route", "show", "table", strconv.Itoa(payload.RoutingTable))
-	if code != 0 {
+	if code != 0 && !isMissingIPRouteTableOutput(output) {
 		return fmt.Errorf("verify external egress route cleanup: %s", firstLine(output))
 	}
-	if strings.TrimSpace(output) != "" {
+	if code == 0 && strings.TrimSpace(output) != "" {
 		return fmt.Errorf("external egress routing table is not empty after cleanup")
 	}
 	return nil
+}
+
+func isMissingIPRouteTableOutput(output string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(output))
+	return strings.Contains(normalized, "fib table does not exist") ||
+		strings.Contains(normalized, "routing table does not exist")
 }
 
 func installExternalEgressFailClosedGuard(ctx context.Context, payload externalEgressJobPayload) error {

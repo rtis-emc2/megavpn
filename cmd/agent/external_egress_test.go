@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -224,6 +225,67 @@ func TestRenderManagedL2TPIPsecConfigRejectsControlCharacters(t *testing.T) {
 	payload.Secrets["preshared_key"] = "provider-psk"
 	if _, _, _, _, err := renderManagedL2TPIPsecConfig(payload); err == nil {
 		t.Fatal("expected a control character in an L2TP secret to be rejected")
+	}
+}
+
+func TestCleanupExternalEgressPolicyTreatsMissingRoutingTableAsClean(t *testing.T) {
+	oldRun := runInstallCommand
+	t.Cleanup(func() { runInstallCommand = oldRun })
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		switch command {
+		case "ip rule del pref 50123 fwmark 0x4d590123 lookup 40123":
+			return 2, "RTNETLINK answers: No such file or directory"
+		case "ip route flush table 40123", "ip route show table 40123":
+			return 2, "Error: ipv4: FIB table does not exist."
+		case "ip rule show":
+			return 0, ""
+		default:
+			t.Fatalf("unexpected cleanup command: %s", command)
+			return 1, "unexpected command"
+		}
+	}
+
+	if err := cleanupExternalEgressPolicy(context.Background(), validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")); err != nil {
+		t.Fatalf("cleanupExternalEgressPolicy returned error for an absent routing table: %v", err)
+	}
+}
+
+func TestMissingIPRouteTableOutput(t *testing.T) {
+	for _, output := range []string{
+		"Error: ipv4: FIB table does not exist.",
+		"Error: ipv6: FIB table does not exist.",
+		"routing table does not exist",
+	} {
+		if !isMissingIPRouteTableOutput(output) {
+			t.Fatalf("missing route table output was not recognized: %q", output)
+		}
+	}
+	if isMissingIPRouteTableOutput("RTNETLINK answers: Operation not permitted") {
+		t.Fatal("permission failure must not be treated as an absent routing table")
+	}
+}
+
+func TestReloadExternalEgressIPsecAfterCleanupSkipsMissingRuntime(t *testing.T) {
+	oldResolve := resolveExternalEgressCleanupExecutable
+	oldRun := runInstallCommand
+	t.Cleanup(func() {
+		resolveExternalEgressCleanupExecutable = oldResolve
+		runInstallCommand = oldRun
+	})
+	resolveExternalEgressCleanupExecutable = func(name string, _ ...string) (string, bool) {
+		if name != "ipsec" {
+			t.Fatalf("unexpected executable lookup: %s", name)
+		}
+		return name, false
+	}
+	runInstallCommand = func(_ context.Context, name string, _ ...string) (int, string) {
+		t.Fatalf("cleanup attempted to execute missing binary: %s", name)
+		return 1, "unexpected command"
+	}
+
+	if warning := reloadExternalEgressIPsecAfterCleanup(context.Background()); warning != "" {
+		t.Fatalf("missing runtime produced cleanup warning: %q", warning)
 	}
 }
 

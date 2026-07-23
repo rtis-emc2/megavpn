@@ -289,7 +289,7 @@ func emergencyCleanupExternalEgressPolicies(ctx context.Context) map[string]any 
 			warnings = append(warnings, "external egress rule cleanup failed: "+firstLine(deleteOutput))
 			continue
 		}
-		if flushCode, flushOutput := runInstallCommand(ctx, "ip", "route", "flush", "table", table); flushCode != 0 {
+		if flushCode, flushOutput := runInstallCommand(ctx, "ip", "route", "flush", "table", table); flushCode != 0 && !isMissingIPRouteTableOutput(flushOutput) {
 			warnings = append(warnings, "external egress route cleanup failed: "+firstLine(flushOutput))
 			continue
 		}

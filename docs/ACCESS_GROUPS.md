@@ -1,6 +1,6 @@
 # Client Access Groups
 
-**Release:** `7.1.1.7`
+**Release:** `7.1.1.8`
 
 Russian companion: [ACCESS_GROUPS_RU.md](ACCESS_GROUPS_RU.md).
 

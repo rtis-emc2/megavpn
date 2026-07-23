@@ -1321,28 +1321,35 @@ func verifyWireGuard(ctx context.Context) map[string]any {
 }
 
 func verifyIPsec(ctx context.Context) map[string]any {
-	version := strings.TrimSpace(firstLine(runCombinedOutput("ipsec", "--version")))
-	if version == "" {
-		version = strings.TrimSpace(firstLine(runOutput("strongswan", "--version")))
+	ipsecPath, ok := resolveExecutable("ipsec")
+	if !ok {
+		return map[string]any{"ok": false, "message": "ipsec binary not found or not executable"}
 	}
+	version := strings.TrimSpace(firstLine(runCombinedOutput(ipsecPath, "--version")))
 	if version == "" {
-		return map[string]any{"ok": false, "message": "ipsec/strongswan binary not found or version unavailable"}
+		return map[string]any{"ok": false, "message": "ipsec binary version is unavailable", "binary_path": ipsecPath}
 	}
 	active := firstKnownActiveState("strongswan", "strongswan-starter", "ipsec")
-	return map[string]any{"ok": true, "message": "ipsec capability verified", "version": version, "systemd_unit": firstKnownUnit("strongswan", "strongswan-starter", "ipsec"), "active_state": active}
+	return map[string]any{
+		"ok": true, "message": "ipsec capability verified", "version": version, "binary_path": ipsecPath,
+		"systemd_unit": firstKnownUnit("strongswan", "strongswan-starter", "ipsec"), "active_state": active,
+	}
 }
 
 func verifyXL2TPD(ctx context.Context) map[string]any {
-	version := strings.TrimSpace(firstLine(runCombinedOutput("xl2tpd", "-v")))
+	xl2tpdPath, ok := resolveExecutable("xl2tpd")
+	if !ok {
+		return map[string]any{"ok": false, "message": "xl2tpd binary not found or not executable"}
+	}
+	version := strings.TrimSpace(firstLine(runCombinedOutput(xl2tpdPath, "-v")))
 	if version == "" {
-		path := strings.TrimSpace(runOutput("which", "xl2tpd"))
-		if path == "" {
-			return map[string]any{"ok": false, "message": "xl2tpd binary not found or version unavailable"}
-		}
-		version = path
+		version = xl2tpdPath
 	}
 	active := firstKnownActiveState("xl2tpd")
-	return map[string]any{"ok": true, "message": "xl2tpd capability verified", "version": version, "systemd_unit": firstKnownUnit("xl2tpd"), "active_state": active}
+	return map[string]any{
+		"ok": true, "message": "xl2tpd capability verified", "version": version, "binary_path": xl2tpdPath,
+		"systemd_unit": firstKnownUnit("xl2tpd"), "active_state": active,
+	}
 }
 
 func verifyHTTPProxy(ctx context.Context) map[string]any {
