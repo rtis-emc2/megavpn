@@ -1,6 +1,6 @@
 # Выход через внешний VPN/Proxy-провайдер
 
-**Релиз:** `7.1.1.12`
+**Релиз:** `7.1.1.13`
 
 External egress profile подключает выбранные группы клиентов к коммерческому
 или стороннему VPN/proxy-провайдеру. Он не заменяет managed Backhaul и не
@@ -126,6 +126,18 @@ config не может запускать локальные команды на
 
 ## Операторский workflow
 
+Страница разделяет два уровня lifecycle:
+
+- `Profiles` содержит переиспользуемые credentials провайдера, endpoint
+  settings и действия `Deploy`, `Edit`, `Delete`.
+- `Deployments` содержит состояние runtime на конкретной node, диагностику и
+  действия `Apply`, `Probe`, `Cleanup`, `Reactivate`, `Remove`.
+
+Во вкладке `Profiles` оператор определяет, что должно подключаться к
+провайдеру. Во вкладке `Deployments` он управляет тем, где профиль установлен.
+Поэтому ошибка runtime одной node больше не сжимает и не перекрывает строку
+переиспользуемого профиля.
+
 1. Откройте `External egress`.
 2. Нажмите `New profile`.
 3. Выберите один из доступных протоколов. Форма перестроится под него.
@@ -133,9 +145,9 @@ config не может запускать локальные команды на
    Для L2TP/IPsec заполните отдельные connection и authentication fields.
 5. Нажмите `Validate settings`, затем сохраните профиль как `Ready to deploy`.
    Внутренний `profile_key` система создаёт сама и оператор его не вводит.
-6. Нажмите `Deploy` и выберите каждую runtime node, где есть Xray/VLESS instance
-   из scope целевой группы.
-7. Дождитесь apply job и выполните `Probe`.
+6. Во вкладке `Profiles` нажмите `Deploy` и выберите каждую runtime node, где
+   есть Xray/VLESS instance из scope целевой группы.
+7. Откройте `Deployments`, дождитесь apply job и выполните `Probe`.
 8. Откройте `Clients -> Groups`, отредактируйте глобальную VLESS access group и
    выберите профиль в поле `External provider gateway`.
 9. Выполните preview/sync группы и проверьте instance apply jobs.

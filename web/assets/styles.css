@@ -54,35 +54,95 @@
 .external-egress-flow strong,
 .external-egress-deployment strong { overflow-wrap: anywhere; }
 .external-egress-flow small,
-.external-egress-deployment small { display: block; color: var(--muted); }
-.external-egress-deployment small.text-danger { color: var(--danger); }
+.external-egress-deployment-issue span { display: block; color: var(--muted); }
 .external-egress-flow > i { align-self: center; color: var(--muted-2); font-style: normal; }
-.table-wrap table.external-egress-table {
-  min-width: 1320px;
+.external-egress-tabs {
+  margin: 0 0 16px;
+}
+.external-egress-tab-panel[hidden] {
+  display: none !important;
+}
+.external-egress-tab-panel {
+  max-width: none;
+}
+.table-wrap table.external-egress-profile-table {
+  min-width: 1160px;
   table-layout: fixed;
 }
-.external-egress-table th:nth-child(1) { width: 180px; }
-.external-egress-table th:nth-child(2) { width: 120px; }
-.external-egress-table th:nth-child(3) { width: 130px; }
-.external-egress-table th:nth-child(4) { width: 220px; }
-.external-egress-table th:nth-child(5) { width: 170px; }
-.external-egress-table th:nth-child(6) { width: 350px; }
-.external-egress-table th:nth-child(7) { width: 150px; }
+.external-egress-profile-table th:nth-child(1) { width: 180px; }
+.external-egress-profile-table th:nth-child(2) { width: 130px; }
+.external-egress-profile-table th:nth-child(3) { width: 220px; }
+.external-egress-profile-table th:nth-child(4) { width: 120px; }
+.external-egress-profile-table th:nth-child(5) { width: 170px; }
+.external-egress-profile-table th:nth-child(6) { width: 150px; }
+.external-egress-profile-table th:nth-child(7) { width: 190px; }
+.table-wrap table.external-egress-deployment-table {
+  min-width: 1180px;
+  table-layout: fixed;
+}
+.external-egress-deployment-table th:nth-child(1) { width: 180px; }
+.external-egress-deployment-table th:nth-child(2) { width: 180px; }
+.external-egress-deployment-table th:nth-child(3) { width: 170px; }
+.external-egress-deployment-table th:nth-child(4) { width: 150px; }
+.external-egress-deployment-table th:nth-child(5) { width: auto; }
+.external-egress-deployment-table th:nth-child(6) { width: 230px; }
 .external-egress-table td {
   min-width: 0;
   overflow-wrap: anywhere;
   vertical-align: top;
 }
-.external-egress-deployments { display: grid; gap: 8px; }
-.external-egress-deployment {
-  display: grid;
-  grid-template-columns: minmax(130px, 1fr) auto auto;
+.external-egress-count-summary,
+.external-egress-status-stack {
+  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.external-egress-deployment-issue {
+  min-width: 0;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-2);
+}
+.external-egress-deployment-issue strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 12px;
+}
+.external-egress-deployment-issue span {
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+  white-space: normal;
+}
+.external-egress-deployment-issue.has-error {
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.05);
+}
+.external-egress-deployment-issue.has-error strong,
+.external-egress-deployment-issue.has-error span {
+  color: var(--danger);
+}
+.table-wrap .external-egress-profile-actions,
+.table-wrap .external-egress-deployment-actions {
+  display: grid;
+  min-width: 0;
+  width: 100%;
+  gap: 6px;
+}
+.table-wrap .external-egress-profile-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.table-wrap .external-egress-deployment-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.table-wrap .external-egress-deployment-actions.is-active button:first-child {
+  grid-column: 1 / -1;
+}
+.external-egress-profile-actions button,
+.external-egress-deployment-actions button {
+  min-width: 0;
+  white-space: nowrap;
 }
 .external-egress-catalog {
   display: grid;
@@ -254,7 +314,6 @@
 @media (max-width: 1500px) {
   .external-egress-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .external-egress-flow > i { display: none; }
-  .external-egress-deployment { grid-template-columns: 1fr; }
 }
 @media (max-width: 1180px) {
   .external-egress-profile-layout {
@@ -314,6 +373,10 @@
   .external-egress-table td[colspan]::before {
     content: none;
   }
+  .table-wrap .external-egress-profile-actions,
+  .table-wrap .external-egress-deployment-actions {
+    max-width: 520px;
+  }
 }
 @media (max-width: 980px) {
   .external-egress-profile-form {
@@ -345,6 +408,11 @@
   .external-egress-table td {
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+  .table-wrap .external-egress-profile-actions,
+  .table-wrap .external-egress-deployment-actions {
+    grid-template-columns: 1fr;
+    max-width: none;
   }
   .external-egress-import-control textarea {
     min-height: 180px;

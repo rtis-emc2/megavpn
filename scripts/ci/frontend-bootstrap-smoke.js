@@ -383,6 +383,56 @@ async function main() {
   assert.strictEqual(resolveImportFormat('l2tp_ipsec', 'server=vpn.example.com'), 'key_value');
   assert.strictEqual(resolveImportFormat('socks5'), 'structured', 'planned structured protocols must not be rewritten as URL imports');
 
+  const externalEgressState = {
+    externalEgressTab: 'profiles',
+    externalEgressCatalog: [{ code: 'l2tp_ipsec', label: 'L2TP over IPsec', notes: 'Provider tunnel' }],
+    externalEgressProfiles: [{
+      id: 'profile-1',
+      display_name: 'Provider gateway',
+      protocol: 'l2tp_ipsec',
+      status: 'active',
+      runtime_support: 'ready',
+      endpoint_host: 'vpn.example.test',
+      endpoint_port: 1701,
+      transport: 'udp_ipsec',
+      secret_purposes: ['config', 'username'],
+      deployments: [{
+        id: 'deployment-1',
+        node_id: 'node-1',
+        node_name: 'ingress-1',
+        interface_name: 'mgev123',
+        routing_table: 43123,
+        status: 'failed',
+        desired_status: 'active',
+        last_error: 'runtime dependency unavailable',
+      }],
+    }],
+  };
+  const externalEgressPage = windowObject.MegaVPNExternalEgressPage.create({
+    state: externalEgressState,
+    setTitle: () => {},
+    el: elementForID,
+    statusTag: (value) => `<span>${String(value)}</span>`,
+    escapeHTML: (value) => String(value ?? ''),
+    formatDate: (value) => String(value ?? ''),
+    hasPermission: () => true,
+    requestJSON: async () => ({}),
+    sendJSON: async () => ({}),
+    refresh: async () => {},
+    openModal: () => {},
+    closeModal: () => {},
+    renderActionResponse: () => '',
+    openActionOutcomeModal: () => {},
+  });
+  externalEgressPage.render();
+  const externalEgressHTML = elementForID('content').innerHTML;
+  assert.match(externalEgressHTML, /data-external-egress-tab="profiles"/);
+  assert.match(externalEgressHTML, /data-external-egress-tab="deployments"/);
+  assert.match(externalEgressHTML, /external-egress-profile-table/);
+  assert.match(externalEgressHTML, /external-egress-deployment-table/);
+  assert.doesNotMatch(externalEgressHTML, /Profiles and deployments/, 'profile and deployment responsibilities must remain separate');
+  assert.match(externalEgressHTML, /Deployment requires attention/);
+
   const shellUI = windowObject.MegaVPNShellUI.create({
     state: {},
     navGroups: [],

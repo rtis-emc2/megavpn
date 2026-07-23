@@ -1,6 +1,6 @@
 # External Provider Egress
 
-**Release:** `7.1.1.12`
+**Release:** `7.1.1.13`
 
 External egress profiles connect selected client access groups to a commercial
 or third-party VPN/proxy provider. They do not replace managed Backhaul and they
@@ -130,6 +130,17 @@ provider configs cannot execute node-local commands.
 
 ## Operator Workflow
 
+The page separates two lifecycle levels:
+
+- `Profiles` contains reusable provider credentials, endpoint settings and the
+  `Deploy`, `Edit` and `Delete` actions.
+- `Deployments` contains node-specific runtime state, diagnostics and the
+  `Apply`, `Probe`, `Cleanup`, `Reactivate` and `Remove` actions.
+
+Use `Profiles` to define what must connect to the provider. Use `Deployments`
+to operate where that profile is installed. A failed node runtime therefore
+does not compress or obscure the reusable profile row.
+
 1. Open `External egress`.
 2. Select `New profile`.
 3. Choose an available provider protocol. The form is rebuilt for that protocol.
@@ -137,9 +148,9 @@ provider configs cannot execute node-local commands.
    For L2TP/IPsec, fill the dedicated connection and authentication fields.
 5. Select `Validate settings`, then save the profile as `Ready to deploy`.
    The system generates the internal `profile_key`; operators do not enter it.
-6. Select `Deploy` and choose every runtime node hosting an Xray/VLESS instance
-   that the target access group can use.
-7. Wait for the deployment apply job and run `Probe`.
+6. On `Profiles`, select `Deploy` and choose every runtime node hosting an
+   Xray/VLESS instance that the target access group can use.
+7. Open `Deployments`, wait for the apply job and run `Probe`.
 8. Open `Clients -> Groups`, edit the global VLESS access group and select the
    profile in `External provider gateway`.
 9. Preview/sync the group and verify instance apply jobs.

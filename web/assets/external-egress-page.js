@@ -36,31 +36,28 @@
       return `${profile.endpoint_host}${profile.endpoint_port ? `:${profile.endpoint_port}` : ''}${profile.transport ? ` · ${profile.transport}` : ''}`;
     }
 
-    function deploymentRows(profile) {
-      const deployments = Array.isArray(profile.deployments) ? profile.deployments : [];
-      if (!deployments.length) return '<div class="metric-caption">Not deployed on runtime nodes.</div>';
-      return deployments.map((deployment) => {
-        const inactive = deployment.status === 'inactive' && deployment.desired_status === 'inactive';
-        const actions = inactive
-          ? `
-            <button class="primary-btn external-egress-apply-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Reactivate</button>
-            <button class="danger-btn external-egress-remove-deployment-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}" data-node-name="${escapeHTML(deployment.node_name || deployment.node_id)}"${canManage() ? '' : ' disabled'}>Remove deployment</button>`
-          : `
-            <button class="secondary-btn external-egress-probe-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Probe</button>
-            <button class="primary-btn external-egress-apply-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Apply</button>
-            <button class="danger-btn external-egress-cleanup-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Cleanup</button>`;
-        return `
-          <div class="external-egress-deployment">
-            <div>
-              <strong>${escapeHTML(deployment.node_name || deployment.node_id)}</strong>
-              <small><code>${escapeHTML(deployment.interface_name || 'pending')}</code> · table ${escapeHTML(deployment.routing_table || 'auto')}</small>
-              ${inactive ? '<small>Runtime is clean. Reactivate it or remove this node deployment.</small>' : ''}
-              ${deployment.last_error ? `<small class="text-danger">${escapeHTML(deployment.last_error)}</small>` : ''}
-            </div>
-            ${statusTag(deployment.status || 'unknown')}
-            <div class="table-actions compact-actions">${actions}</div>
-          </div>`;
-      }).join('');
+    function profileDeployments(profile) {
+      return (Array.isArray(profile?.deployments) ? profile.deployments : [])
+        .filter((deployment) => deployment.status !== 'deleted');
+    }
+
+    function deploymentRecords() {
+      return (state.externalEgressProfiles || []).flatMap((profile) => (
+        profileDeployments(profile).map((deployment) => ({ profile, deployment }))
+      ));
+    }
+
+    function deploymentSummary(profile) {
+      const deployments = profileDeployments(profile);
+      if (!deployments.length) return '<span class="tag">0 nodes</span>';
+      const attention = deployments.filter(({ status, last_error: lastError }) => (
+        Boolean(lastError) || ['failed', 'degraded'].includes(String(status || '').toLowerCase())
+      )).length;
+      return `
+        <div class="external-egress-count-summary">
+          <span class="tag">${escapeHTML(String(deployments.length))} nodes</span>
+          ${attention ? `<span class="tag danger">${escapeHTML(String(attention))} need attention</span>` : '<span class="tag ok">healthy</span>'}
+        </div>`;
     }
 
     function profileRows() {
@@ -70,12 +67,12 @@
         <tr>
           <td data-label="Profile"><strong>${escapeHTML(profile.display_name || protocolLabel(profile.protocol))}</strong>${profile.description ? `<div class="timeline-meta">${escapeHTML(profile.description)}</div>` : ''}</td>
           <td data-label="Protocol"><strong>${escapeHTML(protocolLabel(profile.protocol))}</strong><div class="timeline-meta">${escapeHTML(profile.transport || 'n/a')}</div></td>
-          <td data-label="Status">${statusTag(profile.status || 'unknown')}</td>
           <td data-label="Endpoint"><code>${escapeHTML(endpoint(profile))}</code></td>
+          <td data-label="Status">${statusTag(profile.status || 'unknown')}</td>
+          <td data-label="Deployments">${deploymentSummary(profile)}</td>
           <td data-label="Secrets">${(profile.secret_purposes || []).map((purpose) => `<span class="tag">${escapeHTML(purpose)}</span>`).join(' ') || '<span class="tag">none</span>'}</td>
-          <td data-label="Node deployments"><div class="external-egress-deployments">${deploymentRows(profile)}</div></td>
           <td data-label="Actions">
-            <div class="table-actions compact-actions">
+            <div class="table-actions compact-actions external-egress-profile-actions">
               <button class="primary-btn external-egress-deploy-btn" type="button" data-profile-id="${escapeHTML(profile.id)}"${canManage() && profile.status === 'active' && profile.runtime_support === 'ready' ? '' : ' disabled'}>Deploy</button>
               <button class="secondary-btn external-egress-edit-btn" type="button" data-profile-id="${escapeHTML(profile.id)}"${canManage() && profile.runtime_support === 'ready' ? '' : ' disabled'}>Edit</button>
               <button class="danger-btn external-egress-delete-btn" type="button" data-profile-id="${escapeHTML(profile.id)}"${canManage() ? '' : ' disabled'}>Delete</button>
@@ -84,9 +81,63 @@
         </tr>`).join('');
     }
 
+    function deploymentRows() {
+      const records = deploymentRecords();
+      if (!records.length) return '<tr><td colspan="6"><div class="empty"><strong>No node deployments yet</strong><span>Open Profiles and deploy a provider configuration to a runtime node.</span></div></td></tr>';
+      return records.map(({ profile, deployment }) => {
+        const inactive = deployment.status === 'inactive' && deployment.desired_status === 'inactive';
+        const actions = inactive
+          ? `
+            <button class="primary-btn external-egress-apply-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Reactivate</button>
+            <button class="danger-btn external-egress-remove-deployment-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}" data-node-name="${escapeHTML(deployment.node_name || deployment.node_id)}"${canManage() ? '' : ' disabled'}>Remove</button>`
+          : `
+            <button class="primary-btn external-egress-apply-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Apply</button>
+            <button class="secondary-btn external-egress-probe-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Probe</button>
+            <button class="danger-btn external-egress-cleanup-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Cleanup</button>`;
+        const desiredStatus = deployment.desired_status && deployment.desired_status !== deployment.status
+          ? `<span class="tag">desired: ${escapeHTML(deployment.desired_status)}</span>`
+          : '';
+        return `
+          <tr>
+            <td data-label="Node"><strong>${escapeHTML(deployment.node_name || deployment.node_id)}</strong><div class="timeline-meta">${escapeHTML(deployment.node_id || '')}</div></td>
+            <td data-label="Profile"><strong>${escapeHTML(profile.display_name || protocolLabel(profile.protocol))}</strong><div class="timeline-meta">${escapeHTML(protocolLabel(profile.protocol))}</div></td>
+            <td data-label="Runtime"><code>${escapeHTML(deployment.interface_name || 'pending')}</code><div class="timeline-meta">routing table ${escapeHTML(deployment.routing_table || 'auto')}</div></td>
+            <td data-label="Status"><div class="external-egress-status-stack">${statusTag(deployment.status || 'unknown')}${desiredStatus}</div></td>
+            <td data-label="Issue">
+              <div class="external-egress-deployment-issue${deployment.last_error ? ' has-error' : ''}">
+                <strong>${deployment.last_error ? 'Deployment requires attention' : inactive ? 'Runtime is clean' : 'No active issue'}</strong>
+                <span>${escapeHTML(deployment.last_error || (inactive ? 'Reactivate this runtime or remove the deployment from the node.' : 'The latest observed deployment state has no reported error.'))}</span>
+              </div>
+            </td>
+            <td data-label="Actions"><div class="table-actions compact-actions external-egress-deployment-actions${inactive ? '' : ' is-active'}">${actions}</div></td>
+          </tr>`;
+      }).join('');
+    }
+
+    function pageTabs(activeTab) {
+      const profiles = Array.isArray(state.externalEgressProfiles) ? state.externalEgressProfiles : [];
+      const deployments = deploymentRecords();
+      const attention = deployments.filter(({ deployment }) => (
+        Boolean(deployment.last_error) || ['failed', 'degraded'].includes(String(deployment.status || '').toLowerCase())
+      )).length;
+      return `
+        <nav class="page-tabs control-tabs external-egress-tabs" role="tablist" aria-label="External egress sections">
+          <button class="page-tab${activeTab === 'profiles' ? ' is-active' : ''}" type="button" role="tab" aria-selected="${activeTab === 'profiles' ? 'true' : 'false'}" data-external-egress-tab="profiles">
+            <span>Profiles <em>${escapeHTML(String(profiles.length))}</em></span>
+            <small>Provider credentials and endpoints</small>
+          </button>
+          <button class="page-tab${activeTab === 'deployments' ? ' is-active' : ''}" type="button" role="tab" aria-selected="${activeTab === 'deployments' ? 'true' : 'false'}" data-external-egress-tab="deployments">
+            <span>Deployments <em>${escapeHTML(String(deployments.length))}</em></span>
+            <small>${attention ? `${escapeHTML(String(attention))} require attention` : 'Runtime state by node'}</small>
+          </button>
+        </nav>`;
+    }
+
     function render() {
       setTitle('External egress');
       const catalog = Array.isArray(state.externalEgressCatalog) ? state.externalEgressCatalog : [];
+      const activeTab = state.externalEgressTab === 'deployments' ? 'deployments' : 'profiles';
+      const deploymentCount = deploymentRecords().length;
       el('content').innerHTML = `
         <section class="section-card external-egress-summary">
           <div class="section-head">
@@ -106,19 +157,32 @@
             <i>→</i><div><span>4</span><strong>Provider gateway</strong><small>L2TP/IPsec, VLESS, Shadowsocks, OpenVPN or WireGuard</small></div>
           </div>
         </section>
-        <section class="table-card">
-          <div class="table-head"><div><h2>Profiles and deployments</h2><p class="table-subtitle">A profile stores encrypted provider credentials. A deployment materializes it on one node. Profile changes mark existing deployments pending until Apply completes.</p></div><span class="tag">${escapeHTML(String((state.externalEgressProfiles || []).length))} profiles</span></div>
-          <div class="table-wrap external-egress-table-wrap"><table class="external-egress-table"><thead><tr><th>Profile</th><th>Protocol</th><th>Status</th><th>Endpoint</th><th>Secrets</th><th>Node deployments</th><th>Actions</th></tr></thead><tbody>${profileRows()}</tbody></table></div>
-        </section>
-        <section class="table-card">
-          <div class="table-head"><div><h2>Available protocols</h2><p class="table-subtitle">Every protocol shown here can be configured and deployed on a managed node.</p></div></div>
-          <div class="external-egress-catalog">${catalog.map((item) => `
-            <article><div><strong>${escapeHTML(item.label)}</strong></div><small>${escapeHTML(item.notes || '')}</small></article>`).join('')}</div>
-        </section>`;
+        ${pageTabs(activeTab)}
+        <div class="external-egress-tab-panel bounded-stack" data-external-egress-panel="profiles"${activeTab === 'profiles' ? '' : ' hidden'}>
+          <section class="table-card">
+            <div class="table-head"><div><h2>Provider profiles</h2><p class="table-subtitle">Encrypted provider credentials and connection endpoints. Deploy a profile to one or more runtime nodes.</p></div><span class="tag">${escapeHTML(String((state.externalEgressProfiles || []).length))} profiles</span></div>
+            <div class="table-wrap external-egress-table-wrap"><table class="external-egress-table external-egress-profile-table"><thead><tr><th>Profile</th><th>Protocol</th><th>Endpoint</th><th>Status</th><th>Deployments</th><th>Secrets</th><th>Actions</th></tr></thead><tbody>${profileRows()}</tbody></table></div>
+          </section>
+          <section class="table-card">
+            <div class="table-head"><div><h2>Available protocols</h2><p class="table-subtitle">Every protocol shown here can be configured and deployed on a managed node.</p></div></div>
+            <div class="external-egress-catalog">${catalog.map((item) => `
+              <article><div><strong>${escapeHTML(item.label)}</strong></div><small>${escapeHTML(item.notes || '')}</small></article>`).join('')}</div>
+          </section>
+        </div>
+        <div class="external-egress-tab-panel bounded-stack" data-external-egress-panel="deployments"${activeTab === 'deployments' ? '' : ' hidden'}>
+          <section class="table-card">
+            <div class="table-head"><div><h2>Node deployments</h2><p class="table-subtitle">Apply, inspect or clean provider runtimes independently from their reusable profiles.</p></div><span class="tag">${escapeHTML(String(deploymentCount))} deployments</span></div>
+            <div class="table-wrap external-egress-table-wrap"><table class="external-egress-table external-egress-deployment-table"><thead><tr><th>Node</th><th>Profile</th><th>Runtime</th><th>Status</th><th>Issue</th><th>Actions</th></tr></thead><tbody>${deploymentRows()}</tbody></table></div>
+          </section>
+        </div>`;
       bindActions();
     }
 
     function bindActions() {
+      document.querySelectorAll('[data-external-egress-tab]').forEach((button) => button.addEventListener('click', () => {
+        state.externalEgressTab = button.dataset.externalEgressTab === 'deployments' ? 'deployments' : 'profiles';
+        render();
+      }));
       document.getElementById('externalEgressCreateBtn')?.addEventListener('click', () => openProfileEditor(null));
       document.querySelectorAll('.external-egress-edit-btn').forEach((button) => button.addEventListener('click', () => openProfileEditor(profileByID(button.dataset.profileId))));
       document.querySelectorAll('.external-egress-deploy-btn').forEach((button) => button.addEventListener('click', () => openDeployModal(profileByID(button.dataset.profileId))));

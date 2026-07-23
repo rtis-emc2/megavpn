@@ -42,6 +42,7 @@
       backhaulDrivers: [],
       externalEgressProfiles: [],
       externalEgressCatalog: [],
+      externalEgressTab: 'profiles',
       servicesCatalog: [],
       servicePacks: [],
       servicePackCatalog: [],
