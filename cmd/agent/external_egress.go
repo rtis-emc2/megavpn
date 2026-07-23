@@ -1727,7 +1727,7 @@ func installExternalEgressFailClosedGuard(ctx context.Context, payload externalE
 	table := strconv.Itoa(payload.RoutingTable)
 	priority := strconv.Itoa(externalEgressRulePriority(payload.RoutingTable))
 	mark := fmt.Sprintf("0x%x", payload.FWMark)
-	if code, output := runInstallCommand(ctx, "ip", "route", "flush", "table", table); code != 0 {
+	if code, output := runInstallCommand(ctx, "ip", "route", "flush", "table", table); code != 0 && !isMissingIPRouteTableOutput(output) {
 		return fmt.Errorf("flush external egress routing table: %s", firstLine(output))
 	}
 	if code, output := runInstallCommand(ctx, "ip", "route", "replace", "unreachable", "default", "metric", "32767", "table", table); code != 0 {

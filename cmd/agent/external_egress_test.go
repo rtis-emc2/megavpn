@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -266,6 +267,59 @@ func TestMissingIPRouteTableOutput(t *testing.T) {
 	}
 	if isMissingIPRouteTableOutput("RTNETLINK answers: Operation not permitted") {
 		t.Fatal("permission failure must not be treated as an absent routing table")
+	}
+}
+
+func TestInstallExternalEgressFailClosedGuardCreatesMissingRoutingTable(t *testing.T) {
+	oldRun := runInstallCommand
+	t.Cleanup(func() { runInstallCommand = oldRun })
+	commands := []string{}
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		commands = append(commands, command)
+		switch command {
+		case "ip route flush table 40123":
+			return 2, "Error: ipv4: FIB table does not exist."
+		case "ip route replace unreachable default metric 32767 table 40123":
+			return 0, ""
+		case "ip rule del pref 50123 fwmark 0x4d590123 lookup 40123":
+			return 2, "RTNETLINK answers: No such file or directory"
+		case "ip rule add pref 50123 fwmark 0x4d590123 lookup 40123":
+			return 0, ""
+		default:
+			t.Fatalf("unexpected guard command: %s", command)
+			return 1, "unexpected command"
+		}
+	}
+
+	if err := installExternalEgressFailClosedGuard(context.Background(), validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")); err != nil {
+		t.Fatalf("installExternalEgressFailClosedGuard returned error for an absent routing table: %v", err)
+	}
+	want := []string{
+		"ip route flush table 40123",
+		"ip route replace unreachable default metric 32767 table 40123",
+		"ip rule del pref 50123 fwmark 0x4d590123 lookup 40123",
+		"ip rule add pref 50123 fwmark 0x4d590123 lookup 40123",
+	}
+	if !slices.Equal(commands, want) {
+		t.Fatalf("guard commands = %#v, want %#v", commands, want)
+	}
+}
+
+func TestInstallExternalEgressFailClosedGuardRejectsRouteFlushFailure(t *testing.T) {
+	oldRun := runInstallCommand
+	t.Cleanup(func() { runInstallCommand = oldRun })
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		if command != "ip route flush table 40123" {
+			t.Fatalf("unexpected guard command after route flush failure: %s", command)
+		}
+		return 2, "RTNETLINK answers: Operation not permitted"
+	}
+
+	err := installExternalEgressFailClosedGuard(context.Background(), validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n"))
+	if err == nil || !strings.Contains(err.Error(), "Operation not permitted") {
+		t.Fatalf("route flush permission error = %v", err)
 	}
 }
 
