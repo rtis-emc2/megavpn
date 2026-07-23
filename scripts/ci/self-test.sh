@@ -178,15 +178,7 @@ require_binary_version_commands() {
 }
 
 require_shell_syntax() {
-	local file
-	while IFS= read -r -d '' file; do
-		bash -n "$file"
-	done < <(
-		{
-			find scripts deploy -type f -name '*.sh' -print0
-			[[ ! -f deploy-local.sh ]] || printf '%s\0' deploy-local.sh
-		} | sort -z
-	)
+	scripts/ci/shell-scripts-audit.sh
 }
 
 require_actions_pinning() {
@@ -206,14 +198,11 @@ require_control_plane_install_validation() {
 }
 
 require_frontend_js_syntax() {
-  local file
   if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
-    skip_check "node is unavailable; web/assets/*.js syntax check was not run"
+    skip_check "node is unavailable; JavaScript scripts audit was not run"
     return 77
   fi
-  for file in web/assets/*.js; do
-    "$NODE_BIN" --check "$file"
-  done
+  MEGAVPN_RELEASE_NODE_BIN="$NODE_BIN" scripts/ci/javascript-scripts-audit.sh
 }
 
 require_frontend_bootstrap_smoke() {
@@ -226,6 +215,10 @@ require_frontend_bootstrap_smoke() {
 
 require_install_web_wrapper_smoke() {
   scripts/ci/install-web-wrapper-smoke.sh
+}
+
+require_ops_script_safety_smoke() {
+  scripts/ci/ops-script-safety-smoke.sh
 }
 
 require_service_pack_smoke_regression() {
@@ -469,9 +462,10 @@ run_check "binary-version-commands" "All operational binaries print version and 
 run_check "shell-syntax" "Shell scripts parse under bash -n" require_shell_syntax
 run_check "actions-pinning" "GitHub Actions use pinned commit SHA refs" require_actions_pinning
 run_check "control-plane-install-validation" "Control Plane installer validates non-interactive clean-install inputs" require_control_plane_install_validation
-run_check "frontend-js-syntax" "Static Web UI JavaScript parses under node --check" require_frontend_js_syntax
+run_check "frontend-js-syntax" "Web UI and operational JavaScript parse under node --check" require_frontend_js_syntax
 run_check "frontend-bootstrap-smoke" "Static Web UI assets bootstrap with browser-like runtime dependencies" require_frontend_bootstrap_smoke
 run_check "install-web-wrapper-smoke" "Deploy Web UI wrapper copies static frontend assets from the repository root" require_install_web_wrapper_smoke
+run_check "ops-script-safety-smoke" "Destructive ops scripts reject unsafe targets and malicious archives" require_ops_script_safety_smoke
 run_check "service-pack-smoke-regression" "Service-pack smoke script handles matrix planning, provision apply, artifacts and cleanup against a mock API" require_service_pack_smoke_regression
 run_check "frontend-asset-manifest" "Static Web UI index references only existing assets" require_frontend_asset_manifest
 run_check "frontend-page-module-exports" "Static Web UI page modules export the create contract expected by app.js" require_frontend_page_module_exports

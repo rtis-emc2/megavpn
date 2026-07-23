@@ -86,27 +86,19 @@ jobs:
           node-version: "24"
 
       - name: Check shell syntax
-        run: |
-          set -euo pipefail
-          while IFS= read -r -d '' file; do
-            bash -n "$file"
-          done < <(
-            {
-              find scripts deploy -type f -name '*.sh' -print0
-              [[ ! -f deploy-local.sh ]] || printf '%s\0' deploy-local.sh
-            } | sort -z
-          )
+        run: scripts/ci/shell-scripts-audit.sh
 
-      - name: Check Web UI JavaScript syntax
-        run: |
-          set -euo pipefail
-          find web/assets -maxdepth 1 -type f -name '*.js' -print0 | sort -z | xargs -0 -n1 node --check
+      - name: Check JavaScript scripts
+        run: scripts/ci/javascript-scripts-audit.sh
 
       - name: Check GitHub Actions pinning
         run: scripts/ci/actions-pinning-check.sh
 
       - name: Documentation consistency
         run: scripts/ci/docs-consistency.sh
+
+      - name: Check destructive operations script safety
+        run: scripts/ci/ops-script-safety-smoke.sh
 
   diagnostics:
     name: Self-test diagnostics

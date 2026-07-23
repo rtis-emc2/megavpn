@@ -1,6 +1,6 @@
 # Operations Runbook
 
-**Release:** `7.1.1.15`
+**Release:** `7.1.1.16`
 
 ## Deployment Model
 
@@ -99,10 +99,10 @@ git clone --mirror <remote-url> megavpn-history-backup.git
 git status --short
 git checkout --orphan release-clean
 git add -A
-git commit -m "Release 7.1.1.15 clean import"
-git tag -f v7.1.1.15
+git commit -m "Release 7.1.1.16 clean import"
+git tag -f v7.1.1.16
 git push --force-with-lease origin release-clean:main
-git push --force-with-lease origin v7.1.1.15
+git push --force-with-lease origin v7.1.1.16
 ```
 
 Recovery plan:
@@ -127,6 +127,12 @@ sudo MEGAVPN_DATABASE_DSN='postgres://...' \
 
 The master key is not included by default. Store its SHA-256 and sealed copy separately. Losing the key makes encrypted secrets, certificates and bootstrap material unrecoverable.
 
+Backup input trees may contain only independent regular files and directories.
+The backup command rejects symbolic links, multi-link regular files, device
+nodes, sockets and FIFOs before
+`pg_dump`, so an unexpected filesystem object cannot redirect archive reads
+outside the configured artifact or configuration root.
+
 ## Restore Drill
 
 Never drill restore into production. Use a separate disposable database:
@@ -137,6 +143,13 @@ MEGAVPN_DATABASE_DSN='postgres://restore-target...' \
 MEGAVPN_ARTIFACT_ROOT=/tmp/megavpn-artifacts-restore \
 scripts/ops/restore.sh /var/backups/megavpn/megavpn-backup-YYYYmmdd-HHMMSS.tar.gz
 ```
+
+Restore targets must be explicit safe absolute paths below an operator-selected
+directory. Filesystem root and protected system roots such as `/etc`, `/usr`,
+`/var` and `/opt` are rejected as direct targets. The restore command copies the
+input archive into a private workspace and validates both the outer backup and
+the nested artifact archive before `pg_restore`. Absolute paths, parent
+traversal, symbolic or hard links and special files fail closed.
 
 Pass criteria:
 

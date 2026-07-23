@@ -1,6 +1,6 @@
 # Self-Testing
 
-**Release:** `7.1.1.15`
+**Release:** `7.1.1.16`
 
 `scripts/ci/self-test.sh` is the broad diagnostic entrypoint for release readiness. It differs from `scripts/ci/release-gate.sh`: the release gate is fail-fast, while self-test keeps running independent gates and writes a report that separates working, failing and not-tested areas.
 
@@ -26,10 +26,11 @@ Local gates:
 - `go-build`
 - `binary-version-commands`
 - `shell-syntax`
+- `frontend-js-syntax`, when `node` is installed
+- `ops-script-safety-smoke`
 - `actions-pinning`
 - `docs-consistency`
 - `control-plane-install-validation`
-- `frontend-js-syntax`, when `node` is installed
 - `frontend-bootstrap-smoke`, when `node` is installed
 - `service-pack-smoke-regression`, when `node` is installed
 - `static-security-patterns`
@@ -49,6 +50,22 @@ The `control-plane-install-validation` gate runs the Control Plane installer in
 validate-only mode with non-interactive clean-install inputs. It verifies that
 the installer accepts a production-shaped configuration without requiring root
 writes, systemd changes, package installation or network access.
+
+The `shell-syntax` gate delegates to `scripts/ci/shell-scripts-audit.sh`. It
+checks every shell entrypoint under `scripts/`, `deploy/` and the root
+`deploy-local.sh`, verifies supported shebangs, executable modes and root
+compatibility-wrapper targets.
+
+The `frontend-js-syntax` gate delegates to
+`scripts/ci/javascript-scripts-audit.sh`. It checks Web UI assets and every
+JavaScript utility under `scripts/` and `deploy/`, then verifies that root
+JavaScript compatibility wrappers resolve to executable CI targets.
+
+The `ops-script-safety-smoke` gate exercises destructive operational boundaries
+without a live database. It verifies that Web UI and Control Plane installers
+reject unsafe roots, restore rejects traversal, links and special files before
+`pg_restore`, nested artifact archives receive the same validation, and backup
+rejects unsafe artifact trees before `pg_dump`.
 
 The `service-pack-smoke-regression` gate runs `scripts/smoke/service-pack-smoke.sh`
 against a local mock API. It verifies matrix `--plan` filters, unknown pack

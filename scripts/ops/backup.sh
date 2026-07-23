@@ -23,7 +23,7 @@ require_command() {
 }
 
 is_enabled() {
-  case "${1,,}" in
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|y|on)
       return 0
       ;;
@@ -45,10 +45,30 @@ sha256_file() {
   printf 'unavailable'
 }
 
+reject_unsafe_archive_entries() {
+  local label="$1"
+  local root="$2"
+  local unsafe
+  unsafe="$(
+    find "$root" \
+      \( -type l -o -type b -o -type c -o -type p -o -type s -o \( -type f -links +1 \) \) \
+      -print -quit
+  )"
+  [[ -z "$unsafe" ]] || die "$label contains a link or special file: $unsafe"
+}
+
 [[ -n "$DATABASE_DSN" ]] || die "MEGAVPN_DATABASE_DSN or MEGAVPN_DATABASE_URL is required"
 
 require_command pg_dump
 require_command tar
+require_command find
+
+if [[ -d "$ARTIFACT_ROOT" ]]; then
+  reject_unsafe_archive_entries "artifact root" "$ARTIFACT_ROOT"
+fi
+if is_enabled "$INCLUDE_CONFIG" && [[ -d "$CONFIG_DIR" ]]; then
+  reject_unsafe_archive_entries "config directory" "$CONFIG_DIR"
+fi
 
 timestamp="$(date -u +%Y%m%d-%H%M%S)"
 hostname_value="$(hostname 2>/dev/null || printf 'unknown')"

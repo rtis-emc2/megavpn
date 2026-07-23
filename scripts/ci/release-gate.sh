@@ -107,15 +107,7 @@ require_version_tag_consistency() {
 }
 
 require_shell_syntax() {
-  local file
-  while IFS= read -r -d '' file; do
-    bash -n "$file"
-  done < <(
-    {
-      find scripts deploy -type f -name '*.sh' -print0
-      [[ ! -f deploy-local.sh ]] || printf '%s\0' deploy-local.sh
-    } | sort -z
-  )
+  scripts/ci/shell-scripts-audit.sh
 }
 
 require_actions_pinning() {
@@ -123,7 +115,7 @@ require_actions_pinning() {
 }
 
 require_frontend_js_syntax() {
-  find web/assets -maxdepth 1 -name '*.js' -print0 | xargs -0 -n1 "$NODE_BIN" --check
+  MEGAVPN_RELEASE_NODE_BIN="$NODE_BIN" scripts/ci/javascript-scripts-audit.sh
 }
 
 run_frontend_bootstrap_smoke() {
@@ -132,6 +124,10 @@ run_frontend_bootstrap_smoke() {
 
 run_install_web_wrapper_smoke() {
   scripts/ci/install-web-wrapper-smoke.sh
+}
+
+run_ops_script_safety_smoke() {
+  scripts/ci/ops-script-safety-smoke.sh
 }
 
 run_service_pack_smoke_regression() {
@@ -273,6 +269,7 @@ run_gate "docs-consistency" require_docs_consistency
 run_gate "control-plane-install-validation" require_control_plane_install_validation
 run_gate "smoke-auth-coverage" require_smoke_auth_coverage
 run_gate "install-web-wrapper-smoke" run_install_web_wrapper_smoke
+run_gate "ops-script-safety-smoke" run_ops_script_safety_smoke
 if command -v "$NODE_BIN" >/dev/null 2>&1; then
   run_gate "frontend-js-syntax" require_frontend_js_syntax
   run_gate "frontend-bootstrap-smoke" run_frontend_bootstrap_smoke

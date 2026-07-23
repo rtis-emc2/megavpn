@@ -24,7 +24,7 @@ require_command() {
 }
 
 is_enabled() {
-  case "${1,,}" in
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|y|on)
       return 0
       ;;
@@ -34,25 +34,88 @@ is_enabled() {
   esac
 }
 
+require_safe_restore_target() {
+  local label="$1"
+  local value="$2"
+  if [[ "$value" != /* ||
+        "$value" == "/" ||
+        "$value" == *"/./"* ||
+        "$value" == */. ||
+        "$value" == *"/../"* ||
+        "$value" == */.. ]]; then
+    die "$label must be a safe absolute path: $value"
+  fi
+  case "$value" in
+    /bin|/boot|/dev|/etc|/home|/lib|/lib64|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var|/Applications|/Library|/System|/Users|/private)
+      die "$label cannot be a protected system path: $value"
+      ;;
+  esac
+}
+
+validate_tar_archive() {
+  local archive="$1"
+  local label="$2"
+  local listing="$3"
+  local verbose_listing="$4"
+  local entry normalized line type
+
+  tar -tzf "$archive" >"$listing" || die "$label cannot be listed"
+  while IFS= read -r entry || [[ -n "$entry" ]]; do
+    normalized="$entry"
+    while [[ "$normalized" == ./* ]]; do
+      normalized="${normalized#./}"
+    done
+    if [[ "$normalized" == /* || "/$normalized/" == *"/../"* ]]; then
+      die "$label contains an unsafe path: $entry"
+    fi
+  done <"$listing"
+
+  tar -tvzf "$archive" >"$verbose_listing" || die "$label metadata cannot be listed"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" ]] || continue
+    type="${line:0:1}"
+    case "$type" in
+      -|d)
+        ;;
+      *)
+        die "$label contains a link or special file"
+        ;;
+    esac
+  done <"$verbose_listing"
+}
+
 [[ -n "$BACKUP_ARCHIVE" ]] || die "backup archive path is required"
 [[ -f "$BACKUP_ARCHIVE" ]] || die "backup archive does not exist: $BACKUP_ARCHIVE"
 [[ -n "$DATABASE_DSN" ]] || die "MEGAVPN_DATABASE_DSN or MEGAVPN_DATABASE_URL is required"
 is_enabled "$CONFIRM" || die "restore is destructive; set MEGAVPN_RESTORE_CONFIRM=1"
+require_safe_restore_target "artifact root" "$ARTIFACT_ROOT"
+if is_enabled "$RESTORE_MASTER_KEY"; then
+  [[ -n "$MASTER_KEY_PATH" ]] || die "MEGAVPN_MASTER_KEY_PATH is required to restore master key"
+  require_safe_restore_target "master key path" "$MASTER_KEY_PATH"
+fi
 
 require_command pg_restore
 require_command tar
 
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
-tar -C "$workdir" -xzf "$BACKUP_ARCHIVE"
+archive_copy="$workdir/input.tar.gz"
+restore_root="$workdir/restore"
+install -d -m 0700 "$restore_root"
+install -m 0600 "$BACKUP_ARCHIVE" "$archive_copy"
+validate_tar_archive "$archive_copy" "backup archive" "$workdir/backup.list" "$workdir/backup.verbose"
+tar --no-same-owner --no-same-permissions -C "$restore_root" -xzf "$archive_copy"
 
-[[ -f "$workdir/db.dump" ]] || die "backup archive does not contain db.dump"
+[[ -f "$restore_root/db.dump" ]] || die "backup archive does not contain db.dump"
+if is_enabled "$RESTORE_ARTIFACTS" && [[ -f "$restore_root/artifacts.tar.gz" ]]; then
+  validate_tar_archive "$restore_root/artifacts.tar.gz" "artifact archive" "$workdir/artifacts.list" "$workdir/artifacts.verbose"
+fi
 
 log "restore PostgreSQL database"
-pg_restore --clean --if-exists --no-owner --dbname="$DATABASE_DSN" "$workdir/db.dump"
+pg_restore --clean --if-exists --no-owner --dbname="$DATABASE_DSN" "$restore_root/db.dump"
 
 if is_enabled "$RESTORE_ARTIFACTS"; then
-  if [[ -f "$workdir/artifacts.tar.gz" ]]; then
+  if [[ -f "$restore_root/artifacts.tar.gz" ]]; then
     timestamp="$(date -u +%Y%m%d-%H%M%S)"
     if [[ -e "$ARTIFACT_ROOT" ]]; then
       preserved="${ARTIFACT_ROOT}.pre-restore-${timestamp}"
@@ -61,7 +124,7 @@ if is_enabled "$RESTORE_ARTIFACTS"; then
     fi
     log "restore artifacts into $ARTIFACT_ROOT"
     install -d -m 0750 "$ARTIFACT_ROOT"
-    tar -C "$ARTIFACT_ROOT" -xzf "$workdir/artifacts.tar.gz"
+    tar --no-same-owner --no-same-permissions -C "$ARTIFACT_ROOT" -xzf "$restore_root/artifacts.tar.gz"
   else
     log "backup does not contain artifacts archive"
   fi
@@ -70,14 +133,13 @@ else
 fi
 
 if is_enabled "$RESTORE_MASTER_KEY"; then
-  [[ -n "$MASTER_KEY_PATH" ]] || die "MEGAVPN_MASTER_KEY_PATH is required to restore master key"
-  [[ -f "$workdir/master.key" ]] || die "backup does not contain master.key"
+  [[ -f "$restore_root/master.key" ]] || die "backup does not contain master.key"
   if [[ -e "$MASTER_KEY_PATH" ]] && ! is_enabled "$OVERWRITE_MASTER_KEY"; then
     die "master key exists: $MASTER_KEY_PATH (set MEGAVPN_RESTORE_OVERWRITE_MASTER_KEY=1 to overwrite)"
   fi
   log "restore master key to $MASTER_KEY_PATH"
   install -d -m 0750 "$(dirname "$MASTER_KEY_PATH")"
-  install -m 0600 "$workdir/master.key" "$MASTER_KEY_PATH"
+  install -m 0600 "$restore_root/master.key" "$MASTER_KEY_PATH"
 else
   log "skip master key restore; restore or verify MEGAVPN_MASTER_KEY_PATH separately"
 fi

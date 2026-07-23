@@ -107,7 +107,7 @@ if ! grep -Fq "SECURITY_REVIEW_${code_version}.md" docs/DOCUMENTATION_RU.md; the
   fail=1
 fi
 
-if rg -n 'v=7\.0\.1\.' web/index.html | grep -Fv "v=${code_version}" >&2; then
+if rg -n 'v=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' web/index.html | grep -Fv "v=${code_version}" >&2; then
   printf 'web/index.html contains asset cache keys that do not match release %s\n' "$code_version" >&2
   fail=1
 fi

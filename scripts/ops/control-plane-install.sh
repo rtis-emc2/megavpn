@@ -201,13 +201,30 @@ is_safe_server_name() {
 }
 
 is_safe_abs_path() {
-  [[ "$1" =~ ^/[A-Za-z0-9._/@:+-]+$ ]]
+  local value="$1"
+  [[ "$value" =~ ^/[A-Za-z0-9._/@:+-]+$ ]] || return 1
+  [[ "$value" != "/" &&
+     "$value" != *"/./"* &&
+     "$value" != */. &&
+     "$value" != *"/../"* &&
+     "$value" != */.. ]]
 }
 
 require_safe_abs_path() {
   local label="$1"
   local value="$2"
   is_safe_abs_path "$value" || die "$label must be an absolute path without whitespace or shell metacharacters: $value"
+}
+
+require_safe_directory_path() {
+  local label="$1"
+  local value="$2"
+  require_safe_abs_path "$label" "$value"
+  case "$value" in
+    /bin|/boot|/dev|/etc|/home|/lib|/lib64|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var|/Applications|/Library|/System|/Users|/private)
+      die "$label cannot be a protected system directory: $value"
+      ;;
+  esac
 }
 
 env_quote() {
@@ -556,11 +573,11 @@ validate_configuration() {
     [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "run as root"
   fi
   [[ -n "$DATABASE_DSN" ]] || die "database DSN is required"
-  require_safe_abs_path "install directory" "$APP_DIR"
-  require_safe_abs_path "web root" "$WEB_ROOT"
+  require_safe_directory_path "install directory" "$APP_DIR"
+  require_safe_directory_path "web root" "$WEB_ROOT"
   require_safe_abs_path "runtime env file" "$ENV_FILE"
   require_safe_abs_path "master key path" "$MASTER_KEY_PATH"
-  require_safe_abs_path "artifact root" "$ARTIFACT_ROOT"
+  require_safe_directory_path "artifact root" "$ARTIFACT_ROOT"
   require_safe_abs_path "nginx config path" "$NGINX_CONF_PATH"
   require_safe_abs_path "TLS certificate path" "$TLS_CERT_PATH"
   require_safe_abs_path "TLS key path" "$TLS_KEY_PATH"
