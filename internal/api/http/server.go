@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	appjobs "github.com/rtis-emc2/megavpn/internal/app/jobs"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/jobschema"
@@ -2193,7 +2194,14 @@ func (s *Server) agentHeartbeat(w nethttp.ResponseWriter, r *nethttp.Request) {
 		err = s.store.HeartbeatWithVersion(r.Context(), req.Name, req.AgentVersion, req.ProtocolVersion)
 	}
 	if err != nil {
-		writeSignedAgentError(w, r, 404, "node not registered")
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeSignedAgentError(w, r, nethttp.StatusNotFound, "node not registered")
+			return
+		}
+		if s.log != nil {
+			s.log.Error("agent heartbeat persistence failed", "node_id", req.NodeID, "node_name", req.Name, "error", err)
+		}
+		writeSignedAgentError(w, r, nethttp.StatusInternalServerError, "heartbeat persistence failed")
 		return
 	}
 	writeSignedAgentJSON(w, r, bearerToken(r), 200, response{"status": "ok", "time": time.Now().UTC().Format(time.RFC3339)})

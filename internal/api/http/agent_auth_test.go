@@ -3,13 +3,16 @@ package http
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/rtis-emc2/megavpn/internal/agentauth"
 )
 
@@ -20,6 +23,11 @@ type agentAuthTestStore struct {
 type agentAuthFailureRecordingStore struct {
 	agentAuthTestStore
 	reasons []string
+}
+
+type agentHeartbeatPersistenceStore struct {
+	agentAuthTestStore
+	err error
 }
 
 func (agentAuthTestStore) ValidateAgentToken(_ context.Context, nodeID, token string) bool {
@@ -37,6 +45,10 @@ func (agentAuthTestStore) RecordAgentAuthFailure(_ context.Context, _, _ string)
 func (s *agentAuthFailureRecordingStore) RecordAgentAuthFailure(_ context.Context, _, reason string) error {
 	s.reasons = append(s.reasons, reason)
 	return nil
+}
+
+func (s agentHeartbeatPersistenceStore) HeartbeatByNodeIDWithVersion(_ context.Context, _, _, _ string) error {
+	return s.err
 }
 
 func TestAuthorizeAgentBootstrapRequiresConfiguredToken(t *testing.T) {
@@ -206,6 +218,42 @@ func TestAgentHeartbeatDoesNotLetInvalidTokenChangeNodeDiagnostics(t *testing.T)
 	}
 	if len(store.reasons) != 0 {
 		t.Fatalf("invalid token changed node diagnostics: %#v", store.reasons)
+	}
+}
+
+func TestAgentHeartbeatDistinguishesMissingNodeFromPersistenceFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		storeErr   error
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "missing node", storeErr: pgx.ErrNoRows, wantStatus: http.StatusNotFound, wantBody: "node not registered"},
+		{name: "database failure", storeErr: errors.New("database write failed"), wantStatus: http.StatusInternalServerError, wantBody: "heartbeat persistence failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"node_id":"node-1","name":"node-1"}`)
+			req := httptest.NewRequest(http.MethodPost, "/agent/heartbeat", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer node-token")
+			signTestAgentRequest(req, "node-token", body)
+			rr := httptest.NewRecorder()
+
+			s := &Server{
+				store:                 agentHeartbeatPersistenceStore{err: tt.storeErr},
+				agentSignatureEnforce: true,
+				agentSignatureWindow:  time.Minute,
+				agentSignatureReplay:  newAgentSignatureReplayCache(time.Minute),
+			}
+			s.agentHeartbeat(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rr.Code, tt.wantStatus)
+			}
+			if !strings.Contains(rr.Body.String(), tt.wantBody) {
+				t.Fatalf("body = %q, want %q", rr.Body.String(), tt.wantBody)
+			}
+		})
 	}
 }
 

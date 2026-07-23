@@ -3290,7 +3290,7 @@ func (s *Store) HeartbeatByNodeIDWithVersion(ctx context.Context, nodeID, agentV
 		    agent_version=coalesce(nullif($2,''),agent_version),
 		    protocol_version=coalesce(nullif($3,''),protocol_version),
 		    last_auth_failure_at=null,
-		    last_auth_failure_reason=null
+		    last_auth_failure_reason=''
 		where node_id=$1`, nodeID, strings.TrimSpace(agentVersion), strings.TrimSpace(protocolVersion)); err != nil {
 		return err
 	}

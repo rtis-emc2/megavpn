@@ -3379,7 +3379,7 @@ func TestPostgresIntegrationAgentVersionProjection(t *testing.T) {
 	var unclearedAuthFailures int
 	if err := store.db.QueryRow(ctx, `select count(*) from node_agents
 		where node_id=$1
-		  and (last_auth_failure_at is not null or last_auth_failure_reason is not null)`, node.ID).Scan(&unclearedAuthFailures); err != nil {
+		  and (last_auth_failure_at is not null or last_auth_failure_reason <> '')`, node.ID).Scan(&unclearedAuthFailures); err != nil {
 		t.Fatalf("read agent auth failure after successful heartbeat: %v", err)
 	}
 	if unclearedAuthFailures != 0 {
