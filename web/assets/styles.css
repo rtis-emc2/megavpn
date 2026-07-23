@@ -3142,7 +3142,7 @@ tr:hover td { background: #f8fafc; }
   overflow: hidden;
 }
 .jobs-table-wrap table.jobs-table {
-  min-width: 1040px;
+  min-width: 1160px;
   table-layout: fixed;
 }
 .jobs-table th,
@@ -3158,6 +3158,34 @@ tr:hover td { background: #f8fafc; }
 .jobs-col-created { width: 116px; }
 .jobs-col-status { width: 72px; }
 .jobs-col-result { width: auto; }
+.jobs-col-actions { width: 112px; }
+.jobs-actions-cell {
+  text-align: center;
+}
+.jobs-actions-cell .danger-btn {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+.jobs-action-notice {
+  margin: 0;
+}
+.jobs-action-notice.ok {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+  color: #065f46;
+}
+.jobs-action-notice.danger {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #991b1b;
+}
+.jobs-action-notice > strong {
+  display: block;
+}
+.jobs-action-notice details {
+  margin-top: 8px;
+}
 .mono-clip,
 .job-date,
 .job-result-line,

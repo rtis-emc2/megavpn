@@ -193,6 +193,7 @@
     formatDate,
     renderActionResponse,
     stringValue,
+    hasPermission,
   });
   if (!jobWorkflows) throw new Error('MegaVPNJobWorkflows is not loaded');
 

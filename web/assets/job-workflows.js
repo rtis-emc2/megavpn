@@ -8,6 +8,10 @@
     return 'worker';
   }
 
+  function isCancellableJobStatus(value) {
+    return ['queued', 'retrying'].includes(String(value || '').trim().toLowerCase());
+  }
+
   function createJobWorkflows(ctx = {}) {
     const {
       state,
@@ -20,6 +24,7 @@
       formatDate,
       renderActionResponse,
       stringValue,
+      hasPermission,
     } = ctx;
 
     if (
@@ -32,7 +37,8 @@
       typeof escapeHTML !== 'function' ||
       typeof formatDate !== 'function' ||
       typeof renderActionResponse !== 'function' ||
-      typeof stringValue !== 'function'
+      typeof stringValue !== 'function' ||
+      typeof hasPermission !== 'function'
     ) {
       throw new Error('MegaVPNJobWorkflows requires workflow dependencies');
     }
@@ -248,10 +254,11 @@
     }
 
     function jobCounts(rows) {
-      const counts = { all: rows.length, active: 0, failed: 0, completed: 0 };
+      const counts = { all: rows.length, active: 0, failed: 0, completed: 0, cancellable: 0 };
       rows.forEach((row) => {
         const bucket = jobBucket(row.status);
         counts[bucket] = (counts[bucket] || 0) + 1;
+        if (isCancellableJobStatus(row.status)) counts.cancellable += 1;
       });
       return counts;
     }
@@ -299,6 +306,7 @@
               <col class="jobs-col-created">
               <col class="jobs-col-status">
               <col class="jobs-col-result">
+              <col class="jobs-col-actions">
             </colgroup>
             <thead>
               <tr>
@@ -308,6 +316,7 @@
                 <th>Created</th>
                 <th>Status</th>
                 <th>Result</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -332,10 +341,88 @@
                       </div>
                     </details>
                   </td>
+                  <td class="jobs-actions-cell">
+                    ${row.cancellable
+                      ? `<button class="danger-btn jobs-cancel-btn" type="button" data-job-cancel-id="${escapeHTML(row.id)}" data-job-cancel-type="${escapeHTML(row.type)}">Cancel</button>`
+                      : '<span class="muted">n/a</span>'}
+                  </td>
                 </tr>`).join('')}
             </tbody>
           </table>
         </div>`;
+    }
+
+    async function reloadJobs() {
+      const jobs = await requestJSON('/api/v1/jobs?limit=50');
+      state.jobs = Array.isArray(jobs) ? jobs : [];
+      return state.jobs;
+    }
+
+    async function cancelJobRecords(jobs) {
+      const unique = new Map();
+      (Array.isArray(jobs) ? jobs : []).forEach((job) => {
+        if (job?.id && isCancellableJobStatus(job.status)) unique.set(job.id, job);
+      });
+      const pending = Array.from(unique.values());
+      const summary = { requested: pending.length, cancelled: 0, failed: 0, errors: [] };
+      let cursor = 0;
+      const workerCount = Math.min(4, pending.length);
+      const workers = Array.from({ length: workerCount }, async () => {
+        while (cursor < pending.length) {
+          const index = cursor;
+          cursor += 1;
+          const job = pending[index];
+          try {
+            await requestJSON(`/api/v1/jobs/${encodeURIComponent(job.id)}/cancel`, { method: 'POST' });
+            summary.cancelled += 1;
+          } catch (err) {
+            summary.failed += 1;
+            summary.errors.push({
+              id: job.id,
+              type: job.type || 'unknown',
+              error: err?.message || 'job cancellation failed',
+            });
+          }
+        }
+      });
+      await Promise.all(workers);
+      await reloadJobs();
+      return summary;
+    }
+
+    function cancelJobsByIDs(jobIDs) {
+      const selected = new Set(Array.isArray(jobIDs) ? jobIDs : []);
+      return cancelJobRecords((state.jobs || []).filter((job) => selected.has(job.id)));
+    }
+
+    function setJobsActionNotice(kind, text, details = null) {
+      state.jobsActionNotice = {
+        kind: ['ok', 'warn', 'danger'].includes(kind) ? kind : 'warn',
+        text: String(text || ''),
+        details,
+      };
+    }
+
+    function renderJobsActionNotice() {
+      const notice = state.jobsActionNotice;
+      if (!notice?.text) return '';
+      return `
+        <section class="notice compact-notice jobs-action-notice ${escapeHTML(notice.kind || 'warn')}">
+          <strong>${escapeHTML(notice.text)}</strong>
+          ${notice.details ? `<details><summary>Details</summary>${renderActionResponse(notice.details, 'Job cancellation')}</details>` : ''}
+        </section>`;
+    }
+
+    function summarizeCancellation(summary, bulk = false) {
+      if (!summary.requested) {
+        return ['warn', 'No queued or retrying jobs are available to cancel.'];
+      }
+      if (!summary.failed) {
+        return ['ok', bulk
+          ? `${summary.cancelled} pending jobs cancelled. Running jobs were left unchanged.`
+          : 'Job cancelled.'];
+      }
+      return ['danger', `${summary.cancelled} jobs cancelled; ${summary.failed} could not be cancelled because their state changed or the API rejected the request.`];
     }
 
     function updateJobQueue(rows) {
@@ -362,6 +449,7 @@
         result: jobResultText(job),
         nodeContext: nodeJobContextText(job),
         lockContext: [job.locked_by || '', job.locked_until ? `until ${formatDate(job.locked_until)}` : ''].filter(Boolean).join(' · '),
+        cancellable: hasPermission('job.cancel') && isCancellableJobStatus(job.status),
       }));
       const activeTab = selectedJobsTab();
       const counts = jobCounts(rows);
@@ -377,8 +465,12 @@
               <span class="tag">${escapeHTML(String(rows.length))} loaded</span>
               <span class="tag warn">${escapeHTML(String(counts.active || 0))} active</span>
               <span class="tag danger">${escapeHTML(String(counts.failed || 0))} failed</span>
+              ${hasPermission('job.cancel')
+                ? `<button class="danger-btn" id="cancelPendingJobsBtn" type="button"${counts.cancellable ? '' : ' disabled'}>Cancel pending</button>`
+                : ''}
             </div>
           </section>
+          ${renderJobsActionNotice()}
           ${renderJobTabs(activeTab, counts)}
           <section class="table-card jobs-table-card">
             <div class="table-head">
@@ -397,8 +489,46 @@
             </div>
             <div id="jobsQueueMount">${renderJobQueue(filteredRows)}</div>
           </section>
-          <section class="card control-note-card"><h2>Concurrency rules</h2><p>One mutating job per instance, one bootstrap/install job per node, destructive actions through explicit locks and audit events.</p></section>
+          <section class="card control-note-card"><h2>Concurrency rules</h2><p>One mutating job per instance, one bootstrap/install job per node, destructive actions through explicit locks and audit events. Queue reset cancels only queued or retrying jobs; running work is never hidden or interrupted.</p></section>
         </div>`;
+      document.getElementById('jobsQueueMount')?.addEventListener('click', async (event) => {
+        const button = event.target.closest?.('[data-job-cancel-id]');
+        if (!button || !hasPermission('job.cancel')) return;
+        const jobID = String(button.dataset.jobCancelId || '');
+        const jobType = String(button.dataset.jobCancelType || 'job');
+        if (!jobID || !window.confirm(`Cancel pending job ${jobType} (${shortToken(jobID, 8, 4)})?`)) return;
+        button.disabled = true;
+        button.textContent = 'Cancelling...';
+        try {
+          const summary = await cancelJobsByIDs([jobID]);
+          const [kind, text] = summarizeCancellation(summary);
+          setJobsActionNotice(kind, text, summary.failed ? summary : null);
+        } catch (err) {
+          setJobsActionNotice('danger', err?.message || 'Job cancellation failed.', err?.payload || null);
+        }
+        renderJobs();
+      });
+      document.getElementById('cancelPendingJobsBtn')?.addEventListener('click', async (event) => {
+        if (!hasPermission('job.cancel')) return;
+        const button = event.currentTarget;
+        const candidates = (state.jobs || []).filter((job) => isCancellableJobStatus(job.status));
+        if (!candidates.length) {
+          setJobsActionNotice('warn', 'No queued or retrying jobs are available to cancel.');
+          renderJobs();
+          return;
+        }
+        if (!window.confirm(`Cancel ${candidates.length} loaded queued/retrying jobs? Running jobs and job history will be preserved.`)) return;
+        button.disabled = true;
+        button.textContent = 'Cancelling...';
+        try {
+          const summary = await cancelJobRecords(candidates);
+          const [kind, text] = summarizeCancellation(summary, true);
+          setJobsActionNotice(kind, text, summary.failed ? summary : null);
+        } catch (err) {
+          setJobsActionNotice('danger', err?.message || 'Pending job cancellation failed.', err?.payload || null);
+        }
+        renderJobs();
+      });
       document.querySelectorAll('[data-jobs-tab]').forEach((button) => {
         button.addEventListener('click', () => {
           state.jobsTab = button.dataset.jobsTab || 'active';
@@ -524,6 +654,7 @@
 
     return {
       renderJobs,
+      cancelJobsByIDs,
       watchJob,
       waitForNodeDiagnostics,
     };
@@ -532,5 +663,6 @@
   window.MegaVPNJobWorkflows = {
     create: createJobWorkflows,
     executionTargetForJobType,
+    isCancellableJobStatus,
   };
 })(window);

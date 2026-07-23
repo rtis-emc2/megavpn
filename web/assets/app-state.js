@@ -71,6 +71,7 @@
       jobsTab: localStorage.getItem('megavpn.jobsTab') || 'active',
       jobsSearch: '',
       jobsSort: localStorage.getItem('megavpn.jobsSort') || 'newest',
+      jobsActionNotice: null,
       clientsTab: localStorage.getItem('megavpn.clientsTab') || 'clients',
       clientAccessGroupsServiceFilter: localStorage.getItem('megavpn.clientAccessGroupsServiceFilter') || 'all',
       nodeManageID: '',

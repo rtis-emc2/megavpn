@@ -391,8 +391,15 @@ async function main() {
   assert.strictEqual(executionTargetForJobType('instance.apply'), 'agent');
   assert.strictEqual(executionTargetForJobType('node.bootstrap'), 'worker');
   assert.strictEqual(executionTargetForJobType('client.provision'), 'worker');
+  const isCancellableJobStatus = windowObject.MegaVPNJobWorkflows?.isCancellableJobStatus;
+  assert.strictEqual(typeof isCancellableJobStatus, 'function', 'job cancellation status helper must be exported');
+  assert.strictEqual(isCancellableJobStatus('queued'), true);
+  assert.strictEqual(isCancellableJobStatus('retrying'), true);
+  assert.strictEqual(isCancellableJobStatus('running'), false, 'running jobs must not be cancelled from the queue UI');
+  assert.strictEqual(isCancellableJobStatus('succeeded'), false);
 
   const queuedAt = '2026-07-23T11:18:17Z';
+  const cancelledJobRequests = [];
   const jobWorkflowState = {
     jobsTab: 'active',
     jobsSearch: '',
@@ -420,13 +427,21 @@ async function main() {
     state: jobWorkflowState,
     setTitle: () => {},
     el: elementForID,
-    requestJSON: async () => ({}),
+    requestJSON: async (requestPath, options = {}) => {
+      if (/\/api\/v1\/jobs\/[^/]+\/cancel$/.test(requestPath)) {
+        cancelledJobRequests.push({ requestPath, options });
+        return { status: 'cancelled' };
+      }
+      if (requestPath === '/api/v1/jobs?limit=50') return jobWorkflowState.jobs;
+      return {};
+    },
     fetchJSON: async () => ({}),
     statusTag: () => '',
     escapeHTML: (value) => String(value ?? ''),
     formatDate: (value) => String(value ?? ''),
     renderActionResponse: () => '',
     stringValue: (value) => String(value ?? ''),
+    hasPermission: () => true,
   });
   jobWorkflows.renderJobs();
   assert.match(
@@ -438,6 +453,11 @@ async function main() {
     elementForID('content').innerHTML,
     /waiting for control-plane worker/,
     'external egress jobs must never be attributed to the control-plane worker',
+  );
+  assert.match(
+    elementForID('content').innerHTML,
+    /data-job-cancel-id="a000ffe4-f450-486f-b393-93cbf856b3c3"/,
+    'queued jobs must expose an explicit cancel action',
   );
   jobWorkflowState.jobs.push({
     id: 'b111ffe4-f450-486f-b393-93cbf856b3c4',
@@ -456,6 +476,22 @@ async function main() {
     /waiting for node agent; node is executing node\.capability\.install/,
     'queued agent jobs must identify an active same-node blocker',
   );
+  assert.doesNotMatch(
+    elementForID('content').innerHTML,
+    /data-job-cancel-id="b111ffe4-f450-486f-b393-93cbf856b3c4"/,
+    'running jobs must not expose a cancel action',
+  );
+  const cancellationSummary = await jobWorkflows.cancelJobsByIDs([
+    'a000ffe4-f450-486f-b393-93cbf856b3c3',
+    'b111ffe4-f450-486f-b393-93cbf856b3c4',
+  ]);
+  assert.deepStrictEqual(
+    { requested: cancellationSummary.requested, cancelled: cancellationSummary.cancelled, failed: cancellationSummary.failed },
+    { requested: 1, cancelled: 1, failed: 0 },
+    'bulk cancellation must include queued/retrying jobs only',
+  );
+  assert.strictEqual(cancelledJobRequests.length, 1, 'running jobs must never reach the cancel API');
+  assert.strictEqual(cancelledJobRequests[0].options.method, 'POST');
 
   const pendingCoreRequests = [];
   const loaderState = {

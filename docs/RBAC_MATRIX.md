@@ -31,7 +31,7 @@
 | `share_link.manage` | Artifact | Publish/revoke public share links |
 | `job.read` | Job | Job list/detail/logs |
 | `job.write` | Job | Non-privileged direct jobs only |
-| `job.cancel` | Job | Cancel pending/running jobs |
+| `job.cancel` | Job | Cancel queued/retrying jobs; running work is preserved |
 | `audit.read` | Audit | Audit event list |
 | `traffic.read` | Traffic | Aggregate traffic accounting overview |
 | `secret.reveal` | Secret | Explicit secret reveal operations |
