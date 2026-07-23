@@ -1,6 +1,6 @@
 # External Provider Egress
 
-**Release:** `7.1.1.14`
+**Release:** `7.1.1.15`
 
 External egress profiles connect selected client access groups to a commercial
 or third-party VPN/proxy provider. They do not replace managed Backhaul and they
@@ -288,6 +288,11 @@ recover the listener PID from `ss`, but terminate it only when both the
 executable and `/proc/<pid>/cmdline` prove that it uses MegaVPN-managed
 configuration or runtime paths. Emergency cleanup uses the same checks and
 preserves runtime evidence when ownership cannot be established safely.
+The distribution daemon is handled separately: after
+`systemctl disable --now xl2tpd.service`, a surviving listener may be
+terminated only when `/proc/<pid>/cgroup` still identifies the exact
+`xl2tpd.service` unit. The executable and ownership evidence are checked again
+immediately before signaling. A process in any other cgroup remains untouched.
 
 If UDP/1701 remains occupied, the job fails closed and includes the matching
 `ss -lunp` owner row in job evidence. Inspect it without changing runtime state:

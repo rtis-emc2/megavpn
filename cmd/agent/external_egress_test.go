@@ -581,10 +581,12 @@ func TestTerminateManagedExternalEgressL2TPProcessRejectsUnmanagedCommandLine(t 
 func TestTerminateManagedExternalEgressL2TPListenerRecoversLostPIDFile(t *testing.T) {
 	oldReadlink := readExternalEgressProcessExecutable
 	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldReadCgroup := readExternalEgressProcessCgroup
 	oldSignal := signalExternalEgressProcess
 	t.Cleanup(func() {
 		readExternalEgressProcessExecutable = oldReadlink
 		readExternalEgressProcessCommandLine = oldReadCommandLine
+		readExternalEgressProcessCgroup = oldReadCgroup
 		signalExternalEgressProcess = oldSignal
 	})
 
@@ -597,9 +599,6 @@ func TestTerminateManagedExternalEgressL2TPListenerRecoversLostPIDFile(t *testin
 			return "", os.ErrNotExist
 		}
 		return "/usr/sbin/xl2tpd", nil
-	}
-	readExternalEgressProcessCommandLine = func(string) ([]byte, error) {
-		return []byte("/usr/sbin/xl2tpd\x00-D\x00-p\x00/run/megavpn/external-egress/38fdafed754e4e5e8bdef546e05674f3/xl2tpd.pid\x00"), nil
 	}
 	readExternalEgressProcessCommandLine = func(path string) ([]byte, error) {
 		if path != "/proc/4242/cmdline" {
@@ -616,7 +615,7 @@ func TestTerminateManagedExternalEgressL2TPListenerRecoversLostPIDFile(t *testin
 	}
 
 	output := `UNCONN 0 0 0.0.0.0:1701 0.0.0.0:* users:(("xl2tpd",pid=4242,fd=3))`
-	result, err := terminateManagedExternalEgressL2TPListener(context.Background(), output, 1701)
+	result, err := terminateManagedExternalEgressL2TPListener(context.Background(), output, 1701, false)
 	if err != nil {
 		t.Fatalf("terminateManagedExternalEgressL2TPListener: %v", err)
 	}
@@ -628,10 +627,12 @@ func TestTerminateManagedExternalEgressL2TPListenerRecoversLostPIDFile(t *testin
 func TestTerminateManagedExternalEgressL2TPListenerLeavesUnmanagedProcess(t *testing.T) {
 	oldReadlink := readExternalEgressProcessExecutable
 	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldReadCgroup := readExternalEgressProcessCgroup
 	oldSignal := signalExternalEgressProcess
 	t.Cleanup(func() {
 		readExternalEgressProcessExecutable = oldReadlink
 		readExternalEgressProcessCommandLine = oldReadCommandLine
+		readExternalEgressProcessCgroup = oldReadCgroup
 		signalExternalEgressProcess = oldSignal
 	})
 
@@ -641,18 +642,108 @@ func TestTerminateManagedExternalEgressL2TPListenerLeavesUnmanagedProcess(t *tes
 	readExternalEgressProcessCommandLine = func(string) ([]byte, error) {
 		return []byte("/usr/sbin/xl2tpd\x00-D\x00-c\x00/etc/xl2tpd/xl2tpd.conf\x00"), nil
 	}
+	readExternalEgressProcessCgroup = func(string) ([]byte, error) {
+		return []byte("0::/system.slice/xl2tpd.service.attacker\n"), nil
+	}
 	signalExternalEgressProcess = func(int, syscall.Signal) error {
 		t.Fatal("unmanaged XL2TPD listener was signaled")
 		return nil
 	}
 
 	output := `UNCONN 0 0 [::]:1701 [::]:* users:(("xl2tpd",pid=4242,fd=3))`
-	result, err := terminateManagedExternalEgressL2TPListener(context.Background(), output, 1701)
+	result, err := terminateManagedExternalEgressL2TPListener(context.Background(), output, 1701, true)
 	if err != nil {
 		t.Fatalf("terminateManagedExternalEgressL2TPListener: %v", err)
 	}
 	if result["managed"] != false || result["terminated"] != false {
 		t.Fatalf("unmanaged listener result = %#v", result)
+	}
+}
+
+func TestTerminateManagedExternalEgressL2TPListenerStopsSystemdServiceProcess(t *testing.T) {
+	oldReadlink := readExternalEgressProcessExecutable
+	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldReadCgroup := readExternalEgressProcessCgroup
+	oldSignal := signalExternalEgressProcess
+	t.Cleanup(func() {
+		readExternalEgressProcessExecutable = oldReadlink
+		readExternalEgressProcessCommandLine = oldReadCommandLine
+		readExternalEgressProcessCgroup = oldReadCgroup
+		signalExternalEgressProcess = oldSignal
+	})
+
+	processExited := false
+	readExternalEgressProcessExecutable = func(string) (string, error) {
+		if processExited {
+			return "", os.ErrNotExist
+		}
+		return "/usr/sbin/xl2tpd", nil
+	}
+	readExternalEgressProcessCommandLine = func(string) ([]byte, error) {
+		return []byte("/usr/sbin/xl2tpd\x00-D\x00-c\x00/etc/xl2tpd/xl2tpd.conf\x00"), nil
+	}
+	readExternalEgressProcessCgroup = func(path string) ([]byte, error) {
+		if path != "/proc/994/cgroup" {
+			t.Fatalf("unexpected cgroup path: %s", path)
+		}
+		return []byte("0::/system.slice/xl2tpd.service\n"), nil
+	}
+	signalExternalEgressProcess = func(pid int, signal syscall.Signal) error {
+		if pid != 994 || signal != syscall.SIGTERM {
+			t.Fatalf("unexpected system service signal: pid=%d signal=%v", pid, signal)
+		}
+		processExited = true
+		return nil
+	}
+
+	output := `UNCONN 0 0 0.0.0.0:1701 0.0.0.0:* users:(("xl2tpd",pid=994,fd=3))`
+	result, err := terminateManagedExternalEgressL2TPListener(context.Background(), output, 1701, true)
+	if err != nil {
+		t.Fatalf("terminateManagedExternalEgressL2TPListener: %v", err)
+	}
+	if result["managed"] != true || result["terminated"] != true || result["ownership"] != "xl2tpd.service" {
+		t.Fatalf("system service listener result = %#v", result)
+	}
+}
+
+func TestTerminateManagedExternalEgressL2TPListenerRevalidatesSystemdServiceProcess(t *testing.T) {
+	oldReadlink := readExternalEgressProcessExecutable
+	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldReadCgroup := readExternalEgressProcessCgroup
+	oldSignal := signalExternalEgressProcess
+	t.Cleanup(func() {
+		readExternalEgressProcessExecutable = oldReadlink
+		readExternalEgressProcessCommandLine = oldReadCommandLine
+		readExternalEgressProcessCgroup = oldReadCgroup
+		signalExternalEgressProcess = oldSignal
+	})
+
+	readExternalEgressProcessExecutable = func(string) (string, error) {
+		return "/usr/sbin/xl2tpd", nil
+	}
+	readExternalEgressProcessCommandLine = func(string) ([]byte, error) {
+		return []byte("/usr/sbin/xl2tpd\x00-D\x00-c\x00/etc/xl2tpd/xl2tpd.conf\x00"), nil
+	}
+	cgroupReads := 0
+	readExternalEgressProcessCgroup = func(string) ([]byte, error) {
+		cgroupReads++
+		if cgroupReads == 1 {
+			return []byte("0::/system.slice/xl2tpd.service\n"), nil
+		}
+		return []byte("0::/system.slice/operator-l2tp.service\n"), nil
+	}
+	signalExternalEgressProcess = func(int, syscall.Signal) error {
+		t.Fatal("process with changed cgroup ownership was signaled")
+		return nil
+	}
+
+	output := `UNCONN 0 0 0.0.0.0:1701 0.0.0.0:* users:(("xl2tpd",pid=994,fd=3))`
+	result, err := terminateManagedExternalEgressL2TPListener(context.Background(), output, 1701, true)
+	if err != nil {
+		t.Fatalf("terminateManagedExternalEgressL2TPListener: %v", err)
+	}
+	if result["ownership_changed"] != true || result["terminated"] == true {
+		t.Fatalf("changed system service listener result = %#v", result)
 	}
 }
 

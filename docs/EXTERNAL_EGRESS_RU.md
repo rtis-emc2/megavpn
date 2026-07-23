@@ -1,6 +1,6 @@
 # Выход через внешний VPN/Proxy-провайдер
 
-**Релиз:** `7.1.1.14`
+**Релиз:** `7.1.1.15`
 
 External egress profile подключает выбранные группы клиентов к коммерческому
 или стороннему VPN/proxy-провайдеру. Он не заменяет managed Backhaul и не
@@ -283,6 +283,12 @@ PID listener через `ss`, но завершают его только ког
 `/proc/<pid>/cmdline` подтверждают MegaVPN-managed configuration или runtime
 path. Emergency cleanup использует те же проверки и сохраняет runtime
 evidence, если безопасно доказать ownership невозможно.
+Системный daemon обрабатывается отдельно: после
+`systemctl disable --now xl2tpd.service` оставшийся listener можно завершить
+только если `/proc/<pid>/cgroup` по-прежнему указывает на точный unit
+`xl2tpd.service`. Executable и ownership evidence повторно проверяются
+непосредственно перед сигналом. Процесс из любого другого cgroup остается
+нетронутым.
 
 Если UDP/1701 остается занят, job завершается fail-closed и сохраняет в
 evidence соответствующую строку `ss -lunp`. Ее можно проверить без изменения

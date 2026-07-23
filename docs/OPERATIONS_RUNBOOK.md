@@ -1,6 +1,6 @@
 # Operations Runbook
 
-**Release:** `7.1.1.14`
+**Release:** `7.1.1.15`
 
 ## Deployment Model
 
@@ -99,10 +99,10 @@ git clone --mirror <remote-url> megavpn-history-backup.git
 git status --short
 git checkout --orphan release-clean
 git add -A
-git commit -m "Release 7.1.1.14 clean import"
-git tag -f v7.1.1.14
+git commit -m "Release 7.1.1.15 clean import"
+git tag -f v7.1.1.15
 git push --force-with-lease origin release-clean:main
-git push --force-with-lease origin v7.1.1.14
+git push --force-with-lease origin v7.1.1.15
 ```
 
 Recovery plan:

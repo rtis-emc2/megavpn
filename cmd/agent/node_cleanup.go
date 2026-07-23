@@ -340,7 +340,7 @@ func emergencyCleanupL2TPRuntime(ctx context.Context, fullNode bool) map[string]
 		warnings = append(warnings, "verify UDP/1701 emergency cleanup: "+firstLine(output))
 	} else {
 		if externalEgressUDPPortListening(output, 1701) {
-			listenerResult, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701)
+			listenerResult, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701, true)
 			listenerProcess = listenerResult
 			if listenerErr != nil {
 				errorsOut = append(errorsOut, "inspect stale managed UDP/1701 listener: "+listenerErr.Error())

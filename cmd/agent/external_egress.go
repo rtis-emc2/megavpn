@@ -35,6 +35,7 @@ var (
 	readExternalEgressManagedFile          = os.ReadFile
 	readExternalEgressProcessExecutable    = os.Readlink
 	readExternalEgressProcessCommandLine   = os.ReadFile
+	readExternalEgressProcessCgroup        = os.ReadFile
 	signalExternalEgressProcess            = func(pid int, signal syscall.Signal) error {
 		return syscall.Kill(pid, signal)
 	}
@@ -96,7 +97,7 @@ func (c *client) applyExternalEgress(ctx context.Context, j job, st agentState) 
 			return "failed", map[string]any{"error": "cannot verify UDP/1701 availability: " + firstLine(output), "stage": "port_preflight"}
 		}
 		if externalEgressUDPPortListening(output, 1701) {
-			listenerProcess, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701)
+			listenerProcess, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701, true)
 			l2tpTakeover["orphan_listener"] = listenerProcess
 			if listenerErr != nil {
 				return "failed", map[string]any{
@@ -430,11 +431,12 @@ func terminateManagedExternalEgressL2TPProcessAt(ctx context.Context, pidPath st
 			result["ownership_mismatch"] = true
 			return result, nil
 		}
+		result["ownership"] = "managed_arguments"
 	}
 	return terminateVerifiedExternalEgressL2TPProcess(ctx, pid, result)
 }
 
-func terminateManagedExternalEgressL2TPListener(ctx context.Context, output string, port int) (map[string]any, error) {
+func terminateManagedExternalEgressL2TPListener(ctx context.Context, output string, port int, allowSystemService bool) (map[string]any, error) {
 	owner := externalEgressUDPPortOwner(output, port)
 	result := map[string]any{
 		"owner":      owner,
@@ -470,7 +472,20 @@ func terminateManagedExternalEgressL2TPListener(ctx context.Context, output stri
 	}
 	result["command_line"] = commandLine
 	if !managed {
-		return result, nil
+		if !allowSystemService {
+			return result, nil
+		}
+		systemService, cgroup, cgroupErr := externalEgressL2TPSystemdServiceProcess(pid)
+		if cgroupErr != nil {
+			return result, cgroupErr
+		}
+		result["cgroup"] = cgroup
+		if !systemService {
+			return result, nil
+		}
+		result["ownership"] = "xl2tpd.service"
+	} else {
+		result["ownership"] = "managed_arguments"
 	}
 	result["managed"] = true
 	return terminateVerifiedExternalEgressL2TPProcess(ctx, pid, result)
@@ -495,6 +510,29 @@ func externalEgressManagedL2TPCommandLine(pid int) (bool, string, error) {
 	return false, strings.Join(arguments, " "), nil
 }
 
+func externalEgressL2TPSystemdServiceProcess(pid int) (bool, string, error) {
+	raw, err := readExternalEgressProcessCgroup(filepath.Join("/proc", strconv.Itoa(pid), "cgroup"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("inspect xl2tpd systemd cgroup %d: %w", pid, err)
+	}
+	cgroup := strings.TrimSpace(string(raw))
+	for _, line := range strings.Split(cgroup, "\n") {
+		fields := strings.SplitN(line, ":", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		for _, component := range strings.Split(fields[2], "/") {
+			if component == "xl2tpd.service" {
+				return true, cgroup, nil
+			}
+		}
+	}
+	return false, cgroup, nil
+}
+
 func terminateVerifiedExternalEgressL2TPProcess(ctx context.Context, pid int, result map[string]any) (map[string]any, error) {
 	active, owned, executable, err := externalEgressManagedL2TPProcess(pid)
 	if err != nil {
@@ -509,6 +547,31 @@ func terminateVerifiedExternalEgressL2TPProcess(ctx context.Context, pid int, re
 		// The PID was reused after xl2tpd exited. Never signal an unrelated process.
 		result["stale_pid"] = true
 		result["pid_reused"] = true
+		return result, nil
+	}
+	switch stringify(result["ownership"]) {
+	case "managed_arguments":
+		managed, commandLine, commandErr := externalEgressManagedL2TPCommandLine(pid)
+		result["command_line"] = commandLine
+		if commandErr != nil {
+			return result, commandErr
+		}
+		if !managed {
+			result["ownership_changed"] = true
+			return result, nil
+		}
+	case "xl2tpd.service":
+		systemService, cgroup, cgroupErr := externalEgressL2TPSystemdServiceProcess(pid)
+		result["cgroup"] = cgroup
+		if cgroupErr != nil {
+			return result, cgroupErr
+		}
+		if !systemService {
+			result["ownership_changed"] = true
+			return result, nil
+		}
+	default:
+		result["ownership_missing"] = true
 		return result, nil
 	}
 
@@ -724,7 +787,7 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 			warnings = append(warnings, "verify UDP/1701 cleanup: "+firstLine(output))
 		} else {
 			if externalEgressUDPPortListening(output, 1701) {
-				listenerResult, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701)
+				listenerResult, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701, true)
 				l2tpListenerProcess = listenerResult
 				if listenerErr != nil {
 					warnings = append(warnings, "inspect stale managed UDP/1701 listener: "+listenerErr.Error())
