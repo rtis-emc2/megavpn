@@ -76,6 +76,17 @@ func (c *client) applyExternalEgress(ctx context.Context, j job, st agentState) 
 				"stage": "port_preflight",
 			}
 		}
+		preview, parseErr := externalegress.ParseL2TPIPsec([]byte(payload.Secrets["config"]))
+		if parseErr != nil {
+			return "failed", map[string]any{"error": parseErr.Error(), "stage": "validate_config"}
+		}
+		if preview.AuthMethod != "certificate" {
+			for _, path := range externalEgressIPsecCertificatePaths(payload) {
+				if _, removeErr := removeManagedPath(path, false); removeErr != nil && !os.IsNotExist(removeErr) {
+					return "failed", map[string]any{"error": removeErr.Error(), "stage": "remove_stale_certificate", "path": path}
+				}
+			}
+		}
 	}
 	if externalEgressUsesPolicyRouting(payload.Protocol) {
 		if err := installExternalEgressFailClosedGuard(ctx, payload); err != nil {
@@ -349,6 +360,11 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 		}
 	}
 	if payload.Protocol == "l2tp_ipsec" {
+		for _, path := range externalEgressIPsecCertificatePaths(payload) {
+			if _, err := removeManagedPath(path, false); err != nil && !os.IsNotExist(err) {
+				warnings = append(warnings, path+": "+err.Error())
+			}
+		}
 		_, _ = runInstallCommand(ctx, "ipsec", "rereadsecrets")
 		if code, output := runInstallCommand(ctx, "ipsec", "reload"); code != 0 {
 			warnings = append(warnings, "strongSwan reload: "+firstLine(output))
@@ -500,6 +516,17 @@ func renderExternalEgressRuntime(payload externalEgressJobPayload) ([]managedFil
 			managedFileSpec{Path: filepath.Join(dir, "xl2tpd.conf"), Content: xl2tpConfig, Mode: "0600"},
 			managedFileSpec{Path: filepath.Join(dir, "ppp-options"), Content: pppOptions, Mode: "0600"},
 		)
+		preview, parseErr := externalegress.ParseL2TPIPsec([]byte(payload.Secrets["config"]))
+		if parseErr != nil {
+			return nil, "", parseErr
+		}
+		if preview.AuthMethod == "certificate" {
+			material, materialErr := renderManagedL2TPIPsecCertificateMaterial(payload)
+			if materialErr != nil {
+				return nil, "", materialErr
+			}
+			files = append(files, material.Files...)
+		}
 		startScript := renderManagedL2TPIPsecStartScript(payload, ipsecBinary, xl2tpdBinary, flockBinary)
 		startPath := filepath.Join(dir, "start.sh")
 		files = append(files, managedFileSpec{Path: startPath, Content: startScript, Mode: "0700"})
@@ -542,6 +569,9 @@ func validateExternalEgressManagedArtifacts(payload externalEgressJobPayload, fi
 		allowed[filepath.Join(dir, "xl2tpd.conf")] = "0600"
 		allowed[filepath.Join(dir, "ppp-options")] = "0600"
 		allowed[filepath.Join(dir, "start.sh")] = "0700"
+		for _, path := range externalEgressIPsecCertificatePaths(payload) {
+			allowed[path] = "0600"
+		}
 	default:
 		return fmt.Errorf("external egress protocol %q has no managed artifact allowlist", payload.Protocol)
 	}
@@ -886,23 +916,40 @@ func renderManagedL2TPIPsecConfig(payload externalEgressJobPayload) (string, str
 	}
 	username := firstNonEmptyAgentSecret(payload.Secrets["username"], preview.Username)
 	password := firstNonEmptyAgentSecret(payload.Secrets["password"], preview.Password)
-	psk := firstNonEmptyAgentSecret(payload.Secrets["preshared_key"], preview.PSK)
 	if err := validateExternalEgressCredential("L2TP username", username); err != nil {
 		return "", "", "", "", err
 	}
 	if err := validateExternalEgressCredential("L2TP password", password); err != nil {
 		return "", "", "", "", err
 	}
-	if err := validateExternalEgressCredential("IPsec pre-shared key", psk); err != nil {
-		return "", "", "", "", err
-	}
 	dir := externalEgressManagedDir(payload)
 	connection := externalEgressIPsecConnectionName(payload)
 	remoteID := firstNonEmptyAgentString(preview.RemoteID, preview.EndpointHost)
+	authConfig := ""
+	ipsecSecrets := ""
+	switch preview.AuthMethod {
+	case "psk":
+		psk := firstNonEmptyAgentSecret(payload.Secrets["preshared_key"], preview.PSK)
+		if err := validateExternalEgressCredential("IPsec pre-shared key", psk); err != nil {
+			return "", "", "", "", err
+		}
+		authConfig = "    authby=psk\n"
+		ipsecSecrets = fmt.Sprintf("%%any %s : PSK %s\n", remoteID, quoteExternalEgressSecret(psk))
+	case "certificate":
+		material, err := renderManagedL2TPIPsecCertificateMaterial(payload)
+		if err != nil {
+			return "", "", "", "", err
+		}
+		authConfig = fmt.Sprintf("    leftauth=pubkey\n    leftcert=%s\n    rightauth=pubkey\n    rightca=%s\n",
+			material.CertificatePath, quoteExternalEgressSecret(material.CASubject))
+		ipsecSecrets = fmt.Sprintf(": %s %s\n", material.PrivateKeyType, material.PrivateKeyPath)
+	default:
+		return "", "", "", "", fmt.Errorf("unsupported L2TP/IPsec authentication method")
+	}
 	ipsecConfig := fmt.Sprintf(`conn %s
     type=transport
     keyexchange=ikev1
-    authby=psk
+%s
     left=%%defaultroute
     leftprotoport=17/1701
     right=%s
@@ -914,8 +961,7 @@ func renderManagedL2TPIPsecConfig(payload externalEgressJobPayload) (string, str
     dpddelay=30s
     keyingtries=3
     auto=add
-`, connection, preview.EndpointHost, remoteID, preview.IKEProposal, preview.ESPProposal)
-	ipsecSecrets := fmt.Sprintf("%%any %s : PSK %s\n", remoteID, quoteExternalEgressSecret(psk))
+`, connection, strings.TrimSuffix(authConfig, "\n"), preview.EndpointHost, remoteID, preview.IKEProposal, preview.ESPProposal)
 	xl2tpConfig := fmt.Sprintf(`[global]
 port = 1701
 
@@ -944,10 +990,61 @@ holdoff 5
 	return ipsecConfig, ipsecSecrets, xl2tpConfig, pppOptions, nil
 }
 
+type managedL2TPIPsecCertificateMaterial struct {
+	Files           []managedFileSpec
+	CertificatePath string
+	PrivateKeyPath  string
+	PrivateKeyType  string
+	CASubject       string
+}
+
+func renderManagedL2TPIPsecCertificateMaterial(payload externalEgressJobPayload) (managedL2TPIPsecCertificateMaterial, error) {
+	var material managedL2TPIPsecCertificateMaterial
+	caPEM := payload.Secrets["ca_certificate"]
+	certificatePEM := payload.Secrets["certificate"]
+	privateKeyPEM := payload.Secrets["private_key"]
+	if caPEM == "" || certificatePEM == "" || privateKeyPEM == "" {
+		return material, fmt.Errorf("certificate authentication requires CA certificate, client certificate and private key")
+	}
+	validated, err := externalegress.ValidateCertificateMaterial(caPEM, certificatePEM, privateKeyPEM)
+	if err != nil {
+		return material, err
+	}
+	paths := externalEgressIPsecCertificatePaths(payload)
+	material.CertificatePath = paths[1]
+	material.PrivateKeyPath = paths[2]
+	material.PrivateKeyType = validated.PrivateKeyType
+	material.CASubject = validated.CASubject
+	material.Files = []managedFileSpec{
+		{Path: paths[0], Content: caPEM, Mode: "0600"},
+		{Path: paths[1], Content: certificatePEM, Mode: "0600"},
+		{Path: paths[2], Content: privateKeyPEM, Mode: "0600"},
+	}
+	return material, nil
+}
+
+func externalEgressIPsecCertificatePaths(payload externalEgressJobPayload) []string {
+	compact := strings.ReplaceAll(strings.ToLower(payload.DeploymentID), "-", "")
+	if len(compact) < 12 {
+		sum := sha256.Sum256([]byte(payload.DeploymentID))
+		compact = hex.EncodeToString(sum[:])
+	}
+	prefix := "megavpn-" + compact[:12]
+	return []string{
+		filepath.Join("/etc/ipsec.d/cacerts", prefix+"-ca.pem"),
+		filepath.Join("/etc/ipsec.d/certs", prefix+"-client.pem"),
+		filepath.Join("/etc/ipsec.d/private", prefix+"-client.key"),
+	}
+}
+
 func renderManagedL2TPIPsecStartScript(payload externalEgressJobPayload, ipsecBinary, xl2tpdBinary, flockBinary string) string {
 	dir := externalEgressManagedDir(payload)
 	connection := externalEgressIPsecConnectionName(payload)
 	runtimeDir := filepath.Join("/run/megavpn/external-egress", strings.ReplaceAll(payload.DeploymentID, "-", ""))
+	rereadCAs := ""
+	if preview, err := externalegress.ParseL2TPIPsec([]byte(payload.Secrets["config"])); err == nil && preview.AuthMethod == "certificate" {
+		rereadCAs = ipsecBinary + " rereadcacerts"
+	}
 	return fmt.Sprintf(`#!/bin/sh
 set -eu
 umask 077
@@ -960,11 +1057,12 @@ grep -Fqx 'include /etc/megavpn/external-egress/*/ipsec.secrets' /etc/ipsec.secr
 %s -u 9
 exec 9>&-
 systemctl start strongswan-starter 2>/dev/null || systemctl start strongswan 2>/dev/null || true
+%s
 %s rereadsecrets
 %s reload
 %s up %s
 exec %s -D -c %s -p %s/xl2tpd.pid -C %s/xl2tpd.control
-`, runtimeDir, flockBinary, flockBinary, ipsecBinary, ipsecBinary, ipsecBinary, connection,
+`, runtimeDir, flockBinary, flockBinary, rereadCAs, ipsecBinary, ipsecBinary, ipsecBinary, connection,
 		xl2tpdBinary, filepath.Join(dir, "xl2tpd.conf"), runtimeDir, runtimeDir)
 }
 

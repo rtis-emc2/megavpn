@@ -7,6 +7,17 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
+func TestExternalEgressGeneratedProfileKey(t *testing.T) {
+	t.Parallel()
+	const profileID = "123e4567-e89b-42d3-a456-426614174000"
+	if got := externalEgressGeneratedProfileKey("l2tp+ipsec", profileID); got != "l2tp_ipsec_123e4567e89b" {
+		t.Fatalf("generated profile key = %q", got)
+	}
+	if got := externalEgressGeneratedProfileKey("../../unsafe", "short"); !externalEgressKeyPattern.MatchString(got) {
+		t.Fatalf("fallback profile key %q does not match the storage contract", got)
+	}
+}
+
 func TestValidateExternalEgressRuntimeProfileRequirements(t *testing.T) {
 	t.Parallel()
 
@@ -71,6 +82,20 @@ func TestValidateExternalEgressRuntimeProfileRequirements(t *testing.T) {
 			purposes:  map[string]bool{"config": true},
 			wantError: "preshared_key",
 		},
+		{
+			name: "L2TP IPsec certificate secrets are present", protocol: "l2tp_ipsec",
+			config: `{"server":"l2tp.example.com","auth_method":"certificate"}`,
+			purposes: map[string]bool{
+				"config": true, "username": true, "password": true,
+				"ca_certificate": true, "certificate": true, "private_key": true,
+			},
+		},
+		{
+			name: "L2TP IPsec certificate private key is missing", protocol: "l2tp_ipsec",
+			config:    `{"server":"l2tp.example.com","auth_method":"certificate"}`,
+			purposes:  map[string]bool{"config": true, "username": true, "password": true, "ca_certificate": true, "certificate": true},
+			wantError: "private_key",
+		},
 	}
 
 	for _, test := range tests {
@@ -103,6 +128,22 @@ func TestExternalEgressRuntimeMetadataRequiresReplacementConfig(t *testing.T) {
 	changed.EndpointHost = "other.example.com"
 	if !externalEgressRuntimeMetadataChanged(changed, existing) {
 		t.Fatal("changed endpoint was not detected")
+	}
+}
+
+func TestNormalizeL2TPIPsecRejectsPartialCertificateRotationWithoutConfigReplacement(t *testing.T) {
+	t.Parallel()
+
+	_, err := normalizeExternalEgressProfileInput(domain.ExternalEgressProfileInput{
+		ProfileKey:  "l2tp_ipsec_123e4567e89b",
+		DisplayName: "Provider L2TP",
+		Protocol:    "l2tp_ipsec",
+		Status:      "draft",
+		ConfigJSON:  []byte(`{"auth_method":"certificate"}`),
+		Secrets:     map[string]string{"certificate": "not-a-certificate"},
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "CA certificate, client certificate and private key") {
+		t.Fatalf("normalizeExternalEgressProfileInput() error = %v, want complete certificate material validation", err)
 	}
 }
 

@@ -27,7 +27,7 @@ var protocolCatalog = []ProtocolDefinition{
 	{Code: "shadowsocks", Label: "Shadowsocks", Category: "proxy_tunnel", RuntimeSupport: RuntimeReady, ImportFormats: []string{"url", "json"}, CredentialModes: []string{"password"}, Transports: []string{"tcp", "udp"}, Notes: "Runs as an isolated loopback Xray proxy and is selected only by assigned client access groups."},
 	{Code: "vless", Label: "VLESS", Category: "proxy_tunnel", RuntimeSupport: RuntimeReady, ImportFormats: []string{"url", "json"}, CredentialModes: []string{"uuid"}, Transports: []string{"tcp", "ws", "grpc", "httpupgrade", "xhttp"}, Notes: "Runs as an isolated loopback Xray proxy with mandatory TLS or REALITY security."},
 	{Code: "l2tp", Label: "L2TP", Category: "tunnel", RuntimeSupport: RuntimePlanned, ImportFormats: []string{"structured"}, CredentialModes: []string{"username_password"}, Transports: []string{"udp"}, Notes: "Unencrypted L2TP is catalogued but cannot be activated because it is not safe for production."},
-	{Code: "l2tp_ipsec", Label: "L2TP over IPsec", Category: "tunnel", RuntimeSupport: RuntimeReady, ImportFormats: []string{"key_value", "json"}, CredentialModes: []string{"username_password", "psk"}, Transports: []string{"udp", "ipsec"}, Notes: "Managed strongSwan + xl2tpd client with an isolated PPP interface and fail-closed policy routing."},
+	{Code: "l2tp_ipsec", Label: "L2TP over IPsec", Category: "tunnel", RuntimeSupport: RuntimeReady, ImportFormats: []string{"key_value", "json"}, CredentialModes: []string{"username_password", "psk", "certificate_private_key"}, Transports: []string{"udp", "ipsec"}, Notes: "Managed strongSwan + xl2tpd client with an isolated PPP interface and fail-closed policy routing."},
 	{Code: "ikev2", Label: "IKEv2 / IPsec", Category: "tunnel", RuntimeSupport: RuntimePlanned, ImportFormats: []string{"structured", "mobileconfig"}, CredentialModes: []string{"username_password", "certificate_private_key", "psk"}, Transports: []string{"udp", "ipsec"}, Notes: "Preferred IPsec family option; client-mode runtime driver is planned."},
 	{Code: "trojan", Label: "Trojan", Category: "proxy_tunnel", RuntimeSupport: RuntimePlanned, ImportFormats: []string{"url", "json", "structured"}, CredentialModes: []string{"password", "certificate"}, Transports: []string{"tls"}, Notes: "Catalogued for a future managed TUN runtime."},
 	{Code: "hysteria2", Label: "Hysteria 2", Category: "proxy_tunnel", RuntimeSupport: RuntimePlanned, ImportFormats: []string{"url", "yaml", "structured"}, CredentialModes: []string{"password", "certificate"}, Transports: []string{"quic"}, Notes: "Catalogued for a future managed TUN runtime."},
@@ -36,6 +36,16 @@ var protocolCatalog = []ProtocolDefinition{
 func Catalog() []ProtocolDefinition {
 	out := make([]ProtocolDefinition, len(protocolCatalog))
 	copy(out, protocolCatalog)
+	return out
+}
+
+func AvailableCatalog() []ProtocolDefinition {
+	out := make([]ProtocolDefinition, 0, len(protocolCatalog))
+	for _, item := range protocolCatalog {
+		if item.RuntimeSupport == RuntimeReady {
+			out = append(out, item)
+		}
+	}
 	return out
 }
 

@@ -18,7 +18,7 @@ type externalEgressImportPreviewRequest struct {
 }
 
 func (s *Server) listExternalEgressCatalog(w nethttp.ResponseWriter, _ *nethttp.Request) {
-	writeJSON(w, nethttp.StatusOK, externalegress.Catalog())
+	writeJSON(w, nethttp.StatusOK, externalegress.AvailableCatalog())
 }
 
 func (s *Server) previewExternalEgressImport(w nethttp.ResponseWriter, r *nethttp.Request) {

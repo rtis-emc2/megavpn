@@ -42,25 +42,18 @@ Unselected client or node process
 The node main routing table is not modified. There is no managed
 `0.0.0.0/0 -> provider` route in `main`.
 
-## Protocol Status
+## Available Protocols
 
-| Protocol | Profile/import | Node runtime | Activation |
-| --- | --- | --- | --- |
-| OpenVPN UDP/TCP | `.ovpn`, inline config, separate credentials and PEM material | Ready | Allowed |
-| WireGuard | `wg-quick` `.conf`, inline or separate private key | Ready | Allowed |
-| SOCKS5 | Structured profile | Preview | Draft only |
-| HTTP CONNECT / HTTPS proxy | Structured profile | Preview | Draft only |
-| Shadowsocks | SIP002 URL or strict JSON | Ready | Allowed |
-| VLESS | URI or strict JSON; TLS/REALITY is mandatory | Ready | Allowed |
-| L2TP | Structured catalog entry | Planned; intentionally unsafe without IPsec | Draft only |
-| L2TP over IPsec | Strict key/value or JSON plus PSK and user credentials | Ready | Allowed |
-| IKEv2/IPsec | Structured/mobileconfig catalog entry | Planned | Draft only |
-| Trojan | URL/JSON/structured catalog entry | Planned | Draft only |
-| Hysteria 2 | URL/YAML/structured catalog entry | Planned | Draft only |
+The operator list contains only protocols backed by a deployable runtime
+driver. Roadmap-only `planned` and `preview` states are not exposed in forms.
 
-`Preview` and `Planned` mean the data model is reserved and visible, but no
-runtime job can activate the protocol. This is a fail-closed compatibility
-contract, not a production support claim.
+| Protocol | Profile/import | Node runtime |
+| --- | --- | --- |
+| OpenVPN UDP/TCP | `.ovpn`, inline config, separate credentials and PEM material | Ready |
+| WireGuard | `wg-quick` `.conf`, inline or separate private key | Ready |
+| Shadowsocks | SIP002 URL or strict JSON | Ready |
+| VLESS | URI or strict JSON; TLS/REALITY is mandatory | Ready |
+| L2TP over IPsec | Dedicated connection fields; PSK or certificate authentication | Ready |
 
 The initial runtime-ready implementation routes IPv4. Provider IPv6 default
 routes are not yet materialized.
@@ -100,19 +93,23 @@ ignores provider DNS changes.
 
 ### L2TP over IPsec
 
-Use either strict `key=value` input or a JSON object. Supported fields are the
-provider server, remote identity, username, password, pre-shared key, IKE
-proposal and ESP proposal. The profile requires both the IPsec PSK and L2TP
-username/password. Unknown fields, non-string JSON values, control characters
-and invalid endpoint/identity values are rejected.
+The form collects the provider server, optional remote identity and L2TP/PPP
+username/password separately, followed by one IPsec authentication mode:
+
+- pre-shared key;
+- CA certificate, client certificate and matching RSA/EC private key.
+
+The provider server accepts a DNS name, an IP address or a single-host CIDR
+(`/32` for IPv4, `/128` for IPv6). A network CIDR cannot identify one L2TP
+server and is rejected. Certificate chain validity, certificate lifetime and
+private-key matching are checked before storage and again by the node agent.
 
 The node driver uses strongSwan, `xl2tpd` and `pppd`, assigns a deterministic
 managed PPP interface and never installs the provider default route in the
 main table. Only one active external L2TP/IPsec deployment is allowed per node
 because `xl2tpd` and UDP/1701 are node-scoped resources. The same node cannot
 host a managed XL2TPD server instance; agent preflight also blocks apply when
-an unmanaged process already listens on UDP/1701. Certificate-based provider
-authentication is not advertised by this release.
+an unmanaged process already listens on UDP/1701.
 
 ### VLESS
 
@@ -131,28 +128,21 @@ as a separate secret. Only Xray-compatible AEAD/2022 ciphers accepted by the
 catalog are allowed. SIP003 plugins and arbitrary plugin options are rejected;
 provider configs cannot execute node-local commands.
 
-### Structured Draft Profiles
-
-For the remaining preview/planned protocols, operators can store structured
-metadata and encrypted secrets as a draft. The profile cannot be applied until
-a hardened runtime driver is released.
-
 ## Operator Workflow
 
 1. Open `External egress`.
 2. Select `New profile`.
-3. Choose the provider protocol.
-4. Paste/select the provider config and run `Preview import`. Runtime-ready
-   imports are OpenVPN, WireGuard, L2TP/IPsec, VLESS and Shadowsocks.
-5. Add separate credentials or certificate material when the preview reports a
-   required secret.
-6. Save the profile as `active`. Non-ready protocols remain `draft`.
-7. Select `Deploy` and choose every runtime node hosting an Xray/VLESS instance
+3. Choose an available provider protocol. The form is rebuilt for that protocol.
+4. Paste/select a provider config for OpenVPN, WireGuard, VLESS or Shadowsocks.
+   For L2TP/IPsec, fill the dedicated connection and authentication fields.
+5. Select `Validate settings`, then save the profile as `Ready to deploy`.
+   The system generates the internal `profile_key`; operators do not enter it.
+6. Select `Deploy` and choose every runtime node hosting an Xray/VLESS instance
    that the target access group can use.
-8. Wait for the deployment apply job and run `Probe`.
-9. Open `Clients -> Groups`, edit the global VLESS access group and select the
+7. Wait for the deployment apply job and run `Probe`.
+8. Open `Clients -> Groups`, edit the global VLESS access group and select the
    profile in `External provider gateway`.
-10. Preview/sync the group and verify instance apply jobs.
+9. Preview/sync the group and verify instance apply jobs.
 
 When runtime fields or secrets of an active profile change, all live
 deployments move to `pending`. Apply each deployment again before relying on

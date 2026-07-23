@@ -17,7 +17,10 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
 )
 
-var externalEgressKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{1,62}[a-z0-9]$`)
+var (
+	externalEgressKeyPattern       = regexp.MustCompile(`^[a-z][a-z0-9_]{1,62}[a-z0-9]$`)
+	externalEgressKeyPrefixPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+)
 
 var externalEgressSecretTypes = map[string]string{
 	"config": "opaque", "username": "opaque", "password": "password",
@@ -122,11 +125,14 @@ func (s *Store) populateExternalEgressProfile(ctx context.Context, profile *doma
 }
 
 func (s *Store) CreateExternalEgressProfile(ctx context.Context, input domain.ExternalEgressProfileInput, userID *string) (domain.ExternalEgressProfile, error) {
+	profileID := id.New()
+	if strings.TrimSpace(input.ProfileKey) == "" {
+		input.ProfileKey = externalEgressGeneratedProfileKey(input.Protocol, profileID)
+	}
 	normalized, err := normalizeExternalEgressProfileInput(input, true)
 	if err != nil {
 		return domain.ExternalEgressProfile{}, err
 	}
-	profileID := id.New()
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return domain.ExternalEgressProfile{}, err
@@ -145,6 +151,9 @@ func (s *Store) CreateExternalEgressProfile(ctx context.Context, input domain.Ex
 			return domain.ExternalEgressProfile{}, err
 		}
 	}
+	if err := s.pruneExternalEgressAuthenticationSecretsTx(ctx, tx, profileID, normalized.Protocol, normalized.Secrets["config"]); err != nil {
+		return domain.ExternalEgressProfile{}, err
+	}
 	if normalized.Status == "active" {
 		if err := s.validateExternalEgressProfileSecretsTx(ctx, tx, profileID, normalized.Protocol); err != nil {
 			return domain.ExternalEgressProfile{}, err
@@ -162,9 +171,10 @@ func (s *Store) UpdateExternalEgressProfile(ctx context.Context, profileID strin
 	if err != nil {
 		return domain.ExternalEgressProfile{}, err
 	}
-	if strings.TrimSpace(input.ProfileKey) == "" {
-		input.ProfileKey = existing.ProfileKey
+	if provided := strings.ToLower(strings.TrimSpace(input.ProfileKey)); provided != "" && provided != existing.ProfileKey {
+		return domain.ExternalEgressProfile{}, fmt.Errorf("external egress profile_key is system-managed and cannot be changed")
 	}
+	input.ProfileKey = existing.ProfileKey
 	if strings.TrimSpace(input.DisplayName) == "" {
 		input.DisplayName = existing.DisplayName
 	}
@@ -237,6 +247,9 @@ func (s *Store) UpdateExternalEgressProfile(ctx context.Context, profileID strin
 			return domain.ExternalEgressProfile{}, err
 		}
 	}
+	if err := s.pruneExternalEgressAuthenticationSecretsTx(ctx, tx, profileID, normalized.Protocol, normalized.Secrets["config"]); err != nil {
+		return domain.ExternalEgressProfile{}, err
+	}
 	if normalized.Status == "active" {
 		if err := s.validateExternalEgressProfileSecretsTx(ctx, tx, profileID, normalized.Protocol); err != nil {
 			return domain.ExternalEgressProfile{}, err
@@ -254,6 +267,19 @@ func (s *Store) UpdateExternalEgressProfile(ctx context.Context, profileID strin
 	}
 	_, _ = s.CreateAudit(ctx, "system", "external_egress.profile.update", "external_egress", &profileID, "external egress profile updated")
 	return s.GetExternalEgressProfile(ctx, profileID)
+}
+
+func externalEgressGeneratedProfileKey(protocol, profileID string) string {
+	prefix := externalegress.NormalizeProtocol(protocol)
+	if prefix == "" || !externalEgressKeyPrefixPattern.MatchString(prefix) {
+		prefix = "egress"
+	}
+	suffix := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(profileID)), "-", "")
+	if len(suffix) < 12 {
+		sum := sha256.Sum256([]byte(profileID))
+		suffix = hex.EncodeToString(sum[:])
+	}
+	return prefix + "_" + suffix[:12]
 }
 
 func externalEgressRuntimeMetadataChanged(input domain.ExternalEgressProfileInput, existing domain.ExternalEgressProfile) bool {
@@ -373,6 +399,35 @@ func (s *Store) putExternalEgressSecretTx(ctx context.Context, tx pgx.Tx, profil
 	if previousSecretID != "" && previousSecretID != secretID {
 		if _, err := tx.Exec(ctx, `delete from secret_refs where id=$1`, previousSecretID); err != nil {
 			return fmt.Errorf("delete replaced external egress secret: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) pruneExternalEgressAuthenticationSecretsTx(ctx context.Context, tx pgx.Tx, profileID, protocol, config string) error {
+	if protocol != "l2tp_ipsec" || strings.TrimSpace(config) == "" {
+		return nil
+	}
+	preview, err := externalegress.ParseL2TPIPsec([]byte(config))
+	if err != nil {
+		return err
+	}
+	obsolete := []string{"ca_certificate", "certificate", "private_key"}
+	if preview.AuthMethod == "certificate" {
+		obsolete = []string{"preshared_key"}
+	}
+	for _, purpose := range obsolete {
+		var secretRefID string
+		err := tx.QueryRow(ctx, `delete from external_egress_profile_secrets
+			where profile_id=$1 and purpose=$2 returning secret_ref_id::text`, profileID, purpose).Scan(&secretRefID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `delete from secret_refs where id=$1`, secretRefID); err != nil {
+			return fmt.Errorf("delete obsolete external egress secret: %w", err)
 		}
 	}
 	return nil
@@ -582,6 +637,16 @@ func normalizeExternalEgressProfileInput(input domain.ExternalEgressProfileInput
 				return input, err
 			}
 			input.Transport, input.EndpointHost, input.EndpointPort = preview.Transport, preview.EndpointHost, preview.EndpointPort
+		}
+	}
+	if input.Protocol == "l2tp_ipsec" {
+		caCertificate := input.Secrets["ca_certificate"]
+		certificate := input.Secrets["certificate"]
+		privateKey := input.Secrets["private_key"]
+		if caCertificate != "" || certificate != "" || privateKey != "" {
+			if _, err := externalegress.ValidateCertificateMaterial(caCertificate, certificate, privateKey); err != nil {
+				return input, err
+			}
 		}
 	}
 	if input.Status == "active" && def.RuntimeSupport == externalegress.RuntimeReady && configValue == "" && create {

@@ -12,6 +12,7 @@ type L2TPIPsecPreview struct {
 	Transport       string   `json:"transport"`
 	EndpointHost    string   `json:"endpoint_host"`
 	EndpointPort    int      `json:"endpoint_port"`
+	AuthMethod      string   `json:"auth_method"`
 	RemoteID        string   `json:"remote_id,omitempty"`
 	IKEProposal     string   `json:"ike_proposal"`
 	ESPProposal     string   `json:"esp_proposal"`
@@ -28,6 +29,7 @@ type L2TPIPsecPreview struct {
 func ParseL2TPIPsec(raw []byte) (L2TPIPsecPreview, error) {
 	preview := L2TPIPsecPreview{
 		Protocol: "l2tp_ipsec", Transport: "udp_ipsec", EndpointPort: 1701,
+		AuthMethod:  "psk",
 		IKEProposal: "aes256-sha256-modp2048,aes256-sha1-modp2048",
 		ESPProposal: "aes256-sha256,aes256-sha1,aes128-sha1",
 	}
@@ -79,13 +81,18 @@ func ParseL2TPIPsec(raw []byte) (L2TPIPsecPreview, error) {
 		}
 	}
 	preview.EndpointHost = firstMapValue(values, "server", "endpoint", "host", "address")
+	preview.AuthMethod = normalizeL2TPIPsecAuthMethod(firstMapValue(values, "auth_method", "ipsec_auth", "auth"))
+	if preview.AuthMethod == "" {
+		return preview, fmt.Errorf("L2TP/IPsec auth_method must be psk or certificate")
+	}
 	preview.RemoteID = firstMapValue(values, "remote_id", "rightid")
 	preview.Username = firstMapSecretValue(values, "username", "user", "name")
 	preview.Password = firstMapSecretValue(values, "password", "pass")
 	preview.PSK = firstMapSecretValue(values, "preshared_key", "pre_shared_key", "psk", "ipsec_psk")
 	preview.IKEProposal = firstNonEmpty(firstMapValue(values, "ike", "ike_proposal"), preview.IKEProposal)
 	preview.ESPProposal = firstNonEmpty(firstMapValue(values, "esp", "esp_proposal"), preview.ESPProposal)
-	if err := validateManagedEndpoint(preview.EndpointHost, preview.EndpointPort); err != nil {
+	preview.EndpointHost, err = normalizeL2TPIPsecEndpoint(preview.EndpointHost)
+	if err != nil {
 		return preview, err
 	}
 	if !safeIPsecProposalList(preview.IKEProposal) || !safeIPsecProposalList(preview.ESPProposal) {
@@ -101,13 +108,42 @@ func ParseL2TPIPsec(raw []byte) (L2TPIPsecPreview, error) {
 	if !preview.HasPassword {
 		preview.RequiredSecrets = append(preview.RequiredSecrets, "password")
 	}
-	if !preview.HasPSK {
+	if preview.AuthMethod == "psk" && !preview.HasPSK {
 		preview.RequiredSecrets = append(preview.RequiredSecrets, "preshared_key")
+	}
+	if preview.AuthMethod == "certificate" {
+		preview.RequiredSecrets = append(preview.RequiredSecrets, "ca_certificate", "certificate", "private_key")
 	}
 	if strings.Contains(preview.IKEProposal, "modp1024") {
 		preview.Warnings = append(preview.Warnings, "modp1024 is retained only as a legacy provider fallback")
 	}
 	return preview, nil
+}
+
+func normalizeL2TPIPsecAuthMethod(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "psk", "pre_shared_key", "preshared_key":
+		return "psk"
+	case "certificate", "cert", "public_key":
+		return "certificate"
+	default:
+		return ""
+	}
+}
+
+func normalizeL2TPIPsecEndpoint(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if ip, network, err := net.ParseCIDR(value); err == nil {
+		ones, bits := network.Mask.Size()
+		if ones != bits {
+			return "", fmt.Errorf("L2TP/IPsec server CIDR must identify one host (/32 or /128)")
+		}
+		return ip.String(), nil
+	}
+	if err := validateManagedEndpoint(value, 1701); err != nil {
+		return "", fmt.Errorf("L2TP/IPsec server must be a DNS name, IP address or host CIDR (/32 or /128)")
+	}
+	return value, nil
 }
 
 func safeIPsecRemoteID(value string) bool {
@@ -117,7 +153,7 @@ func safeIPsecRemoteID(value string) bool {
 
 func allowedL2TPIPsecKey(key string) bool {
 	switch key {
-	case "server", "endpoint", "host", "address", "remote_id", "rightid", "username", "user", "name", "password", "pass", "preshared_key", "pre_shared_key", "psk", "ipsec_psk", "ike", "ike_proposal", "esp", "esp_proposal":
+	case "server", "endpoint", "host", "address", "auth_method", "ipsec_auth", "auth", "remote_id", "rightid", "username", "user", "name", "password", "pass", "preshared_key", "pre_shared_key", "psk", "ipsec_psk", "ike", "ike_proposal", "esp", "esp_proposal":
 		return true
 	default:
 		return false
