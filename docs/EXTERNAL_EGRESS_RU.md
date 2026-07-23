@@ -1,6 +1,6 @@
 # Выход через внешний VPN/Proxy-провайдер
 
-**Релиз:** `7.1.1.8`
+**Релиз:** `7.1.1.9`
 
 External egress profile подключает выбранные группы клиентов к коммерческому
 или стороннему VPN/proxy-провайдеру. Он не заменяет managed Backhaul и не
@@ -146,6 +146,12 @@ config не может запускать локальные команды на
 проверкой unit/interface/policy rule/route table и не доказывает доступность
 произвольного адреса в Интернете через провайдера.
 
+`Cleanup` сохраняет provider profile и зашифрованные credentials, но переводит
+deployment выбранной node в `inactive`. После этого `Reactivate` повторно
+разворачивает тот же profile на node, а `Remove deployment` удаляет только
+привязку profile к node. Удаление блокируется, пока cleanup не завершён или
+deployment job ещё активен.
+
 Не назначайте профиль группе до active deployment на всех nodes ее scope.
 Materialization работает fail-closed: отсутствующий или unhealthy deployment
 блокирует применение группы.
@@ -232,13 +238,16 @@ journalctl -u megavpn-external-egress-<deployment-id-без-дефисов>.serv
 | Провайдер недоступен | Probe/deployment получает failed/degraded | Восстановить провайдера либо перевести группу на другой active profile |
 
 Для rollback трафика очистите `External provider gateway` в access group и
-выполните sync/apply. Для удаления runtime выполните `Cleanup`. Profile можно
-удалить только после снятия ссылок групп и перевода deployments в inactive.
+выполните sync/apply. Для удаления runtime выполните `Cleanup`. Inactive
+deployment можно затем реактивировать или удалить отдельно. Profile можно
+удалить только после снятия ссылок групп и перевода deployments в inactive либо
+их удаления.
 
 Обязательный порядок удаления: снять profile со всех групп, синхронизировать
-затронутые instances, выполнить `Cleanup` всех node deployments, отключить
-profile и затем удалить его. PostgreSQL lifecycle guards обеспечивают те же
-инварианты, что и API, в том числе при конкурентных запросах операторов.
+затронутые instances, выполнить `Cleanup` всех node deployments, при
+необходимости удалить node deployments, отключить profile и затем удалить его.
+PostgreSQL lifecycle guards обеспечивают те же инварианты, что и API, в том
+числе при конкурентных запросах операторов.
 
 ## Observability, backup и scaling
 

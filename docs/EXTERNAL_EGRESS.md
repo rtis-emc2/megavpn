@@ -1,6 +1,6 @@
 # External Provider Egress
 
-**Release:** `7.1.1.8`
+**Release:** `7.1.1.9`
 
 External egress profiles connect selected client access groups to a commercial
 or third-party VPN/proxy provider. They do not replace managed Backhaul and they
@@ -150,6 +150,12 @@ the updated provider configuration. Probe is structural: it verifies the
 managed unit, interface, policy rule and route table; it does not prove that an
 arbitrary Internet destination is reachable through the provider.
 
+`Cleanup` keeps the provider profile and encrypted credentials, but moves the
+selected node deployment to `inactive`. From that state, select `Reactivate` to
+materialize the same profile on the node again, or `Remove deployment` to remove
+only the profile-to-node assignment. Removal is rejected until cleanup has
+completed and no deployment job is active.
+
 Do not assign the profile before all scoped runtime nodes have an active
 deployment. Group materialization fails closed when a deployment is absent or
 unhealthy.
@@ -239,13 +245,15 @@ Expected state:
 
 To roll back group traffic, edit the access group and clear `External provider
 gateway`, then sync/apply. To remove runtime state, run deployment `Cleanup`.
-Delete the profile only after all group references are cleared and all
-deployments are inactive.
+An inactive deployment can then be reactivated or removed independently. Delete
+the profile only after all group references are cleared and all deployments are
+inactive or removed.
 
 The enforced removal order is: unassign the profile from every group, sync the
-affected instances, clean up every node deployment, disable the profile, then
-delete it. PostgreSQL lifecycle guards enforce the same invariants as the API,
-including under concurrent operator requests.
+affected instances, clean up every node deployment, optionally remove the node
+deployments, disable the profile, then delete it. PostgreSQL lifecycle guards
+enforce the same invariants as the API, including under concurrent operator
+requests.
 
 ## Observability, Backup And Scaling
 

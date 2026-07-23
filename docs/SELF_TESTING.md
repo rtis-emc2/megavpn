@@ -1,6 +1,6 @@
 # Self-Testing
 
-**Release:** `7.1.1.8`
+**Release:** `7.1.1.9`
 
 `scripts/ci/self-test.sh` is the broad diagnostic entrypoint for release readiness. It differs from `scripts/ci/release-gate.sh`: the release gate is fail-fast, while self-test keeps running independent gates and writes a report that separates working, failing and not-tested areas.
 

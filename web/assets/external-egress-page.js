@@ -39,20 +39,28 @@
     function deploymentRows(profile) {
       const deployments = Array.isArray(profile.deployments) ? profile.deployments : [];
       if (!deployments.length) return '<div class="metric-caption">Not deployed on runtime nodes.</div>';
-      return deployments.map((deployment) => `
-        <div class="external-egress-deployment">
-          <div>
-            <strong>${escapeHTML(deployment.node_name || deployment.node_id)}</strong>
-            <small><code>${escapeHTML(deployment.interface_name || 'pending')}</code> · table ${escapeHTML(deployment.routing_table || 'auto')}</small>
-            ${deployment.last_error ? `<small class="text-danger">${escapeHTML(deployment.last_error)}</small>` : ''}
-          </div>
-          ${statusTag(deployment.status || 'unknown')}
-          <div class="table-actions compact-actions">
+      return deployments.map((deployment) => {
+        const inactive = deployment.status === 'inactive' && deployment.desired_status === 'inactive';
+        const actions = inactive
+          ? `
+            <button class="primary-btn external-egress-apply-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Reactivate</button>
+            <button class="danger-btn external-egress-remove-deployment-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}" data-node-name="${escapeHTML(deployment.node_name || deployment.node_id)}"${canManage() ? '' : ' disabled'}>Remove deployment</button>`
+          : `
             <button class="secondary-btn external-egress-probe-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Probe</button>
             <button class="primary-btn external-egress-apply-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Apply</button>
-            <button class="danger-btn external-egress-cleanup-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Cleanup</button>
-          </div>
-        </div>`).join('');
+            <button class="danger-btn external-egress-cleanup-btn" type="button" data-deployment-id="${escapeHTML(deployment.id)}"${canManage() ? '' : ' disabled'}>Cleanup</button>`;
+        return `
+          <div class="external-egress-deployment">
+            <div>
+              <strong>${escapeHTML(deployment.node_name || deployment.node_id)}</strong>
+              <small><code>${escapeHTML(deployment.interface_name || 'pending')}</code> · table ${escapeHTML(deployment.routing_table || 'auto')}</small>
+              ${inactive ? '<small>Runtime is clean. Reactivate it or remove this node deployment.</small>' : ''}
+              ${deployment.last_error ? `<small class="text-danger">${escapeHTML(deployment.last_error)}</small>` : ''}
+            </div>
+            ${statusTag(deployment.status || 'unknown')}
+            <div class="table-actions compact-actions">${actions}</div>
+          </div>`;
+      }).join('');
     }
 
     function profileRows() {
@@ -117,6 +125,7 @@
       document.querySelectorAll('.external-egress-apply-btn').forEach((button) => button.addEventListener('click', () => queueDeploymentAction(button.dataset.deploymentId, 'apply')));
       document.querySelectorAll('.external-egress-probe-btn').forEach((button) => button.addEventListener('click', () => queueDeploymentAction(button.dataset.deploymentId, 'probe')));
       document.querySelectorAll('.external-egress-cleanup-btn').forEach((button) => button.addEventListener('click', () => queueDeploymentAction(button.dataset.deploymentId, 'cleanup')));
+      document.querySelectorAll('.external-egress-remove-deployment-btn').forEach((button) => button.addEventListener('click', () => removeDeployment(button.dataset.deploymentId, button.dataset.nodeName)));
       document.querySelectorAll('.external-egress-delete-btn').forEach((button) => button.addEventListener('click', () => deleteProfile(profileByID(button.dataset.profileId))));
     }
 
@@ -406,6 +415,28 @@
       } catch (error) {
         openActionOutcomeModal?.('External egress action failed', 'Provider gateway', 'failed', error.message || 'The node action could not be queued.');
       }
+    }
+
+    function removeDeployment(deploymentID, nodeName) {
+      openModal(`Remove deployment: ${nodeName || 'runtime node'}`, 'Provider gateway lifecycle', `
+        <div class="callout danger">
+          <strong>Remove the inactive node deployment?</strong>
+          <span>The provider profile and encrypted credentials are preserved. Deploy it again later to recreate the runtime on this node.</span>
+        </div>
+        <div class="modal-actions">
+          <button class="danger-btn" id="externalEgressRemoveDeploymentConfirm" type="button">Remove deployment</button>
+          <button class="secondary-btn" id="externalEgressRemoveDeploymentCancel" type="button">Cancel</button>
+        </div>`, { size: 'medium', variant: 'danger' });
+      document.getElementById('externalEgressRemoveDeploymentCancel')?.addEventListener('click', closeModal);
+      document.getElementById('externalEgressRemoveDeploymentConfirm')?.addEventListener('click', async () => {
+        try {
+          await sendJSON(`/api/v1/external-egress/deployments/${encodeURIComponent(deploymentID)}`, 'DELETE', {});
+          await refresh(); closeModal(); render();
+          openActionOutcomeModal?.('External egress deployment removed', 'Provider gateway', 'succeeded', `${nodeName || 'The node'} is no longer assigned to this provider profile.`);
+        } catch (error) {
+          openActionOutcomeModal?.('External egress removal blocked', 'Provider gateway', 'failed', error.message || 'The node deployment could not be removed.');
+        }
+      });
     }
 
     function deleteProfile(profile) {

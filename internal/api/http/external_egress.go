@@ -185,6 +185,23 @@ func (s *Server) createExternalEgressDeployment(w nethttp.ResponseWriter, r *net
 	writeJSON(w, nethttp.StatusCreated, deployment)
 }
 
+func (s *Server) deleteExternalEgressDeployment(w nethttp.ResponseWriter, r *nethttp.Request) {
+	deployment, err := s.store.DeleteExternalEgressDeployment(
+		r.Context(),
+		strings.TrimSpace(r.PathValue("deployment_id")),
+		externalEgressActor(r),
+	)
+	if errors.Is(err, domain.ErrExternalEgressDeploymentNotFound) {
+		writeErr(w, nethttp.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		writeErr(w, nethttp.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, deployment)
+}
+
 func (s *Server) applyExternalEgressDeployment(w nethttp.ResponseWriter, r *nethttp.Request) {
 	s.externalEgressDeploymentJob(w, r, s.store.CreateExternalEgressApplyJob)
 }

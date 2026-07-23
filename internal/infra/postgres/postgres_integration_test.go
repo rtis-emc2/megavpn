@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -97,6 +98,73 @@ func TestPostgresIntegrationExternalEgressJobIdempotency(t *testing.T) {
 	}
 	if _, err := store.db.Exec(ctx, `update external_egress_profiles set status='disabled' where id=$1`, profile.ID); err == nil {
 		t.Fatal("expected database lifecycle guard to reject disabling a deployed profile")
+	}
+	finishJob := func(job domain.Job, resultStatus string) {
+		t.Helper()
+		if _, err := store.db.Exec(ctx, `update jobs set status=$2,finished_at=now(),locked_by=null,locked_until=null where id=$1`, job.ID, resultStatus); err != nil {
+			t.Fatalf("finish external egress job %s: %v", job.ID, err)
+		}
+		if _, err := store.db.Exec(ctx, `delete from resource_locks where job_id=$1`, job.ID); err != nil {
+			t.Fatalf("release external egress job lock %s: %v", job.ID, err)
+		}
+		if err := store.ApplyExternalEgressJobResult(ctx, job, resultStatus, map[string]any{"health": map[string]any{"status": resultStatus}}); err != nil {
+			t.Fatalf("apply external egress result %s: %v", job.ID, err)
+		}
+	}
+	finishJob(newer, "succeeded")
+
+	cleanup, err := store.CreateExternalEgressCleanupJob(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("create cleanup job: %v", err)
+	}
+	finishJob(cleanup, "succeeded")
+	inactive, err := store.GetExternalEgressDeployment(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("get inactive deployment: %v", err)
+	}
+	if inactive.DesiredStatus != "inactive" || inactive.Status != "inactive" {
+		t.Fatalf("cleanup state = %s/%s, want inactive/inactive", inactive.DesiredStatus, inactive.Status)
+	}
+	if _, err := store.CreateExternalEgressProbeJob(ctx, deployment.ID); err == nil || !strings.Contains(err.Error(), "reactivate") {
+		t.Fatalf("inactive probe error = %v, want reactivate guidance", err)
+	}
+
+	reactivate, err := store.CreateExternalEgressApplyJob(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("reactivate inactive deployment: %v", err)
+	}
+	reactivating, err := store.GetExternalEgressDeployment(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("get reactivating deployment: %v", err)
+	}
+	if reactivating.DesiredStatus != "active" || reactivating.Status != "queued" {
+		t.Fatalf("reactivation state = %s/%s, want active/queued", reactivating.DesiredStatus, reactivating.Status)
+	}
+	finishJob(reactivate, "succeeded")
+
+	cleanup, err = store.CreateExternalEgressCleanupJob(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("create second cleanup job: %v", err)
+	}
+	finishJob(cleanup, "succeeded")
+	removed, err := store.DeleteExternalEgressDeployment(ctx, deployment.ID, nil)
+	if err != nil {
+		t.Fatalf("remove inactive deployment: %v", err)
+	}
+	if removed.DesiredStatus != "deleted" || removed.Status != "deleted" {
+		t.Fatalf("removed state = %s/%s, want deleted/deleted", removed.DesiredStatus, removed.Status)
+	}
+	if _, err := store.DeleteExternalEgressDeployment(ctx, deployment.ID, nil); !errors.Is(err, domain.ErrExternalEgressDeploymentNotFound) {
+		t.Fatalf("repeat deployment removal error = %v, want not found", err)
+	}
+	recreated, err := store.CreateExternalEgressDeployment(ctx, profile.ID, domain.ExternalEgressDeploymentInput{
+		NodeID: node.ID, RoutingTable: "auto", RouteMetric: 100,
+	})
+	if err != nil {
+		t.Fatalf("recreate removed deployment: %v", err)
+	}
+	if recreated.ID != deployment.ID || recreated.DesiredStatus != "active" || recreated.Status != "pending" {
+		t.Fatalf("recreated deployment = %s %s/%s, want %s active/pending", recreated.ID, recreated.DesiredStatus, recreated.Status, deployment.ID)
 	}
 }
 

@@ -786,6 +786,71 @@ func (s *Store) GetExternalEgressDeployment(ctx context.Context, deploymentID st
 	return deployment, err
 }
 
+func (s *Store) DeleteExternalEgressDeployment(ctx context.Context, deploymentID string, userID *string) (domain.ExternalEgressDeployment, error) {
+	deploymentID = strings.TrimSpace(deploymentID)
+	if deploymentID == "" {
+		return domain.ExternalEgressDeployment{}, domain.ErrExternalEgressDeploymentNotFound
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return domain.ExternalEgressDeployment{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1,0))`, deploymentID); err != nil {
+		return domain.ExternalEgressDeployment{}, err
+	}
+	deployment, err := scanExternalEgressDeployment(tx.QueryRow(
+		ctx,
+		externalEgressDeploymentSelect+` where d.id=$1 and d.status <> 'deleted' for update of d`,
+		deploymentID,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ExternalEgressDeployment{}, domain.ErrExternalEgressDeploymentNotFound
+	}
+	if err != nil {
+		return domain.ExternalEgressDeployment{}, err
+	}
+	if deployment.DesiredStatus != "inactive" || deployment.Status != "inactive" {
+		return domain.ExternalEgressDeployment{}, fmt.Errorf("cleanup the external egress deployment before removing it from the node")
+	}
+	var activeJobs int
+	if err := tx.QueryRow(ctx, `select count(*) from jobs
+		where scope_type='external_egress' and scope_id=$1 and status in ('queued','running','retrying')`,
+		deployment.ID,
+	).Scan(&activeJobs); err != nil {
+		return domain.ExternalEgressDeployment{}, err
+	}
+	if activeJobs > 0 {
+		return domain.ExternalEgressDeployment{}, fmt.Errorf("external egress deployment still has %d active job(s)", activeJobs)
+	}
+	healthJSON := mustJSON(map[string]any{"status": "deleted"})
+	if _, err := tx.Exec(ctx, `update external_egress_deployments
+		set desired_status='deleted',status='deleted',health_json=$2,last_job_id=null,last_error='',updated_at=now()
+		where id=$1`,
+		deployment.ID,
+		healthJSON,
+	); err != nil {
+		return domain.ExternalEgressDeployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.ExternalEgressDeployment{}, err
+	}
+	deployment.DesiredStatus = "deleted"
+	deployment.Status = "deleted"
+	deployment.HealthJSON = healthJSON
+	deployment.LastJobID = nil
+	deployment.LastError = ""
+	_, _ = s.CreateAuditForUser(
+		ctx,
+		userID,
+		"external_egress.deployment.delete",
+		"external_egress",
+		&deployment.ID,
+		"external egress deployment removed from node "+deployment.NodeName,
+	)
+	return deployment, nil
+}
+
 func (s *Store) getExternalEgressDeploymentByProfileNode(ctx context.Context, profileID, nodeID string) (domain.ExternalEgressDeployment, error) {
 	deployment, err := scanExternalEgressDeployment(s.db.QueryRow(ctx, externalEgressDeploymentSelect+` where d.profile_id=$1 and d.node_id=$2`, profileID, nodeID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -881,8 +946,14 @@ func (s *Store) createExternalEgressJob(ctx context.Context, deploymentID, jobTy
 		return domain.Job{}, fmt.Errorf("external egress deployment profile changed while queuing job")
 	}
 	if jobType != "node.external_egress.cleanup" {
-		if profile.Status != "active" || deployment.DesiredStatus != "active" {
-			return domain.Job{}, fmt.Errorf("external egress profile and deployment must be active")
+		if profile.Status != "active" {
+			return domain.Job{}, fmt.Errorf("external egress profile must be active")
+		}
+		if deployment.DesiredStatus == "deleted" || deployment.Status == "deleted" {
+			return domain.Job{}, domain.ErrExternalEgressDeploymentNotFound
+		}
+		if jobType == "node.external_egress.probe" && deployment.DesiredStatus != "active" {
+			return domain.Job{}, fmt.Errorf("external egress deployment is inactive; reactivate it before probing")
 		}
 		if profile.RuntimeSupport != externalegress.RuntimeReady {
 			return domain.Job{}, fmt.Errorf("protocol %s runtime is not available", profile.Protocol)
@@ -946,6 +1017,10 @@ func (s *Store) createExternalEgressJob(ctx context.Context, deploymentID, jobTy
 	status := "queued"
 	if jobType == "node.external_egress.cleanup" {
 		if _, err := tx.Exec(ctx, `update external_egress_deployments set desired_status='inactive',status=$2,last_job_id=$3,last_error='',updated_at=now() where id=$1`, deployment.ID, status, job.ID); err != nil {
+			return domain.Job{}, err
+		}
+	} else if jobType == "node.external_egress.apply" {
+		if _, err := tx.Exec(ctx, `update external_egress_deployments set desired_status='active',status=$2,last_job_id=$3,last_error='',updated_at=now() where id=$1`, deployment.ID, status, job.ID); err != nil {
 			return domain.Job{}, err
 		}
 	} else if _, err := tx.Exec(ctx, `update external_egress_deployments set status=$2,last_job_id=$3,last_error='',updated_at=now() where id=$1`, deployment.ID, status, job.ID); err != nil {

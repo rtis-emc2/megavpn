@@ -1,6 +1,6 @@
 # RBAC Matrix
 
-**Release:** `7.1.1.8`
+**Release:** `7.1.1.9`
 
 ## Seeded Roles
 
