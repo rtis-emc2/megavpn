@@ -3266,23 +3266,35 @@ func (s *Store) HeartbeatByNodeID(ctx context.Context, nodeID string) error {
 }
 
 func (s *Store) HeartbeatByNodeIDWithVersion(ctx context.Context, nodeID, agentVersion, protocolVersion string) error {
-	now := time.Now().UTC()
-	cmd, err := s.db.Exec(ctx, `update nodes set status='online',agent_status='online',last_heartbeat_at=$2,updated_at=$2 where id=$1 and status <> 'retired'`, nodeID, now)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	cmd, err := tx.Exec(ctx, `update nodes
+		set status='online',
+		    agent_status='online',
+		    last_heartbeat_at=now(),
+		    updated_at=now()
+		where id=$1 and status <> 'retired'`, nodeID)
 	if err != nil {
 		return err
 	}
 	if cmd.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
-	if _, err := s.db.Exec(ctx, `update node_agents
-		set last_seen_at=$2,
+	if _, err := tx.Exec(ctx, `update node_agents
+		set last_seen_at=now(),
 		    status='active',
-		    agent_version=coalesce(nullif($3,''),agent_version),
-		    protocol_version=coalesce(nullif($4,''),protocol_version)
-		where node_id=$1`, nodeID, now, strings.TrimSpace(agentVersion), strings.TrimSpace(protocolVersion)); err != nil {
+		    agent_version=coalesce(nullif($2,''),agent_version),
+		    protocol_version=coalesce(nullif($3,''),protocol_version),
+		    last_auth_failure_at=null,
+		    last_auth_failure_reason=null
+		where node_id=$1`, nodeID, strings.TrimSpace(agentVersion), strings.TrimSpace(protocolVersion)); err != nil {
 		return err
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func normalizeAgentRuntimeVersion(value, fallback string) string {

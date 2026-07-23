@@ -3370,8 +3370,20 @@ func TestPostgresIntegrationAgentVersionProjection(t *testing.T) {
 		t.Fatalf("registered node agent projection = version:%q protocol:%q registered:%v last_seen:%v", registered.AgentVersion, registered.AgentProtocolVersion, registered.AgentRegisteredAt, registered.AgentLastSeenAt)
 	}
 
+	if err := store.RecordAgentAuthFailure(ctx, node.ID, "heartbeat unauthorized"); err != nil {
+		t.Fatalf("record agent auth failure: %v", err)
+	}
 	if err := store.HeartbeatByNodeIDWithVersion(ctx, node.ID, heartbeatAgentVersion, "v1"); err != nil {
 		t.Fatalf("heartbeat with version: %v", err)
+	}
+	var unclearedAuthFailures int
+	if err := store.db.QueryRow(ctx, `select count(*) from node_agents
+		where node_id=$1
+		  and (last_auth_failure_at is not null or last_auth_failure_reason is not null)`, node.ID).Scan(&unclearedAuthFailures); err != nil {
+		t.Fatalf("read agent auth failure after successful heartbeat: %v", err)
+	}
+	if unclearedAuthFailures != 0 {
+		t.Fatalf("successful heartbeat left %d auth failure markers, want 0", unclearedAuthFailures)
 	}
 	nodes, err := store.ListNodes(ctx)
 	if err != nil {
