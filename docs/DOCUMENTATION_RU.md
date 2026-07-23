@@ -1,6 +1,6 @@
 # Индекс документации
 
-**Релиз:** `7.1.1.2`
+**Релиз:** `7.1.1.3`
 
 Этот документ - русская входная точка в документацию RTIS MegaVPN. Он фиксирует,
 где находится источник правды по каждому направлению: эксплуатация,
@@ -16,7 +16,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | 2 | [Руководство пользователя](USER_GUIDE_RU.md) | Полный операторский guide |
 | 3 | [Operations runbook](OPERATIONS_RUNBOOK.md) | Эксплуатация, backup, restore, upgrade, rollback |
 | 4 | [Release gates](RELEASE_GATES.md) | Release evidence и критерии приемки |
-| 5 | [Release notes](releases/7.1.1.2.md) | Текущий release baseline и заметные изменения |
+| 5 | [Release notes](releases/7.1.1.3.md) | Текущий release baseline и заметные изменения |
 | 6 | [Self-testing](SELF_TESTING.md) | Локальные и live diagnostic gates |
 | 7 | [Threat model](THREAT_MODEL.md) | Security model и остаточные риски |
 | 8 | [RBAC matrix](RBAC_MATRIX.md) | Роли, permissions и privileged job rules |
@@ -30,7 +30,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | 16 | [Внешний VPN/proxy egress](EXTERNAL_EGRESS_RU.md) | Маршрутизация выбранных access groups через стороннего провайдера |
 | 17 | [Roadmap](../ROADMAP_V1_AND_TZ_RU.md) | Roadmap и техническая спецификация |
 | 18 | [Next steps](NEXT_STEPS_RU.md) | Текущая engineering-точка |
-| 19 | [Security review](SECURITY_REVIEW_7.1.1.2.md) | Security и release review artifact |
+| 19 | [Security review](SECURITY_REVIEW_7.1.1.3.md) | Security и release review artifact |
 | 20 | [English roadmap](../ROADMAP_V1_AND_TZ.md) | Английская версия roadmap |
 
 ## Владение документацией
@@ -40,7 +40,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 | Product overview | `README.md`, `README_RU.md` | README должен оставаться краткой входной точкой. |
 | Operator usage | `docs/USER_GUIDE_EN.md`, `docs/USER_GUIDE_RU.md` | Английская и русская версии должны быть синхронизированы. |
 | Operations | `docs/OPERATIONS_RUNBOOK.md` | Production procedures и controlled maintenance. |
-| Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md`, `docs/releases/7.1.1.2.md` | Release notes, release evidence, self-test и smoke gates. |
+| Release readiness | `docs/RELEASE_GATES.md`, `docs/SELF_TESTING.md`, `docs/releases/7.1.1.3.md` | Release notes, release evidence, self-test и smoke gates. |
 | Security | `docs/THREAT_MODEL.md`, `docs/RBAC_MATRIX.md` | Threat model, roles, permissions и privileged jobs. |
 | Backhaul/routing | `docs/BACKHAUL.md` | Managed links, route projection и troubleshooting. |
 | Topology | `docs/NODE_MAP.md`, `docs/NODE_MAP_RU.md` | GeoIP-размещение нод, локальная статичная карта, node owner metadata и backhaul overlay. |
@@ -76,7 +76,7 @@ English entry point: [DOCUMENTATION.md](DOCUMENTATION.md).
 - Если в Control Plane есть managed workflow, документация не должна предлагать
   ручное изменение node как основной путь.
 - Каждый поддерживаемый документационный файл должен содержать release banner:
-  `7.1.1.2`.
+  `7.1.1.3`.
 
 ## Текущие gaps документации
 
