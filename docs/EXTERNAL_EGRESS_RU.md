@@ -1,6 +1,6 @@
 # Выход через внешний VPN/Proxy-провайдер
 
-**Релиз:** `7.1.1.13`
+**Релиз:** `7.1.1.14`
 
 External egress profile подключает выбранные группы клиентов к коммерческому
 или стороннему VPN/proxy-провайдеру. Он не заменяет managed Backhaul и не
@@ -273,6 +273,27 @@ runtime и записывает отдельную XL2TPD/PPP/IPsec конфиг
 route, runtime directory, временное состояние, MegaVPN certificate files и
 точные глобальные IPsec include directives, когда управляемых L2TP deployment
 больше нет.
+До удаления runtime directory Cleanup проверяет сохраненный XL2TPD PID через
+`/proc/<pid>/exe`, завершает только процесс, подтвержденный как `xl2tpd`, и
+ждет освобождения UDP/1701. Apply выполняет такую же ownership-aware очистку
+для stale managed deployments. Глобальное завершение процессов по имени не
+используется, чтобы не остановить чужой сервис оператора.
+Если старый Cleanup уже удалил PID file, Apply и Cleanup могут восстановить
+PID listener через `ss`, но завершают его только когда executable и
+`/proc/<pid>/cmdline` подтверждают MegaVPN-managed configuration или runtime
+path. Emergency cleanup использует те же проверки и сохраняет runtime
+evidence, если безопасно доказать ownership невозможно.
+
+Если UDP/1701 остается занят, job завершается fail-closed и сохраняет в
+evidence соответствующую строку `ss -lunp`. Ее можно проверить без изменения
+runtime:
+
+```bash
+sudo ss -H -lunp | grep ':1701 '
+sudo systemctl status xl2tpd 'megavpn-external-egress-*' --no-pager -l
+```
+
+Не завершайте найденный процесс, пока его принадлежность не подтверждена.
 
 `Full node wipe` дополнительно удаляет executable packages `xl2tpd`, `ppp` и
 strongSwan. Ошибка package purge считается ошибкой wipe: агент не удаляет сам
@@ -291,6 +312,7 @@ binary должны находиться. После этого повторит
 | Parser отклонил config | На node ничего не меняется | Убрать запрещенные директивы или добавить отдельные managed secrets |
 | Не установился runtime package | Существующий deployment продолжает работать | Исправить OS repositories/capability и повторить apply |
 | `xl2tpd` остался unconfigured | Apply завершается до замены runtime | Восстановить apt/dpkg по инструкции и повторить apply |
+| UDP/1701 остается занят после managed teardown | Apply или Cleanup завершается ошибкой и показывает владельца listener | Проверить evidence `ss -lunp`, затем остановить или перенести только подтвержденный конфликтующий runtime |
 | Full wipe не смог удалить L2TP packages | Wipe завершается ошибкой, agent сохраняется | Восстановить apt/dpkg, проверить job evidence и повторить full wipe |
 | Новый runtime не стартовал | Apply job возвращает stage/output | Проверить journal, исправить profile, повторить apply |
 | Provider interface отключился | Трафик выбранной группы отклоняется dedicated unreachable route | Восстановить provider runtime либо перевести группу на другой active profile |

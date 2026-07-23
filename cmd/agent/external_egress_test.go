@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
+	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -443,6 +445,305 @@ func TestExternalEgressUDPPortListeningDetectsL2TPConflicts(t *testing.T) {
 	}
 	if externalEgressUDPPortListening("UNCONN 0 0 0.0.0.0:1194 0.0.0.0:*", 1701) {
 		t.Fatal("unrelated UDP listener was reported as an L2TP conflict")
+	}
+	owner := `UNCONN 0 0 0.0.0.0:1701 0.0.0.0:* users:(("xl2tpd",pid=4242,fd=3))`
+	if got := externalEgressUDPPortOwner(owner, 1701); got != owner {
+		t.Fatalf("UDP/1701 owner = %q, want %q", got, owner)
+	}
+}
+
+func TestTerminateManagedExternalEgressL2TPProcessStopsOwnedOrphan(t *testing.T) {
+	oldReadFile := readExternalEgressManagedFile
+	oldReadlink := readExternalEgressProcessExecutable
+	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldSignal := signalExternalEgressProcess
+	t.Cleanup(func() {
+		readExternalEgressManagedFile = oldReadFile
+		readExternalEgressProcessExecutable = oldReadlink
+		readExternalEgressProcessCommandLine = oldReadCommandLine
+		signalExternalEgressProcess = oldSignal
+	})
+
+	readExternalEgressManagedFile = func(string) ([]byte, error) {
+		return []byte("4242\n"), nil
+	}
+	processExited := false
+	readExternalEgressProcessExecutable = func(path string) (string, error) {
+		if path != "/proc/4242/exe" {
+			t.Fatalf("unexpected process path: %s", path)
+		}
+		if processExited {
+			return "", os.ErrNotExist
+		}
+		return "/usr/sbin/xl2tpd", nil
+	}
+	readExternalEgressProcessCommandLine = func(string) ([]byte, error) {
+		return []byte("/usr/sbin/xl2tpd\x00-D\x00-p\x00/run/megavpn/external-egress/38fdafed754e4e5e8bdef546e05674f3/xl2tpd.pid\x00"), nil
+	}
+	signals := []syscall.Signal{}
+	signalExternalEgressProcess = func(pid int, signal syscall.Signal) error {
+		if pid != 4242 {
+			t.Fatalf("unexpected process id: %d", pid)
+		}
+		signals = append(signals, signal)
+		processExited = true
+		return nil
+	}
+
+	result, err := terminateManagedExternalEgressL2TPProcess(
+		context.Background(),
+		validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n"),
+	)
+	if err != nil {
+		t.Fatalf("terminateManagedExternalEgressL2TPProcess: %v", err)
+	}
+	if result["terminated"] != true {
+		t.Fatalf("managed process result = %#v", result)
+	}
+	if len(signals) != 1 || signals[0] != syscall.SIGTERM {
+		t.Fatalf("managed process signals = %#v", signals)
+	}
+}
+
+func TestTerminateManagedExternalEgressL2TPProcessNeverSignalsReusedPID(t *testing.T) {
+	oldReadFile := readExternalEgressManagedFile
+	oldReadlink := readExternalEgressProcessExecutable
+	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldSignal := signalExternalEgressProcess
+	t.Cleanup(func() {
+		readExternalEgressManagedFile = oldReadFile
+		readExternalEgressProcessExecutable = oldReadlink
+		readExternalEgressProcessCommandLine = oldReadCommandLine
+		signalExternalEgressProcess = oldSignal
+	})
+
+	readExternalEgressManagedFile = func(string) ([]byte, error) {
+		return []byte("4242\n"), nil
+	}
+	readExternalEgressProcessExecutable = func(string) (string, error) {
+		return "/usr/sbin/nginx", nil
+	}
+	signalExternalEgressProcess = func(int, syscall.Signal) error {
+		t.Fatal("reused PID was signaled")
+		return nil
+	}
+
+	result, err := terminateManagedExternalEgressL2TPProcess(
+		context.Background(),
+		validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n"),
+	)
+	if err != nil {
+		t.Fatalf("terminateManagedExternalEgressL2TPProcess: %v", err)
+	}
+	if result["pid_reused"] != true || result["terminated"] != false {
+		t.Fatalf("reused PID result = %#v", result)
+	}
+}
+
+func TestTerminateManagedExternalEgressL2TPProcessRejectsUnmanagedCommandLine(t *testing.T) {
+	oldReadFile := readExternalEgressManagedFile
+	oldReadlink := readExternalEgressProcessExecutable
+	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldSignal := signalExternalEgressProcess
+	t.Cleanup(func() {
+		readExternalEgressManagedFile = oldReadFile
+		readExternalEgressProcessExecutable = oldReadlink
+		readExternalEgressProcessCommandLine = oldReadCommandLine
+		signalExternalEgressProcess = oldSignal
+	})
+
+	readExternalEgressManagedFile = func(string) ([]byte, error) {
+		return []byte("4242\n"), nil
+	}
+	readExternalEgressProcessExecutable = func(string) (string, error) {
+		return "/usr/sbin/xl2tpd", nil
+	}
+	readExternalEgressProcessCommandLine = func(string) ([]byte, error) {
+		return []byte("/usr/sbin/xl2tpd\x00-D\x00-c\x00/etc/xl2tpd/xl2tpd.conf\x00"), nil
+	}
+	signalExternalEgressProcess = func(int, syscall.Signal) error {
+		t.Fatal("XL2TPD process without managed arguments was signaled")
+		return nil
+	}
+
+	result, err := terminateManagedExternalEgressL2TPProcess(
+		context.Background(),
+		validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n"),
+	)
+	if err != nil {
+		t.Fatalf("terminateManagedExternalEgressL2TPProcess: %v", err)
+	}
+	if result["ownership_mismatch"] != true || result["terminated"] != false {
+		t.Fatalf("unmanaged command line result = %#v", result)
+	}
+}
+
+func TestTerminateManagedExternalEgressL2TPListenerRecoversLostPIDFile(t *testing.T) {
+	oldReadlink := readExternalEgressProcessExecutable
+	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldSignal := signalExternalEgressProcess
+	t.Cleanup(func() {
+		readExternalEgressProcessExecutable = oldReadlink
+		readExternalEgressProcessCommandLine = oldReadCommandLine
+		signalExternalEgressProcess = oldSignal
+	})
+
+	processExited := false
+	readExternalEgressProcessExecutable = func(path string) (string, error) {
+		if path != "/proc/4242/exe" {
+			t.Fatalf("unexpected process path: %s", path)
+		}
+		if processExited {
+			return "", os.ErrNotExist
+		}
+		return "/usr/sbin/xl2tpd", nil
+	}
+	readExternalEgressProcessCommandLine = func(string) ([]byte, error) {
+		return []byte("/usr/sbin/xl2tpd\x00-D\x00-p\x00/run/megavpn/external-egress/38fdafed754e4e5e8bdef546e05674f3/xl2tpd.pid\x00"), nil
+	}
+	readExternalEgressProcessCommandLine = func(path string) ([]byte, error) {
+		if path != "/proc/4242/cmdline" {
+			t.Fatalf("unexpected command line path: %s", path)
+		}
+		return []byte("/usr/sbin/xl2tpd\x00-D\x00-c\x00/etc/megavpn/external-egress/38fdafed-754e-4e5e-8bde-f546e05674f3/xl2tpd.conf\x00"), nil
+	}
+	signalExternalEgressProcess = func(pid int, signal syscall.Signal) error {
+		if pid != 4242 || signal != syscall.SIGTERM {
+			t.Fatalf("unexpected managed listener signal: pid=%d signal=%v", pid, signal)
+		}
+		processExited = true
+		return nil
+	}
+
+	output := `UNCONN 0 0 0.0.0.0:1701 0.0.0.0:* users:(("xl2tpd",pid=4242,fd=3))`
+	result, err := terminateManagedExternalEgressL2TPListener(context.Background(), output, 1701)
+	if err != nil {
+		t.Fatalf("terminateManagedExternalEgressL2TPListener: %v", err)
+	}
+	if result["managed"] != true || result["terminated"] != true {
+		t.Fatalf("managed listener result = %#v", result)
+	}
+}
+
+func TestTerminateManagedExternalEgressL2TPListenerLeavesUnmanagedProcess(t *testing.T) {
+	oldReadlink := readExternalEgressProcessExecutable
+	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldSignal := signalExternalEgressProcess
+	t.Cleanup(func() {
+		readExternalEgressProcessExecutable = oldReadlink
+		readExternalEgressProcessCommandLine = oldReadCommandLine
+		signalExternalEgressProcess = oldSignal
+	})
+
+	readExternalEgressProcessExecutable = func(string) (string, error) {
+		return "/usr/sbin/xl2tpd", nil
+	}
+	readExternalEgressProcessCommandLine = func(string) ([]byte, error) {
+		return []byte("/usr/sbin/xl2tpd\x00-D\x00-c\x00/etc/xl2tpd/xl2tpd.conf\x00"), nil
+	}
+	signalExternalEgressProcess = func(int, syscall.Signal) error {
+		t.Fatal("unmanaged XL2TPD listener was signaled")
+		return nil
+	}
+
+	output := `UNCONN 0 0 [::]:1701 [::]:* users:(("xl2tpd",pid=4242,fd=3))`
+	result, err := terminateManagedExternalEgressL2TPListener(context.Background(), output, 1701)
+	if err != nil {
+		t.Fatalf("terminateManagedExternalEgressL2TPListener: %v", err)
+	}
+	if result["managed"] != false || result["terminated"] != false {
+		t.Fatalf("unmanaged listener result = %#v", result)
+	}
+}
+
+func TestCleanupExternalEgressL2TPStopsOrphanBeforeRemovingRuntime(t *testing.T) {
+	oldRun := runInstallCommand
+	oldReadFile := readExternalEgressManagedFile
+	oldReadlink := readExternalEgressProcessExecutable
+	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldSignal := signalExternalEgressProcess
+	oldRemove := removeExternalEgressManagedPath
+	oldGlob := globExternalEgressPaths
+	oldResolve := resolveExternalEgressCleanupExecutable
+	t.Cleanup(func() {
+		runInstallCommand = oldRun
+		readExternalEgressManagedFile = oldReadFile
+		readExternalEgressProcessExecutable = oldReadlink
+		readExternalEgressProcessCommandLine = oldReadCommandLine
+		signalExternalEgressProcess = oldSignal
+		removeExternalEgressManagedPath = oldRemove
+		globExternalEgressPaths = oldGlob
+		resolveExternalEgressCleanupExecutable = oldResolve
+	})
+
+	processExited := false
+	readExternalEgressManagedFile = func(string) ([]byte, error) {
+		return []byte("4242\n"), nil
+	}
+	readExternalEgressProcessExecutable = func(string) (string, error) {
+		if processExited {
+			return "", os.ErrNotExist
+		}
+		return "/usr/sbin/xl2tpd", nil
+	}
+	readExternalEgressProcessCommandLine = func(string) ([]byte, error) {
+		return []byte("/usr/sbin/xl2tpd\x00-D\x00-p\x00/run/megavpn/external-egress/38fdafed754e4e5e8bdef546e05674f3/xl2tpd.pid\x00"), nil
+	}
+	signalExternalEgressProcess = func(pid int, signal syscall.Signal) error {
+		if pid != 4242 || signal != syscall.SIGTERM {
+			t.Fatalf("unexpected managed process signal: pid=%d signal=%v", pid, signal)
+		}
+		processExited = true
+		return nil
+	}
+	removedPaths := []string{}
+	removeExternalEgressManagedPath = func(path string, _ bool) (bool, error) {
+		removedPaths = append(removedPaths, path)
+		return true, nil
+	}
+	globExternalEgressPaths = func(string) ([]string, error) {
+		return []string{filepath.Join(externalEgressManagedRoot, "other", "ipsec.conf")}, nil
+	}
+	resolveExternalEgressCleanupExecutable = func(string, ...string) (string, bool) {
+		return "", false
+	}
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		switch {
+		case name == "systemctl":
+			return 0, ""
+		case command == "ip rule del pref 50123 fwmark 0x4d590123 lookup 40123":
+			return 2, "RTNETLINK answers: No such file or directory"
+		case command == "ip route flush table 40123", command == "ip route show table 40123":
+			return 2, "Error: ipv4: FIB table does not exist."
+		case command == "ip rule show":
+			return 0, ""
+		case command == "ss -H -lunp":
+			return 0, ""
+		default:
+			t.Fatalf("unexpected cleanup command: %s", command)
+			return 1, "unexpected command"
+		}
+	}
+
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
+	status, result := (&client{}).cleanupExternalEgress(context.Background(), job{Payload: map[string]any{
+		"node_id": payload.NodeID, "profile_id": payload.ProfileID, "deployment_id": payload.DeploymentID,
+		"protocol": payload.Protocol, "interface_name": payload.InterfaceName, "routing_table": payload.RoutingTable,
+		"route_metric": payload.RouteMetric, "fwmark": payload.FWMark,
+	}}, agentState{NodeID: payload.NodeID})
+	if status != "succeeded" {
+		t.Fatalf("cleanup status = %s, result = %#v", status, result)
+	}
+	processResult, _ := result["l2tp_process"].(map[string]any)
+	if processResult["terminated"] != true {
+		t.Fatalf("cleanup process result = %#v", processResult)
+	}
+	removed := strings.Join(removedPaths, "\n")
+	for _, required := range []string{externalEgressManagedDir(payload), externalEgressRuntimeDir(payload)} {
+		if !strings.Contains(removed, required) {
+			t.Fatalf("removed paths %q do not contain %q", removed, required)
+		}
 	}
 }
 

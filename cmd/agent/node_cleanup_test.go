@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -290,5 +292,93 @@ func TestPurgeEmergencyL2TPPackagesRejectsUnmanagedExecutables(t *testing.T) {
 	}
 	if !strings.Contains(stringify(result["error"]), "unmanaged L2TP/IPsec executables") {
 		t.Fatalf("unexpected error: %#v", result)
+	}
+}
+
+func TestEmergencyCleanupL2TPRuntimeStopsManagedProcessBeforeRemoval(t *testing.T) {
+	oldRun := runInstallCommand
+	oldGlob := globExternalEgressPaths
+	oldReadFile := readExternalEgressManagedFile
+	oldReadlink := readExternalEgressProcessExecutable
+	oldReadCommandLine := readExternalEgressProcessCommandLine
+	oldSignal := signalExternalEgressProcess
+	oldRemove := removeExternalEgressManagedPath
+	oldResolve := resolveExternalEgressCleanupExecutable
+	t.Cleanup(func() {
+		runInstallCommand = oldRun
+		globExternalEgressPaths = oldGlob
+		readExternalEgressManagedFile = oldReadFile
+		readExternalEgressProcessExecutable = oldReadlink
+		readExternalEgressProcessCommandLine = oldReadCommandLine
+		signalExternalEgressProcess = oldSignal
+		removeExternalEgressManagedPath = oldRemove
+		resolveExternalEgressCleanupExecutable = oldResolve
+	})
+
+	const pidPath = "/run/megavpn/external-egress/38fdafed754e4e5e8bdef546e05674f3/xl2tpd.pid"
+	processExited := false
+	globExternalEgressPaths = func(pattern string) ([]string, error) {
+		switch pattern {
+		case "/run/megavpn/external-egress/*/xl2tpd.pid":
+			return []string{pidPath}, nil
+		case externalEgressManagedRoot + "/*/ipsec.conf":
+			return []string{externalEgressManagedRoot + "/other/ipsec.conf"}, nil
+		default:
+			t.Fatalf("unexpected glob pattern: %s", pattern)
+			return nil, nil
+		}
+	}
+	readExternalEgressManagedFile = func(path string) ([]byte, error) {
+		if path != pidPath {
+			t.Fatalf("unexpected PID path: %s", path)
+		}
+		return []byte("4242\n"), nil
+	}
+	readExternalEgressProcessExecutable = func(path string) (string, error) {
+		if path != "/proc/4242/exe" {
+			t.Fatalf("unexpected process path: %s", path)
+		}
+		if processExited {
+			return "", os.ErrNotExist
+		}
+		return "/usr/sbin/xl2tpd", nil
+	}
+	readExternalEgressProcessCommandLine = func(string) ([]byte, error) {
+		return []byte("/usr/sbin/xl2tpd\x00-D\x00-p\x00/run/megavpn/external-egress/38fdafed754e4e5e8bdef546e05674f3/xl2tpd.pid\x00"), nil
+	}
+	signalExternalEgressProcess = func(pid int, signal syscall.Signal) error {
+		if pid != 4242 || signal != syscall.SIGTERM {
+			t.Fatalf("unexpected managed process signal: pid=%d signal=%v", pid, signal)
+		}
+		processExited = true
+		return nil
+	}
+	removeExternalEgressManagedPath = func(path string, recursive bool) (bool, error) {
+		if path == "/run/megavpn/external-egress" && (!recursive || !processExited) {
+			t.Fatalf("runtime removed before managed process exit: recursive=%v exited=%v", recursive, processExited)
+		}
+		return true, nil
+	}
+	resolveExternalEgressCleanupExecutable = func(string, ...string) (string, bool) {
+		return "", false
+	}
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		switch command {
+		case "systemctl disable --now xl2tpd.service", "ss -H -lunp":
+			return 0, ""
+		default:
+			t.Fatalf("unexpected cleanup command: %s", command)
+			return 1, "unexpected command"
+		}
+	}
+
+	result := emergencyCleanupL2TPRuntime(context.Background(), false)
+	if errors := stringSliceFromAny(result["errors"]); len(errors) != 0 {
+		t.Fatalf("emergency cleanup errors = %#v, result = %#v", errors, result)
+	}
+	processes, _ := result["managed_processes"].([]map[string]any)
+	if len(processes) != 1 || processes[0]["terminated"] != true {
+		t.Fatalf("emergency cleanup processes = %#v", processes)
 	}
 }

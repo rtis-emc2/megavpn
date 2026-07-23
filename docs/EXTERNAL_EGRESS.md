@@ -1,6 +1,6 @@
 # External Provider Egress
 
-**Release:** `7.1.1.13`
+**Release:** `7.1.1.14`
 
 External egress profiles connect selected client access groups to a commercial
 or third-party VPN/proxy provider. They do not replace managed Backhaul and they
@@ -278,6 +278,26 @@ writes a deployment-specific XL2TPD/PPP/IPsec configuration. Normal deployment
 cleanup and emergency services cleanup remove the managed unit, policy route,
 runtime directory, temporary state, MegaVPN certificate files and the exact
 global IPsec include directives when no managed L2TP deployment remains.
+Before deleting the runtime directory, cleanup verifies the saved XL2TPD PID
+against `/proc/<pid>/exe`, terminates only a process proven to be `xl2tpd` and
+waits for UDP/1701 to become free. Apply performs the same ownership-aware
+teardown for stale managed deployments. It never uses a global process-name
+kill that could stop an unrelated operator-managed service.
+When an older cleanup has already removed the PID file, Apply and cleanup can
+recover the listener PID from `ss`, but terminate it only when both the
+executable and `/proc/<pid>/cmdline` prove that it uses MegaVPN-managed
+configuration or runtime paths. Emergency cleanup uses the same checks and
+preserves runtime evidence when ownership cannot be established safely.
+
+If UDP/1701 remains occupied, the job fails closed and includes the matching
+`ss -lunp` owner row in job evidence. Inspect it without changing runtime state:
+
+```bash
+sudo ss -H -lunp | grep ':1701 '
+sudo systemctl status xl2tpd 'megavpn-external-egress-*' --no-pager -l
+```
+
+Do not terminate the reported process until its ownership is established.
 
 `Full node wipe` additionally purges the installed `xl2tpd`, `ppp` and
 strongSwan executable packages. Package purge failure is a hard wipe failure:
@@ -296,6 +316,7 @@ profile or rotate provider credentials for this package-manager failure.
 | Config parser rejects input | Nothing is deployed | Remove forbidden directives or use separate managed secrets |
 | Runtime package install fails | Existing deployment is left running | Fix OS repositories/capabilities and apply again |
 | `xl2tpd` remains unconfigured | Apply fails before runtime replacement | Repair apt/dpkg with the documented sequence and apply again |
+| UDP/1701 remains occupied after managed teardown | Apply or cleanup fails and reports the listener owner | Verify the `ss -lunp` evidence, then stop or move only the confirmed conflicting runtime |
 | Full wipe cannot purge L2TP packages | Wipe fails and agent remains installed | Repair apt/dpkg, verify the job evidence and repeat full wipe |
 | New runtime does not start | Apply job fails and reports stage/output | Inspect unit journal, correct profile, apply again |
 | Provider interface goes down | Selected group traffic is rejected by the dedicated unreachable route | Restore the provider runtime or move the group to another active profile |

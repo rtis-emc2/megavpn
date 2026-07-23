@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 	"unicode"
 
 	"github.com/rtis-emc2/megavpn/internal/externalegress"
@@ -22,10 +24,20 @@ const externalEgressManagedRoot = "/etc/megavpn/external-egress"
 
 var (
 	externalEgressUUIDPattern              = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	externalEgressCompactUUIDPattern       = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	externalEgressInterfacePattern         = regexp.MustCompile(`^mgev[0-9a-f]{10}$`)
+	externalEgressListenerPIDPattern       = regexp.MustCompile(`\bpid=([0-9]+)\b`)
+	externalEgressL2TPConfigPathPattern    = regexp.MustCompile(`^/etc/megavpn/external-egress/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/xl2tpd\.conf$`)
+	externalEgressL2TPRuntimePathPattern   = regexp.MustCompile(`^/run/megavpn/external-egress/[0-9a-f]{32}/xl2tpd\.(pid|control)$`)
 	resolveExternalEgressCleanupExecutable = resolveExecutable
 	globExternalEgressPaths                = filepath.Glob
 	removeExternalEgressManagedPath        = removeManagedPath
+	readExternalEgressManagedFile          = os.ReadFile
+	readExternalEgressProcessExecutable    = os.Readlink
+	readExternalEgressProcessCommandLine   = os.ReadFile
+	signalExternalEgressProcess            = func(pid int, signal syscall.Signal) error {
+		return syscall.Kill(pid, signal)
+	}
 )
 
 const (
@@ -79,14 +91,34 @@ func (c *client) applyExternalEgress(ctx context.Context, j job, st agentState) 
 		if err != nil {
 			return "failed", map[string]any{"error": err.Error(), "stage": "prepare_l2tp_takeover", "takeover": l2tpTakeover}
 		}
-		code, output := runInstallCommand(ctx, "ss", "-H", "-lun")
+		code, output := runInstallCommand(ctx, "ss", "-H", "-lunp")
 		if code != 0 {
 			return "failed", map[string]any{"error": "cannot verify UDP/1701 availability: " + firstLine(output), "stage": "port_preflight"}
 		}
 		if externalEgressUDPPortListening(output, 1701) {
+			listenerProcess, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701)
+			l2tpTakeover["orphan_listener"] = listenerProcess
+			if listenerErr != nil {
+				return "failed", map[string]any{
+					"error": "inspect stale managed UDP/1701 listener: " + listenerErr.Error(),
+					"stage": "port_preflight", "takeover": l2tpTakeover,
+				}
+			}
+			if listenerProcess["terminated"] == true {
+				code, output = runInstallCommand(ctx, "ss", "-H", "-lunp")
+				if code != 0 {
+					return "failed", map[string]any{
+						"error": "cannot verify UDP/1701 after managed listener teardown: " + firstLine(output),
+						"stage": "port_preflight", "takeover": l2tpTakeover,
+					}
+				}
+			}
+		}
+		if externalEgressUDPPortListening(output, 1701) {
 			return "failed", map[string]any{
-				"error": "UDP/1701 is already in use; remove or move the existing L2TP runtime before applying this provider profile",
+				"error": "UDP/1701 is already in use after managed L2TP teardown; stop or move the remaining listener before applying this provider profile",
 				"stage": "port_preflight",
+				"owner": externalEgressUDPPortOwner(output, 1701),
 			}
 		}
 		preview, parseErr := externalegress.ParseL2TPIPsec([]byte(payload.Secrets["config"]))
@@ -139,8 +171,14 @@ func (c *client) applyExternalEgress(ctx context.Context, j job, st agentState) 
 func prepareExternalEgressL2TPTakeover(ctx context.Context, payload externalEgressJobPayload) (map[string]any, error) {
 	result := map[string]any{
 		"system_xl2tpd_stopped": false,
+		"current_process":       map[string]any{},
 		"stale_deployments":     []string{},
 		"removed_paths":         []string{},
+	}
+	currentProcess, err := terminateManagedExternalEgressL2TPProcess(ctx, payload)
+	result["current_process"] = currentProcess
+	if err != nil {
+		return result, fmt.Errorf("stop current managed L2TP process: %w", err)
 	}
 	code, output := runInstallCommand(ctx, "systemctl", "disable", "--now", "xl2tpd.service")
 	if code != 0 && !isMissingSystemdUnitOutput(output) {
@@ -166,6 +204,11 @@ func prepareExternalEgressL2TPTakeover(ctx context.Context, payload externalEgre
 		if stopCode, stopOutput := runInstallCommand(ctx, "systemctl", "disable", "--now", unitName); stopCode != 0 && !isMissingSystemdUnitOutput(stopOutput) {
 			return result, fmt.Errorf("stop stale managed L2TP runtime %s: %s", deploymentID, firstLine(stopOutput))
 		}
+		processResult, processErr := terminateManagedExternalEgressL2TPProcess(ctx, stale)
+		if processErr != nil {
+			return result, fmt.Errorf("stop stale managed L2TP process %s: %w", deploymentID, processErr)
+		}
+		result["stale_process_"+deploymentID] = processResult
 		routeScript := filepath.Join(externalEgressManagedDir(stale), "route-policy.sh")
 		if info, statErr := os.Stat(routeScript); statErr == nil && info.Mode()&0o111 != 0 {
 			if routeCode, routeOutput := runInstallCommand(ctx, routeScript, "cleanup"); routeCode != 0 && !isMissingIPRouteTableOutput(routeOutput) {
@@ -328,6 +371,218 @@ func externalEgressUDPPortListening(output string, port int) bool {
 	return false
 }
 
+func externalEgressUDPPortOwner(output string, port int) string {
+	if port < 1 || port > 65535 {
+		return ""
+	}
+	wanted := strconv.Itoa(port)
+	for _, line := range strings.Split(output, "\n") {
+		for _, address := range strings.Fields(strings.TrimSpace(line)) {
+			host, value, err := net.SplitHostPort(address)
+			if err == nil && value == wanted && host != "" {
+				return strings.TrimSpace(line)
+			}
+		}
+	}
+	return ""
+}
+
+func terminateManagedExternalEgressL2TPProcess(ctx context.Context, payload externalEgressJobPayload) (map[string]any, error) {
+	pidPath := filepath.Join(externalEgressRuntimeDir(payload), "xl2tpd.pid")
+	return terminateManagedExternalEgressL2TPProcessAt(ctx, pidPath)
+}
+
+func terminateManagedExternalEgressL2TPProcessAt(ctx context.Context, pidPath string) (map[string]any, error) {
+	result := map[string]any{
+		"pid_file":   pidPath,
+		"pid":        0,
+		"terminated": false,
+	}
+	rawPID, err := readExternalEgressManagedFile(pidPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			result["pid_file_present"] = false
+			return result, nil
+		}
+		return result, fmt.Errorf("read managed xl2tpd pid file: %w", err)
+	}
+	result["pid_file_present"] = true
+	pid, err := strconv.Atoi(strings.TrimSpace(string(rawPID)))
+	if err != nil || pid <= 1 {
+		return result, fmt.Errorf("managed xl2tpd pid file is invalid")
+	}
+	result["pid"] = pid
+
+	active, owned, executable, err := externalEgressManagedL2TPProcess(pid)
+	if err != nil {
+		return result, err
+	}
+	result["executable"] = executable
+	if active && owned {
+		managed, commandLine, commandErr := externalEgressManagedL2TPCommandLine(pid)
+		if commandErr != nil {
+			return result, commandErr
+		}
+		result["command_line"] = commandLine
+		if !managed {
+			result["stale_pid"] = true
+			result["pid_reused"] = true
+			result["ownership_mismatch"] = true
+			return result, nil
+		}
+	}
+	return terminateVerifiedExternalEgressL2TPProcess(ctx, pid, result)
+}
+
+func terminateManagedExternalEgressL2TPListener(ctx context.Context, output string, port int) (map[string]any, error) {
+	owner := externalEgressUDPPortOwner(output, port)
+	result := map[string]any{
+		"owner":      owner,
+		"pid":        0,
+		"managed":    false,
+		"terminated": false,
+	}
+	match := externalEgressListenerPIDPattern.FindStringSubmatch(owner)
+	if len(match) != 2 {
+		return result, nil
+	}
+	pid, err := strconv.Atoi(match[1])
+	if err != nil || pid <= 1 {
+		return result, nil
+	}
+	result["pid"] = pid
+
+	active, owned, executable, err := externalEgressManagedL2TPProcess(pid)
+	if err != nil {
+		return result, err
+	}
+	result["executable"] = executable
+	if !active {
+		result["stale_pid"] = true
+		return result, nil
+	}
+	if !owned {
+		return result, nil
+	}
+	managed, commandLine, err := externalEgressManagedL2TPCommandLine(pid)
+	if err != nil {
+		return result, err
+	}
+	result["command_line"] = commandLine
+	if !managed {
+		return result, nil
+	}
+	result["managed"] = true
+	return terminateVerifiedExternalEgressL2TPProcess(ctx, pid, result)
+}
+
+func externalEgressManagedL2TPCommandLine(pid int) (bool, string, error) {
+	raw, err := readExternalEgressProcessCommandLine(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("inspect managed xl2tpd command line %d: %w", pid, err)
+	}
+	arguments := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+	for _, argument := range arguments {
+		cleaned := filepath.Clean(strings.TrimSpace(argument))
+		if externalEgressL2TPConfigPathPattern.MatchString(cleaned) ||
+			externalEgressL2TPRuntimePathPattern.MatchString(cleaned) {
+			return true, strings.Join(arguments, " "), nil
+		}
+	}
+	return false, strings.Join(arguments, " "), nil
+}
+
+func terminateVerifiedExternalEgressL2TPProcess(ctx context.Context, pid int, result map[string]any) (map[string]any, error) {
+	active, owned, executable, err := externalEgressManagedL2TPProcess(pid)
+	if err != nil {
+		return result, err
+	}
+	result["executable"] = executable
+	if !active {
+		result["stale_pid"] = true
+		return result, nil
+	}
+	if !owned {
+		// The PID was reused after xl2tpd exited. Never signal an unrelated process.
+		result["stale_pid"] = true
+		result["pid_reused"] = true
+		return result, nil
+	}
+
+	if err := signalExternalEgressProcess(pid, syscall.SIGTERM); err != nil && err != syscall.ESRCH {
+		return result, fmt.Errorf("terminate managed xl2tpd process %d: %w", pid, err)
+	}
+	result["term_sent"] = true
+	exited, err := waitForManagedExternalEgressL2TPProcess(ctx, pid, 30, 100*time.Millisecond)
+	if err != nil {
+		return result, err
+	}
+	if exited {
+		result["terminated"] = true
+		return result, nil
+	}
+
+	active, owned, executable, err = externalEgressManagedL2TPProcess(pid)
+	if err != nil {
+		return result, err
+	}
+	if !active || !owned {
+		result["terminated"] = true
+		result["executable"] = executable
+		return result, nil
+	}
+	if err := signalExternalEgressProcess(pid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+		return result, fmt.Errorf("kill managed xl2tpd process %d: %w", pid, err)
+	}
+	result["kill_sent"] = true
+	exited, err = waitForManagedExternalEgressL2TPProcess(ctx, pid, 20, 100*time.Millisecond)
+	if err != nil {
+		return result, err
+	}
+	if !exited {
+		return result, fmt.Errorf("managed xl2tpd process %d did not exit", pid)
+	}
+	result["terminated"] = true
+	return result, nil
+}
+
+func externalEgressManagedL2TPProcess(pid int) (active, owned bool, executable string, err error) {
+	executable, err = readExternalEgressProcessExecutable(filepath.Join("/proc", strconv.Itoa(pid), "exe"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, false, "", nil
+		}
+		return false, false, "", fmt.Errorf("inspect managed xl2tpd process %d: %w", pid, err)
+	}
+	name := filepath.Base(strings.TrimSuffix(executable, " (deleted)"))
+	return true, name == "xl2tpd", executable, nil
+}
+
+func waitForManagedExternalEgressL2TPProcess(ctx context.Context, pid, attempts int, interval time.Duration) (bool, error) {
+	for attempt := 0; attempt < attempts; attempt++ {
+		active, owned, _, err := externalEgressManagedL2TPProcess(pid)
+		if err != nil {
+			return false, err
+		}
+		if !active || !owned {
+			return true, nil
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return false, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return false, nil
+}
+
 func externalEgressRuntimeProtocol(protocol string) bool {
 	switch protocol {
 	case "openvpn", "wireguard", "l2tp_ipsec", "vless", "shadowsocks":
@@ -421,6 +676,9 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 	}
 	unitName := externalEgressUnitName(payload)
 	warnings := []string{}
+	l2tpProcess := map[string]any{}
+	l2tpListenerProcess := map[string]any{}
+	l2tpTeardownSafe := true
 	if code, output := runInstallCommand(ctx, "systemctl", "disable", "--now", unitName); code != 0 && !isMissingSystemdUnitOutput(output) {
 		warnings = append(warnings, "systemd stop: "+firstLine(output))
 	}
@@ -429,18 +687,30 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 			warnings = append(warnings, err.Error())
 		}
 	}
-	paths := []string{externalEgressUnitPath(payload), externalEgressManagedDir(payload), externalEgressRuntimeDir(payload)}
-	for index, path := range paths {
-		if _, err := removeManagedPath(path, index > 0); err != nil && !os.IsNotExist(err) {
-			warnings = append(warnings, path+": "+err.Error())
-		}
-	}
 	if payload.Protocol == "l2tp_ipsec" {
 		if code, output := runInstallCommand(ctx, "systemctl", "disable", "--now", "xl2tpd.service"); code != 0 && !isMissingSystemdUnitOutput(output) {
 			warnings = append(warnings, "system xl2tpd stop: "+firstLine(output))
 		}
+		processResult, processErr := terminateManagedExternalEgressL2TPProcess(ctx, payload)
+		l2tpProcess = processResult
+		if processErr != nil {
+			l2tpTeardownSafe = false
+			warnings = append(warnings, processErr.Error())
+		}
+	}
+	paths := []string{externalEgressUnitPath(payload), externalEgressManagedDir(payload), externalEgressRuntimeDir(payload)}
+	if !l2tpTeardownSafe {
+		paths = nil
+		warnings = append(warnings, "managed L2TP artifacts were preserved for a safe cleanup retry")
+	}
+	for index, path := range paths {
+		if _, err := removeExternalEgressManagedPath(path, index > 0); err != nil && !os.IsNotExist(err) {
+			warnings = append(warnings, path+": "+err.Error())
+		}
+	}
+	if payload.Protocol == "l2tp_ipsec" {
 		for _, path := range externalEgressIPsecCertificatePaths(payload) {
-			if _, err := removeManagedPath(path, false); err != nil && !os.IsNotExist(err) {
+			if _, err := removeExternalEgressManagedPath(path, false); err != nil && !os.IsNotExist(err) {
 				warnings = append(warnings, path+": "+err.Error())
 			}
 		}
@@ -450,11 +720,39 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 		if warning := reloadExternalEgressIPsecAfterCleanup(ctx); warning != "" {
 			warnings = append(warnings, warning)
 		}
+		if code, output := runInstallCommand(ctx, "ss", "-H", "-lunp"); code != 0 {
+			warnings = append(warnings, "verify UDP/1701 cleanup: "+firstLine(output))
+		} else {
+			if externalEgressUDPPortListening(output, 1701) {
+				listenerResult, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701)
+				l2tpListenerProcess = listenerResult
+				if listenerErr != nil {
+					warnings = append(warnings, "inspect stale managed UDP/1701 listener: "+listenerErr.Error())
+				}
+				if listenerResult["terminated"] == true {
+					code, output = runInstallCommand(ctx, "ss", "-H", "-lunp")
+					if code != 0 {
+						warnings = append(warnings, "verify UDP/1701 after managed listener teardown: "+firstLine(output))
+					}
+				}
+			}
+			if code == 0 && externalEgressUDPPortListening(output, 1701) {
+				owner := externalEgressUDPPortOwner(output, 1701)
+				warnings = append(warnings, "UDP/1701 remains in use after managed cleanup: "+firstNonEmptyAgentString(owner, "owner unavailable"))
+			}
+		}
 	}
 	if _, err := runSystemdDaemonReload(ctx); err != nil {
 		warnings = append(warnings, err.Error())
 	}
-	result := map[string]any{"message": "external egress runtime removed", "unit": unitName, "warnings": warnings, "health": map[string]any{"status": "inactive"}}
+	result := map[string]any{
+		"message": "external egress runtime removed", "unit": unitName, "warnings": warnings,
+		"health": map[string]any{"status": "inactive"},
+	}
+	if payload.Protocol == "l2tp_ipsec" {
+		result["l2tp_process"] = l2tpProcess
+		result["l2tp_listener_process"] = l2tpListenerProcess
+	}
 	if len(warnings) > 0 {
 		result["error"] = strings.Join(warnings, "; ")
 		return "failed", result

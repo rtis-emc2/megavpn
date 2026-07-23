@@ -265,6 +265,8 @@ func emergencyCleanupManagedLeftovers(ctx context.Context, cleanupScope string) 
 func emergencyCleanupL2TPRuntime(ctx context.Context, fullNode bool) map[string]any {
 	result := map[string]any{
 		"system_xl2tpd_stopped": false,
+		"managed_processes":     []map[string]any{},
+		"listener_process":      map[string]any{},
 		"removed_paths":         []string{},
 		"warnings":              []string{},
 		"errors":                []string{},
@@ -272,19 +274,43 @@ func emergencyCleanupL2TPRuntime(ctx context.Context, fullNode bool) map[string]
 	warnings := []string{}
 	errorsOut := []string{}
 	removedPaths := []string{}
+	managedProcesses := []map[string]any{}
+	l2tpTeardownSafe := true
 
 	if code, output := runInstallCommand(ctx, "systemctl", "disable", "--now", "xl2tpd.service"); code != 0 && !isMissingSystemdUnitOutput(output) {
 		warnings = append(warnings, "system xl2tpd stop: "+firstLine(output))
 	} else {
 		result["system_xl2tpd_stopped"] = code == 0
 	}
-	for _, path := range []string{"/run/megavpn/external-egress"} {
-		removed, err := removeManagedPath(path, true)
+	pidPaths, globErr := globExternalEgressPaths("/run/megavpn/external-egress/*/xl2tpd.pid")
+	if globErr != nil {
+		l2tpTeardownSafe = false
+		errorsOut = append(errorsOut, "discover managed XL2TPD processes: "+globErr.Error())
+	}
+	for _, pidPath := range pidPaths {
+		runtimeID := strings.ToLower(filepath.Base(filepath.Dir(pidPath)))
+		if !externalEgressCompactUUIDPattern.MatchString(runtimeID) {
+			l2tpTeardownSafe = false
+			errorsOut = append(errorsOut, "unexpected managed XL2TPD PID path: "+pidPath)
+			continue
+		}
+		processResult, processErr := terminateManagedExternalEgressL2TPProcessAt(ctx, pidPath)
+		managedProcesses = append(managedProcesses, processResult)
+		if processErr != nil {
+			l2tpTeardownSafe = false
+			errorsOut = append(errorsOut, processErr.Error())
+		}
+	}
+	if l2tpTeardownSafe {
+		path := "/run/megavpn/external-egress"
+		removed, err := removeExternalEgressManagedPath(path, true)
 		if err != nil && !os.IsNotExist(err) {
 			warnings = append(warnings, path+": "+err.Error())
 		} else if removed {
 			removedPaths = append(removedPaths, path)
 		}
+	} else {
+		warnings = append(warnings, "managed L2TP runtime was preserved for a safe cleanup retry")
 	}
 	for _, pattern := range []string{
 		"/etc/ipsec.d/cacerts/megavpn-*-ca.pem",
@@ -297,7 +323,7 @@ func emergencyCleanupL2TPRuntime(ctx context.Context, fullNode bool) map[string]
 			continue
 		}
 		for _, path := range matches {
-			removed, removeErr := removeManagedPath(path, false)
+			removed, removeErr := removeExternalEgressManagedPath(path, false)
 			if removeErr != nil && !os.IsNotExist(removeErr) {
 				warnings = append(warnings, path+": "+removeErr.Error())
 			} else if removed {
@@ -309,6 +335,28 @@ func emergencyCleanupL2TPRuntime(ctx context.Context, fullNode bool) map[string]
 	if warning := reloadExternalEgressIPsecAfterCleanup(ctx); warning != "" {
 		warnings = append(warnings, warning)
 	}
+	listenerProcess := map[string]any{}
+	if code, output := runInstallCommand(ctx, "ss", "-H", "-lunp"); code != 0 {
+		warnings = append(warnings, "verify UDP/1701 emergency cleanup: "+firstLine(output))
+	} else {
+		if externalEgressUDPPortListening(output, 1701) {
+			listenerResult, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701)
+			listenerProcess = listenerResult
+			if listenerErr != nil {
+				errorsOut = append(errorsOut, "inspect stale managed UDP/1701 listener: "+listenerErr.Error())
+			}
+			if listenerResult["terminated"] == true {
+				code, output = runInstallCommand(ctx, "ss", "-H", "-lunp")
+				if code != 0 {
+					warnings = append(warnings, "verify UDP/1701 after managed listener teardown: "+firstLine(output))
+				}
+			}
+		}
+		if code == 0 && externalEgressUDPPortListening(output, 1701) {
+			owner := externalEgressUDPPortOwner(output, 1701)
+			warnings = append(warnings, "UDP/1701 remains in use after emergency cleanup: "+firstNonEmptyAgentString(owner, "owner unavailable"))
+		}
+	}
 	if fullNode {
 		packageCleanup := purgeEmergencyL2TPPackages(ctx)
 		result["package_cleanup"] = packageCleanup
@@ -316,6 +364,8 @@ func emergencyCleanupL2TPRuntime(ctx context.Context, fullNode bool) map[string]
 			errorsOut = append(errorsOut, errorText)
 		}
 	}
+	result["managed_processes"] = managedProcesses
+	result["listener_process"] = listenerProcess
 	result["removed_paths"] = removedPaths
 	result["warnings"] = warnings
 	result["errors"] = errorsOut
