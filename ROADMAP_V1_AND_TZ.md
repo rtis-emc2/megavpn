@@ -1,9 +1,9 @@
 # RTIS MegaVPN Roadmap and Technical Specification
 
-**Release:** `7.1.1.17`
+**Release:** `7.1.1.18`
 
 **Analysis date:** 2026-07-05
-**Code baseline:** RTIS MegaVPN `7.1.1.17`
+**Code baseline:** RTIS MegaVPN `7.1.1.18`
 **Canonical repository:** `github.com/rtis-emc2/megavpn`
 
 This document is the English roadmap and technical specification for the
@@ -23,19 +23,21 @@ the runbook and user guides.
 
 ## 2. Current Baseline
 
-`7.1.1.17` continues the production-hardening line after the firewall,
+`7.1.1.18` continues the production-hardening line after the firewall,
 backhaul, VLESS routing, route-policy preview, traffic-camouflage,
 documentation-gate, VLESS provisioning-sync, traffic-accounting collector
-coverage, firewall apply hardening and lost-node lifecycle releases. This
-release makes L2TP over IPsec, VLESS and Shadowsocks external-provider egress
-runtime-ready for explicitly selected global client access groups. It also
-splits initial console loading into a critical first render followed by bounded
-secondary inventory requests. Provider routes remain isolated from the node
-main table; unselected clients and ordinary node processes keep their existing
-routing path. The preceding hardening releases made service-pack rollout
-idempotent, stabilized client-level VLESS identities across ingress replacement
-and made agent-handled job wait states explicit in Jobs UI. The codebase already
-has a working control-plane foundation:
+coverage, firewall apply hardening and lost-node lifecycle releases. L2TP over
+IPsec, VLESS and Shadowsocks external-provider egress are available to
+explicitly selected global client access groups. This patch strengthens the
+L2TP lifecycle: stale managed PPP state is released before Apply, Cleanup keeps
+ownership evidence until teardown succeeds, routing waits for an interface
+address, and health requires two complete IPsec/PPP/routing probes. Provider
+routes remain isolated from the node main table; unselected clients and
+ordinary node processes keep their existing routing path. The preceding
+hardening releases made service-pack rollout idempotent, stabilized
+client-level VLESS identities across ingress replacement and made
+agent-handled job wait states explicit in Jobs UI. The codebase already has a
+working control-plane foundation:
 
 - Go API, worker, agent, migration and admin binaries.
 - PostgreSQL-backed persistence and ordered migrations.
