@@ -1,6 +1,6 @@
 # Operations Runbook
 
-**Release:** `7.1.1.18`
+**Release:** `7.1.1.19`
 
 ## Deployment Model
 
@@ -34,6 +34,14 @@ Use:
    The signed agent channel rejects requests outside its replay-protection
    window, and SSH bootstrap blocks nodes whose clock differs by more than two
    minutes.
+10. Confirm the Control Plane host has `ssh`, `ssh-keyscan`, `ssh-keygen` and
+    `sshpass` when the browser SSH terminal is enabled. Standard install and
+    `deploy-local.sh` flows reconcile `openssh-client` and `sshpass`
+    automatically. Set `MEGAVPN_DEPLOY_INSTALL_RUNTIME_DEPS=0` only when these
+    dependencies are managed independently.
+11. Confirm the public Nginx location preserves WebSocket
+    `Upgrade`/`Connection` headers and uses read/send timeouts suitable for the
+    two-hour maximum browser terminal session.
 
 ## Agent Clock Synchronization
 
@@ -99,10 +107,10 @@ git clone --mirror <remote-url> megavpn-history-backup.git
 git status --short
 git checkout --orphan release-clean
 git add -A
-git commit -m "Release 7.1.1.18 clean import"
-git tag -f v7.1.1.18
+git commit -m "Release 7.1.1.19 clean import"
+git tag -f v7.1.1.19
 git push --force-with-lease origin release-clean:main
-git push --force-with-lease origin v7.1.1.18
+git push --force-with-lease origin v7.1.1.19
 ```
 
 Recovery plan:

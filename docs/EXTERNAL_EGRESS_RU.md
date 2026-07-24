@@ -1,6 +1,6 @@
 # Выход через внешний VPN/Proxy-провайдер
 
-**Релиз:** `7.1.1.18`
+**Релиз:** `7.1.1.19`
 
 External egress profile подключает выбранные группы клиентов к коммерческому
 или стороннему VPN/proxy-провайдеру. Он не заменяет managed Backhaul и не
@@ -216,6 +216,12 @@ proxy deployments не получают `ip rule`, не меняют main table 
 - последний external-egress apply/probe job завершился успешно;
 - group sync и связанные instance apply jobs успешны.
 
+Failed L2TP Apply и Probe jobs содержат ограниченный по размеру объект
+`runtime_evidence`: состояние managed unit, последние журналы
+unit/strongSwan/pppd и классификацию вероятной причины. Password, PSK, private
+key и username из provider profile удаляются до отправки результата с node.
+Сначала используйте этот evidence, а затем переходите к ручной диагностике.
+
 На node:
 
 ```bash
@@ -239,6 +245,15 @@ journalctl -u megavpn-external-egress-<deployment-id-без-дефисов>.serv
 - VLESS/Shadowsocks deployment слушает только назначенный `127.0.0.1` SOCKS
   port и не создает provider route в main table;
 - в main table не появился provider default route.
+
+Если likely cause сообщает, что provider IKE endpoint не ответил, node отправила
+IKE-пакеты, но не получила ответа. Проверьте UDP/500 и UDP/4500 в обе стороны,
+upstream NAT, source-IP allowlist провайдера и endpoint. Не меняйте PSK только
+из-за timeout: ошибка PSK или proposal появляется лишь после ответа peer.
+
+Релиз `7.1.1.19` также исправляет старую xl2tpd-настройку, которая приводила к
+`rmax value must be at least 1`. После обновления node agent повторите Apply,
+чтобы пересоздать managed config и systemd unit с ограничением restart loop.
 
 Если L2TP/IPsec apply сообщает, что `dpkg --configure -a` не может настроить
 `xl2tpd`, восстановите прерванную package transaction на проблемной node:

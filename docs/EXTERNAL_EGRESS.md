@@ -1,6 +1,6 @@
 # External Provider Egress
 
-**Release:** `7.1.1.18`
+**Release:** `7.1.1.19`
 
 External egress profiles connect selected client access groups to a commercial
 or third-party VPN/proxy provider. They do not replace managed Backhaul and they
@@ -221,6 +221,12 @@ Control Plane checks:
 - the latest external-egress apply/probe job succeeded;
 - group sync and related instance apply jobs succeeded.
 
+Failed L2TP Apply and Probe jobs include a bounded `runtime_evidence` object.
+It contains the managed unit state, recent unit/strongSwan/pppd journals and a
+redacted likely-cause classification. Passwords, PSKs, private keys and
+usernames from the provider profile are removed before the result leaves the
+node. Use this evidence before running ad-hoc diagnostics.
+
 Node checks:
 
 ```bash
@@ -244,6 +250,17 @@ Expected state:
 - a VLESS/Shadowsocks deployment listens only on its assigned `127.0.0.1` SOCKS
   port and has no provider route in the main table;
 - the main table has not acquired a provider default route.
+
+If the likely cause says that the provider IKE endpoint did not respond, the
+node sent IKE packets but received no reply. Check outbound and return
+UDP/500/4500, upstream NAT, the provider's source-IP allowlist and the provider
+endpoint. Do not rotate the PSK merely because of a timeout: a PSK or proposal
+failure appears only after the peer answers.
+
+Release `7.1.1.19` also corrects an older generated xl2tpd setting that could
+produce `rmax value must be at least 1`. Re-apply the deployment after updating
+the node agent so the managed config and rate-limited systemd unit are
+regenerated.
 
 If an L2TP/IPsec apply reports that `dpkg --configure -a` cannot configure
 `xl2tpd`, repair the interrupted package transaction on the affected node:
