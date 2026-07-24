@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -163,7 +164,10 @@ func TestRenderManagedL2TPIPsecConfigIsolatesDefaultRoute(t *testing.T) {
 			t.Fatalf("IPsec config is missing %q:\n%s", required, ipsecConfig)
 		}
 	}
-	if !strings.Contains(ipsecSecrets, `PSK "provider-psk"`) || !strings.Contains(xl2tpConfig, "autodial = yes") {
+	if !strings.Contains(ipsecSecrets, `PSK "provider-psk"`) ||
+		!strings.Contains(xl2tpConfig, "autodial = yes") ||
+		!strings.Contains(xl2tpConfig, "max redials = 10") ||
+		strings.Contains(xl2tpConfig, "max redials = 0") {
 		t.Fatalf("L2TP/IPsec managed files are incomplete")
 	}
 	for _, required := range []string{
@@ -577,6 +581,98 @@ func TestProbeExternalEgressL2TPReportsMissingLayers(t *testing.T) {
 		if !strings.Contains(message, required) {
 			t.Fatalf("probe error %q does not contain %q", message, required)
 		}
+	}
+}
+
+func TestProbeExternalEgressL2TPCollectsRedactedFailureEvidence(t *testing.T) {
+	oldRun := runInstallCommand
+	t.Cleanup(func() { runInstallCommand = oldRun })
+
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\nusername=embedded-user\npassword=embedded-pass\npsk=embedded-psk\n")
+	payload.Secrets["username"] = "provider-user"
+	payload.Secrets["password"] = "provider-pass"
+	payload.Secrets["preshared_key"] = "provider-psk"
+	job := externalEgressProbeJob(payload)
+	job.Payload["secrets"] = map[string]any{
+		"config": payload.Secrets["config"], "username": payload.Secrets["username"],
+		"password": payload.Secrets["password"], "preshared_key": payload.Secrets["preshared_key"],
+	}
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		switch {
+		case command == "systemctl is-active "+externalEgressUnitName(payload):
+			return 3, "failed\n"
+		case command == "ip -o link show dev "+payload.InterfaceName:
+			return 1, `Device "` + payload.InterfaceName + `" does not exist.`
+		case command == "ip -4 -o addr show dev "+payload.InterfaceName:
+			return 1, `Device "` + payload.InterfaceName + `" does not exist.`
+		case command == "ip rule show":
+			return 0, ""
+		case command == "ip route show table 40123":
+			return 0, "unreachable default metric 32767\n"
+		case command == "ipsec status "+externalEgressIPsecConnectionName(payload):
+			return 0, "Security Associations (0 up, 0 connecting):\n"
+		case strings.HasPrefix(command, "systemctl status "):
+			return 3, "provider-pass embedded-pass provider-user embedded-user\n"
+		case strings.HasPrefix(command, "journalctl -u "+externalEgressUnitName(payload)):
+			return 0, "giving up after no proposal chosen; PSK provider-psk embedded-psk\n"
+		case strings.HasPrefix(command, "journalctl -u strongswan-starter.service"):
+			return 0, "peer authentication failed for provider-user\n"
+		case strings.HasPrefix(command, "journalctl _COMM=pppd"):
+			return 0, "CHAP authentication failed for embedded-user\n"
+		default:
+			t.Fatalf("unexpected probe or evidence command: %s", command)
+			return 1, ""
+		}
+	}
+
+	status, result := (&client{}).probeExternalEgressWithEvidence(
+		context.Background(),
+		job,
+		agentState{NodeID: payload.NodeID},
+	)
+	if status != "failed" {
+		t.Fatalf("probe status = %s, result = %#v", status, result)
+	}
+	evidence, ok := result["runtime_evidence"].(map[string]any)
+	if !ok {
+		t.Fatalf("runtime evidence = %#v", result["runtime_evidence"])
+	}
+	if evidence["likely_cause"] != "IPsec proposal mismatch; compare the provider IKE/ESP algorithms with the profile" {
+		t.Fatalf("likely cause = %#v", evidence["likely_cause"])
+	}
+	encoded := fmt.Sprintf("%#v", evidence)
+	for _, secret := range []string{
+		"provider-pass", "provider-psk", "provider-user",
+		"embedded-pass", "embedded-psk", "embedded-user",
+	} {
+		if strings.Contains(encoded, secret) {
+			t.Fatalf("runtime evidence leaks %q: %s", secret, encoded)
+		}
+	}
+	if !strings.Contains(encoded, "[REDACTED]") {
+		t.Fatalf("runtime evidence has no redaction marker: %s", encoded)
+	}
+}
+
+func TestClassifyExternalEgressL2TPFailure(t *testing.T) {
+	for name, test := range map[string]struct {
+		output string
+		want   string
+	}{
+		"proposal":         {"peer response contained NO_PROPOSAL_CHOSEN", "IPsec proposal mismatch"},
+		"ipsec auth":       {"received AUTHENTICATION_FAILED notify", "IPsec authentication failed"},
+		"ppp auth":         {"CHAP authentication failed", "PPP authentication failed"},
+		"listener":         {"bind: Address already in use", "UDP/1701 is owned"},
+		"config":           {"parsing config file failed: unknown keyword", "configuration was rejected"},
+		"xl2tp rmax":       {"parse_config: line 10: rmax value must be at least 1", "configuration was rejected"},
+		"provider timeout": {"giving up after 5 retransmits; establishing IKE_SA failed, peer not responding", "provider IKE endpoint did not respond"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := classifyExternalEgressL2TPFailure(test.output); !strings.Contains(got, test.want) {
+				t.Fatalf("classifyExternalEgressL2TPFailure(%q) = %q, want substring %q", test.output, got, test.want)
+			}
+		})
 	}
 }
 
@@ -1161,6 +1257,21 @@ func TestRenderExternalEgressUnitKeepsFailClosedGuardOnStop(t *testing.T) {
 	}
 	if err := validateExternalEgressManagedArtifacts(payload, files, externalEgressUnitPath(payload)); err != nil {
 		t.Fatalf("generated artifacts were rejected: %v", err)
+	}
+}
+
+func TestRenderExternalEgressL2TPUnitBoundsRestartStorm(t *testing.T) {
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
+	unit := renderExternalEgressUnit(payload, "/managed/route-policy.sh", "/managed/start.sh", nil)
+	for _, required := range []string{
+		"StartLimitIntervalSec=300s",
+		"StartLimitBurst=5",
+		"Restart=on-failure",
+		"RestartSec=15s",
+	} {
+		if !strings.Contains(unit, required) {
+			t.Fatalf("L2TP unit is missing %q:\n%s", required, unit)
+		}
 	}
 }
 

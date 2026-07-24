@@ -615,8 +615,8 @@ EOF
 }
 
 maybe_install_packages() {
-  local package_commands=(curl rsync openssl tar)
-  local packages=(curl rsync openssl tar ca-certificates)
+  local package_commands=(curl rsync openssl tar ssh ssh-keyscan ssh-keygen sshpass)
+  local packages=(curl rsync openssl tar ca-certificates openssh-client sshpass)
   local missing=()
   local command_name package
   if [[ "$TLS_MODE" == "self-signed-nginx" ]]; then
@@ -912,8 +912,8 @@ server {
         proxy_set_header X-Forwarded-Port $public_port;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$megavpn_connection_upgrade;
-        proxy_read_timeout 120s;
-        proxy_send_timeout 120s;
+        proxy_read_timeout 2h;
+        proxy_send_timeout 2h;
         proxy_pass http://$upstream_hostport;
     }
 }

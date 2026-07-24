@@ -11,6 +11,7 @@ ALLOW_DIRTY="${MEGAVPN_DEPLOY_ALLOW_DIRTY:-0}"
 ENV_FILE="${MEGAVPN_DEPLOY_ENV_FILE:-/etc/megavpn/megavpn.env}"
 SYNC_MODE="${MEGAVPN_DEPLOY_SYNC_MODE:-auto}"
 ALLOW_HISTORY_REWRITE="${MEGAVPN_DEPLOY_ALLOW_HISTORY_REWRITE:-0}"
+INSTALL_RUNTIME_DEPS="${MEGAVPN_DEPLOY_INSTALL_RUNTIME_DEPS:-1}"
 
 SERVICES=("megavpn-api" "megavpn-worker" "megavpn-agent" "megavpn-migrate")
 CORE_SERVICES=("megavpn-api" "megavpn-worker")
@@ -86,6 +87,29 @@ confirm_history_rewrite_reset() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+ensure_control_plane_runtime_dependencies() {
+  local missing=()
+  local command_name
+  for command_name in ssh ssh-keyscan ssh-keygen sshpass; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+      missing+=("$command_name")
+    fi
+  done
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    return 0
+  fi
+  if ! is_true "$INSTALL_RUNTIME_DEPS"; then
+    die "missing control-plane runtime commands: ${missing[*]}; install openssh-client and sshpass or set MEGAVPN_DEPLOY_INSTALL_RUNTIME_DEPS=1"
+  fi
+  command -v apt-get >/dev/null 2>&1 || die "automatic control-plane runtime dependency install supports apt-get only; missing: ${missing[*]}"
+  log "install control-plane Web SSH runtime dependencies: openssh-client sshpass"
+  DEBIAN_FRONTEND=noninteractive apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-client sshpass
+  for command_name in ssh ssh-keyscan ssh-keygen sshpass; do
+    command -v "$command_name" >/dev/null 2>&1 || die "runtime dependency is still unavailable after package install: $command_name"
+  done
 }
 
 load_runtime_env() {
@@ -224,6 +248,7 @@ fi
 log "[1/10] Update source from GitHub"
 update_from_git
 assert_git_repo_ready
+ensure_control_plane_runtime_dependencies
 
 log "[2/10] Download Go modules"
 go mod download

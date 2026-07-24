@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -175,6 +176,9 @@ func (c *client) applyExternalEgress(ctx context.Context, j job, st agentState) 
 	status, result := c.probeExternalEgressUntilStable(ctx, j, st, payload.Protocol)
 	if len(l2tpTakeover) > 0 {
 		result["l2tp_takeover"] = l2tpTakeover
+	}
+	if status != "succeeded" && payload.Protocol == "l2tp_ipsec" {
+		result["runtime_evidence"] = collectExternalEgressL2TPRuntimeEvidence(ctx, payload)
 	}
 	return status, result
 }
@@ -828,6 +832,134 @@ func (c *client) probeExternalEgress(ctx context.Context, j job, st agentState) 
 		}
 	}
 	return "succeeded", map[string]any{"message": "external egress runtime is active", "health": health}
+}
+
+func (c *client) probeExternalEgressWithEvidence(ctx context.Context, j job, st agentState) (string, map[string]any) {
+	status, result := c.probeExternalEgress(ctx, j, st)
+	if status == "succeeded" {
+		return status, result
+	}
+	payload, err := decodeExternalEgressJob(j, st, false)
+	if err == nil && payload.Protocol == "l2tp_ipsec" {
+		result["runtime_evidence"] = collectExternalEgressL2TPRuntimeEvidence(ctx, payload)
+	}
+	return status, result
+}
+
+type externalEgressDiagnosticCommand struct {
+	key  string
+	name string
+	args []string
+	max  int
+}
+
+func collectExternalEgressL2TPRuntimeEvidence(ctx context.Context, payload externalEgressJobPayload) map[string]any {
+	unitName := externalEgressUnitName(payload)
+	connection := externalEgressIPsecConnectionName(payload)
+	commands := []externalEgressDiagnosticCommand{
+		{
+			key: "managed_unit", name: "systemctl",
+			args: []string{"status", unitName, "--no-pager", "-l", "--lines=100"}, max: 4000,
+		},
+		{
+			key: "managed_unit_journal", name: "journalctl",
+			args: []string{"-u", unitName, "--since=-15min", "-n", "200", "--no-pager", "-o", "cat"}, max: 7000,
+		},
+		{
+			key: "ipsec_connection", name: "ipsec",
+			args: []string{"status", connection}, max: 3500,
+		},
+		{
+			key: "strongswan_journal", name: "journalctl",
+			args: []string{"-u", "strongswan-starter.service", "-u", "strongswan.service", "--since=-15min", "-n", "160", "--no-pager", "-o", "cat"}, max: 6000,
+		},
+		{
+			key: "pppd_journal", name: "journalctl",
+			args: []string{"_COMM=pppd", "--since=-15min", "-n", "120", "--no-pager", "-o", "cat"}, max: 5000,
+		},
+	}
+	result := map[string]any{
+		"unit":       unitName,
+		"connection": connection,
+	}
+	combined := strings.Builder{}
+	for _, command := range commands {
+		code, output := runInstallCommand(ctx, command.name, command.args...)
+		output = redactExternalEgressDiagnosticOutput(output, payload)
+		output = truncate(strings.TrimSpace(output), command.max)
+		result[command.key] = map[string]any{
+			"exit_code": code,
+			"output":    output,
+		}
+		if output != "" {
+			combined.WriteString(output)
+			combined.WriteByte('\n')
+		}
+	}
+	if cause := classifyExternalEgressL2TPFailure(combined.String()); cause != "" {
+		result["likely_cause"] = cause
+	}
+	return result
+}
+
+func redactExternalEgressDiagnosticOutput(output string, payload externalEgressJobPayload) string {
+	values := []string{
+		payload.Secrets["password"],
+		payload.Secrets["preshared_key"],
+		payload.Secrets["private_key"],
+		payload.Secrets["username"],
+	}
+	if preview, err := externalegress.ParseL2TPIPsec([]byte(payload.Secrets["config"])); err == nil {
+		values = append(values, preview.Password, preview.PSK, preview.Username)
+	}
+	sort.SliceStable(values, func(i, j int) bool {
+		return len(values[i]) > len(values[j])
+	})
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		output = strings.ReplaceAll(output, value, "[REDACTED]")
+	}
+	return output
+}
+
+func classifyExternalEgressL2TPFailure(output string) string {
+	normalized := strings.ToLower(output)
+	switch {
+	case strings.Contains(normalized, "peer not responding") ||
+		strings.Contains(normalized, "giving up after") && strings.Contains(normalized, "retransmit"):
+		return "the provider IKE endpoint did not respond; verify UDP/500 and UDP/4500 reachability, upstream NAT and provider source-IP allowlists"
+	case strings.Contains(normalized, "no proposal chosen") ||
+		strings.Contains(normalized, "no_proposal_chosen") ||
+		strings.Contains(normalized, "no acceptable proposal"):
+		return "IPsec proposal mismatch; compare the provider IKE/ESP algorithms with the profile"
+	case strings.Contains(normalized, "chap authentication failed") ||
+		strings.Contains(normalized, "pap authentication failed") ||
+		strings.Contains(normalized, "peer refused to authenticate"):
+		return "PPP authentication failed; verify the provider username, password and accepted PPP authentication mode"
+	case strings.Contains(normalized, "no shared key found") ||
+		strings.Contains(normalized, "authentication_failed") ||
+		strings.Contains(normalized, "authentication failed") ||
+		strings.Contains(normalized, "peer authentication failed"):
+		return "IPsec authentication failed; verify the PSK or certificate and the provider remote ID"
+	case strings.Contains(normalized, "address already in use") ||
+		strings.Contains(normalized, "bind: address"):
+		return "UDP/1701 is owned by another runtime or process"
+	case strings.Contains(normalized, "failed to load connection") ||
+		strings.Contains(normalized, "parsing config file failed") ||
+		strings.Contains(normalized, "unable to load config file") ||
+		strings.Contains(normalized, "rmax value must be at least 1") ||
+		strings.Contains(normalized, "unknown keyword"):
+		return "the generated strongSwan or xl2tpd configuration was rejected by the installed runtime"
+	default:
+		return ""
+	}
 }
 
 func (c *client) probeExternalEgressUntilStable(ctx context.Context, j job, st agentState, protocol string) (string, map[string]any) {
@@ -1688,7 +1820,7 @@ pppoptfile = %s
 autodial = yes
 redial = yes
 redial timeout = 5
-max redials = 0
+max redials = 10
 length bit = yes
 `, connection, preview.EndpointHost, filepath.Join(dir, "ppp-options"))
 	pppOptions := fmt.Sprintf(`ifname %s
@@ -1866,8 +1998,14 @@ func externalEgressRulePriority(routingTable int) int {
 func renderExternalEgressUnit(payload externalEgressJobPayload, routeScript, execStart string, stopCommands []string) string {
 	typeName := "simple"
 	remain := ""
+	restart := "on-failure"
+	restartSec := "3s"
 	if payload.Protocol == "wireguard" {
 		typeName, remain = "oneshot", "RemainAfterExit=yes\n"
+		restart = "no"
+	}
+	if payload.Protocol == "l2tp_ipsec" {
+		restartSec = "15s"
 	}
 	var stops strings.Builder
 	for _, command := range stopCommands {
@@ -1881,19 +2019,21 @@ func renderExternalEgressUnit(payload externalEgressJobPayload, routeScript, exe
 Description=MegaVPN external egress %s
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300s
+StartLimitBurst=5
 
 [Service]
 Type=%s
 %sExecStart=%s
 %s%sRestart=%s
-RestartSec=3s
+RestartSec=%s
 KillMode=control-group
 TimeoutStartSec=120s
 TimeoutStopSec=30s
 
 [Install]
 WantedBy=multi-user.target
-`, payload.DeploymentID, typeName, remain, execStart, postStart, stops.String(), map[bool]string{true: "no", false: "on-failure"}[payload.Protocol == "wireguard"])
+`, payload.DeploymentID, typeName, remain, execStart, postStart, stops.String(), restart, restartSec)
 }
 
 func cleanupExternalEgressPolicy(ctx context.Context, payload externalEgressJobPayload) error {

@@ -191,7 +191,7 @@ func (c *client) execute(ctx context.Context, j job, st *agentState) (string, ma
 	case "node.external_egress.apply":
 		return c.applyExternalEgress(ctx, j, *st)
 	case "node.external_egress.probe":
-		return c.probeExternalEgress(ctx, j, *st)
+		return c.probeExternalEgressWithEvidence(ctx, j, *st)
 	case "node.external_egress.cleanup":
 		return c.cleanupExternalEgress(ctx, j, *st)
 	case "node.route_policy.apply":

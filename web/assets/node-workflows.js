@@ -349,6 +349,7 @@ snapshot: ${escapeHTML(kernel.managed_snapshot || data?.output_path || 'n/a')}</
 
     let activeTerminalSocket = null;
     let activeTerminalView = null;
+    let activeTerminalFailed = false;
 
     function enabledSSHMethod(methods) {
       return arrayOrEmpty(methods).find((item) => item.method === 'ssh' && item.is_enabled === true) || null;
@@ -423,6 +424,7 @@ snapshot: ${escapeHTML(kernel.managed_snapshot || data?.output_path || 'n/a')}</
     async function startNodeTerminal(node) {
       if (!node?.id) return;
       disconnectNodeTerminal();
+      activeTerminalFailed = false;
       const startButton = document.getElementById('startNodeTerminalBtn');
       if (startButton) startButton.disabled = true;
       setTerminalStatus('opening', 'warn');
@@ -448,6 +450,7 @@ snapshot: ${escapeHTML(kernel.managed_snapshot || data?.output_path || 'n/a')}</
           if (msg.type === 'output') appendTerminalOutput(msg.data || '');
           if (msg.type === 'status') setTerminalStatus(msg.message || 'connected', 'ok');
           if (msg.type === 'error') {
+            activeTerminalFailed = true;
             setTerminalStatus('error', 'danger');
             appendTerminalOutput(`\n[megavpn] ${msg.message || 'terminal error'}\n`);
           }
@@ -456,15 +459,19 @@ snapshot: ${escapeHTML(kernel.managed_snapshot || data?.output_path || 'n/a')}</
             appendTerminalOutput(`\n[megavpn] ${msg.message || 'ssh session closed'}\n`);
           }
         });
-        socket.addEventListener('close', () => {
+        socket.addEventListener('close', (event) => {
           if (activeTerminalSocket === socket) activeTerminalSocket = null;
           state.nodeTerminalActive = false;
-          setTerminalStatus('disconnected', 'stub');
+          const failed = activeTerminalFailed || (event.code !== 1000 && event.code !== 1005);
+          setTerminalStatus(failed ? 'failed' : 'disconnected', failed ? 'danger' : 'stub');
+          if (event.reason) appendTerminalOutput(`\n[megavpn] websocket closed: ${event.reason}\n`);
           if (startButton) startButton.disabled = false;
           document.getElementById('disconnectNodeTerminalBtn')?.setAttribute('disabled', 'disabled');
         });
         socket.addEventListener('error', () => {
+          activeTerminalFailed = true;
           setTerminalStatus('connection error', 'danger');
+          appendTerminalOutput('\n[megavpn] WebSocket connection failed. Verify the control-plane Nginx Upgrade headers and API logs.\n');
         });
       } catch (err) {
         state.nodeTerminalActive = false;
