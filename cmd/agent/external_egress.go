@@ -36,6 +36,8 @@ var (
 	readExternalEgressProcessExecutable    = os.Readlink
 	readExternalEgressProcessCommandLine   = os.ReadFile
 	readExternalEgressProcessCgroup        = os.ReadFile
+	externalEgressInterfaceReleaseInterval = 200 * time.Millisecond
+	externalEgressProbeInterval            = time.Second
 	signalExternalEgressProcess            = func(pid int, signal syscall.Signal) error {
 		return syscall.Kill(pid, signal)
 	}
@@ -91,6 +93,14 @@ func (c *client) applyExternalEgress(ctx context.Context, j job, st agentState) 
 		l2tpTakeover, err = prepareExternalEgressL2TPTakeover(ctx, payload)
 		if err != nil {
 			return "failed", map[string]any{"error": err.Error(), "stage": "prepare_l2tp_takeover", "takeover": l2tpTakeover}
+		}
+		interfaceRelease, releaseErr := releaseExternalEgressL2TPInterface(ctx, payload)
+		l2tpTakeover["interface_release"] = interfaceRelease
+		if releaseErr != nil {
+			return "failed", map[string]any{
+				"error": releaseErr.Error(), "stage": "prepare_l2tp_interface",
+				"takeover": l2tpTakeover,
+			}
 		}
 		code, output := runInstallCommand(ctx, "ss", "-H", "-lunp")
 		if code != 0 {
@@ -162,11 +172,56 @@ func (c *client) applyExternalEgress(ctx context.Context, j job, st agentState) 
 			"unit": unitName, "output": truncate(output, 4000),
 		}
 	}
-	status, result := c.probeExternalEgress(ctx, j, st)
+	status, result := c.probeExternalEgressUntilStable(ctx, j, st, payload.Protocol)
 	if len(l2tpTakeover) > 0 {
 		result["l2tp_takeover"] = l2tpTakeover
 	}
 	return status, result
+}
+
+func releaseExternalEgressL2TPInterface(ctx context.Context, payload externalEgressJobPayload) (map[string]any, error) {
+	result := map[string]any{
+		"interface": payload.InterfaceName,
+		"released":  false,
+	}
+	for attempt := 0; attempt < 25; attempt++ {
+		code, output := runInstallCommand(ctx, "ip", "-o", "link", "show", "dev", payload.InterfaceName)
+		if code != 0 {
+			if externalEgressInterfaceMissing(output) {
+				result["released"] = true
+				result["attempts"] = attempt + 1
+				return result, nil
+			}
+			result["inspect_error"] = firstLine(output)
+			return result, fmt.Errorf("inspect stale managed PPP interface %s: %s", payload.InterfaceName, firstNonEmptyAgentString(firstLine(output), "ip link failed"))
+		}
+		if attempt == 0 {
+			result["stale_interface"] = truncate(strings.TrimSpace(output), 1000)
+			_, _ = runInstallCommand(ctx, "ip", "link", "set", "dev", payload.InterfaceName, "down")
+			deleteCode, deleteOutput := runInstallCommand(ctx, "ip", "link", "delete", "dev", payload.InterfaceName)
+			result["delete_exit_code"] = deleteCode
+			if deleteCode != 0 && !externalEgressInterfaceMissing(deleteOutput) {
+				result["delete_output"] = truncate(strings.TrimSpace(deleteOutput), 1000)
+			}
+		}
+		timer := time.NewTimer(externalEgressInterfaceReleaseInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return result, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return result, fmt.Errorf("stale managed PPP interface %s remained after stopping the previous L2TP runtime", payload.InterfaceName)
+}
+
+func externalEgressInterfaceMissing(output string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(output))
+	return strings.Contains(normalized, "cannot find device") ||
+		strings.Contains(normalized, "does not exist") ||
+		strings.Contains(normalized, "no such device")
 }
 
 func prepareExternalEgressL2TPTakeover(ctx context.Context, payload externalEgressJobPayload) (map[string]any, error) {
@@ -673,12 +728,15 @@ func (c *client) probeExternalEgress(ctx context.Context, j job, st agentState) 
 		return "failed", map[string]any{"error": err.Error(), "stage": "validate"}
 	}
 	unitName := externalEgressUnitName(payload)
-	unitState := normalizeSystemctlState(strings.TrimSpace(runOutput("systemctl", "is-active", unitName)))
+	unitCode, unitOutput := runInstallCommand(ctx, "systemctl", "is-active", unitName)
+	unitState := normalizeSystemctlState(strings.TrimSpace(unitOutput))
 	if externalEgressUsesLoopbackProxyRuntime(payload.Protocol) {
-		listening := externalEgressLoopbackPortListening(runOutput("ss", "-H", "-lnt"), payload.ProxyPort)
+		listenCode, listenOutput := runInstallCommand(ctx, "ss", "-H", "-lnt")
+		listening := listenCode == 0 && externalEgressLoopbackPortListening(listenOutput, payload.ProxyPort)
 		health := map[string]any{
 			"status": "active", "unit": unitName, "unit_state": unitState,
 			"proxy_address": "127.0.0.1", "proxy_port": payload.ProxyPort, "proxy_listening": listening,
+			"unit_check_exit_code": unitCode, "listener_check_exit_code": listenCode,
 		}
 		if unitState != "active" || !listening {
 			health["status"] = "failed"
@@ -686,27 +744,149 @@ func (c *client) probeExternalEgress(ctx context.Context, j job, st agentState) 
 		}
 		return "succeeded", map[string]any{"message": "external egress loopback proxy is active", "health": health}
 	}
-	interfaceState := strings.TrimSpace(runOutput("ip", "-o", "link", "show", "dev", payload.InterfaceName))
-	rules := runOutput("ip", "rule", "show")
+	interfaceCode, interfaceOutput := runInstallCommand(ctx, "ip", "-o", "link", "show", "dev", payload.InterfaceName)
+	interfaceState := strings.TrimSpace(interfaceOutput)
+	addressCode, addressOutput := runInstallCommand(ctx, "ip", "-4", "-o", "addr", "show", "dev", payload.InterfaceName)
+	addressState := strings.TrimSpace(addressOutput)
+	addressRequired := payload.Protocol == "l2tp_ipsec"
+	rulesCode, rules := runInstallCommand(ctx, "ip", "rule", "show")
 	mark := fmt.Sprintf("0x%x", payload.FWMark)
-	rulePresent := strings.Contains(strings.ToLower(rules), strings.ToLower(mark)) && strings.Contains(rules, strconv.Itoa(payload.RoutingTable))
-	routes := strings.TrimSpace(runOutput("ip", "route", "show", "table", strconv.Itoa(payload.RoutingTable)))
+	rulePresent := rulesCode == 0 && strings.Contains(strings.ToLower(rules), strings.ToLower(mark)) && strings.Contains(rules, strconv.Itoa(payload.RoutingTable))
+	routesCode, routesOutput := runInstallCommand(ctx, "ip", "route", "show", "table", strconv.Itoa(payload.RoutingTable))
+	routes := strings.TrimSpace(routesOutput)
 	providerRoutePresent, failClosedRoutePresent := externalEgressRouteHealth(routes, payload.InterfaceName)
+	ipsecEstablished := true
+	ipsecCode := 0
+	ipsecOutput := ""
+	if payload.Protocol == "l2tp_ipsec" {
+		ipsecCode, ipsecOutput = runInstallCommand(ctx, "ipsec", "status", externalEgressIPsecConnectionName(payload))
+		normalized := strings.ToUpper(ipsecOutput)
+		ipsecEstablished = ipsecCode == 0 &&
+			strings.Contains(normalized, "ESTABLISHED") &&
+			strings.Contains(normalized, "INSTALLED")
+	}
 	health := map[string]any{
 		"status": "active", "unit": unitName, "unit_state": unitState,
-		"interface": payload.InterfaceName, "interface_present": interfaceState != "",
+		"interface": payload.InterfaceName, "interface_present": interfaceCode == 0 && interfaceState != "",
+		"interface_address_present": addressCode == 0 && addressState != "", "interface_address_required": addressRequired,
 		"routing_table": payload.RoutingTable, "route_present": providerRoutePresent,
 		"provider_default_route_present": providerRoutePresent, "fail_closed_route_present": failClosedRoutePresent,
 		"fwmark": mark, "rule_present": rulePresent,
+		"unit_check_exit_code": unitCode, "interface_check_exit_code": interfaceCode,
+		"address_check_exit_code": addressCode, "rule_check_exit_code": rulesCode,
+		"route_check_exit_code": routesCode,
 	}
-	if unitState != "active" || interfaceState == "" || !providerRoutePresent || !rulePresent {
+	missing := []string{}
+	interfaceDescription := "tunnel interface "
+	if payload.Protocol == "l2tp_ipsec" {
+		interfaceDescription = "PPP interface "
+	}
+	if unitState != "active" {
+		missing = append(missing, "systemd unit "+unitName)
+	}
+	if interfaceCode != 0 || interfaceState == "" {
+		missing = append(missing, interfaceDescription+payload.InterfaceName)
+	}
+	if addressRequired && (addressCode != 0 || addressState == "") {
+		missing = append(missing, "IPv4 address on "+payload.InterfaceName)
+	}
+	if !providerRoutePresent {
+		missing = append(missing, "provider default route in table "+strconv.Itoa(payload.RoutingTable))
+	}
+	if !rulePresent {
+		missing = append(missing, "policy rule for "+mark)
+	}
+	if payload.Protocol == "l2tp_ipsec" {
+		health["ipsec_connection"] = externalEgressIPsecConnectionName(payload)
+		health["ipsec_established"] = ipsecEstablished
+		health["ipsec_check_exit_code"] = ipsecCode
+		health["ipsec_status"] = truncate(strings.TrimSpace(ipsecOutput), 2000)
+		if !ipsecEstablished {
+			missing = append(missing, "IPsec security association "+externalEgressIPsecConnectionName(payload))
+		}
+	}
+	if len(missing) > 0 {
 		health["status"] = "failed"
+		health["missing_components"] = missing
+		diagnosticCommands := []string{
+			"systemctl status " + unitName + " --no-pager -l",
+			"journalctl -u " + unitName + " -n 200 --no-pager -l",
+			"ip -4 addr show dev " + payload.InterfaceName,
+			"ip route show table " + strconv.Itoa(payload.RoutingTable),
+			"ip rule show",
+		}
+		if payload.Protocol == "l2tp_ipsec" {
+			diagnosticCommands = append([]string{
+				"ipsec status " + externalEgressIPsecConnectionName(payload),
+			}, diagnosticCommands...)
+		}
 		return "failed", map[string]any{
-			"error": "external egress runtime is incomplete", "message": "unit, interface, route and policy rule must all be active",
-			"health": health,
+			"error":               "external egress runtime is incomplete: missing " + strings.Join(missing, ", "),
+			"message":             externalEgressProbeRequirementMessage(payload.Protocol),
+			"diagnostic_commands": diagnosticCommands,
+			"health":              health,
 		}
 	}
 	return "succeeded", map[string]any{"message": "external egress runtime is active", "health": health}
+}
+
+func (c *client) probeExternalEgressUntilStable(ctx context.Context, j job, st agentState, protocol string) (string, map[string]any) {
+	requiredConsecutive := 1
+	attempts := 1
+	if protocol == "l2tp_ipsec" {
+		requiredConsecutive = 2
+		attempts = 4
+	}
+	consecutive := 0
+	status := "failed"
+	result := map[string]any{"error": "external egress runtime probe did not run"}
+	for attempt := 0; attempt < attempts; attempt++ {
+		status, result = c.probeExternalEgress(ctx, j, st)
+		result["probe_attempt"] = attempt + 1
+		if status == "succeeded" {
+			consecutive++
+			if consecutive >= requiredConsecutive {
+				result["stable_observations"] = consecutive
+				return status, result
+			}
+		} else {
+			consecutive = 0
+		}
+		if attempt+1 < attempts {
+			timer := time.NewTimer(externalEgressProbeInterval)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return "failed", map[string]any{"error": ctx.Err().Error(), "stage": "stability_probe"}
+			case <-timer.C:
+			}
+		}
+	}
+	result["stable_observations"] = consecutive
+	if consecutive < requiredConsecutive {
+		if status == "succeeded" {
+			result["error"] = fmt.Sprintf(
+				"external egress runtime did not remain stable: observed %d of %d required consecutive complete probes",
+				consecutive,
+				requiredConsecutive,
+			)
+			if health, ok := result["health"].(map[string]any); ok {
+				health["status"] = "failed"
+				health["stability_check"] = "failed"
+			}
+		}
+		return "failed", result
+	}
+	return status, result
+}
+
+func externalEgressProbeRequirementMessage(protocol string) string {
+	if protocol == "l2tp_ipsec" {
+		return "systemd unit, IPsec association, PPP interface address, provider route and policy rule must all be active"
+	}
+	return "systemd unit, tunnel interface, provider route and policy rule must all be active"
 }
 
 func externalEgressRouteHealth(routes, interfaceName string) (providerDefault, failClosed bool) {
@@ -741,6 +921,7 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 	warnings := []string{}
 	l2tpProcess := map[string]any{}
 	l2tpListenerProcess := map[string]any{}
+	l2tpInterfaceRelease := map[string]any{}
 	l2tpTeardownSafe := true
 	if code, output := runInstallCommand(ctx, "systemctl", "disable", "--now", unitName); code != 0 && !isMissingSystemdUnitOutput(output) {
 		warnings = append(warnings, "systemd stop: "+firstLine(output))
@@ -759,6 +940,39 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 		if processErr != nil {
 			l2tpTeardownSafe = false
 			warnings = append(warnings, processErr.Error())
+		}
+		if code, output := runInstallCommand(ctx, "ss", "-H", "-lunp"); code != 0 {
+			l2tpTeardownSafe = false
+			warnings = append(warnings, "verify UDP/1701 cleanup: "+firstLine(output))
+		} else {
+			if externalEgressUDPPortListening(output, 1701) {
+				listenerResult, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701, true)
+				l2tpListenerProcess = listenerResult
+				if listenerErr != nil {
+					l2tpTeardownSafe = false
+					warnings = append(warnings, "inspect stale managed UDP/1701 listener: "+listenerErr.Error())
+				}
+				if listenerResult["terminated"] == true {
+					code, output = runInstallCommand(ctx, "ss", "-H", "-lunp")
+					if code != 0 {
+						l2tpTeardownSafe = false
+						warnings = append(warnings, "verify UDP/1701 after managed listener teardown: "+firstLine(output))
+					}
+				}
+			}
+			if code == 0 && externalEgressUDPPortListening(output, 1701) {
+				l2tpTeardownSafe = false
+				owner := externalEgressUDPPortOwner(output, 1701)
+				warnings = append(warnings, "UDP/1701 remains in use after managed cleanup: "+firstNonEmptyAgentString(owner, "owner unavailable"))
+			}
+		}
+		if l2tpTeardownSafe {
+			var releaseErr error
+			l2tpInterfaceRelease, releaseErr = releaseExternalEgressL2TPInterface(ctx, payload)
+			if releaseErr != nil {
+				l2tpTeardownSafe = false
+				warnings = append(warnings, releaseErr.Error())
+			}
 		}
 	}
 	paths := []string{externalEgressUnitPath(payload), externalEgressManagedDir(payload), externalEgressRuntimeDir(payload)}
@@ -783,27 +997,6 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 		if warning := reloadExternalEgressIPsecAfterCleanup(ctx); warning != "" {
 			warnings = append(warnings, warning)
 		}
-		if code, output := runInstallCommand(ctx, "ss", "-H", "-lunp"); code != 0 {
-			warnings = append(warnings, "verify UDP/1701 cleanup: "+firstLine(output))
-		} else {
-			if externalEgressUDPPortListening(output, 1701) {
-				listenerResult, listenerErr := terminateManagedExternalEgressL2TPListener(ctx, output, 1701, true)
-				l2tpListenerProcess = listenerResult
-				if listenerErr != nil {
-					warnings = append(warnings, "inspect stale managed UDP/1701 listener: "+listenerErr.Error())
-				}
-				if listenerResult["terminated"] == true {
-					code, output = runInstallCommand(ctx, "ss", "-H", "-lunp")
-					if code != 0 {
-						warnings = append(warnings, "verify UDP/1701 after managed listener teardown: "+firstLine(output))
-					}
-				}
-			}
-			if code == 0 && externalEgressUDPPortListening(output, 1701) {
-				owner := externalEgressUDPPortOwner(output, 1701)
-				warnings = append(warnings, "UDP/1701 remains in use after managed cleanup: "+firstNonEmptyAgentString(owner, "owner unavailable"))
-			}
-		}
 	}
 	if _, err := runSystemdDaemonReload(ctx); err != nil {
 		warnings = append(warnings, err.Error())
@@ -815,6 +1008,7 @@ func (c *client) cleanupExternalEgress(ctx context.Context, j job, st agentState
 	if payload.Protocol == "l2tp_ipsec" {
 		result["l2tp_process"] = l2tpProcess
 		result["l2tp_listener_process"] = l2tpListenerProcess
+		result["l2tp_interface_release"] = l2tpInterfaceRelease
 	}
 	if len(warnings) > 0 {
 		result["error"] = strings.Join(warnings, "; ")
@@ -1498,6 +1692,8 @@ max redials = 0
 length bit = yes
 `, connection, preview.EndpointHost, filepath.Join(dir, "ppp-options"))
 	pppOptions := fmt.Sprintf(`ifname %s
+ipparam %s
+linkname %s
 name %s
 password %s
 noauth
@@ -1509,7 +1705,8 @@ mru 1400
 persist
 maxfail 0
 holdoff 5
-`, payload.InterfaceName, quoteExternalEgressSecret(username), quoteExternalEgressSecret(password))
+`, payload.InterfaceName, payload.InterfaceName, payload.InterfaceName,
+		quoteExternalEgressSecret(username), quoteExternalEgressSecret(password))
 	return ipsecConfig, ipsecSecrets, xl2tpConfig, pppOptions, nil
 }
 
@@ -1625,9 +1822,9 @@ func renderExternalEgressRouteScript(payload externalEgressJobPayload) string {
 set -eu
 action="${1:-apply}"
 if [ "$action" = cleanup ]; then
-	  ip rule del pref %d fwmark %s lookup %d 2>/dev/null || true
-	  ip route flush table %d 2>/dev/null || true
-	  exit 0
+  ip rule del pref %d fwmark %s lookup %d 2>/dev/null || true
+  ip route flush table %d 2>/dev/null || true
+  exit 0
 fi
 ip route flush table %d 2>/dev/null || true
 ip route replace unreachable default metric 32767 table %d
@@ -1642,10 +1839,24 @@ while ! ip link show dev %s >/dev/null 2>&1; do
   [ "$i" -lt 60 ] || { echo "interface %s did not appear" >&2; exit 1; }
   sleep 1
 done
+%s
 ip route replace default dev %s table %d metric %d
-	`, priority, mark, payload.RoutingTable, payload.RoutingTable,
+`, priority, mark, payload.RoutingTable, payload.RoutingTable,
 		payload.RoutingTable, payload.RoutingTable, priority, mark, payload.RoutingTable, priority, mark, payload.RoutingTable,
-		payload.InterfaceName, payload.InterfaceName, payload.InterfaceName, payload.RoutingTable, payload.RouteMetric)
+		payload.InterfaceName, payload.InterfaceName, externalEgressInterfaceAddressWait(payload),
+		payload.InterfaceName, payload.RoutingTable, payload.RouteMetric)
+}
+
+func externalEgressInterfaceAddressWait(payload externalEgressJobPayload) string {
+	if payload.Protocol != "l2tp_ipsec" {
+		return ""
+	}
+	return fmt.Sprintf(`i=0
+while ! ip -4 addr show dev %s | grep -q 'inet '; do
+  i=$((i + 1))
+  [ "$i" -lt 60 ] || { echo "interface %s did not receive an IPv4 address" >&2; exit 1; }
+  sleep 1
+done`, payload.InterfaceName, payload.InterfaceName)
 }
 
 func externalEgressRulePriority(routingTable int) int {
@@ -1676,6 +1887,9 @@ Type=%s
 %sExecStart=%s
 %s%sRestart=%s
 RestartSec=3s
+KillMode=control-group
+TimeoutStartSec=120s
+TimeoutStopSec=30s
 
 [Install]
 WantedBy=multi-user.target

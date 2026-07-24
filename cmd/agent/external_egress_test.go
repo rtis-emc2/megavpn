@@ -27,6 +27,16 @@ func validExternalEgressPayload(protocol, config string) externalEgressJobPayloa
 	}
 }
 
+func externalEgressProbeJob(payload externalEgressJobPayload) job {
+	return job{Payload: map[string]any{
+		"node_id": payload.NodeID, "profile_id": payload.ProfileID,
+		"deployment_id": payload.DeploymentID, "protocol": payload.Protocol,
+		"interface_name": payload.InterfaceName, "routing_table": payload.RoutingTable,
+		"route_metric": payload.RouteMetric, "fwmark": payload.FWMark,
+		"proxy_port": payload.ProxyPort,
+	}}
+}
+
 func TestRenderManagedOpenVPNConfigIsolatesRouting(t *testing.T) {
 	raw := "client\nproto tcp-client\nremote vpn.example.com 443\ndev tun9\nredirect-gateway def1\nauth-user-pass\n"
 	payload := validExternalEgressPayload("openvpn", raw)
@@ -156,8 +166,15 @@ func TestRenderManagedL2TPIPsecConfigIsolatesDefaultRoute(t *testing.T) {
 	if !strings.Contains(ipsecSecrets, `PSK "provider-psk"`) || !strings.Contains(xl2tpConfig, "autodial = yes") {
 		t.Fatalf("L2TP/IPsec managed files are incomplete")
 	}
-	if !strings.Contains(pppOptions, "nodefaultroute") || !strings.Contains(pppOptions, "ifname mgev0123456789") {
-		t.Fatalf("PPP options do not isolate node routing:\n%s", pppOptions)
+	for _, required := range []string{
+		"nodefaultroute",
+		"ifname mgev0123456789",
+		"ipparam mgev0123456789",
+		"linkname mgev0123456789",
+	} {
+		if !strings.Contains(pppOptions, required) {
+			t.Fatalf("PPP options do not contain %q:\n%s", required, pppOptions)
+		}
 	}
 }
 
@@ -422,6 +439,194 @@ func TestPrepareExternalEgressL2TPTakeoverStopsSystemAndStaleManagedRuntime(t *t
 	stale, _ := result["stale_deployments"].([]string)
 	if len(stale) != 1 || stale[0] != staleID {
 		t.Fatalf("stale deployments = %#v", result["stale_deployments"])
+	}
+}
+
+func TestReleaseExternalEgressL2TPInterfaceRemovesStaleInterface(t *testing.T) {
+	oldRun := runInstallCommand
+	oldInterval := externalEgressInterfaceReleaseInterval
+	t.Cleanup(func() {
+		runInstallCommand = oldRun
+		externalEgressInterfaceReleaseInterval = oldInterval
+	})
+	externalEgressInterfaceReleaseInterval = 0
+
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
+	commands := []string{}
+	inspections := 0
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		commands = append(commands, command)
+		if command == "ip -o link show dev "+payload.InterfaceName {
+			inspections++
+			if inspections == 1 {
+				return 0, "14: " + payload.InterfaceName + ": <POINTOPOINT,UP> mtu 1400"
+			}
+			return 1, `Device "` + payload.InterfaceName + `" does not exist.`
+		}
+		return 0, ""
+	}
+
+	result, err := releaseExternalEgressL2TPInterface(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("releaseExternalEgressL2TPInterface returned error: %v", err)
+	}
+	if result["released"] != true {
+		t.Fatalf("interface release result = %#v", result)
+	}
+	got := strings.Join(commands, "\n")
+	for _, required := range []string{
+		"ip link set dev " + payload.InterfaceName + " down",
+		"ip link delete dev " + payload.InterfaceName,
+	} {
+		if !strings.Contains(got, required) {
+			t.Fatalf("commands %q do not contain %q", got, required)
+		}
+	}
+}
+
+func TestProbeExternalEgressL2TPRequiresStableCompleteRuntime(t *testing.T) {
+	oldRun := runInstallCommand
+	oldInterval := externalEgressProbeInterval
+	t.Cleanup(func() {
+		runInstallCommand = oldRun
+		externalEgressProbeInterval = oldInterval
+	})
+	externalEgressProbeInterval = 0
+
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
+	probes := 0
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		switch command {
+		case "systemctl is-active " + externalEgressUnitName(payload):
+			probes++
+			return 0, "active\n"
+		case "ip -o link show dev " + payload.InterfaceName:
+			return 0, "14: " + payload.InterfaceName + ": <POINTOPOINT,UP> mtu 1400\n"
+		case "ip -4 -o addr show dev " + payload.InterfaceName:
+			return 0, "14: " + payload.InterfaceName + " inet 10.20.30.40 peer 10.20.30.1/32 scope global\n"
+		case "ip rule show":
+			return 0, "50123: from all fwmark 0x4d590123 lookup 40123\n"
+		case "ip route show table 40123":
+			return 0, "default dev " + payload.InterfaceName + " metric 100\nunreachable default metric 32767\n"
+		case "ipsec status " + externalEgressIPsecConnectionName(payload):
+			return 0, externalEgressIPsecConnectionName(payload) + "[1]: ESTABLISHED; INSTALLED, TRANSPORT\n"
+		default:
+			t.Fatalf("unexpected probe command: %s", command)
+			return 1, ""
+		}
+	}
+
+	status, result := (&client{}).probeExternalEgressUntilStable(
+		context.Background(),
+		externalEgressProbeJob(payload),
+		agentState{NodeID: payload.NodeID},
+		payload.Protocol,
+	)
+	if status != "succeeded" {
+		t.Fatalf("probe status = %s, result = %#v", status, result)
+	}
+	if probes != 2 || result["stable_observations"] != 2 {
+		t.Fatalf("stable probe count = %d, result = %#v", probes, result)
+	}
+}
+
+func TestProbeExternalEgressL2TPReportsMissingLayers(t *testing.T) {
+	oldRun := runInstallCommand
+	t.Cleanup(func() { runInstallCommand = oldRun })
+
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		switch command {
+		case "systemctl is-active " + externalEgressUnitName(payload):
+			return 0, "active\n"
+		case "ip -o link show dev " + payload.InterfaceName:
+			return 1, `Device "` + payload.InterfaceName + `" does not exist.`
+		case "ip -4 -o addr show dev " + payload.InterfaceName:
+			return 1, `Device "` + payload.InterfaceName + `" does not exist.`
+		case "ip rule show":
+			return 0, ""
+		case "ip route show table 40123":
+			return 0, "unreachable default metric 32767\n"
+		case "ipsec status " + externalEgressIPsecConnectionName(payload):
+			return 0, "Security Associations (0 up, 0 connecting):\n"
+		default:
+			t.Fatalf("unexpected probe command: %s", command)
+			return 1, ""
+		}
+	}
+
+	status, result := (&client{}).probeExternalEgress(
+		context.Background(),
+		externalEgressProbeJob(payload),
+		agentState{NodeID: payload.NodeID},
+	)
+	if status != "failed" {
+		t.Fatalf("probe status = %s, result = %#v", status, result)
+	}
+	message := stringify(result["error"])
+	for _, required := range []string{
+		"PPP interface " + payload.InterfaceName,
+		"IPv4 address on " + payload.InterfaceName,
+		"provider default route in table 40123",
+		"policy rule for 0x4d590123",
+		"IPsec security association " + externalEgressIPsecConnectionName(payload),
+	} {
+		if !strings.Contains(message, required) {
+			t.Fatalf("probe error %q does not contain %q", message, required)
+		}
+	}
+}
+
+func TestProbeExternalEgressL2TPRejectsSingleFinalSuccess(t *testing.T) {
+	oldRun := runInstallCommand
+	oldInterval := externalEgressProbeInterval
+	t.Cleanup(func() {
+		runInstallCommand = oldRun
+		externalEgressProbeInterval = oldInterval
+	})
+	externalEgressProbeInterval = 0
+
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
+	probeNumber := 0
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		switch command {
+		case "systemctl is-active " + externalEgressUnitName(payload):
+			probeNumber++
+			if probeNumber%2 == 0 {
+				return 0, "active\n"
+			}
+			return 3, "inactive\n"
+		case "ip -o link show dev " + payload.InterfaceName:
+			return 0, "14: " + payload.InterfaceName + ": <POINTOPOINT,UP> mtu 1400\n"
+		case "ip -4 -o addr show dev " + payload.InterfaceName:
+			return 0, "14: " + payload.InterfaceName + " inet 10.20.30.40 peer 10.20.30.1/32 scope global\n"
+		case "ip rule show":
+			return 0, "50123: from all fwmark 0x4d590123 lookup 40123\n"
+		case "ip route show table 40123":
+			return 0, "default dev " + payload.InterfaceName + " metric 100\nunreachable default metric 32767\n"
+		case "ipsec status " + externalEgressIPsecConnectionName(payload):
+			return 0, externalEgressIPsecConnectionName(payload) + "[1]: ESTABLISHED; INSTALLED, TRANSPORT\n"
+		default:
+			t.Fatalf("unexpected probe command: %s", command)
+			return 1, ""
+		}
+	}
+
+	status, result := (&client{}).probeExternalEgressUntilStable(
+		context.Background(),
+		externalEgressProbeJob(payload),
+		agentState{NodeID: payload.NodeID},
+		payload.Protocol,
+	)
+	if status != "failed" || !strings.Contains(stringify(result["error"]), "did not remain stable") {
+		t.Fatalf("unstable probe status = %s, result = %#v", status, result)
+	}
+	if result["stable_observations"] != 1 {
+		t.Fatalf("unstable probe result = %#v", result)
 	}
 }
 
@@ -865,6 +1070,8 @@ func TestCleanupExternalEgressL2TPStopsOrphanBeforeRemovingRuntime(t *testing.T)
 			return 0, ""
 		case command == "ss -H -lunp":
 			return 0, ""
+		case command == "ip -o link show dev mgev0123456789":
+			return 1, `Device "mgev0123456789" does not exist.`
 		default:
 			t.Fatalf("unexpected cleanup command: %s", command)
 			return 1, "unexpected command"
@@ -926,6 +1133,15 @@ func TestRenderExternalEgressRouteScriptUsesDeploymentSpecificRule(t *testing.T)
 	}
 }
 
+func TestRenderExternalEgressRouteScriptWaitsForL2TPAddress(t *testing.T) {
+	payload := validExternalEgressPayload("l2tp_ipsec", "server=l2tp.example.com\n")
+	script := renderExternalEgressRouteScript(payload)
+	if !strings.Contains(script, "ip -4 addr show dev mgev0123456789") ||
+		!strings.Contains(script, "did not receive an IPv4 address") {
+		t.Fatalf("L2TP route script does not wait for PPP address:\n%s", script)
+	}
+}
+
 func TestRenderExternalEgressUnitKeepsFailClosedGuardOnStop(t *testing.T) {
 	payload := validExternalEgressPayload("openvpn", "client\nremote vpn.example.com 1194\n")
 	dir := externalEgressManagedDir(payload)
@@ -937,6 +1153,11 @@ func TestRenderExternalEgressUnitKeepsFailClosedGuardOnStop(t *testing.T) {
 	unit := renderExternalEgressUnit(payload, routeScript, "openvpn --config "+dir+"/client.ovpn", []string{routeScript + " guard"})
 	if !strings.Contains(unit, "route-policy.sh guard") || strings.Contains(unit, "route-policy.sh cleanup") {
 		t.Fatalf("unit does not preserve fail-closed routing on stop:\n%s", unit)
+	}
+	for _, required := range []string{"\n[Service]\n", "KillMode=control-group", "TimeoutStartSec=120s", "TimeoutStopSec=30s"} {
+		if !strings.Contains(unit, required) {
+			t.Fatalf("unit is missing %q:\n%s", required, unit)
+		}
 	}
 	if err := validateExternalEgressManagedArtifacts(payload, files, externalEgressUnitPath(payload)); err != nil {
 		t.Fatalf("generated artifacts were rejected: %v", err)

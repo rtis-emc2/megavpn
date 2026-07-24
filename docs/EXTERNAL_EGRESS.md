@@ -239,6 +239,8 @@ Expected state:
 - the managed unit is active;
 - an L3 deployment has its `mgev*`/managed PPP interface, dedicated default
   route and matching fwmark `ip rule`;
+- an L2TP/IPsec deployment additionally has an established/installed IPsec
+  security association and an IPv4 address on the managed PPP interface;
 - a VLESS/Shadowsocks deployment listens only on its assigned `127.0.0.1` SOCKS
   port and has no provider route in the main table;
 - the main table has not acquired a provider default route.
@@ -293,6 +295,13 @@ The distribution daemon is handled separately: after
 terminated only when `/proc/<pid>/cgroup` still identifies the exact
 `xl2tpd.service` unit. The executable and ownership evidence are checked again
 immediately before signaling. A process in any other cgroup remains untouched.
+Apply and Cleanup also wait for the deployment-specific PPP interface to
+disappear before replacing or removing the runtime. A new Apply does not reuse
+a stale interface from the previous deployment. Startup waits for both the PPP
+interface and its IPv4 address before installing the provider default route.
+The final probe requires two consecutive complete observations for L2TP/IPsec
+and reports each missing layer separately: systemd unit, IPsec association,
+PPP interface, address, route or policy rule.
 
 If UDP/1701 remains occupied, the job fails closed and includes the matching
 `ss -lunp` owner row in job evidence. Inspect it without changing runtime state:
@@ -322,6 +331,7 @@ profile or rotate provider credentials for this package-manager failure.
 | Runtime package install fails | Existing deployment is left running | Fix OS repositories/capabilities and apply again |
 | `xl2tpd` remains unconfigured | Apply fails before runtime replacement | Repair apt/dpkg with the documented sequence and apply again |
 | UDP/1701 remains occupied after managed teardown | Apply or cleanup fails and reports the listener owner | Verify the `ss -lunp` evidence, then stop or move only the confirmed conflicting runtime |
+| Runtime probe reports missing L2TP layers | Apply fails with the exact missing unit, IPsec SA, PPP address, provider route or policy rule | Use the diagnostic commands stored in job evidence; fix the first missing layer and apply again |
 | Full wipe cannot purge L2TP packages | Wipe fails and agent remains installed | Repair apt/dpkg, verify the job evidence and repeat full wipe |
 | New runtime does not start | Apply job fails and reports stage/output | Inspect unit journal, correct profile, apply again |
 | Provider interface goes down | Selected group traffic is rejected by the dedicated unreachable route | Restore the provider runtime or move the group to another active profile |
