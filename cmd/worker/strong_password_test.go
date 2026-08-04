@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestRandomStrongPasswordShape(t *testing.T) {
 	password, err := randomStrongPassword(32)
@@ -21,6 +24,18 @@ func TestRandomStrongPasswordShape(t *testing.T) {
 	}
 	if !containsAny(password, "!#$%&()*+,-.:=?@_~") {
 		t.Fatalf("password does not include a symbol: %q", password)
+	}
+}
+
+type failingRandomReader struct{}
+
+func (failingRandomReader) Read([]byte) (int, error) {
+	return 0, errors.New("entropy unavailable")
+}
+
+func TestRandomHexStringFailsClosedWhenEntropyIsUnavailable(t *testing.T) {
+	if value, err := randomHexStringFrom(failingRandomReader{}, 12); err == nil || value != "" {
+		t.Fatalf("randomHexStringFrom() = %q, %v; want empty value and error", value, err)
 	}
 }
 

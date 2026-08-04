@@ -1379,7 +1379,7 @@ func (s *Server) importNodeServiceDiscovery(w nethttp.ResponseWriter, r *nethttp
 		writeErr(w, 409, err.Error())
 		return
 	}
-	writeJSON(w, 201, x)
+	writeJSON(w, 201, redactedInstance(x))
 }
 
 func (s *Server) importAllNodeServiceDiscoveries(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -1391,7 +1391,7 @@ func (s *Server) importAllNodeServiceDiscoveries(w nethttp.ResponseWriter, r *ne
 	if x == nil {
 		x = []domain.Instance{}
 	}
-	writeJSON(w, 201, x)
+	writeJSON(w, 201, redactedInstances(x))
 }
 
 func (s *Server) createNodeServiceDiscoveryJob(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -1541,7 +1541,7 @@ func (s *Server) listInstances(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 500, "list instances failed")
 		return
 	}
-	writeJSON(w, 200, x)
+	writeJSON(w, 200, redactedInstances(x))
 }
 
 func (s *Server) listInstanceRuntimeStates(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -1559,7 +1559,7 @@ func (s *Server) getInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 404, "instance not found")
 		return
 	}
-	writeJSON(w, 200, x)
+	writeJSON(w, 200, redactedInstance(x))
 }
 
 func (s *Server) getInstanceRuntimeState(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -1578,7 +1578,7 @@ func (s *Server) listInstanceRuntimeObservations(w nethttp.ResponseWriter, r *ne
 		writeErr(w, 500, "list instance runtime observations failed")
 		return
 	}
-	writeJSON(w, 200, x)
+	writeJSON(w, 200, redactedInstanceRuntimeObservations(x))
 }
 
 func (s *Server) listInstanceRevisions(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -1602,7 +1602,7 @@ func (s *Server) listInstanceRevisions(w nethttp.ResponseWriter, r *nethttp.Requ
 	if x == nil {
 		x = []domain.InstanceRevision{}
 	}
-	writeJSON(w, 200, x)
+	writeJSON(w, 200, redactedInstanceRevisions(x))
 }
 func (s *Server) replaceInstanceSpec(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req instanceSpecRequest
@@ -1631,7 +1631,7 @@ func (s *Server) replaceInstanceSpec(w nethttp.ResponseWriter, r *nethttp.Reques
 		message = "instance revision saved with validation issues"
 	}
 	writeJSON(w, 200, response{
-		"revision":    revision,
+		"revision":    redactedInstanceRevision(revision),
 		"can_apply":   revision.Status == "validated" || revision.Status == "applied",
 		"message":     message,
 		"issue_count": len(revision.ValidationErrors),
@@ -1665,7 +1665,7 @@ func (s *Server) rollbackInstanceRevision(w nethttp.ResponseWriter, r *nethttp.R
 		message = "rollback revision created with validation issues"
 	}
 	writeJSON(w, 200, response{
-		"revision":    revision,
+		"revision":    redactedInstanceRevision(revision),
 		"can_apply":   revision.Status == "validated" || revision.Status == "applied",
 		"message":     message,
 		"issue_count": len(revision.ValidationErrors),
@@ -1682,7 +1682,7 @@ func (s *Server) createInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 201, created)
+	writeJSON(w, 201, redactedInstance(created))
 }
 func (s *Server) deleteInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
 	x, err := s.store.DeleteInstance(r.Context(), idParam(r))
@@ -1690,7 +1690,7 @@ func (s *Server) deleteInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 409, err.Error())
 		return
 	}
-	writeJSON(w, 200, x)
+	writeJSON(w, 200, redactedInstance(x))
 }
 func (s *Server) forceDeleteInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req instanceForceDeleteRequest
@@ -1703,7 +1703,7 @@ func (s *Server) forceDeleteInstance(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeErr(w, 409, err.Error())
 		return
 	}
-	writeJSON(w, 200, response{"status": "deleted", "instance": x})
+	writeJSON(w, 200, response{"status": "deleted", "instance": redactedInstance(x)})
 }
 func (s *Server) diagnoseInstance(w nethttp.ResponseWriter, r *nethttp.Request) {
 	j, err := s.store.CreateInstanceDiagnosticsJob(r.Context(), idParam(r))
@@ -1805,7 +1805,7 @@ func (s *Server) clientAccesses(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 500, "list accesses failed")
 		return
 	}
-	writeJSON(w, 200, x)
+	writeJSON(w, 200, redactedServiceAccesses(x))
 }
 
 func (s *Server) deleteClientServiceAccess(w nethttp.ResponseWriter, r *nethttp.Request) {

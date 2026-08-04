@@ -10,6 +10,7 @@ docs/*
 node_modules/
 .DS_Store
 coverage/
+*.tsbuildinfo
 *.key
 *.pem
 *.crt

@@ -25,6 +25,63 @@ func redactedJobs(jobs []domain.Job) []domain.Job {
 	return out
 }
 
+func redactedServiceAccesses(accesses []domain.ServiceAccess) []domain.ServiceAccess {
+	if accesses == nil {
+		return nil
+	}
+	out := make([]domain.ServiceAccess, len(accesses))
+	for i := range accesses {
+		out[i] = accesses[i]
+		out[i].Policy = redactSensitiveMap(accesses[i].Policy)
+		out[i].Metadata = redactSensitiveMap(accesses[i].Metadata)
+	}
+	return out
+}
+
+func redactedInstance(instance domain.Instance) domain.Instance {
+	instance.Spec = redactInstanceSpec(instance.Spec)
+	return instance
+}
+
+func redactedInstances(instances []domain.Instance) []domain.Instance {
+	if instances == nil {
+		return nil
+	}
+	out := make([]domain.Instance, len(instances))
+	for i := range instances {
+		out[i] = redactedInstance(instances[i])
+	}
+	return out
+}
+
+func redactedInstanceRevision(revision domain.InstanceRevision) domain.InstanceRevision {
+	revision.Spec = redactInstanceSpec(revision.Spec)
+	return revision
+}
+
+func redactedInstanceRevisions(revisions []domain.InstanceRevision) []domain.InstanceRevision {
+	if revisions == nil {
+		return nil
+	}
+	out := make([]domain.InstanceRevision, len(revisions))
+	for i := range revisions {
+		out[i] = redactedInstanceRevision(revisions[i])
+	}
+	return out
+}
+
+func redactedInstanceRuntimeObservations(observations []domain.InstanceRuntimeObservation) []domain.InstanceRuntimeObservation {
+	if observations == nil {
+		return nil
+	}
+	out := make([]domain.InstanceRuntimeObservation, len(observations))
+	for i := range observations {
+		out[i] = observations[i]
+		out[i].Result = redactSensitiveMap(observations[i].Result)
+	}
+	return out
+}
+
 func redactedBootstrapRun(run domain.NodeBootstrapRun) domain.NodeBootstrapRun {
 	run.RequestPayload = redactSensitiveMap(run.RequestPayload)
 	run.ResultPayload = redactSensitiveMap(run.ResultPayload)
@@ -75,28 +132,52 @@ func redactedNodeCapabilityInstallEvents(events []domain.NodeCapabilityInstallEv
 }
 
 func redactSensitiveMap(src map[string]any) map[string]any {
+	return redactMapWithKeyPolicy(src, isSensitiveResponseKey)
+}
+
+func redactInstanceSpec(src map[string]any) map[string]any {
+	out := redactMapWithKeyPolicy(src, isSensitiveInstanceSpecKey)
+	clients, ok := out["managed_clients"].([]any)
+	if !ok {
+		return out
+	}
+	for _, item := range clients {
+		client, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, key := range []string{"id", "uuid", "xray_uuid", "vless_uuid"} {
+			if _, exists := client[key]; exists {
+				client[key] = redactedValue
+			}
+		}
+	}
+	return out
+}
+
+func redactMapWithKeyPolicy(src map[string]any, sensitiveKey func(string) bool) map[string]any {
 	if src == nil {
 		return nil
 	}
 	out := make(map[string]any, len(src))
 	for key, value := range src {
-		if isSensitiveResponseKey(key) {
+		if sensitiveKey(key) {
 			out[key] = redactedValue
 			continue
 		}
-		out[key] = redactSensitiveValue(value)
+		out[key] = redactValueWithKeyPolicy(value, sensitiveKey)
 	}
 	return out
 }
 
-func redactSensitiveValue(value any) any {
+func redactValueWithKeyPolicy(value any, sensitiveKey func(string) bool) any {
 	switch typed := value.(type) {
 	case map[string]any:
-		return redactSensitiveMap(typed)
+		return redactMapWithKeyPolicy(typed, sensitiveKey)
 	case []any:
 		out := make([]any, len(typed))
 		for i := range typed {
-			out[i] = redactSensitiveValue(typed[i])
+			out[i] = redactValueWithKeyPolicy(typed[i], sensitiveKey)
 		}
 		return out
 	case string:
@@ -106,6 +187,17 @@ func redactSensitiveValue(value any) any {
 		return typed
 	default:
 		return value
+	}
+}
+
+func isSensitiveInstanceSpecKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	switch normalized {
+	case "content", "json", "config", "config_json", "config_content":
+		return false
+	default:
+		return isSensitiveResponseKey(key)
 	}
 }
 
@@ -125,6 +217,7 @@ func isSensitiveResponseKey(key string) bool {
 	switch normalized {
 	case "token", "agent_token", "new_agent_token", "new_agent_token_hash", "enrollment_token",
 		"password", "smtp_password", "private_key", "secret", "psk",
+		"uuid", "xray_uuid", "vless_uuid",
 		"agent_bootstrapenv", "agent_bootstrap_env", "bootstrap_env",
 		"content", "json", "config", "config_json", "config_content", "privatekey", "presharedkey",
 		"reality_private_key", "wireguard_private_key", "openvpn_private_key", "tls_private_key":

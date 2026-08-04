@@ -551,8 +551,8 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 				"error":              fmt.Sprintf("service pack component %q is not apply-ready: %v", servicePackComponentLabel(component), createErr),
 				"component":          servicePackComponentLabel(component),
 				"service_pack_key":   pack.Key,
-				"created_instances":  created,
-				"existing_instances": existing,
+				"created_instances":  redactedInstances(created),
+				"existing_instances": redactedInstances(existing),
 				"discarded_count":    discarded,
 			})
 			return
@@ -580,8 +580,8 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 				"error":                err.Error(),
 				"service_pack_key":     pack.Key,
 				"runtime_service_code": runtimeCode,
-				"created_instances":    created,
-				"existing_instances":   existing,
+				"created_instances":    redactedInstances(created),
+				"existing_instances":   redactedInstances(existing),
 				"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
 			})
 			return
@@ -596,8 +596,8 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 				"status":               "apply_queue_failed",
 				"error":                err.Error(),
 				"service_pack_key":     pack.Key,
-				"created_instances":    created,
-				"existing_instances":   existing,
+				"created_instances":    redactedInstances(created),
+				"existing_instances":   redactedInstances(existing),
 				"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
 				"apply_jobs":           redactedJobs(applyJobs),
 			})
@@ -622,8 +622,8 @@ func (s *Server) createServicePackInstances(w nethttp.ResponseWriter, r *nethttp
 	writeJSON(w, statusCode, response{
 		"status":               statusText,
 		"service_pack_key":     pack.Key,
-		"created_instances":    created,
-		"existing_instances":   existing,
+		"created_instances":    redactedInstances(created),
+		"existing_instances":   redactedInstances(existing),
 		"runtime_install_jobs": redactedJobs(runtimeInstallJobs),
 		"apply_jobs":           redactedJobs(applyJobs),
 	})

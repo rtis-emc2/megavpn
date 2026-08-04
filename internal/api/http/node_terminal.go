@@ -14,6 +14,7 @@ import (
 	"net"
 	nethttp "net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,6 +153,10 @@ func (s *Server) nodeSSHTerminal(w nethttp.ResponseWriter, r *nethttp.Request) {
 	authCtx, ok := authFromRequest(r)
 	if !ok {
 		writeErr(w, 401, "authentication required")
+		return
+	}
+	if !terminalWebSocketOriginAllowed(r, s.publicBaseURL) {
+		writeErr(w, 403, "ssh terminal websocket origin is not allowed")
 		return
 	}
 	nodeID := idParam(r)
@@ -568,6 +573,55 @@ func upgradeTerminalWebSocket(w nethttp.ResponseWriter, r *nethttp.Request) (*te
 		return nil, err
 	}
 	return &terminalWebSocket{conn: conn, r: rw.Reader}, nil
+}
+
+func terminalWebSocketOriginAllowed(r *nethttp.Request, publicBaseURL string) bool {
+	if r == nil {
+		return false
+	}
+	origin, err := url.Parse(strings.TrimSpace(r.Header.Get("Origin")))
+	if err != nil || origin.Host == "" || (origin.Scheme != "http" && origin.Scheme != "https") {
+		return false
+	}
+	if origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/") {
+		return false
+	}
+
+	if base := strings.TrimSpace(publicBaseURL); base != "" {
+		expected, err := url.Parse(base)
+		if err != nil || expected.Host == "" || (expected.Scheme != "http" && expected.Scheme != "https") {
+			return false
+		}
+		return terminalOriginEndpoint(origin) == terminalOriginEndpoint(expected)
+	}
+
+	expectedScheme := "http"
+	if r.TLS != nil {
+		expectedScheme = "https"
+	}
+	expected, err := url.Parse(expectedScheme + "://" + strings.TrimSpace(r.Host))
+	return err == nil && expected.Host != "" && terminalOriginEndpoint(origin) == terminalOriginEndpoint(expected)
+}
+
+func terminalOriginEndpoint(parsed *url.URL) string {
+	if parsed == nil {
+		return ""
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(parsed.Hostname())), ".")
+	port := parsed.Port()
+	if port == "" {
+		switch scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+	if scheme == "" || host == "" || port == "" {
+		return ""
+	}
+	return scheme + "://" + net.JoinHostPort(host, port)
 }
 
 func headerTokenContains(value, token string) bool {

@@ -193,6 +193,30 @@ func TestProductionPreflightSeverity(t *testing.T) {
 			t.Fatal("externalControlPlaneTLSAssumed() = false, want true")
 		}
 	})
+
+	t.Run("disabled agent signatures fail in production", func(t *testing.T) {
+		t.Parallel()
+		check := (&Server{productionMode: true, agentSignatureEnforce: false}).agentSignaturePreflightCheck()
+		if check.Status != "failed" {
+			t.Fatalf("status = %q, want failed: %#v", check.Status, check)
+		}
+	})
+
+	t.Run("disabled agent signatures warn outside production", func(t *testing.T) {
+		t.Parallel()
+		check := (&Server{agentSignatureEnforce: false}).agentSignaturePreflightCheck()
+		if check.Status != "warning" {
+			t.Fatalf("status = %q, want warning: %#v", check.Status, check)
+		}
+	})
+
+	t.Run("enforced agent signatures pass in production", func(t *testing.T) {
+		t.Parallel()
+		check := (&Server{productionMode: true, agentSignatureEnforce: true}).agentSignaturePreflightCheck()
+		if check.Status != "ok" {
+			t.Fatalf("status = %q, want ok: %#v", check.Status, check)
+		}
+	})
 }
 
 func TestArtifactStoragePreflightCheck(t *testing.T) {

@@ -46,6 +46,111 @@ func TestRedactedJobRemovesSensitivePayloadAndResultFields(t *testing.T) {
 	}
 }
 
+func TestRedactedServiceAccessesRemoveCredentialMetadata(t *testing.T) {
+	accesses := []domain.ServiceAccess{{
+		Policy: map[string]any{
+			"rotate_credentials": true,
+		},
+		Metadata: map[string]any{
+			"username":                          "client-1",
+			"password":                          "secret-password",
+			"shadowsocks_password":              "secret-shadowsocks-password",
+			"l2tp_password":                     "secret-l2tp-password",
+			"xray_uuid":                         "vless-credential",
+			"http_proxy_password_secret_ref_id": "secret-ref-id",
+			"server_host":                       "vpn.example.com",
+		},
+	}}
+
+	got := redactedServiceAccesses(accesses)
+	if got[0].Metadata["password"] != redactedValue ||
+		got[0].Metadata["shadowsocks_password"] != redactedValue ||
+		got[0].Metadata["l2tp_password"] != redactedValue ||
+		got[0].Metadata["xray_uuid"] != redactedValue {
+		t.Fatalf("credential metadata was not redacted: %#v", got[0].Metadata)
+	}
+	if got[0].Metadata["http_proxy_password_secret_ref_id"] != "secret-ref-id" {
+		t.Fatalf("secret ref id should remain visible: %#v", got[0].Metadata)
+	}
+	if got[0].Metadata["server_host"] != "vpn.example.com" {
+		t.Fatalf("non-sensitive metadata was changed: %#v", got[0].Metadata)
+	}
+	if accesses[0].Metadata["password"] != "secret-password" {
+		t.Fatalf("source metadata was mutated: %#v", accesses[0].Metadata)
+	}
+}
+
+func TestRedactedInstancesAndRevisionsRemoveCredentialSpecs(t *testing.T) {
+	instance := domain.Instance{Spec: map[string]any{
+		"server_host": "vpn.example.com",
+		"managed_accounts": []any{map[string]any{
+			"username": "client-1",
+			"password": "credential",
+		}},
+		"managed_clients": []any{map[string]any{
+			"id":    "vless-credential",
+			"email": "client-1",
+		}},
+		"config_json": map[string]any{
+			"log":      map[string]any{"level": "warning"},
+			"password": "nested-credential",
+		},
+		"config_content":     "listen 443;\n",
+		"private_key_config": "-----BEGIN PRIVATE KEY-----\ncredential\n-----END PRIVATE KEY-----",
+		"psk_secret_ref_id":  "secret-ref-id",
+	}}
+	revision := domain.InstanceRevision{Spec: instance.Spec}
+
+	gotInstance := redactedInstance(instance)
+	gotRevision := redactedInstanceRevision(revision)
+	for label, spec := range map[string]map[string]any{
+		"instance": gotInstance.Spec,
+		"revision": gotRevision.Spec,
+	} {
+		accounts, ok := spec["managed_accounts"].([]any)
+		if !ok || len(accounts) != 1 {
+			t.Fatalf("%s managed accounts = %#v", label, spec["managed_accounts"])
+		}
+		account, ok := accounts[0].(map[string]any)
+		if !ok || account["password"] != redactedValue {
+			t.Fatalf("%s password was not redacted: %#v", label, accounts[0])
+		}
+		if spec["server_host"] != "vpn.example.com" || spec["psk_secret_ref_id"] != "secret-ref-id" {
+			t.Fatalf("%s non-sensitive fields changed: %#v", label, spec)
+		}
+		config, ok := spec["config_json"].(map[string]any)
+		if !ok || config["log"].(map[string]any)["level"] != "warning" || config["password"] != redactedValue {
+			t.Fatalf("%s structured config was not selectively redacted: %#v", label, spec["config_json"])
+		}
+		if spec["config_content"] != "listen 443;\n" || spec["private_key_config"] != redactedValue {
+			t.Fatalf("%s config content redaction mismatch: %#v", label, spec)
+		}
+		clients, ok := spec["managed_clients"].([]any)
+		if !ok || clients[0].(map[string]any)["id"] != redactedValue || clients[0].(map[string]any)["email"] != "client-1" {
+			t.Fatalf("%s VLESS client credential was not redacted: %#v", label, spec["managed_clients"])
+		}
+	}
+	if instance.Spec["managed_accounts"].([]any)[0].(map[string]any)["password"] != "credential" {
+		t.Fatalf("source instance spec was mutated: %#v", instance.Spec)
+	}
+}
+
+func TestRedactedInstanceRuntimeObservationsRemoveSensitiveResult(t *testing.T) {
+	observations := []domain.InstanceRuntimeObservation{{
+		Result: map[string]any{
+			"status":   "failed",
+			"password": "credential",
+		},
+	}}
+	got := redactedInstanceRuntimeObservations(observations)
+	if got[0].Result["password"] != redactedValue || got[0].Result["status"] != "failed" {
+		t.Fatalf("runtime observation result was not redacted: %#v", got[0].Result)
+	}
+	if observations[0].Result["password"] != "credential" {
+		t.Fatalf("source runtime observation was mutated: %#v", observations[0].Result)
+	}
+}
+
 func TestRedactedNodeCapabilityInstallEventsRemoveSensitivePayload(t *testing.T) {
 	events := []domain.NodeCapabilityInstallEvent{{
 		Payload: map[string]any{

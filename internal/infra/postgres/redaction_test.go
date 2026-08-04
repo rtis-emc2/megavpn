@@ -30,6 +30,7 @@ func TestRedactSensitiveMapForStorageRemovesRuntimeSecrets(t *testing.T) {
 		},
 		"settings": map[string]any{
 			"privateKey":   "xray-reality-secret",
+			"xray_uuid":    "vless-credential",
 			"content_hash": "safe-hash",
 			"bundle":       "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----",
 		},
@@ -44,6 +45,9 @@ func TestRedactSensitiveMapForStorageRemovesRuntimeSecrets(t *testing.T) {
 	settings := got["settings"].(map[string]any)
 	if settings["privateKey"] != "[redacted]" {
 		t.Fatalf("camel-case privateKey was not redacted: %#v", settings)
+	}
+	if settings["xray_uuid"] != "[redacted]" {
+		t.Fatalf("VLESS UUID was not redacted: %#v", settings)
 	}
 	if settings["bundle"] != "[redacted]" {
 		t.Fatalf("PEM private key content was not redacted: %#v", settings)

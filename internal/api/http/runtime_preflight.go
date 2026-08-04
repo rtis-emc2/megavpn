@@ -50,6 +50,7 @@ func (s *Server) runtimePreflightChecks(ctx context.Context) []runtimePreflightC
 		s.proxyHeadersPreflightCheck(),
 		s.requestLimitPreflightCheck(),
 		s.agentRegistrationPreflightCheck(),
+		s.agentSignaturePreflightCheck(),
 	}
 }
 
@@ -187,6 +188,16 @@ func (s *Server) agentRegistrationPreflightCheck() runtimePreflightCheck {
 		return warningPreflight("agent_auto_register", "agent auto-registration is enabled", "prefer enrollment-token based registration in production")
 	}
 	return okPreflight("agent_auto_register", "agent auto-registration is disabled", "")
+}
+
+func (s *Server) agentSignaturePreflightCheck() runtimePreflightCheck {
+	if s.agentSignatureEnforce {
+		return okPreflight("agent_request_signatures", "agent request signatures are enforced", "")
+	}
+	if s.productionMode {
+		return failedPreflight("agent_request_signatures", "agent request signatures are disabled", "set MEGAVPN_AGENT_SIGNATURE_ENFORCE=true before accepting production agent traffic")
+	}
+	return warningPreflight("agent_request_signatures", "agent request signatures are disabled", "unsigned agent requests are permitted outside production mode")
 }
 
 func runtimePreflightStatus(checks []runtimePreflightCheck) string {

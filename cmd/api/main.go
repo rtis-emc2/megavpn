@@ -150,7 +150,9 @@ func shutdown(_ context.Context, log *slog.Logger, srv *http.Server, timeout tim
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Error("graceful shutdown failed", "error", err)
-		_ = srv.Close()
+		if closeErr := srv.Close(); closeErr != nil {
+			log.Error("forced server close failed", "error", closeErr)
+		}
 		os.Exit(1)
 	}
 	log.Info("api server stopped")

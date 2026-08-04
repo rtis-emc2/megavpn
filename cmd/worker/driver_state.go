@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/netip"
 	"reflect"
@@ -49,7 +50,11 @@ func ensureXrayInstanceDriverState(ctx context.Context, store *postgres.Store, i
 			changed = true
 		}
 		if firstNonEmpty(stringify(spec["short_id"])) == "" && len(stringListLocal(spec["short_ids"])) == 0 {
-			spec["short_id"] = randomHexString(4)
+			shortID, err := randomHexString(4)
+			if err != nil {
+				return err
+			}
+			spec["short_id"] = shortID
 			changed = true
 		}
 	}
@@ -520,7 +525,11 @@ func ensureOpenVPNInstanceAndClientState(ctx context.Context, store *postgres.St
 		if err != nil {
 			return err
 		}
-		serverCN := "server_" + randomHexString(8)
+		serverSuffix, err := randomHexString(8)
+		if err != nil {
+			return err
+		}
+		serverCN := "server_" + serverSuffix
 		serverCertPEM, serverKeyPEM, err := pki.IssueSignedCertificate(caCertPEM, caKeyPEM, serverCN, true)
 		if err != nil {
 			return err
@@ -813,7 +822,10 @@ func ensureHTTPProxyInstanceDriverState(ctx context.Context, store *postgres.Sto
 
 		password := firstNonEmpty(stringify(meta["password"]), stringify(meta["proxy_password"]), stringify(meta["http_proxy_password"]))
 		if rotate || password == "" {
-			password = randomHexString(12)
+			password, err = randomHexString(12)
+			if err != nil {
+				return err
+			}
 			meta["password"] = password
 			meta["proxy_password"] = password
 			meta["http_proxy_password"] = password
@@ -894,7 +906,10 @@ func ensureMTProtoInstanceDriverState(ctx context.Context, store *postgres.Store
 
 		secret := firstNonEmpty(stringify(meta["mtproto_secret"]), stringify(meta["secret"]))
 		if rotate || secret == "" {
-			secret = randomHexString(16)
+			secret, err = randomHexString(16)
+			if err != nil {
+				return err
+			}
 			meta["mtproto_secret"] = secret
 			meta["secret"] = secret
 			metaChanged = true
@@ -1131,7 +1146,10 @@ func ensureIPSecL2TPInstanceDriverState(ctx context.Context, store *postgres.Sto
 	xl2tpdChanged := false
 
 	if firstNonEmpty(stringify(spec["psk_secret_ref_id"]), stringify(spec["psk"])) == "" {
-		psk := randomHexString(16)
+		psk, err := randomHexString(16)
+		if err != nil {
+			return nil, err
+		}
 		pskRef, err := store.CreateSecretRef(ctx, "psk", []byte(psk), map[string]any{"scope": "instance", "instance_id": instance.ID, "material": "ipsec_psk"})
 		if err != nil {
 			return nil, err
@@ -1198,7 +1216,10 @@ func ensureIPSecL2TPInstanceDriverState(ctx context.Context, store *postgres.Sto
 
 		password := firstNonEmpty(stringify(meta["password"]), stringify(meta["l2tp_password"]), stringify(meta["ppp_password"]))
 		if rotate || password == "" {
-			password = randomHexString(12)
+			password, err = randomHexString(12)
+			if err != nil {
+				return nil, err
+			}
 			meta["password"] = password
 			meta["l2tp_password"] = password
 			meta["ppp_password"] = password
@@ -1294,15 +1315,19 @@ func generateWireGuardKeyPair() (string, string, error) {
 	return base64.StdEncoding.EncodeToString(privateKey.Bytes()), base64.StdEncoding.EncodeToString(publicKey.Bytes()), nil
 }
 
-func randomHexString(n int) string {
+func randomHexString(n int) (string, error) {
+	return randomHexStringFrom(rand.Reader, n)
+}
+
+func randomHexStringFrom(reader io.Reader, n int) (string, error) {
 	if n <= 0 {
 		n = 8
 	}
 	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return strings.Repeat("0", n*2)
+	if _, err := io.ReadFull(reader, buf); err != nil {
+		return "", fmt.Errorf("generate secure random value: %w", err)
 	}
-	return fmt.Sprintf("%x", buf)
+	return fmt.Sprintf("%x", buf), nil
 }
 
 func randomStrongPassword(n int) (string, error) {
