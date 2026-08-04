@@ -2375,11 +2375,41 @@ func (s *Store) completeJob(ctx context.Context, idv, owner string, requireLease
 		return err
 	}
 
-	if err := s.applyJobCompletionSideEffects(ctx, idv, jobType, status, scopeID, instanceID, payload, result, b); err != nil {
-		_ = s.AddJobLog(ctx, idv, "error", "job completion side effect failed", map[string]any{"error": err.Error(), "job_type": jobType, "status": status})
+	finalStatus := status
+	if sideEffectErr := s.applyJobCompletionSideEffects(ctx, idv, jobType, status, scopeID, instanceID, payload, result, b); sideEffectErr != nil {
+		_ = s.AddJobLog(ctx, idv, "error", "job completion side effect failed", map[string]any{"error": sideEffectErr.Error(), "job_type": jobType, "status": status})
+		if err := s.markJobCompletionSideEffectFailure(ctx, idv, status, storedResult, sideEffectErr); err != nil {
+			return errors.Join(sideEffectErr, err)
+		}
+		finalStatus = "failed"
 	}
 
-	_, _ = s.CreateAudit(ctx, "system", "job."+status, "job", &idv, "job finished")
+	_, _ = s.CreateAudit(ctx, "system", "job."+finalStatus, "job", &idv, "job finished")
+	return nil
+}
+
+func (s *Store) markJobCompletionSideEffectFailure(ctx context.Context, jobID, runtimeStatus string, storedResult map[string]any, sideEffectErr error) error {
+	failedResult := make(map[string]any, len(storedResult)+4)
+	for key, value := range storedResult {
+		failedResult[key] = value
+	}
+	failedResult["runtime_completion_status"] = runtimeStatus
+	failedResult["control_plane_reconciliation_status"] = "failed"
+	failedResult["control_plane_reconciliation_error"] = sideEffectErr.Error()
+	failedResult["message"] = "runtime completed, but control-plane reconciliation failed: " + sideEffectErr.Error()
+	resultJSON, err := json.Marshal(redactSensitiveMapForStorage(failedResult))
+	if err != nil {
+		return fmt.Errorf("marshal control-plane reconciliation failure: %w", err)
+	}
+	tag, err := s.db.Exec(ctx, `update jobs
+		set status='failed',result_json=$3,finished_at=coalesce(finished_at,now()),locked_by=null,locked_until=null
+		where id=$1 and status=$2`, jobID, runtimeStatus, resultJSON)
+	if err != nil {
+		return fmt.Errorf("record control-plane reconciliation failure: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("record control-plane reconciliation failure: job %s is no longer in %s state", jobID, runtimeStatus)
+	}
 	return nil
 }
 
@@ -2612,17 +2642,11 @@ func (s *Store) applyInstanceJobCompletionSideEffects(ctx context.Context, insta
 			}
 			routePolicyNeeded = true
 		case "instance.delete":
-			if _, err := tx.Exec(ctx, `update instances set status='deleted',enabled=false,updated_at=now() where id=$1`, instanceID); err != nil {
-				return err
-			}
-			cleanup, err := s.cleanupInstanceClientServiceAccesses(ctx, tx, instanceID)
+			cleanupPaths, err := s.cleanupInstanceControlPlaneRows(ctx, tx, instanceID)
 			if err != nil {
 				return err
 			}
-			artifactCleanupPaths = cleanup.paths
-			if err := releaseInstanceAddressPoolAllocationsTx(ctx, tx, instanceID); err != nil && !isAddressPoolCatalogUnavailable(err) {
-				return err
-			}
+			artifactCleanupPaths = cleanupPaths
 			routePolicyNeeded = true
 		}
 	} else if jobType == "instance.apply" {
@@ -2662,8 +2686,10 @@ func (s *Store) applyInstanceJobCompletionSideEffects(ctx context.Context, insta
 			}
 		}
 	}
-	if err := s.upsertInstanceRuntimeStateForJobTx(ctx, tx, instance, jobID, jobType, status, result); err != nil {
-		return err
+	if !(status == "succeeded" && jobType == "instance.delete") {
+		if err := s.upsertInstanceRuntimeStateForJobTx(ctx, tx, instance, jobID, jobType, status, result); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -3724,6 +3750,7 @@ func isSensitiveStorageKey(key string) bool {
 	switch normalized {
 	case "token", "agent_token", "new_agent_token", "new_agent_token_hash", "enrollment_token",
 		"password", "smtp_password", "private_key", "secret", "psk",
+		"uuid", "xray_uuid", "vless_uuid",
 		"agent_bootstrapenv", "agent_bootstrap_env", "bootstrap_env",
 		"content", "json", "config", "config_json", "config_content", "privatekey", "presharedkey",
 		"reality_private_key", "wireguard_private_key", "openvpn_private_key", "tls_private_key":

@@ -3705,6 +3705,17 @@ func TestPostgresIntegrationInstanceDeleteRemovesClientServiceAccessRows(t *test
 	store.SetArtifactRoot(t.TempDir())
 
 	fixture := createClientServiceAccessCleanupFixture(t, ctx, store, "instance-cleanup")
+	instanceSecret, err := store.CreateSecretRef(ctx, "private_key", []byte("integration-instance-secret"), map[string]any{
+		"scope":       "instance",
+		"instance_id": fixture.instance.ID,
+	})
+	if err != nil {
+		t.Fatalf("create instance secret: %v", err)
+	}
+	if _, err := store.db.Exec(ctx, `insert into instance_runtime_observations(id,instance_id,node_id,source)
+		values($1,$2,$3,'integration-test')`, id.New(), fixture.instance.ID, fixture.node.ID); err != nil {
+		t.Fatalf("create runtime observation: %v", err)
+	}
 	deleting, err := store.DeleteInstance(ctx, fixture.instance.ID)
 	if err != nil {
 		t.Fatalf("delete instance with client access: %v", err)
@@ -3739,8 +3750,65 @@ func TestPostgresIntegrationInstanceDeleteRemovesClientServiceAccessRows(t *test
 	assertPostgresCount(t, ctx, store, `select count(*) from artifacts where id=$1`, 0, fixture.artifact.ID)
 	assertPostgresCount(t, ctx, store, `select count(*) from share_links where id=$1`, 0, fixture.share.ID)
 	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, fixture.secret.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from secret_refs where id=$1`, 0, instanceSecret.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from instance_runtime_states where instance_id=$1`, 0, fixture.instance.ID)
+	assertPostgresCount(t, ctx, store, `select count(*) from instance_runtime_observations where instance_id=$1`, 0, fixture.instance.ID)
 	if _, err := os.Stat(fixture.artifact.StoragePath); !os.IsNotExist(err) {
 		t.Fatalf("artifact file after instance delete error = %v, want not exist", err)
+	}
+}
+
+func TestPostgresIntegrationJobSideEffectFailureMarksJobFailed(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	node, err := store.CreateNode(ctx, domain.Node{
+		Name:          "it-side-effect-node-" + suffix,
+		Kind:          "remote",
+		Role:          "ingress",
+		Status:        "online",
+		Address:       "203.0.113.47",
+		OSFamily:      "linux",
+		OSVersion:     "ubuntu-24.04",
+		Architecture:  "amd64",
+		ExecutionMode: "agent_managed",
+		AgentStatus:   "online",
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	missingPolicyID := id.New()
+	job, err := store.CreateJob(ctx, domain.Job{
+		Type:      "node.firewall.apply",
+		ScopeType: "node",
+		ScopeID:   &node.ID,
+		NodeID:    &node.ID,
+		Payload: map[string]any{
+			"node_id":   node.ID,
+			"policy_id": missingPolicyID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create firewall job: %v", err)
+	}
+	if err := store.CompleteJob(ctx, job.ID, "succeeded", map[string]any{"message": "agent apply succeeded"}); err != nil {
+		t.Fatalf("complete job with failing side effect: %v", err)
+	}
+	finished, err := store.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("get reconciled job: %v", err)
+	}
+	if finished.Status != "failed" {
+		t.Fatalf("job status = %q, want failed", finished.Status)
+	}
+	if got := strings.TrimSpace(stringify(finished.Result["runtime_completion_status"])); got != "succeeded" {
+		t.Fatalf("runtime completion status = %q, want succeeded; result=%#v", got, finished.Result)
+	}
+	if got := strings.TrimSpace(stringify(finished.Result["control_plane_reconciliation_status"])); got != "failed" {
+		t.Fatalf("control-plane reconciliation status = %q, want failed; result=%#v", got, finished.Result)
+	}
+	if got := strings.TrimSpace(stringify(finished.Result["control_plane_reconciliation_error"])); got == "" {
+		t.Fatalf("control-plane reconciliation error is empty; result=%#v", finished.Result)
 	}
 }
 
