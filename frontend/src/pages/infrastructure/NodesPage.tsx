@@ -77,7 +77,7 @@ import {
   useDownloadNodeBootstrapBundle,
   useVerifyNodeCapability,
 } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, RefreshButton, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { NodeTerminal, type NodeTerminalSession } from './NodeTerminal';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
@@ -501,7 +501,7 @@ export function NodesPage() {
                 {roles.map((role) => <option key={role} value={role}>{role}</option>)}
               </Select>
             </FormField>
-            <Button icon={<RefreshCw size={16} />} onClick={() => void nodes.refetch()}>{t('common.refresh')}</Button>
+            <RefreshButton onRefresh={() => nodes.refetch()}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
         </CardBody>
       </Card>
@@ -1412,23 +1412,38 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   const currentClearedStaleRotation = clearedStaleRotation?.nodeId === current?.id ? clearedStaleRotation : null;
 
   return (
-    <Drawer title={nodeLabel(current)} open={open} onClose={onClose}>
+    <Drawer title={nodeLabel(current)} open={open} onClose={onClose} size="wide">
       <QueryBoundary isLoading={detail.isLoading} isError={detail.isError} error={detail.error} refetch={() => void detail.refetch()}>
         {current ? (
           <div className="page-stack">
-            <div className="tabs" role="tablist" aria-label={t('nodes.detailTabs')}>
-              {(['overview', 'runtime', 'onboarding', 'inventory', 'capabilities', 'diagnostics', 'discovery', 'bootstrap', 'security', 'terminal', 'lifecycle', 'jobs'] as NodeTab[]).map((tab) => (
-                <button
-                  key={tab}
-                  className={`tab-link ${activeTab === tab ? 'active' : ''}`.trim()}
-                  role="tab"
-                  aria-selected={activeTab === tab}
-                  type="button"
-                  onClick={() => setActiveTab(tab)}
-                >
-                  {t(`nodes.tabs.${tab}`)}
-                </button>
-              ))}
+            <div className="node-detail-header">
+              <div className="tabs node-detail-tabs" role="tablist" aria-label={t('nodes.detailTabs')}>
+                {(['overview', 'runtime', 'onboarding', 'inventory', 'capabilities', 'diagnostics', 'discovery', 'bootstrap', 'security', 'terminal', 'lifecycle', 'jobs'] as NodeTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    className={`tab-link ${activeTab === tab ? 'active' : ''}`.trim()}
+                    role="tab"
+                    aria-selected={activeTab === tab}
+                    type="button"
+                    onClick={() => setActiveTab(tab)}
+                  >
+                    {t(`nodes.tabs.${tab}`)}
+                  </button>
+                ))}
+              </div>
+              <div className="node-detail-context">
+                <div className="node-detail-identity">
+                  <strong>{current.role || current.kind || t('common.notAvailable')}</strong>
+                  <span>{endpoint(current)}</span>
+                </div>
+                <Toolbar>
+                  <StatusBadge status={current.status} />
+                  <StatusBadge status={diagnostics.data?.communication_state || current.agent_status || 'unknown'} />
+                  <RefreshButton onRefresh={() => Promise.all([detail.refetch(), diagnostics.refetch()])}>
+                    {t('common.refresh')}
+                  </RefreshButton>
+                </Toolbar>
+              </div>
             </div>
             {notice ? <div role={notice.includes(':') ? 'alert' : 'status'}>{notice}</div> : null}
             {visibleOneTimePanel ? (
@@ -1697,7 +1712,6 @@ function OverviewTab({ node, busy, onConfirm, canWrite, onEdit }: { node: NodeDe
             <span>{t('common.updated')}</span><strong>{fmt.date(node.updated_at)}</strong>
           </div>
           <Toolbar>
-            <StatusBadge status={node.status} />
             <Button
               icon={<FilePenLine size={16} />}
               disabled={!canWrite || busy}
@@ -1730,11 +1744,6 @@ function RuntimeTab({ node, diagnostics }: { node: NodeDetail; diagnostics: Retu
     <div className="page-stack">
       <Card>
         <CardBody>
-          <Toolbar>
-            <StatusBadge status={data?.heartbeat_state || node.status} />
-            <StatusBadge status={data?.communication_state || node.agent_status} />
-            <Button icon={<RefreshCw size={16} />} onClick={() => void diagnostics.refetch()}>{t('common.refresh')}</Button>
-          </Toolbar>
           {diagnostics.isError ? <div role="alert" className="error-state-inline">{t('nodes.diagnosticsUnavailable')}: {formatAPIError(diagnostics.error)}</div> : null}
           <div className="definition-grid">
             <span>{t('nodes.heartbeatState')}</span><strong>{data?.heartbeat_state || node.status || 'n/a'}</strong>
@@ -1770,7 +1779,7 @@ function InventoryTab({ node, inventory, busy, onConfirm }: { node: NodeDetail; 
         <CardBody>
           <Toolbar>
             <Button variant="primary" icon={<DownloadCloud size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'inventory-sync', node, source: 'inventory' })}>{t('nodes.syncInventory')}</Button>
-            <Button icon={<RefreshCw size={16} />} onClick={() => void inventory.refetch()}>{t('common.refresh')}</Button>
+            <RefreshButton onRefresh={() => inventory.refetch()}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
           {inventory.isError ? <div role="alert" className="error-state-inline">{t('nodes.inventoryUnavailable')}: {formatAPIError(inventory.error)}</div> : null}
           {inventory.data ? (
@@ -1841,7 +1850,7 @@ function CapabilitiesTab({ node, capabilities, drift, events, installers, instal
             <Toolbar>
               <Button variant="primary" icon={<PackageCheck size={16} />} disabled={busy || !serviceCode} onClick={() => onConfirm({ type: 'capability-install', node, input: installInput })}>{t('nodes.installCapability')}</Button>
               <Button icon={<CheckCircle2 size={16} />} disabled={busy || !serviceCode} onClick={() => onConfirm({ type: 'capability-verify', node, serviceCode })}>{t('nodes.verifyCapability')}</Button>
-              <Button icon={<RefreshCw size={16} />} onClick={() => { void capabilities.refetch(); void drift.refetch(); void events.refetch(); }}>{t('common.refresh')}</Button>
+              <RefreshButton onRefresh={() => Promise.all([capabilities.refetch(), drift.refetch(), events.refetch()])}>{t('common.refresh')}</RefreshButton>
             </Toolbar>
           </div>
         </CardBody>
@@ -1907,7 +1916,7 @@ function DiagnosticsTab({ node, diagnostics, busy, onConfirm }: { node: NodeDeta
             <Button icon={<RefreshCw size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'diagnostics', node, action: 'retry-discovery' })}>{t('nodes.retryDiscovery')}</Button>
             <Button icon={<ServerCog size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'diagnostics', node, action: 'reconcile-runtime' })}>{t('nodes.reconcileRuntime')}</Button>
             <Button icon={<Play size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'diagnostics', node, action: 'requeue-stuck-job' })}>{t('nodes.requeueStuckJob')}</Button>
-            <Button icon={<RefreshCw size={16} />} onClick={() => void diagnostics.refetch()}>{t('common.refresh')}</Button>
+            <RefreshButton onRefresh={() => diagnostics.refetch()}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
         </CardBody>
       </Card>
@@ -1938,7 +1947,7 @@ function DiscoveryTab({ node, discoveries, summary, busy, onConfirm }: {
           <Toolbar>
             <Button variant="primary" icon={<Boxes size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'service-discover', node })}>{t('nodes.discoverServices')}</Button>
             <Button icon={<ShieldCheck size={16} />} disabled={busy || !(summary.data?.importable_count || 0)} onClick={() => onConfirm({ type: 'service-import-all', node })}>{t('nodes.importAllDiscoveries')}</Button>
-            <Button icon={<RefreshCw size={16} />} onClick={() => { void discoveries.refetch(); void summary.refetch(); }}>{t('common.refresh')}</Button>
+            <RefreshButton onRefresh={() => Promise.all([discoveries.refetch(), summary.refetch()])}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
           {summary.isError ? <div role="alert" className="error-state-inline">{t('nodes.discoverySummaryUnavailable')}: {formatAPIError(summary.error)}</div> : null}
           {summary.data ? (
@@ -2147,7 +2156,7 @@ function BootstrapTab({ node, accessMethods, runs, busy, canBootstrap, onConfirm
               <Button icon={<RotateCcw size={16} />} disabled={busy || !hasEnabledSSH} onClick={() => onConfirm({ type: 'agent-reinstall', node, input: { ...input, bootstrap_mode: 'ssh_bootstrap', reinstall_agent: true } })}>
                 {t('nodes.reinstallAgent')}
               </Button>
-              <Button icon={<RefreshCw size={16} />} onClick={() => { void accessMethods.refetch(); void runs.refetch(); }}>{t('common.refresh')}</Button>
+              <RefreshButton onRefresh={() => Promise.all([accessMethods.refetch(), runs.refetch()])}>{t('common.refresh')}</RefreshButton>
             </Toolbar>
           </div>
         </CardBody>
@@ -2348,7 +2357,7 @@ function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, cr
             <Toolbar>
               <Button variant="primary" icon={<KeyRound size={16} />} disabled={busy || Boolean(ttlValidation.errorKey)} onClick={() => onConfirm({ type: 'enrollment-create', node, ttlHours: ttlValidation.ttlHours, source: 'security' })}>{t('nodes.createEnrollmentToken')}</Button>
               <Button icon={<RotateCcw size={16} />} disabled={busy || Boolean(ttlValidation.errorKey)} onClick={() => onConfirm({ type: 'enrollment-rotate', node, ttlHours: ttlValidation.ttlHours, source: 'security' })}>{t('nodes.rotateEnrollmentToken')}</Button>
-              <Button icon={<RefreshCw size={16} />} onClick={() => void tokens.refetch()}>{t('common.refresh')}</Button>
+              <RefreshButton onRefresh={() => tokens.refetch()}>{t('common.refresh')}</RefreshButton>
             </Toolbar>
             {tokens.isError ? <div role="alert" className="error-state-inline">{t('nodes.enrollmentTokensUnavailable')}: {formatAPIError(tokens.error)}</div> : null}
           </div>
@@ -2395,7 +2404,7 @@ function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, cr
               >
                 {t('nodes.addSSHAccessMethod')}
               </Button>
-              <Button icon={<RefreshCw size={16} />} onClick={() => void accessMethods.refetch()}>{t('common.refresh')}</Button>
+              <RefreshButton onRefresh={() => accessMethods.refetch()}>{t('common.refresh')}</RefreshButton>
             </Toolbar>
             {!canBootstrap ? <p className="muted">{t('nodes.addSSHAccessPermissionHint')}</p> : null}
             {accessMethods.isError ? <div role="alert" className="error-state-inline">{t('nodes.accessMethodsUnavailable')}: {formatAPIError(accessMethods.error)}</div> : null}
@@ -2740,7 +2749,7 @@ function TerminalTab({ node, accessMethods, busy, session, onDisconnect, onConfi
             {!canLaunch ? <div role="alert" className="error-state-inline">{t('nodes.terminalUnavailable')}</div> : null}
             <Toolbar>
               {!session ? <Button variant="primary" icon={<TerminalSquare size={16} />} disabled={busy || !canLaunch} onClick={() => onConfirm({ type: 'ssh-session-launch', node })}>{t('nodes.launchSshSession')}</Button> : null}
-              <Button icon={<RefreshCw size={16} />} onClick={() => void accessMethods.refetch()}>{t('common.refresh')}</Button>
+              <RefreshButton onRefresh={() => accessMethods.refetch()}>{t('common.refresh')}</RefreshButton>
             </Toolbar>
             {session ? <NodeTerminal session={session} onDisconnect={onDisconnect} /> : null}
           </div>

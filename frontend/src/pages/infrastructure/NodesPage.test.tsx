@@ -2204,7 +2204,7 @@ describe('NodesPage', () => {
     expect(screen.getAllByText('agent_managed').length).toBeGreaterThan(0);
     expect(screen.getAllByText('agent...hint').length).toBeGreaterThan(0);
     expect(screen.getAllByText('inventory_ok').length).toBeGreaterThan(0);
-    expect(screen.getByText('Live external-node validation is not proven.')).toBeInTheDocument();
+    expect(screen.queryByText('Live external-node validation is not proven.')).not.toBeInTheDocument();
 
     const pageText = document.body.textContent || '';
     expect(pageText).not.toContain('opaque-value-a');
@@ -2351,7 +2351,7 @@ describe('NodesPage', () => {
     await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
     await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
 
-    expect(await screen.findByText('Read-only onboarding status')).toBeInTheDocument();
+    expect(await screen.findByText('Agent onboarding')).toBeInTheDocument();
     expect(screen.getAllByText('node.bootstrap is required for onboarding actions. Status remains visible with read permissions.').length).toBeGreaterThan(0);
     await userEvent.click(await screen.findByRole('button', { name: 'Synchronize inventory' }));
     const dialog = activeDialog();
@@ -2854,7 +2854,7 @@ describe('NodesPage', () => {
     await openNode({ ...authPayload, permissions: ['node.read', 'node.write'] });
     await userEvent.click(screen.getByRole('tab', { name: 'Onboarding' }));
 
-    expect(await screen.findByText('Read-only onboarding status')).toBeInTheDocument();
+    expect(await screen.findByText('Agent onboarding')).toBeInTheDocument();
     expect(screen.getAllByText('node.bootstrap is required for onboarding actions. Status remains visible with read permissions.').length).toBeGreaterThan(0);
     expect(screen.getByText('Choose bootstrap method')).toBeInTheDocument();
     expect(screen.getByText('SSH bootstrap')).toBeInTheDocument();

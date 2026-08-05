@@ -1,1 +1,0 @@
-import{si as e,t,ti as n}from"./ui-Dk9tmzoL.js";var r=e();function i(){let{t:e}=n();return(0,r.jsx)(t,{tabs:[{label:e(`nav.instances`),to:`/services/instances`},{label:e(`nav.servicePacks`),to:`/services/service-packs`},{label:e(`nav.runtimeArtifacts`),to:`/services/runtime-artifacts`}]})}export{i as t};

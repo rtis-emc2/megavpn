@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeAll, describe, expect, it } from 'vitest';
 import i18n from '../i18n';
 import { Button } from './Button';
-import { Modal } from './Overlay';
+import { Drawer, Modal } from './Overlay';
 
 function Harness() {
   const [open, setOpen] = useState(false);
@@ -46,5 +46,15 @@ describe('Modal accessibility lifecycle', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
     expect(document.body).not.toHaveClass('overlay-open');
+  });
+
+  it('applies the wide workspace variant to drawers', () => {
+    render(
+      <Drawer title="Node workspace" open onClose={() => undefined} size="wide">
+        <div>Node details</div>
+      </Drawer>,
+    );
+
+    expect(screen.getByRole('dialog', { name: 'Node workspace' })).toHaveClass('drawer-wide');
   });
 });

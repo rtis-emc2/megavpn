@@ -639,12 +639,18 @@ body.overlay-open {
 }
 
 .drawer {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   justify-self: end;
   width: min(560px, 100vw);
   height: 100%;
-  overflow: auto;
+  overflow: hidden;
   background: var(--color-surface);
   box-shadow: var(--shadow-modal);
+}
+
+.drawer-wide {
+  width: min(1120px, calc(100vw - 48px));
 }
 
 .modal {
@@ -890,6 +896,84 @@ body.overlay-open {
   display: grid;
 }
 
+.drawer-wide .form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.drawer-wide .definition-grid {
+  grid-template-columns: 140px minmax(0, 1fr) 140px minmax(0, 1fr);
+}
+
+.drawer-wide .data-table-wrap {
+  display: block;
+}
+
+.drawer-wide .record-list {
+  display: none;
+}
+
+.node-detail-header {
+  position: sticky;
+  top: calc(-1 * var(--space-16));
+  z-index: 5;
+  display: grid;
+  gap: var(--space-10, 10px);
+  margin: calc(-1 * var(--space-16)) calc(-1 * var(--space-16)) 0;
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.node-detail-tabs {
+  display: flex !important;
+  flex-wrap: nowrap;
+  gap: var(--space-6, 6px);
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.node-detail-tabs .tab-link {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: var(--space-8) var(--space-12);
+  white-space: nowrap;
+}
+
+.node-detail-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  min-width: 0;
+}
+
+.node-detail-identity {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  color: var(--color-text-muted);
+}
+
+.node-detail-identity strong {
+  color: var(--color-text);
+}
+
+.node-detail-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.button-refresh.is-refreshing svg {
+  animation: refresh-spin 620ms linear infinite;
+}
+
+@keyframes refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
 .code-block {
   overflow: auto;
   padding: var(--space-12);
@@ -1121,6 +1205,10 @@ body.overlay-open {
 .toast-danger { border-left-color: var(--color-danger); }
 
 @media (max-width: 1279px) {
+  .drawer-wide .definition-grid {
+    grid-template-columns: 160px minmax(0, 1fr);
+  }
+
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1203,6 +1291,23 @@ body.overlay-open {
 
   .modal-wide {
     width: 100vw;
+  }
+
+  .drawer-wide {
+    width: 100vw;
+  }
+
+  .drawer-wide .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .drawer-wide .definition-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .node-detail-context {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .modal-actions {

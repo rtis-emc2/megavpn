@@ -1,10 +1,10 @@
-import { Eye, RefreshCw, Upload } from 'lucide-react';
+import { Eye, Upload } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { APIError } from '../../shared/api/client';
 import type { RuntimeArtifact } from '../../shared/api/types';
 import { useImportRuntimeArtifact, useRuntimeArtifacts } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, DataTable, Drawer, FormField, FormGrid, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, DataTable, Drawer, FormField, FormGrid, RefreshButton, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 import { ServicesTabs } from './ServicesTabs';
@@ -70,7 +70,7 @@ export function RuntimeArtifactsPage() {
     <PageScaffold title={t('instances.runtimeArtifactsTitle')} subtitle={t('runtimeArtifacts.subtitle')} actions={<Button icon={<Upload size={16} />} onClick={() => setImportOpen(true)}>{t('runtimeArtifacts.import')}</Button>}>
       <ServicesTabs />
       <Toolbar>
-        <Button icon={<RefreshCw size={16} />} onClick={() => void artifacts.refetch()}>{t('common.refresh')}</Button>
+        <RefreshButton onRefresh={() => artifacts.refetch()}>{t('common.refresh')}</RefreshButton>
       </Toolbar>
       <QueryBoundary isLoading={artifacts.isLoading} isError={artifacts.isError} error={artifacts.error} refetch={() => void artifacts.refetch()}>
         <DataTable

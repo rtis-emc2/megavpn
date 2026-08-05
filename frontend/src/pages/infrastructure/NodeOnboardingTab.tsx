@@ -1,4 +1,4 @@
-import { DownloadCloud, KeyRound, Play, RefreshCw, RotateCcw } from 'lucide-react';
+import { DownloadCloud, KeyRound, Play, RotateCcw } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
@@ -9,7 +9,7 @@ import type {
   NodeDiagnostics,
   NodeInventorySnapshot,
 } from '../../shared/api/types';
-import { Badge, Button, Card, CardBody, FormField, FormGrid, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, FormField, FormGrid, RefreshButton, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import {
   ENROLLMENT_TOKEN_TTL_DEFAULT_HOURS,
@@ -291,8 +291,6 @@ export function NodeOnboardingTab({
           <div className="page-stack">
             <h3 className="card-title">{t('nodes.onboarding.agentOnboarding')}</h3>
             <Toolbar>
-              <Badge>{t('nodes.onboarding.readOnlyStatus')}</Badge>
-              <Badge>{t('nodes.onboarding.liveValidationNotProven')}</Badge>
               <OverallStatusBadge status={model.overallStatus} />
             </Toolbar>
             <div className="definition-grid">
@@ -311,9 +309,9 @@ export function NodeOnboardingTab({
             {refreshStatus ? <div role="status">{refreshStatus}</div> : null}
             {refreshError ? <div role="alert" className="error-state-inline">{refreshError}</div> : null}
             <Toolbar>
-              <Button type="button" icon={<RefreshCw size={16} />} onClick={() => void refresh()}>
+              <RefreshButton type="button" onRefresh={refresh}>
                 {t('nodes.onboarding.refreshStatus')}
-              </Button>
+              </RefreshButton>
               {model.targetTab ? (
                 <Button type="button" onClick={() => onOpenTab(model.targetTab as NodeOnboardingTargetTab)}>
                   {t(targetLabelKey(model.targetTab))}

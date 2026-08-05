@@ -1,4 +1,4 @@
-import { Ban, Download, Eraser, Hammer, KeyRound, LinkIcon, Mail, Plus, RefreshCw, RotateCw, Route, Search, ShieldCheck, Trash2, UserCheck, UserMinus, UserPlus } from 'lucide-react';
+import { Ban, Download, Eraser, Hammer, KeyRound, LinkIcon, Mail, Plus, RotateCw, Route, Search, ShieldCheck, Trash2, UserCheck, UserMinus, UserPlus } from 'lucide-react';
 import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
@@ -42,7 +42,7 @@ import {
   useUpdateClientRoute,
   useUpdateClientStatus,
 } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, TextField, Textarea, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, RefreshButton, Select, StatusBadge, TextField, Textarea, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
@@ -261,7 +261,7 @@ export function ClientsPage() {
                 {statusOptions.map((option) => <option key={option} value={option}>{option === 'all' ? t('common.all') : option}</option>)}
               </Select>
             </FormField>
-            <Button icon={<RefreshCw size={16} />} onClick={() => void clients.refetch()}>{t('common.refresh')}</Button>
+            <RefreshButton onRefresh={() => clients.refetch()}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
         </CardBody>
       </Card>
@@ -788,7 +788,7 @@ function RoutesTab({ client }: { client: ClientDetail }) {
               </FormGrid>
               <Toolbar>
                 <Button variant="primary" type="submit" icon={<Route size={16} />} disabled={!effectiveAccessId || busy}>{t('clients.routes.createRoute')}</Button>
-                <Button type="button" icon={<RefreshCw size={16} />} onClick={() => { void routes.refetch(); void accesses.refetch(); }}>{t('common.refresh')}</Button>
+                <RefreshButton type="button" onRefresh={() => Promise.all([routes.refetch(), accesses.refetch()])}>{t('common.refresh')}</RefreshButton>
               </Toolbar>
               {!effectiveAccessId ? <p className="muted">{t('clients.routes.createRequiresAccess')}</p> : null}
             </form>
@@ -1055,7 +1055,7 @@ function MaintenanceTab({ client }: { client: ClientDetail }) {
                 <Button variant="danger" icon={<KeyRound size={16} />} disabled={!selectedAccess || !effectiveDriver || busy} onClick={openRotateConfirm}>{t('clients.maintenance.rotateAccess')}</Button>
                 <Button variant="danger" icon={<Ban size={16} />} disabled={!selectedAccess || busy} onClick={() => selectedAccess && setConfirm({ type: 'revoke-access', access: selectedAccess })}>{t('clients.maintenance.revokeAccess')}</Button>
                 <Button variant="danger" icon={<Trash2 size={16} />} disabled={!selectedAccess || busy} onClick={() => selectedAccess && setConfirm({ type: 'delete-access', access: selectedAccess })}>{t('clients.maintenance.deleteAccess')}</Button>
-                <Button icon={<RefreshCw size={16} />} onClick={() => void accesses.refetch()}>{t('common.refresh')}</Button>
+                <RefreshButton onRefresh={() => accesses.refetch()}>{t('common.refresh')}</RefreshButton>
               </Toolbar>
               <p className="muted">{t('clients.maintenance.previewUnavailable')}</p>
             </div>
@@ -1233,7 +1233,7 @@ function ArtifactsTab({ client, onConfirm, onOpenDelivery }: { client: ClientDet
               </FormGrid>
               <Toolbar>
                 <Button variant="primary" icon={<Hammer size={16} />} disabled={build.isPending} onClick={() => void runBuild()}>{t('clients.core.buildArtifact')}</Button>
-                <Button icon={<RefreshCw size={16} />} onClick={() => void artifacts.refetch()}>{t('common.refresh')}</Button>
+                <RefreshButton onRefresh={() => artifacts.refetch()}>{t('common.refresh')}</RefreshButton>
               </Toolbar>
               {build.error ? <div role="alert" className="error-state-inline">{formatAPIError(build.error)}</div> : null}
               {downloadNotice ? <div role="status">{downloadNotice}</div> : null}
@@ -1428,7 +1428,7 @@ function DeliveryTab({ client, initialArtifactId }: { client: ClientDetail; init
               </FormGrid>
               <Toolbar>
                 <Button variant="primary" icon={<LinkIcon size={16} />} disabled={!effectiveArtifactId || busy} onClick={() => void runCreateShare()}>{t('clients.delivery.createShareLink')}</Button>
-                <Button icon={<RefreshCw size={16} />} onClick={() => { void shareLinks.refetch(); void artifacts.refetch(); }}>{t('common.refresh')}</Button>
+                <RefreshButton onRefresh={() => Promise.all([shareLinks.refetch(), artifacts.refetch()])}>{t('common.refresh')}</RefreshButton>
               </Toolbar>
               {selectedArtifact ? <p className="muted">{t('clients.delivery.selectedArtifact', { artifact: selectedArtifact.artifact_type || selectedArtifact.id })}</p> : null}
             </div>
@@ -1468,7 +1468,7 @@ function DeliveryTab({ client, initialArtifactId }: { client: ClientDetail; init
               </FormGrid>
               <Toolbar>
                 <Button variant="primary" icon={<LinkIcon size={16} />} disabled={busy} onClick={() => void runCreateSubscription()}>{t('clients.delivery.createSubscription')}</Button>
-                <Button icon={<RefreshCw size={16} />} onClick={() => void subscriptions.refetch()}>{t('common.refresh')}</Button>
+                <RefreshButton onRefresh={() => subscriptions.refetch()}>{t('common.refresh')}</RefreshButton>
               </Toolbar>
               <p className="muted">{t('clients.delivery.vlessOnly')}</p>
             </div>
@@ -1518,7 +1518,7 @@ function DeliveryTab({ client, initialArtifactId }: { client: ClientDetail; init
               <p className="muted">{t('clients.delivery.emailBackendScope')}</p>
               <Toolbar>
                 <Button variant="primary" icon={<Mail size={16} />} disabled={!client.email || busy} onClick={() => void runSendEmail()}>{t('clients.delivery.sendEmail')}</Button>
-                <Button icon={<RefreshCw size={16} />} onClick={() => void deliveryHistory.refetch()}>{t('common.refresh')}</Button>
+                <RefreshButton onRefresh={() => deliveryHistory.refetch()}>{t('common.refresh')}</RefreshButton>
               </Toolbar>
               {emailResult?.delivery ? (
                 <div className="inline-panel">

@@ -92,12 +92,32 @@
   border-right: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.app-sidebar-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-8);
+}
+
 .app-brand {
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr);
   align-items: center;
   gap: var(--space-12);
   padding: var(--space-8);
+}
+
+.app-sidebar-toggle {
+  flex: 0 0 auto;
+  color: #e5e7eb;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.app-sidebar-toggle:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .app-brand-mark {
@@ -238,6 +258,15 @@
   padding-inline: 0;
 }
 
+.sidebar-collapsed .app-sidebar-head {
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+
+.sidebar-collapsed .app-sidebar-toggle {
+  grid-row: 2;
+}
+
 .sidebar-collapsed .app-brand-copy,
 .sidebar-collapsed .app-nav-section-toggle span,
 .sidebar-collapsed .app-nav-chevron,
@@ -246,10 +275,13 @@
   display: none;
 }
 
-.sidebar-collapsed .app-nav-section-toggle,
 .sidebar-collapsed .app-nav-link {
   justify-content: center;
   padding-inline: 0;
+}
+
+.sidebar-collapsed .app-nav-section-toggle {
+  display: none;
 }
 
 .sidebar-collapsed .app-nav-items {
@@ -271,6 +303,10 @@
   background: rgba(245, 247, 251, 0.88);
   border-bottom: 1px solid var(--color-border);
   backdrop-filter: blur(14px);
+}
+
+.mobile-navigation-trigger {
+  display: none;
 }
 
 .topbar-actions {
@@ -324,6 +360,11 @@
     transform: translateX(0);
   }
 
+  .app-sidebar-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    justify-items: stretch;
+  }
+
   .app-sidebar-backdrop {
     position: fixed;
     inset: 0;
@@ -348,6 +389,15 @@
     padding: var(--space-8);
   }
 
+  .sidebar-collapsed .app-sidebar-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    justify-items: stretch;
+  }
+
+  .sidebar-collapsed .app-sidebar-toggle {
+    grid-row: auto;
+  }
+
   .sidebar-collapsed .app-brand-copy,
   .sidebar-collapsed .app-nav-section-toggle span,
   .sidebar-collapsed .app-nav-chevron,
@@ -358,6 +408,7 @@
 
   .sidebar-collapsed .app-nav-section-toggle,
   .sidebar-collapsed .app-nav-link {
+    display: flex;
     justify-content: flex-start;
     padding-inline: var(--space-10, 10px);
   }
@@ -374,6 +425,10 @@
 
   .topbar {
     padding-inline: var(--space-16);
+  }
+
+  .mobile-navigation-trigger {
+    display: inline-flex;
   }
 }
 

@@ -1,4 +1,4 @@
-import { FilePenLine, PackagePlus, Power, RefreshCw, Trash2 } from 'lucide-react';
+import { FilePenLine, PackagePlus, Power, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
@@ -13,7 +13,7 @@ import {
   useSetServicePackEnabled,
   useUpdateServicePack,
 } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, RefreshButton, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { text } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 import { ServicesTabs } from './ServicesTabs';
@@ -159,7 +159,7 @@ export function ServicePacksPage() {
       <ServicesTabs />
       <Toolbar>
         <Badge>{t('servicePacks.backendManaged')}</Badge>
-        <Button icon={<RefreshCw size={16} />} onClick={() => void packs.refetch()}>{t('common.refresh')}</Button>
+        <RefreshButton onRefresh={() => packs.refetch()}>{t('common.refresh')}</RefreshButton>
       </Toolbar>
       <QueryBoundary isLoading={packs.isLoading} isError={packs.isError} error={packs.error} refetch={() => void packs.refetch()}>
         <DataTable

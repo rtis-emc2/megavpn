@@ -1,4 +1,4 @@
-import { MailPlus, RefreshCw, ShieldOff } from 'lucide-react';
+import { MailPlus, ShieldOff } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { APIError } from '../../shared/api/client';
@@ -6,7 +6,7 @@ import type { InviteCreateInput, Session, UserAccount } from '../../shared/api/t
 import { useAuth } from '../../shared/auth/AuthProvider';
 import { hasPermission } from '../../shared/permissions/permissions';
 import { useCreateInvite, usePlatformInvites, usePlatformSessions, usePlatformUserDetail, usePlatformUsers, useRevokeSession } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, Modal, StatusBadge, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, Modal, RefreshButton, StatusBadge, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
@@ -91,7 +91,7 @@ export function AccessPage() {
       actions={(
         <>
           <Button icon={<MailPlus size={16} />} disabled={!canManage} onClick={() => setInviteOpen(true)}>{t('settings.createInvite')}</Button>
-          <Button icon={<RefreshCw size={16} />} onClick={() => { void users.refetch(); void invites.refetch(); void sessions.refetch(); }}>{t('common.refresh')}</Button>
+          <RefreshButton onRefresh={() => Promise.all([users.refetch(), invites.refetch(), sessions.refetch()])}>{t('common.refresh')}</RefreshButton>
         </>
       )}
     >

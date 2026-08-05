@@ -23,7 +23,7 @@ import {
   useRollbackInstance,
   useRunInstanceDiagnostics,
 } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, RefreshButton, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 import { ServicesTabs } from './ServicesTabs';
@@ -144,7 +144,7 @@ export function InstancesPage() {
                 {(nodes.data || []).map((node) => <option key={node.id} value={node.id}>{node.name || node.id}</option>)}
               </Select>
             </FormField>
-            <Button icon={<RefreshCw size={16} />} onClick={() => { void instances.refetch(); void runtimeStates.refetch(); }}>{t('common.refresh')}</Button>
+            <RefreshButton onRefresh={() => Promise.all([instances.refetch(), runtimeStates.refetch()])}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
         </CardBody>
       </Card>
@@ -529,7 +529,7 @@ function DiagnosticsTab({ instance, diagnostics, busy, onConfirm }: { instance: 
         <CardBody>
           <Toolbar>
             <Button variant="primary" icon={<Activity size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'diagnose', instance })}>{t('instances.runDiagnostics')}</Button>
-            <Button icon={<RefreshCw size={16} />} onClick={() => void diagnostics.refetch()}>{t('common.refresh')}</Button>
+            <RefreshButton onRefresh={() => diagnostics.refetch()}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
         </CardBody>
       </Card>

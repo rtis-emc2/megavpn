@@ -90,7 +90,7 @@ function useDialogLifecycle(
   }, [dialogRef, open]);
 }
 
-export function Drawer({ title, open, onClose, children }: OverlayProps) {
+export function Drawer({ title, open, onClose, children, size = 'default' }: OverlayProps) {
   const { t } = useTranslation();
   const titleID = useId();
   const ref = useRef<HTMLDivElement | null>(null);
@@ -98,7 +98,7 @@ export function Drawer({ title, open, onClose, children }: OverlayProps) {
   if (!open) return null;
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby={titleID} tabIndex={-1} ref={ref}>
+      <aside className={`drawer ${size === 'wide' ? 'drawer-wide' : ''}`.trim()} role="dialog" aria-modal="true" aria-labelledby={titleID} tabIndex={-1} ref={ref}>
         <div className="overlay-head">
           <h2 id={titleID} className="card-title">{title}</h2>
           <IconButton title={t('common.close')} onClick={onClose}><X size={18} /></IconButton>

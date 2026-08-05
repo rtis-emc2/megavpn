@@ -48,6 +48,7 @@ describe('AppShell navigation', () => {
     const shell = document.querySelector('.app-shell');
     const closeButton = screen.getByRole('button', { name: 'Close navigation' });
 
+    expect(closeButton).toHaveClass('app-sidebar-toggle');
     expect(closeButton).toHaveAttribute('aria-expanded', 'true');
     await userEvent.click(closeButton);
 

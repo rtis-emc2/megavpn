@@ -1,4 +1,4 @@
-import { ChevronDown, KeyRound, LogOut, Menu, RefreshCw, UserRound, X } from 'lucide-react';
+import { ChevronDown, KeyRound, LogOut, Menu, UserRound, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -7,7 +7,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { hasPermission, hasPermissions } from '../permissions/permissions';
 import { setLocale, supportedLocales, type SupportedLocale } from '../i18n';
 import { useReady, useVersion } from '../query/hooks';
-import { Button, FormField, IconButton, Modal, StatusBadge, TextField } from '../ui';
+import { Button, FormField, IconButton, Modal, RefreshButton, StatusBadge, TextField } from '../ui';
 
 export function AppShell() {
   const { t, i18n } = useTranslation();
@@ -119,12 +119,23 @@ export function AppShell() {
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileNavigationOpen ? 'mobile-navigation-open' : ''}`.trim()}>
       <aside className="app-sidebar" id="primary-navigation" aria-label={t('common.navigation')}>
-        <div className="app-brand">
-          <div className="app-brand-mark">{t('common.brandShort')}</div>
-          <div className="app-brand-copy">
-            <div className="app-brand-title">{t('common.brandProduct')}</div>
-            <div className="app-brand-subtitle">{t('common.newConsole')}</div>
+        <div className="app-sidebar-head">
+          <div className="app-brand">
+            <div className="app-brand-mark">{t('common.brandShort')}</div>
+            <div className="app-brand-copy">
+              <div className="app-brand-title">{t('common.brandProduct')}</div>
+              <div className="app-brand-subtitle">{t('common.newConsole')}</div>
+            </div>
           </div>
+          <IconButton
+            className="app-sidebar-toggle"
+            title={(compactViewport ? mobileNavigationOpen : !sidebarCollapsed) ? t('common.closeNavigation') : t('common.openNavigation')}
+            aria-controls="primary-navigation"
+            aria-expanded={compactViewport ? mobileNavigationOpen : !sidebarCollapsed}
+            onClick={toggleNavigation}
+          >
+            {compactViewport && mobileNavigationOpen ? <X size={18} /> : <Menu size={18} />}
+          </IconButton>
         </div>
 
         <nav className="app-nav">
@@ -135,7 +146,7 @@ export function AppShell() {
               const item = section.items[0];
               const ItemIcon = item.icon;
               return (
-                <NavLink className="app-nav-link app-nav-root-link" to={item.path} end key={item.id} onClick={() => { setMobileNavigationOpen(false); setAccountMenuOpen(false); }}>
+                <NavLink className="app-nav-link app-nav-root-link" to={item.path} end key={item.id} title={sidebarCollapsed ? t(item.labelKey) : undefined} aria-label={sidebarCollapsed ? t(item.labelKey) : undefined} onClick={() => { setMobileNavigationOpen(false); setAccountMenuOpen(false); }}>
                   <ItemIcon size={18} strokeWidth={2.2} />
                   <span>{t(item.labelKey)}</span>
                 </NavLink>
@@ -163,7 +174,7 @@ export function AppShell() {
                         <span>{t(item.labelKey)}</span>
                       </>
                     );
-                    return <NavLink className="app-nav-link" to={item.path} end={item.path === '/' || item.path === '/clients'} key={item.id} onClick={() => { setMobileNavigationOpen(false); setAccountMenuOpen(false); }}>{content}</NavLink>;
+                    return <NavLink className="app-nav-link" to={item.path} end={item.path === '/' || item.path === '/clients'} key={item.id} title={sidebarCollapsed ? t(item.labelKey) : undefined} aria-label={sidebarCollapsed ? t(item.labelKey) : undefined} onClick={() => { setMobileNavigationOpen(false); setAccountMenuOpen(false); }}>{content}</NavLink>;
                   })}
                 </div>
               </section>
@@ -187,20 +198,23 @@ export function AppShell() {
       <main className="app-main">
         <header className="topbar">
           <div className="toolbar">
-            <IconButton
-              title={(compactViewport ? mobileNavigationOpen : !sidebarCollapsed) ? t('common.closeNavigation') : t('common.openNavigation')}
-              aria-controls="primary-navigation"
-              aria-expanded={compactViewport ? mobileNavigationOpen : !sidebarCollapsed}
-              onClick={toggleNavigation}
-            >
-              {mobileNavigationOpen ? <X size={18} /> : <Menu size={18} />}
-            </IconButton>
+            {compactViewport ? (
+              <IconButton
+                className="mobile-navigation-trigger"
+                title={t('common.openNavigation')}
+                aria-controls="primary-navigation"
+                aria-expanded={mobileNavigationOpen}
+                onClick={() => setMobileNavigationOpen(true)}
+              >
+                <Menu size={18} />
+              </IconButton>
+            ) : null}
             <StatusBadge status={rawHealthStatus} label={healthLabel} title={t('common.controlPlaneStatus')} />
           </div>
           <div className="topbar-actions">
-            <Button icon={<RefreshCw size={16} />} onClick={() => { void ready.refetch(); }}>
+            <RefreshButton onRefresh={() => ready.refetch()}>
               {t('common.refresh')}
-            </Button>
+            </RefreshButton>
             <div className="account-menu" ref={accountMenuRef}>
               <Button
                 className="account-trigger"

@@ -1,4 +1,4 @@
-import { Ban, FilePlus2, KeyRound, RefreshCw, ShieldCheck, ShieldPlus, Star, Trash2, Upload } from 'lucide-react';
+import { Ban, FilePlus2, KeyRound, ShieldCheck, ShieldPlus, Star, Trash2, Upload } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { APIError } from '../../shared/api/client';
@@ -17,7 +17,7 @@ import {
   useRevokeCertificate,
   useSetDefaultCertificate,
 } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, Modal, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, Modal, RefreshButton, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
@@ -196,7 +196,7 @@ export function CertificatesPage() {
       <Toolbar>
         <Button icon={<KeyRound size={16} />} onClick={() => setIssueOpen(true)}>{t('certificates.issue')}</Button>
         <Button icon={<ShieldCheck size={16} />} onClick={() => setPkiRootOpen(true)}>{t('certificates.createPkiRoot')}</Button>
-        <Button icon={<RefreshCw size={16} />} onClick={() => { void certificates.refetch(); void pkiRoots.refetch(); }}>{t('common.refresh')}</Button>
+        <RefreshButton onRefresh={() => Promise.all([certificates.refetch(), pkiRoots.refetch()])}>{t('common.refresh')}</RefreshButton>
       </Toolbar>
       {notice ? <div role={notice.includes(':') ? 'alert' : 'status'}>{notice}</div> : null}
 
