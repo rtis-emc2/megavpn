@@ -53,6 +53,8 @@ assert_precedes deploy-local.sh \
   './scripts/build.sh'
 grep -Fq './scripts/install-frontend.sh "$APP_DIR/web"' deploy-local.sh ||
   fail "deploy-local.sh must install the verified React frontend"
+grep -Fxq '/web/' .gitignore ||
+  fail "the deploy-managed web/ runtime directory must be ignored by git"
 if grep -Fq 'scripts/install-web.sh' deploy-local.sh; then
   fail "deploy-local.sh references the removed legacy Web UI installer"
 fi
