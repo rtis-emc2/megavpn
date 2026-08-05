@@ -262,18 +262,18 @@ export function ClientGroupsPage() {
             { key: 'service', header: t('instances.service'), render: (service) => <strong>{service.display_name || service.service_code}</strong> },
             { key: 'status', header: t('common.status'), render: (service) => <StatusBadge status={serviceCapabilityLabel(service)} /> },
             { key: 'capabilities', header: t('common.scope'), render: (service) => (
-              <div className="toolbar">
-                <Badge>{service.supports_groups ? t('clients.groups.groupsSupported') : t('common.catalogOnly')}</Badge>
-                <Badge>{service.supports_membership ? t('clients.groups.membersSupported') : t('common.disabled')}</Badge>
-                <Badge>{service.supports_materialization ? t('clients.groups.materializationSupported') : t('common.planned')}</Badge>
-              </div>
+              <span className="muted">{[
+                service.supports_groups ? t('clients.groups.groupsSupported') : null,
+                service.supports_membership ? t('clients.groups.membersSupported') : null,
+                service.supports_materialization ? t('clients.groups.materializationSupported') : null,
+              ].filter(Boolean).join(' · ') || t('common.catalogOnly')}</span>
             ) },
             { key: 'description', header: t('common.description'), render: (service) => text(service.description) },
           ]}
         />
       </QueryBoundary>
 
-      <div className="toolbar">
+      <div className="toolbar client-groups-filter">
         <FormField label={t('clients.serviceFilter')}>
           <Select value={serviceFilter} onChange={(event) => setServiceFilter(event.currentTarget.value)}>
             <option value="all">{t('common.all')}</option>
@@ -284,8 +284,6 @@ export function ClientGroupsPage() {
             ))}
           </Select>
         </FormField>
-        <Badge>{t('clients.previewRequired')}</Badge>
-        <Badge>{t('clients.bulkBounded')}</Badge>
       </div>
 
       <QueryBoundary isLoading={groups.isLoading} isError={groups.isError} error={groups.error} refetch={() => void groups.refetch()}>

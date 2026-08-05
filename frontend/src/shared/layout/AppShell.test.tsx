@@ -5,14 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../i18n';
 import { AppShell } from './AppShell';
 
-const mocks = vi.hoisted(() => ({ logout: vi.fn() }));
+const mocks = vi.hoisted(() => ({ logout: vi.fn(), changePassword: vi.fn() }));
 
 vi.mock('../auth/AuthProvider', () => ({
   useAuth: () => ({
-    session: { user: { display_name: 'Test operator' } },
+    session: { user: { username: 'operator', display_name: 'Test operator', email: 'operator@example.com' } },
     roles: ['superadmin'],
     permissions: [],
     logout: mocks.logout,
+    changePassword: mocks.changePassword,
   }),
 }));
 
@@ -21,12 +22,13 @@ vi.mock('../query/hooks', () => ({
   useVersion: () => ({ data: { version: '8.0.0-pre.1' } }),
 }));
 
-function renderShell() {
+function renderShell(initialPath = '/clients') {
   render(
-    <MemoryRouter initialEntries={['/clients']}>
+    <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
         <Route element={<AppShell />}>
           <Route path="/clients" element={<div>Clients content</div>} />
+          <Route path="/clients/groups" element={<div>Groups content</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -37,6 +39,8 @@ describe('AppShell navigation', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en');
     mocks.logout.mockClear();
+    mocks.changePassword.mockReset();
+    mocks.changePassword.mockResolvedValue(undefined);
   });
 
   it('uses the menu button to collapse and restore desktop navigation', async () => {
@@ -70,5 +74,30 @@ describe('AppShell navigation', () => {
     renderShell();
     expect(screen.getByText('Control plane online')).toBeInTheDocument();
     expect(screen.queryByText(/^ready$/i)).not.toBeInTheDocument();
+  });
+
+  it('marks only the exact clients route active when a child page is open', () => {
+    renderShell('/clients/groups');
+
+    expect(screen.getByRole('link', { name: 'Groups' })).toHaveClass('active');
+    expect(screen.getByRole('link', { name: 'Clients' })).not.toHaveClass('active');
+  });
+
+  it('opens account controls and submits a password change', async () => {
+    renderShell();
+
+    await userEvent.click(screen.getByRole('button', { name: /Test operator/i }));
+    expect(screen.getByRole('button', { name: 'RU' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Logout' })).toBeVisible();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Account settings' }));
+    expect(screen.getByRole('dialog', { name: 'Account settings' })).toBeVisible();
+
+    await userEvent.type(screen.getByLabelText('Current password'), 'current-password');
+    await userEvent.type(screen.getByLabelText('New password'), 'new-password-123');
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'new-password-123');
+    await userEvent.click(screen.getByRole('button', { name: 'Save new password' }));
+
+    expect(mocks.changePassword).toHaveBeenCalledWith('current-password', 'new-password-123');
   });
 });

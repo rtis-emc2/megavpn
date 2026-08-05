@@ -1,4 +1,4 @@
-import { Activity, FilePenLine, PackagePlus, Play, Power, RefreshCw, RotateCcw, Search, Square, Trash2 } from 'lucide-react';
+import { Activity, FilePenLine, PackagePlus, Play, Power, RefreshCw, RotateCcw, Search, Square, Trash2, UsersRound } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
@@ -109,13 +109,14 @@ export function InstancesPage() {
     <PageScaffold
       title={t('instances.title')}
       subtitle={t('instances.subtitle')}
-      actions={<><Button icon={<PackagePlus size={16} />} onClick={() => navigate('/services/service-packs')}>{t('instances.createFromPack')}</Button><Button icon={<FilePenLine size={16} />} onClick={() => setManualCreateOpen(true)}>{t('instances.manualInstance')}</Button></>}
+      actions={(
+        <>
+          <Button variant="primary" icon={<PackagePlus size={16} />} onClick={() => navigate('/services/service-packs')}>{t('instances.createFromPack')}</Button>
+          <Button icon={<FilePenLine size={16} />} onClick={() => setManualCreateOpen(true)}>{t('instances.manualInstance')}</Button>
+        </>
+      )}
     >
       <ServicesTabs />
-      <Toolbar>
-        <Badge>{t('instances.applyExplicit')}</Badge>
-        <Badge>{t('instances.accessGroupsReadOnly')} <Link to="/clients/groups">{t('clients.openGroups')}</Link></Badge>
-      </Toolbar>
       <Card>
         <CardBody>
           <Toolbar>
@@ -154,6 +155,7 @@ export function InstancesPage() {
         refetch={() => { void instances.refetch(); void runtimeStates.refetch(); }}
       >
         <DataTable
+          responsive="wide"
           rows={filteredRows}
           columns={[
             { key: 'name', header: t('instances.instance'), render: (row) => <strong>{instanceLabel(row)}</strong> },
@@ -353,6 +355,10 @@ function OverviewTab({ instance, runtime, nodeName, busy, onConfirm }: { instanc
           <Toolbar>
             <Button variant="primary" icon={<Play size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'apply', instance })}>{t('common.apply')}</Button>
             <Button icon={<RefreshCw size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'reapply', instance })}>{t('instances.reapply')}</Button>
+            <Link className="button button-secondary" to="/clients/groups">
+              <UsersRound size={16} />
+              <span className="button-label">{t('clients.openGroups')}</span>
+            </Link>
           </Toolbar>
         </div>
       </CardBody>

@@ -14,15 +14,18 @@ export function FormField({ label, children, full = false }: { label: ReactNode;
 }
 
 export function TextField(props: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className="input" {...props} />;
+  const { className = '', ...rest } = props;
+  return <input className={`input ${className}`.trim()} {...rest} />;
 }
 
 export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className="textarea" {...props} />;
+  const { className = '', ...rest } = props;
+  return <textarea className={`textarea ${className}`.trim()} {...rest} />;
 }
 
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className="select" {...props} />;
+  const { className = '', ...rest } = props;
+  return <select className={`select ${className}`.trim()} {...rest} />;
 }
 
 export function Checkbox({ label, ...props }: InputHTMLAttributes<HTMLInputElement> & { label: ReactNode }) {

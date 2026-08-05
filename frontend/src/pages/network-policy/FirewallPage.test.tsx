@@ -453,6 +453,6 @@ describe('FirewallPage', () => {
     expect(screen.getAllByText('Not configured').length).toBeGreaterThan(0);
     await openTab('Node state');
     const edgeRow = screen.getAllByText('Edge One').map((element) => element.closest('tr')).find(Boolean) as HTMLElement;
-    expect(within(edgeRow).getByText('applied')).toBeInTheDocument();
+    expect(within(edgeRow).getByText('Applied')).toBeInTheDocument();
   });
 });

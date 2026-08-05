@@ -218,6 +218,13 @@ export function logout(): Promise<unknown> {
   return apiRequest('/api/v1/auth/logout', { method: 'POST' });
 }
 
+export function changePassword(currentPassword: string, newPassword: string): Promise<{ status: string; relogin_required: boolean }> {
+  return sendJSON('/api/v1/auth/change-password', 'POST', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
+}
+
 export function getInvite(token: string): Promise<Record<string, unknown>> {
   return apiRequest(`/api/v1/auth/invites/${encodeURIComponent(token)}`);
 }

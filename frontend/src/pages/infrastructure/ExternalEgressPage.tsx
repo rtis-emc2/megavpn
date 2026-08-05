@@ -219,6 +219,7 @@ export function ExternalEgressPage() {
       >
         <DataTable
           title={t('externalEgress.profiles')}
+          responsive="wide"
           rows={profileRows}
           columns={[
             {
@@ -328,6 +329,7 @@ function ProfileDetail({ profile, canWrite, onDeploy, onAction }: {
       </Card>
       <DataTable
         title={t('externalEgress.deployments')}
+        responsive="wide"
         rows={deployments}
         columns={[
           {

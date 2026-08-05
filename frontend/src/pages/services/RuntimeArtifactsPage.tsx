@@ -70,8 +70,6 @@ export function RuntimeArtifactsPage() {
     <PageScaffold title={t('instances.runtimeArtifactsTitle')} subtitle={t('runtimeArtifacts.subtitle')} actions={<Button icon={<Upload size={16} />} onClick={() => setImportOpen(true)}>{t('runtimeArtifacts.import')}</Button>}>
       <ServicesTabs />
       <Toolbar>
-        <Badge>{t('runtimeArtifacts.binaryRepository')}</Badge>
-        <Badge>{t('runtimeArtifacts.deleteUnsupported')}</Badge>
         <Button icon={<RefreshCw size={16} />} onClick={() => void artifacts.refetch()}>{t('common.refresh')}</Button>
       </Toolbar>
       <QueryBoundary isLoading={artifacts.isLoading} isError={artifacts.isError} error={artifacts.error} refetch={() => void artifacts.refetch()}>
@@ -93,7 +91,7 @@ export function RuntimeArtifactsPage() {
       <Drawer title={t('runtimeArtifacts.import')} open={importOpen} onClose={() => setImportOpen(false)}>
         <div className="page-stack">
           <ServicesTabs />
-          <Badge>{t('runtimeArtifacts.urlImportOnly')}</Badge>
+          <p className="page-note">{t('runtimeArtifacts.urlImportOnly')}</p>
           {notice ? <div role={notice.includes(':') ? 'alert' : 'status'}>{notice}</div> : null}
           <FormGrid>
             <FormField label={t('runtimeArtifacts.sourceURL')} full>
@@ -160,9 +158,6 @@ export function RuntimeArtifactsPage() {
                 <pre className="code-block">{safeJSON({ metadata: selected.metadata || {}, storage_path: selected.storage_path || '' })}</pre>
               </CardBody>
             </Card>
-            <Toolbar>
-              <Button variant="danger" disabled>{t('common.delete')} - {t('runtimeArtifacts.deleteUnsupported')}</Button>
-            </Toolbar>
           </div>
         ) : null}
       </Drawer>

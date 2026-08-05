@@ -190,7 +190,7 @@ describe('Services workspace', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
     await screen.findByText(/<img src=x onerror=alert\(1\)>/);
     expect(document.querySelector('img')).toBeNull();
-    expect(screen.getByRole('button', { name: /Delete - Backend has no binary runtime artifact delete endpoint/ })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /^Delete/ })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Import artifact' }));
     await userEvent.type(await screen.findByLabelText('Source URL'), 'https://downloads.example.test/xray');

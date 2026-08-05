@@ -29,9 +29,21 @@ export function MobileRecordList<T>({ rows, columns }: { rows: T[]; columns: Dat
   );
 }
 
-export function DataTable<T>({ rows, columns, title, tools }: { rows: T[]; columns: DataColumn<T>[]; title?: ReactNode; tools?: ReactNode }) {
+export function DataTable<T>({
+  rows,
+  columns,
+  title,
+  tools,
+  responsive = 'default',
+}: {
+  rows: T[];
+  columns: DataColumn<T>[];
+  title?: ReactNode;
+  tools?: ReactNode;
+  responsive?: 'default' | 'wide';
+}) {
   return (
-    <Card className="data-table-card">
+    <Card className={`data-table-card data-table-responsive-${responsive}`}>
       {title || tools ? (
         <div className="page-header card-body">
           <h2 className="card-title">{title}</h2>
@@ -44,13 +56,13 @@ export function DataTable<T>({ rows, columns, title, tools }: { rows: T[]; colum
             <table className="data-table">
               <thead>
                 <tr>
-                  {columns.map((column) => <th key={column.key}>{column.header}</th>)}
+                  {columns.map((column) => <th className={`data-table-cell data-table-cell-${column.key}`} key={column.key}>{column.header}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row, index) => (
                   <tr key={index}>
-                    {columns.map((column) => <td key={column.key}>{column.render(row)}</td>)}
+                    {columns.map((column) => <td className={`data-table-cell data-table-cell-${column.key}`} key={column.key}>{column.render(row)}</td>)}
                   </tr>
                 ))}
               </tbody>

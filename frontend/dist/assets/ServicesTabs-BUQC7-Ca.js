@@ -1,1 +1,0 @@
-import{ei as e,oi as t,t as n}from"./ui-0dHPDbPr.js";var r=t();function i(){let{t}=e();return(0,r.jsx)(n,{tabs:[{label:t(`nav.instances`),to:`/services/instances`},{label:t(`nav.servicePacks`),to:`/services/service-packs`},{label:t(`nav.runtimeArtifacts`),to:`/services/runtime-artifacts`}]})}export{i as t};

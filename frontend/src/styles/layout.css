@@ -1,12 +1,13 @@
 .auth-page {
   min-height: 100dvh;
   display: grid;
+  grid-template-columns: minmax(0, 430px);
   place-items: center;
-  padding: var(--space-24);
+  padding: var(--space-16);
 }
 
 .auth-panel {
-  width: min(100%, 430px);
+  width: 100%;
 }
 
 .route-error-page {
@@ -231,13 +232,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-8);
-  flex-wrap: wrap;
-}
-
-.topbar .topbar-language {
-  width: 160px;
-  min-width: 124px;
-  flex: 0 0 160px;
+  flex-wrap: nowrap;
 }
 
 .content-shell {
@@ -337,26 +332,79 @@
 }
 
 @media (max-width: 767px) {
-
   .topbar {
     position: static;
-    align-items: flex-start;
-    flex-direction: column;
-    padding: var(--space-16);
+    width: 100%;
+    min-width: 0;
+    align-items: center;
+    flex-direction: row;
+    gap: var(--space-8);
+    min-height: 60px;
+    padding: var(--space-10, 10px) var(--space-12);
+  }
+
+  .topbar > .toolbar {
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
   }
 
   .topbar-actions {
-    justify-content: flex-start;
-    width: 100%;
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    width: auto;
   }
 
-  .topbar .topbar-language {
-    width: auto;
+  .topbar > .toolbar .status-badge {
     min-width: 0;
-    flex: 1 1 120px;
+    max-width: 132px;
+  }
+
+  .topbar > .toolbar .status-badge .badge-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar-actions > .button:not(.account-trigger) {
+    width: 40px;
+    min-width: 40px;
+    padding-inline: 0;
+  }
+
+  .topbar-actions > .button:not(.account-trigger) .button-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+
+  .topbar .account-trigger {
+    width: 40px;
+    min-width: 0;
+    padding: 4px;
+  }
+
+  .account-trigger-copy {
+    display: none;
+  }
+
+  .account-trigger-chevron {
+    display: none;
+  }
+
+  .account-popover {
+    position: fixed;
+    top: 76px;
+    right: var(--space-16);
+    left: var(--space-16);
+    width: auto;
   }
 
   .content-shell {
+    width: 100%;
+    min-width: 0;
     padding: var(--space-16);
   }
 }

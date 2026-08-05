@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import { acceptInvite, getSession, login as loginRequest, logout as logoutRequest } from '../api/endpoints';
+import { acceptInvite, changePassword as changePasswordRequest, getSession, login as loginRequest, logout as logoutRequest } from '../api/endpoints';
 import type { AuthPayload } from '../api/types';
 
 type AuthContextValue = {
@@ -11,6 +11,7 @@ type AuthContextValue = {
   permissions: string[];
   login: (login: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   acceptInvite: (token: string, password: string) => Promise<void>;
 };
 
@@ -48,6 +49,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
   });
 
+  const changePasswordMutation = useMutation({
+    mutationFn: ({ currentPassword, newPassword }: { currentPassword: string; newPassword: string }) => changePasswordRequest(currentPassword, newPassword),
+    onSuccess: () => {
+      queryClient.setQueryData(['auth', 'session'], null);
+    },
+  });
+
   const session = sessionQuery.data || null;
   const value = useMemo<AuthContextValue>(() => ({
     session,
@@ -61,10 +69,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     logout: async () => {
       await logoutMutation.mutateAsync();
     },
+    changePassword: async (currentPassword, newPassword) => {
+      await changePasswordMutation.mutateAsync({ currentPassword, newPassword });
+    },
     acceptInvite: async (token, password) => {
       await inviteMutation.mutateAsync({ token, password });
     },
-  }), [inviteMutation, loginMutation, logoutMutation, session, sessionQuery.isLoading]);
+  }), [changePasswordMutation, inviteMutation, loginMutation, logoutMutation, session, sessionQuery.isLoading]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

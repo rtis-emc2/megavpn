@@ -9,7 +9,7 @@ export function Button({ variant = 'secondary', icon, children, className = '', 
   return (
     <button type={type} className={`button button-${variant} ${className}`.trim()} {...props}>
       {icon}
-      {children ? <span>{children}</span> : null}
+      {children ? <span className="button-label">{children}</span> : null}
     </button>
   );
 }

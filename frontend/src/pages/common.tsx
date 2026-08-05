@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Badge, Button, Card, CardBody, ErrorState, LoadingSkeleton, PageHeader, Toolbar } from '../shared/ui';
+import { Card, CardBody, ErrorState, LoadingSkeleton, PageHeader } from '../shared/ui';
 
 export function PageScaffold({ title, subtitle, actions, children }: { title: string; subtitle?: string; actions?: ReactNode; children: ReactNode }) {
   return (
@@ -29,12 +29,9 @@ export function ComingSoonCard({ capability }: { capability?: string }) {
     <Card>
       <CardBody>
         <div className="page-stack">
-          <Toolbar>
-            <Badge>{t('common.comingSoon')}</Badge>
-            {capability ? <Badge>{capability}</Badge> : null}
-          </Toolbar>
+          <h2 className="card-title">{t('common.comingSoon')}</h2>
           <p>{t('common.unsupportedAction')}</p>
-          <Button disabled>{t('common.apply')}</Button>
+          {capability ? <code>{capability}</code> : null}
         </div>
       </CardBody>
     </Card>
