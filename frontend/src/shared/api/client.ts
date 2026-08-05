@@ -1,0 +1,128 @@
+const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS', 'TRACE']);
+
+export class APIError extends Error {
+  readonly status: number;
+  readonly payload: unknown;
+
+  constructor(message: string, status: number, payload: unknown) {
+    super(message);
+    this.name = 'APIError';
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
+export function apiURL(path: string): string {
+  const hasControlCharacter = Array.from(path).some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
+  if (
+    !path.startsWith('/')
+    || path.startsWith('//')
+    || path.includes('\\')
+    || hasControlCharacter
+  ) {
+    throw new Error('API path must be same-origin and absolute');
+  }
+  return path;
+}
+
+type RequestOptions = RequestInit & {
+  parseAs?: 'json' | 'text' | 'empty';
+};
+
+type BlobRequestResult = {
+  blob: Blob;
+  contentType: string;
+  contentDisposition?: string;
+};
+
+export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const method = String(options.method || 'GET').toUpperCase();
+  const headers = new Headers(options.headers || {});
+  headers.set('Accept', headers.get('Accept') || 'application/json');
+  if (!safeMethods.has(method)) {
+    headers.set('X-MegaVPN-CSRF', '1');
+  }
+
+  const response = await fetch(apiURL(path), {
+    ...options,
+    credentials: 'include',
+    method,
+    headers,
+  });
+
+  const contentType = response.headers.get('content-type') || '';
+  const parseAs = options.parseAs || (contentType.includes('application/json') ? 'json' : 'text');
+  const payload = parseAs === 'empty'
+    ? null
+    : parseAs === 'json'
+      ? await response.json().catch(() => null)
+      : await response.text().catch(() => '');
+
+  if (!response.ok) {
+    const message = typeof payload === 'object' && payload && 'error' in payload
+      ? String((payload as { error?: unknown }).error || '')
+      : typeof payload === 'string' && payload
+        ? payload
+        : `${path}: HTTP ${response.status}`;
+    throw new APIError(message, response.status, payload);
+  }
+
+  return payload as T;
+}
+
+export async function apiBlobRequest(path: string, options: RequestInit = {}): Promise<BlobRequestResult> {
+  const method = String(options.method || 'GET').toUpperCase();
+  const headers = new Headers(options.headers || {});
+  headers.set('Accept', headers.get('Accept') || 'text/plain, application/octet-stream');
+  if (!safeMethods.has(method)) {
+    headers.set('X-MegaVPN-CSRF', '1');
+  }
+
+  const response = await fetch(apiURL(path), {
+    ...options,
+    credentials: 'include',
+    cache: 'no-store',
+    method,
+    headers,
+  });
+
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok) {
+    if (contentType.includes('application/json')) {
+      const payload = await response.json().catch(() => null);
+      const message = typeof payload === 'object' && payload && 'error' in payload
+        ? String((payload as { error?: unknown }).error || '')
+        : `${path}: HTTP ${response.status}`;
+      throw new APIError(message, response.status, payload);
+    }
+    throw new APIError(`${path}: HTTP ${response.status}`, response.status, null);
+  }
+  if (contentType.toLowerCase().includes('text/html')) {
+    throw new APIError('download response was not a file', response.status, null);
+  }
+
+  return {
+    blob: await response.blob(),
+    contentType,
+    contentDisposition: response.headers.get('content-disposition') || undefined,
+  };
+}
+
+export function sendJSON<T>(path: string, method: string, payload?: unknown): Promise<T> {
+  return apiRequest<T>(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: payload == null ? null : JSON.stringify(payload),
+  });
+}
+
+export function isUnauthorized(error: unknown): boolean {
+  return error instanceof APIError && error.status === 401;
+}
+
+export function isForbidden(error: unknown): boolean {
+  return error instanceof APIError && error.status === 403;
+}

@@ -1,0 +1,84 @@
+# Threat Model
+
+**Release:** `8.0.0-pre.1`
+
+## Scope
+
+MegaVPN consists of:
+
+- Control-plane API and Web UI.
+- PostgreSQL state store.
+- Worker process for queued jobs, bootstrap and control-plane TLS apply.
+- Node agent for inventory, service materialization and runtime actions.
+- Nginx public edge.
+- Generated VPN/proxy service configs and client artifacts.
+- Runtime binary repository and pinned node downloads.
+- Managed ingress-to-egress backhaul route projection.
+- Node topology map with GeoIP metadata and managed backhaul overlay.
+- VLESS access groups for client routing policy and public per-client VLESS
+  subscription endpoints.
+
+## Trust Boundaries
+
+| Boundary | Trusted Side | Untrusted Side | Controls |
+| --- | --- | --- | --- |
+| Browser to API | API session middleware | Browser/client network | HttpOnly cookie, CSRF header, rate limits, strict JSON decode |
+| Public share link | Artifact download handler | Anyone with token URL | High-entropy token, `token_hash`, expiry, revocation, artifact-root containment |
+| API to PostgreSQL | API/worker store code | SQL data and concurrent workers | Transactions, row locks, lease owner checks |
+| API to agent | Signed agent channel | Network and reverse proxies | HTTPS for remote endpoints, optional private CA/client certificate, HMAC request/response signatures, timestamp window, nonce/body hash |
+| Worker to SSH node | Bootstrap worker | Remote host/network | Strict user/host validation, host-key SHA256 pinning, `--` target separator |
+| Agent to host OS | Managed allowlists | Job payload/spec data | Path canonicalization, symlink-safe writes, unit allowlists, direct systemd argv |
+| Generated artifacts | Artifact root | Filesystem path data | Artifact-root symlink containment before serving |
+| Runtime binary repository | Artifact root and signed agent download | External release URLs and uploaded files | HTTPS import, SHA-256 pinning, artifact-root containment, service-specific install path allowlists |
+| VLESS ingress to egress | Xray instance route config | Client traffic and public network | Instance-level default outbound, managed backhaul source routing, explicit access groups |
+| VLESS access groups | Group catalog and client bindings | Operator mistakes and client traffic | Central catalog, apply-time rendering, target-only allow rules, final block fallback |
+| VLESS subscriptions | Token registry and public subscription feed | Anyone with a live bearer URL | Token hashing, one-time plaintext display, expiry, revocation, active-access filtering, `Cache-Control: no-store` |
+
+## Primary Assets
+
+- Platform user credentials and sessions.
+- Node enrollment tokens and persistent agent tokens.
+- Secret master key and encrypted `secret_refs`.
+- Platform certificates and service PKI roots.
+- VPN service private keys, PSKs, account passwords and generated client bundles.
+- External-provider client configs, account credentials, certificates and private keys.
+- VLESS subscription tokens and generated client profile URLs.
+- Job/audit history.
+- PostgreSQL database and artifact root backups.
+
+## Key Threats And Mitigations
+
+| Threat | Mitigation |
+| --- | --- |
+| Agent command tampering or replay | Bidirectional HMAC signatures, timestamp window, nonce/body hash, signed empty `204` job poll |
+| Agent transport downgrade | Non-loopback cleartext HTTP is rejected unless an explicit migration override is enabled; custom CA and optional paired client certificate/key are supported |
+| Stale or stolen job result | Agent completion requires current `locked_by`, `running` status and non-expired lease |
+| Privilege escalation through generic jobs | Privileged job types must use typed APIs; remaining direct jobs require job-type permission matrix |
+| Filesystem escape from agent-managed files | Canonical absolute paths, root allowlists, whitespace/control rejection, symlink-safe parent/target checks |
+| Arbitrary systemd unit injection | Strict managed unit allowlist and direct ExecStart validation |
+| SSH bootstrap MITM or option injection | `ssh_host_key_sha256`, safe user/host regex plus IP parser, strict known_hosts, `--` before target |
+| Nginx directive injection | DNS/IP/wildcard-only `server_name`, directive character rejection |
+| Public share token database disclosure | Store `token_hash` only, expose plaintext once, use `token_hint` for operations |
+| Supply-chain compromise of remote installer | Xray remote install requires pinned script SHA-256; otherwise fail closed |
+| Runtime binary substitution | Runtime artifacts are stored under a control-plane artifact root and installed only after hash verification and service/path allowlist checks |
+| Accidental direct breakout from ingress VLESS | Xray egress is resolved at instance level; generated configs add a default outbound via managed backhaul when the node role requires remote egress |
+| Malicious external-provider configuration | Provider files are untrusted input. OpenVPN scripts, plugins, management sockets, external file references and log/status hooks are rejected; WireGuard hooks and `SaveConfig` are rejected; VLESS/Shadowsocks unknown fields, insecure transport and plugins are rejected; L2TP/IPsec input uses a strict field allowlist. Runtime files are generated under a deployment-specific managed directory. |
+| External-provider secret disclosure | Imported configurations and separate credentials are encrypted through `secret_refs`, omitted from profile reads and hydrated only when the assigned node claims an apply job. Probe and cleanup jobs never receive provider secrets. |
+| External tunnel captures node traffic | OpenVPN, WireGuard and L2TP/IPsec use a dedicated Xray socket mark, `ip rule` and routing table. VLESS/Shadowsocks use a loopback-only managed SOCKS listener selected by the group outbound. The node main table is not changed, and only members of an explicitly assigned client access group receive the provider outbound. L3 profiles retain a high-metric unreachable fallback. |
+| Unsafe node cleanup | Cleanup jobs must remain scoped to managed instance/backhaul units and operator confirmation must name the target node |
+| Subscription URL leakage | Treat subscription tokens as bearer credentials; use per-client rotation, expiry, audit and `Cache-Control: no-store` |
+| SMTP credential or message leakage | Authenticated SMTP requires TLS; messages reject header injection and unsafe action URLs, enforce bounded recipients/attachments and use network deadlines |
+| Secret loss | Backup DB/artifacts separately from master key; master key rotation and sealed copy required |
+
+## Residual Risks
+
+- A root-running node agent is intentionally privileged. Production deployments must restrict which operators can queue apply/capability jobs.
+- Package-manager capability installs write broadly to the node OS. Use manual-present strategy or pre-baked images where policy forbids runtime package installation.
+- Unencrypted L2TP remains intentionally blocked. L2TP/IPsec supports PSK or validated certificate authentication plus username/password and one active external client deployment per node.
+- VLESS/Shadowsocks provider listeners are root-owned and loopback-only. They do not capture node traffic, but a privileged process on the node can intentionally connect to the local listener; node-root compromise remains outside this isolation boundary.
+- External-egress probe confirms local unit/interface/rule/route state; it does not provide end-to-end provider reachability or SLA validation.
+- Public share links are bearer URLs. Hashing protects database disclosure, not recipients forwarding a live URL.
+- The topology map exposes operational metadata derived from public node IPs. External GeoIP providers will see those public IPs; regulated deployments should use an internal GeoIP endpoint or disable lookup with `MEGAVPN_GEOIP_LOOKUP_URL_TEMPLATE=disabled`.
+- A full repository-wide security scan requires delegated worker coverage. Parent-agent-only scans are useful but must not be treated as exhaustive release evidence.
+- Mandatory agent mTLS is not globally enforced. Deployments that require mutual certificate authentication must configure the client certificate/key and terminate TLS on a Control Plane edge that verifies that identity; HMAC signing remains mandatory independently.
+- Security-sensitive HTTP actions use required audit persistence. Other lifecycle audit events remain best effort until state mutation and audit publication share a transactional outbox.

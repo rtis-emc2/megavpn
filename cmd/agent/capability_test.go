@@ -1,0 +1,412 @@
+package main
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestVerifyFileSHA256(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "installer.sh")
+	content := []byte("#!/usr/bin/env sh\nexit 0\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	if err := verifyFileSHA256(path, hex.EncodeToString(sum[:])); err != nil {
+		t.Fatalf("expected checksum to match: %v", err)
+	}
+	if err := verifyFileSHA256(path, "0000000000000000000000000000000000000000000000000000000000000000"); err == nil {
+		t.Fatal("expected checksum mismatch")
+	}
+	if err := verifyFileSHA256(path, "not-a-sha"); err == nil {
+		t.Fatal("expected malformed checksum to be rejected")
+	}
+}
+
+func TestPGPFingerprintOutputContains(t *testing.T) {
+	t.Parallel()
+
+	output := "pub:-:4096:1:ABF5BD827BD9BF62:1563811491:::-:::scESC::::::23::0:\n" +
+		"fpr:::::::::573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62:\n"
+	if !pgpFingerprintOutputContains(output, "573B FD6B 3D8F BC64 1079 A6AB ABF5 BD82 7BD9 BF62") {
+		t.Fatal("expected nginx.org signing key fingerprint to be accepted")
+	}
+	if pgpFingerprintOutputContains(output, "0000000000000000000000000000000000000000") {
+		t.Fatal("unexpected fingerprint match")
+	}
+}
+
+func TestSafeAptCodename(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"jammy", "noble", "bookworm", "ubuntu-24.04"} {
+		if !safeAptCodename(value) {
+			t.Fatalf("expected codename %q to be accepted", value)
+		}
+	}
+	for _, value := range []string{"", "noble main", "noble\nmain", "$(id)", "Noble"} {
+		if safeAptCodename(value) {
+			t.Fatalf("expected codename %q to be rejected", value)
+		}
+	}
+}
+
+func TestAptInstallFailureMessageForShadowsocks(t *testing.T) {
+	t.Parallel()
+
+	got := aptInstallFailureMessage("shadowsocks", "shadowsocks-libev", "apt update failed")
+	for _, want := range []string{"shadowsocks-libev", "ss-server", "apt repositories/network"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("message %q does not contain %q", got, want)
+		}
+	}
+}
+
+func TestAptInstallFailureResultIncludesLastFailedCommand(t *testing.T) {
+	t.Parallel()
+
+	result := aptInstallFailureResult("shadowsocks", "shadowsocks-libev", "package install failed", []map[string]any{
+		{
+			"command":   []string{"apt-get", "update"},
+			"exit_code": 0,
+			"output":    "ok",
+		},
+		{
+			"command":   []string{"env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "shadowsocks-libev"},
+			"exit_code": 100,
+			"output":    "E: Sub-process /usr/bin/dpkg returned an error code (1)\nsecond line",
+		},
+	})
+	message := stringify(result["message"])
+	if !strings.Contains(message, "failed command: env DEBIAN_FRONTEND=noninteractive apt-get install -y shadowsocks-libev") {
+		t.Fatalf("message missing command: %q", message)
+	}
+	if !strings.Contains(message, "output: E: Sub-process /usr/bin/dpkg returned an error code (1)") {
+		t.Fatalf("message missing first output line: %q", message)
+	}
+	if got := stringify(result["last_failed_command"]); got == "" {
+		t.Fatal("last_failed_command is empty")
+	}
+	if got := result["last_failed_exit_code"]; got != 100 {
+		t.Fatalf("last_failed_exit_code = %#v, want 100", got)
+	}
+}
+
+func TestSummarizeInstallFailureOutputUsesDiagnosticTail(t *testing.T) {
+	t.Parallel()
+
+	output := strings.Join([]string{
+		"Reading package lists...",
+		"Building dependency tree...",
+		"dpkg: dependency problems prevent configuration of ppp:",
+		" ppp depends on libpcap0.8t64; however:",
+		"  Package libpcap0.8t64 is not installed.",
+		"dpkg: error processing package ppp (--configure):",
+		" dependency problems - leaving unconfigured",
+		"E: Sub-process /usr/bin/dpkg returned an error code (1)",
+	}, "\n")
+	got := summarizeInstallFailureOutput(output)
+	for _, want := range []string{
+		"dpkg: error processing package ppp",
+		"dependency problems - leaving unconfigured",
+		"E: Sub-process /usr/bin/dpkg returned an error code (1)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary %q does not contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "Reading package lists") {
+		t.Fatalf("summary contains non-diagnostic first line: %q", got)
+	}
+}
+
+func TestSummarizeInstallFailureOutputFallsBackToLastLine(t *testing.T) {
+	t.Parallel()
+
+	if got := summarizeInstallFailureOutput("Reading package lists...\nCustom package manager exit\n"); got != "Custom package manager exit" {
+		t.Fatalf("summary = %q", got)
+	}
+}
+
+func TestAptInstallCommandRetryClassification(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		command string
+		args    []string
+		output  string
+		want    bool
+	}{
+		{
+			name:    "apt update network failure retries",
+			command: "apt-get",
+			args:    []string{"update"},
+			output:  "Temporary failure resolving archive.ubuntu.com",
+			want:    true,
+		},
+		{
+			name:    "env apt install lock retries",
+			command: "env",
+			args:    []string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "shadowsocks-libev"},
+			output:  "Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 123",
+			want:    true,
+		},
+		{
+			name:    "missing package does not retry",
+			command: "env",
+			args:    []string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "missing-package"},
+			output:  "E: Unable to locate package missing-package",
+			want:    false,
+		},
+		{
+			name:    "non apt command does not retry",
+			command: "systemctl",
+			args:    []string{"enable", "--now", "shadowsocks-libev"},
+			output:  "failed",
+			want:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldRetryAptInstallCommand(tc.command, tc.args, 100, tc.output)
+			if got != tc.want {
+				t.Fatalf("shouldRetryAptInstallCommand() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNginxOrgFallbackReason(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		res  map[string]any
+		want string
+	}{
+		{
+			name: "apt update falls back to ubuntu repo",
+			res:  map[string]any{"ok": false, "message": "apt update failed before nginx install"},
+			want: "nginx.org repository install failed: apt update failed before nginx install",
+		},
+		{
+			name: "repo setup failure falls back",
+			res:  map[string]any{"ok": false, "message": "apt update failed after nginx repo setup"},
+			want: "nginx.org repository install failed: apt update failed after nginx repo setup",
+		},
+		{
+			name: "isa failure falls back",
+			res:  map[string]any{"ok": false, "verify_output": "Fatal glibc error: CPU does not support x86-64-v2 ISA level"},
+			want: "nginx.org binary failed with CPU ISA compatibility error",
+		},
+		{
+			name: "root failure does not fall back",
+			res:  map[string]any{"ok": false, "message": "nginx install requires root"},
+			want: "",
+		},
+		{
+			name: "runtime verify failure does not hide as repo fallback",
+			res:  map[string]any{"ok": false, "message": "nginx service is not active"},
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nginxOrgFallbackReason(tc.res)
+			if got != tc.want {
+				t.Fatalf("nginxOrgFallbackReason() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAptFailureSuggestsRepair(t *testing.T) {
+	t.Parallel()
+
+	if !aptFailureSuggestsRepair("E: dpkg was interrupted, you must manually run 'sudo dpkg --configure -a' to correct the problem.") {
+		t.Fatal("expected interrupted dpkg output to request repair")
+	}
+	if !aptFailureSuggestsRepair("dpkg: error processing package shadowsocks-libev (--configure): installed shadowsocks-libev package post-installation script subprocess returned error exit status 1") {
+		t.Fatal("expected package post-install failure to request repair")
+	}
+	if aptFailureSuggestsRepair("Temporary failure resolving archive.ubuntu.com") {
+		t.Fatal("network resolution failure must not request dpkg repair")
+	}
+}
+
+func TestRepairUbuntuPackageStateContinuesAfterDpkgDependencyFailure(t *testing.T) {
+	oldRun := runInstallCommand
+	t.Cleanup(func() { runInstallCommand = oldRun })
+
+	commands := []string{}
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		commands = append(commands, command)
+		switch len(commands) {
+		case 1:
+			if !strings.Contains(command, "dpkg --configure -a") {
+				t.Fatalf("first repair command = %q", command)
+			}
+			return 1, "dpkg: dependency problems prevent configuration of xl2tpd"
+		case 2:
+			if !strings.Contains(command, "apt-get") || !strings.Contains(command, "-f install -y") {
+				t.Fatalf("second repair command = %q", command)
+			}
+			return 0, "dependencies repaired"
+		case 3:
+			if !strings.Contains(command, "dpkg --configure -a") {
+				t.Fatalf("third repair command = %q", command)
+			}
+			return 0, "xl2tpd configured"
+		default:
+			t.Fatalf("unexpected repair command: %q", command)
+			return 1, "unexpected command"
+		}
+	}
+
+	steps := []map[string]any{}
+	if reason := repairUbuntuPackageState(context.Background(), &steps); reason != "" {
+		t.Fatalf("repairUbuntuPackageState() reason = %q", reason)
+	}
+	if len(commands) != 3 {
+		t.Fatalf("repair commands = %d, want 3", len(commands))
+	}
+	if len(steps) != 4 {
+		t.Fatalf("repair steps = %d, want 4 including continuation evidence", len(steps))
+	}
+	if note := stringify(steps[1]["note"]); !strings.Contains(note, "continuing with apt dependency repair") {
+		t.Fatalf("continuation evidence note = %q", note)
+	}
+}
+
+func TestRepairUbuntuPackageStateReportsDependencyRepairFailure(t *testing.T) {
+	oldRun := runInstallCommand
+	t.Cleanup(func() { runInstallCommand = oldRun })
+
+	runInstallCommand = func(_ context.Context, name string, args ...string) (int, string) {
+		command := name + " " + strings.Join(args, " ")
+		if strings.Contains(command, "dpkg --configure -a") {
+			return 1, "dependency problems prevent configuration"
+		}
+		if strings.Contains(command, "apt-get") && strings.Contains(command, "-f install -y") {
+			return 100, "unable to correct dependencies"
+		}
+		t.Fatalf("unexpected repair command: %q", command)
+		return 1, "unexpected command"
+	}
+
+	steps := []map[string]any{}
+	if reason := repairUbuntuPackageState(context.Background(), &steps); reason != "apt dependency repair failed" {
+		t.Fatalf("repairUbuntuPackageState() reason = %q", reason)
+	}
+}
+
+func TestAptSandboxSetuidFallbackCommand(t *testing.T) {
+	t.Parallel()
+
+	output := "E: seteuid 42 failed - seteuid (1: Operation not permitted)\nE: Method gave invalid 400 URI Failure message: Failed to set new user ids - setresuid (1: Operation not permitted)"
+	if !aptFailureLooksSandboxSetuid(output) {
+		t.Fatal("expected apt sandbox setuid failure to be detected")
+	}
+	name, args, ok := aptSandboxRootFallbackCommand("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-o", "Dpkg::Lock::Timeout=120", "install", "-y", "shadowsocks-libev")
+	if !ok {
+		t.Fatal("expected apt sandbox fallback command")
+	}
+	if name != "env" {
+		t.Fatalf("fallback name = %q, want env", name)
+	}
+	got := strings.Join(args, " ")
+	if !strings.Contains(got, "apt-get -o APT::Sandbox::User=root -o Dpkg::Lock::Timeout=120 install -y shadowsocks-libev") {
+		t.Fatalf("fallback args = %q", got)
+	}
+	if aptFailureLooksSandboxSetuid("Temporary failure resolving archive.ubuntu.com") {
+		t.Fatal("network failure must not trigger apt sandbox fallback")
+	}
+}
+
+func TestAptPolicyHasCandidate(t *testing.T) {
+	t.Parallel()
+
+	if !aptPolicyHasCandidate("Installed: (none)\nCandidate: 3.3.5-1\nVersion table:\n") {
+		t.Fatal("expected package candidate to be detected")
+	}
+	if aptPolicyHasCandidate("Installed: (none)\nCandidate: (none)\nVersion table:\n") {
+		t.Fatal("expected missing package candidate to be rejected")
+	}
+}
+
+func TestUbuntuUniverseRepositoryPreparationSelection(t *testing.T) {
+	t.Parallel()
+
+	if !shouldPrepareUbuntuUniverseRepository("ubuntu", "shadowsocks-libev") {
+		t.Fatal("expected shadowsocks-libev on Ubuntu to request universe repository preparation")
+	}
+	if shouldPrepareUbuntuUniverseRepository("debian", "shadowsocks-libev") {
+		t.Fatal("did not expect Debian to request Ubuntu universe repository preparation")
+	}
+	if shouldPrepareUbuntuUniverseRepository("ubuntu", "openvpn") {
+		t.Fatal("did not expect mainline OpenVPN package to request universe repository preparation")
+	}
+}
+
+func TestOSReleaseIDFromContent(t *testing.T) {
+	t.Parallel()
+
+	got := osReleaseIDFromContent("NAME=\"Ubuntu\"\nID=ubuntu\nVERSION_ID=\"24.04\"\n")
+	if got != "ubuntu" {
+		t.Fatalf("os release id = %q, want ubuntu", got)
+	}
+	quoted := osReleaseIDFromContent("ID=\"ubuntu\"\n")
+	if quoted != "ubuntu" {
+		t.Fatalf("quoted os release id = %q, want ubuntu", quoted)
+	}
+}
+
+func TestShadowsocksUbuntuRuntimeInstallDoesNotEnablePackageUnit(t *testing.T) {
+	t.Parallel()
+
+	if got := ubuntuPackageEnableUnits("shadowsocks", "shadowsocks-libev"); len(got) != 0 {
+		t.Fatalf("shadowsocks runtime install enable units = %#v, want none", got)
+	}
+	if got := ubuntuPackageEnableUnits("openvpn", "openvpn"); len(got) != 1 || got[0] != "openvpn" {
+		t.Fatalf("openvpn runtime install enable units = %#v, want [openvpn]", got)
+	}
+}
+
+func TestPackageServiceAutostartPreventionSelection(t *testing.T) {
+	t.Parallel()
+
+	if !shouldPreventPackageServiceAutostart("shadowsocks") {
+		t.Fatal("expected Shadowsocks package install to block distro service autostart")
+	}
+	if !shouldPreventPackageServiceAutostart("xl2tpd") {
+		t.Fatal("expected XL2TPD package install to block distro service autostart")
+	}
+	if shouldPreventPackageServiceAutostart("openvpn") {
+		t.Fatal("did not expect OpenVPN package install to block distro service autostart")
+	}
+}
+
+func TestHasBinaryRepositoryInstallPayload(t *testing.T) {
+	t.Parallel()
+
+	j := job{Payload: map[string]any{
+		"binary_repository_fallback": map[string]any{"artifact_id": "artifact-1"},
+	}}
+	if !hasBinaryRepositoryInstallPayload(j, "binary_repository_fallback") {
+		t.Fatal("expected fallback binary repository payload to be detected")
+	}
+	if hasBinaryRepositoryInstallPayload(j, "binary_repository") {
+		t.Fatal("unexpected primary binary repository payload")
+	}
+}

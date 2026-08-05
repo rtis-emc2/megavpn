@@ -1,0 +1,684 @@
+import { describe, expect, it } from 'vitest';
+import type { EnrollmentToken, NodeAccessMethod, NodeBootstrapRun, NodeDetail, NodeDiagnostics, NodeInventorySnapshot } from '../../shared/api/types';
+import { deriveNodeOnboardingModel } from './nodeOnboarding';
+
+const node: NodeDetail = {
+  id: 'node-1',
+  name: 'Edge One',
+  status: 'online',
+  address: '203.0.113.10',
+  execution_mode: 'agent_managed',
+  created_at: '2026-07-09T08:00:00Z',
+  updated_at: '2026-07-09T08:01:00Z',
+};
+
+const activeToken: EnrollmentToken = {
+  id: 'token-1',
+  node_id: 'node-1',
+  token_hint: 'enro...hint',
+  status: 'active',
+  expires_at: '2026-07-10T08:00:00Z',
+  created_at: '2026-07-09T08:02:00Z',
+};
+
+const sshMethod: NodeAccessMethod = {
+  id: 'ssh-1',
+  node_id: 'node-1',
+  method: 'ssh',
+  is_enabled: true,
+  ssh_host: 'edge-one.example.test',
+  ssh_port: 22,
+  ssh_user: 'ubuntu',
+  ssh_host_key_sha256: 'SHA256:pinned',
+  secret_configured: true,
+};
+
+const queuedRun: NodeBootstrapRun = {
+  id: 'run-queued',
+  node_id: 'node-1',
+  status: 'queued',
+  bootstrap_mode: 'ssh_bootstrap',
+  created_at: '2026-07-09T08:03:00Z',
+};
+
+const runningRun: NodeBootstrapRun = {
+  ...queuedRun,
+  id: 'run-running',
+  status: 'running',
+  created_at: '2026-07-09T08:04:00Z',
+};
+
+const successRun: NodeBootstrapRun = {
+  ...queuedRun,
+  id: 'run-success',
+  status: 'succeeded',
+  finished_at: '2026-07-09T08:06:00Z',
+  created_at: '2026-07-09T08:05:00Z',
+};
+
+const failedRun: NodeBootstrapRun = {
+  ...queuedRun,
+  id: 'run-failed',
+  status: 'failed',
+  finished_at: '2026-07-09T08:07:00Z',
+  created_at: '2026-07-09T08:06:00Z',
+};
+
+const inventory: NodeInventorySnapshot = {
+  id: 'inventory-1',
+  node_id: 'node-1',
+  created_at: '2026-07-09T08:09:00Z',
+};
+
+function diagnostics(overrides: Partial<NodeDiagnostics> = {}): NodeDiagnostics {
+  return {
+    node,
+    heartbeat_state: 'unknown',
+    communication_state: 'missing_agent_identity',
+    agent: {
+      node_id: 'node-1',
+      status: 'missing',
+      token_rotation_status: 'missing',
+    },
+    ...overrides,
+  };
+}
+
+function registeredDiagnostics(overrides: Partial<NodeDiagnostics> = {}): NodeDiagnostics {
+  return diagnostics({
+    heartbeat_state: 'unknown',
+    communication_state: 'healthy',
+    agent: {
+      node_id: 'node-1',
+      status: 'active',
+      agent_version: '8.0.0-agent',
+      protocol_version: 'v1',
+      registered_at: '2026-07-09T08:07:00Z',
+      token_rotation_status: 'active',
+    },
+    ...overrides,
+  });
+}
+
+function stepStatus(model: ReturnType<typeof deriveNodeOnboardingModel>, key: string) {
+  return model.steps.find((step) => step.key === key)?.status;
+}
+
+function stepEvidence(model: ReturnType<typeof deriveNodeOnboardingModel>, key: string) {
+  return model.steps.find((step) => step.key === key)?.evidenceCode;
+}
+
+describe('node onboarding model', () => {
+  it('classifies empty safe data as not started and profile as current', () => {
+    const model = deriveNodeOnboardingModel({});
+
+    expect(model.overallStatus).toBe('not_started');
+    expect(model.currentStep).toBe('profile');
+    expect(stepStatus(model, 'profile')).toBe('current');
+    expect(model.recommendedAction).toBe('none');
+  });
+
+  it('completes the profile step from a loaded node and blocks retired nodes', () => {
+    const loaded = deriveNodeOnboardingModel({ node });
+    expect(stepStatus(loaded, 'profile')).toBe('complete');
+    expect(stepEvidence(loaded, 'profile')).toBe('profile_loaded');
+
+    const retired = deriveNodeOnboardingModel({ node: { ...node, status: 'retired' } });
+    expect(retired.overallStatus).toBe('blocked');
+    expect(retired.currentStep).toBe('profile');
+    expect(retired.steps.every((step) => step.status === 'blocked')).toBe(true);
+    expect(retired.recommendedAction).toBe('none');
+  });
+
+  it('advances credential with an active redacted enrollment token and ignores plaintext token fields', () => {
+    const model = deriveNodeOnboardingModel({
+      node,
+      enrollmentTokens: [{ ...activeToken, token: 'plain-secret-token', enrollment_token: 'enroll-secret-token' } as unknown as EnrollmentToken],
+    });
+
+    expect(stepStatus(model, 'credential')).toBe('complete');
+    expect(stepEvidence(model, 'credential')).toBe('credential_active_token');
+    expect(model.overallStatus).toBe('in_progress');
+    expect(model.recommendedAction).toBe('start_manual_bundle');
+    expect(JSON.stringify(model)).not.toContain('plain-secret-token');
+    expect(JSON.stringify(model)).not.toContain('enroll-secret-token');
+  });
+
+  it('treats active token without registration as awaiting registration', () => {
+    const model = deriveNodeOnboardingModel({ node, diagnostics: diagnostics({ active_enrollment_token: activeToken }), enrollmentTokens: [] });
+
+    expect(stepStatus(model, 'credential')).toBe('complete');
+    expect(stepStatus(model, 'registration')).toBe('current');
+    expect(model.currentStep).toBe('registration');
+    expect(model.overallStatus).toBe('in_progress');
+    expect(model.recommendedAction).toBe('start_manual_bundle');
+  });
+
+  it('maps queued and running bootstrap to the current bootstrap step', () => {
+    const queued = deriveNodeOnboardingModel({ node, bootstrapRuns: [queuedRun] });
+    expect(stepStatus(queued, 'bootstrap')).toBe('current');
+    expect(stepEvidence(queued, 'bootstrap')).toBe('bootstrap_queued');
+
+    const running = deriveNodeOnboardingModel({ node, bootstrapRuns: [runningRun] });
+    expect(stepStatus(running, 'bootstrap')).toBe('current');
+    expect(stepEvidence(running, 'bootstrap')).toBe('bootstrap_running');
+  });
+
+  it('completes successful bootstrap and keeps older failures from overriding a newer success', () => {
+    const model = deriveNodeOnboardingModel({ node, bootstrapRuns: [failedRun, { ...successRun, created_at: '2026-07-09T08:08:00Z' }] });
+
+    expect(stepStatus(model, 'bootstrap')).toBe('complete');
+    expect(stepEvidence(model, 'bootstrap')).toBe('bootstrap_successful');
+    expect(model.overallStatus).toBe('in_progress');
+  });
+
+  it('maps latest failed bootstrap to warning and action required', () => {
+    const model = deriveNodeOnboardingModel({ node, bootstrapRuns: [successRun, failedRun] });
+
+    expect(stepStatus(model, 'bootstrap')).toBe('warning');
+    expect(model.overallStatus).toBe('action_required');
+  });
+
+  it('completes registration from registered_at and treats revoked agent as action required', () => {
+    const registered = deriveNodeOnboardingModel({ node, diagnostics: registeredDiagnostics() });
+    expect(stepStatus(registered, 'registration')).toBe('complete');
+    expect(registered.registered).toBe(true);
+
+    const revoked = deriveNodeOnboardingModel({
+      node,
+      diagnostics: registeredDiagnostics({
+        communication_state: 'auth_failure',
+        agent: {
+          node_id: 'node-1',
+          status: 'revoked',
+          registered_at: '2026-07-09T08:07:00Z',
+          revoked_at: '2026-07-09T08:08:00Z',
+          token_rotation_status: 'revoked',
+        },
+      }),
+    });
+    expect(stepStatus(revoked, 'registration')).toBe('warning');
+    expect(revoked.overallStatus).toBe('action_required');
+    expect(revoked.recommendedAction).toBe('reissue_enrollment_token');
+  });
+
+  it('keeps heartbeat current after registration until a heartbeat is observed', () => {
+    const model = deriveNodeOnboardingModel({ node, diagnostics: registeredDiagnostics() });
+
+    expect(stepStatus(model, 'heartbeat')).toBe('current');
+    expect(model.heartbeatObserved).toBe(false);
+    expect(model.recommendedAction).toBe('none');
+  });
+
+  it('completes online heartbeat and warns on degraded or offline heartbeat', () => {
+    const online = deriveNodeOnboardingModel({
+      node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online' }),
+    });
+    expect(stepStatus(online, 'heartbeat')).toBe('complete');
+
+    const degraded = deriveNodeOnboardingModel({
+      node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'degraded', communication_state: 'degraded' }),
+    });
+    expect(stepStatus(degraded, 'heartbeat')).toBe('warning');
+
+    const offline = deriveNodeOnboardingModel({
+      node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'offline', communication_state: 'channel_offline' }),
+    });
+    expect(stepStatus(offline, 'heartbeat')).toBe('warning');
+    expect(offline.overallStatus).toBe('action_required');
+  });
+
+  it('maps unhealthy communication states conservatively', () => {
+    for (const state of ['heartbeat_stalled', 'channel_offline', 'auth_failure', 'job_result_stalled']) {
+      const model = deriveNodeOnboardingModel({
+        node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+        diagnostics: registeredDiagnostics({ heartbeat_state: 'offline', communication_state: state }),
+      });
+      expect(model.overallStatus).toBe('action_required');
+    }
+  });
+
+  it('keeps job_running in progress', () => {
+    const model = deriveNodeOnboardingModel({
+      node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'job_running' }),
+    });
+
+    expect(model.overallStatus).toBe('in_progress');
+  });
+
+  it('completes inventory from snapshot or last_inventory_sync_at but not from a queued job alone', () => {
+    const snapshot = deriveNodeOnboardingModel({
+      node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online', latest_inventory: inventory }),
+    });
+    expect(stepStatus(snapshot, 'inventory')).toBe('complete');
+
+    const lastSync = deriveNodeOnboardingModel({
+      node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          last_inventory_sync_at: '2026-07-09T08:09:00Z',
+          token_rotation_status: 'active',
+        },
+      }),
+    });
+    expect(stepStatus(lastSync, 'inventory')).toBe('complete');
+
+    const queuedOnly = deriveNodeOnboardingModel({
+      node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'job_running',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          last_job_claim_type: 'node.inventory.sync',
+          token_rotation_status: 'active',
+        },
+      }),
+    });
+    expect(stepStatus(queuedOnly, 'inventory')).toBe('current');
+    expect(queuedOnly.inventoryObserved).toBe(false);
+    expect(queuedOnly.recommendedAction).toBe('none');
+  });
+
+  it('requires registration, heartbeat and inventory evidence before ready', () => {
+    for (const state of ['inventory_ok', 'discovery_ok', 'healthy']) {
+      const ready = deriveNodeOnboardingModel({
+        node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+        diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: state, latest_inventory: inventory }),
+      });
+      expect(ready.overallStatus).toBe('ready');
+      expect(ready.recommendedAction).toBe('none');
+    }
+
+    const communicationOnly = deriveNodeOnboardingModel({
+      node,
+      diagnostics: diagnostics({ communication_state: 'healthy' }),
+    });
+    expect(communicationOnly.overallStatus).not.toBe('ready');
+  });
+
+  it('marks complete milestones degraded when current communication is degraded', () => {
+    const model = deriveNodeOnboardingModel({
+      node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'degraded', communication_state: 'degraded', latest_inventory: inventory }),
+    });
+
+    expect(model.overallStatus).toBe('degraded');
+  });
+
+  it('keeps unknown backend statuses safely pending and does not mutate source arrays', () => {
+    const runs = [successRun, { ...queuedRun, id: 'run-unknown', status: 'mystery', created_at: '2026-07-09T08:10:00Z' }];
+    const tokens = [{ ...activeToken }];
+    const runOrder = runs.map((run) => run.id).join(',');
+    const tokenOrder = tokens.map((token) => token.id).join(',');
+    const model = deriveNodeOnboardingModel({ node, enrollmentTokens: tokens, bootstrapRuns: runs });
+
+    expect(stepStatus(model, 'bootstrap')).toBe('pending');
+    expect(stepEvidence(model, 'bootstrap')).toBe('bootstrap_unknown_status');
+    expect(runs.map((run) => run.id).join(',')).toBe(runOrder);
+    expect(tokens.map((token) => token.id).join(',')).toBe(tokenOrder);
+    expect(model.recommendedAction).toBe('none');
+  });
+
+  it('does not invent enrollment token issue when bootstrap can create backend-managed enrollment material', () => {
+    const model = deriveNodeOnboardingModel({
+      node,
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      bootstrapRuns: [],
+    });
+
+    expect(stepStatus(model, 'credential')).toBe('current');
+    expect(model.recommendedAction).toBe('start_manual_bundle');
+  });
+
+  it('recommends enrollment token reissue only for source-defined recovery states', () => {
+    const authFailure = deriveNodeOnboardingModel({
+      node,
+      diagnostics: diagnostics({ communication_state: 'auth_failure' }),
+      enrollmentTokens: [activeToken],
+    });
+    expect(authFailure.recommendedAction).toBe('reissue_enrollment_token');
+
+    const pendingReenroll = deriveNodeOnboardingModel({
+      node,
+      diagnostics: diagnostics({ agent: { node_id: 'node-1', status: 'missing', token_rotation_status: 'pending_reenroll' } }),
+      enrollmentTokens: [activeToken],
+    });
+    expect(pendingReenroll.recommendedAction).toBe('reissue_enrollment_token');
+
+    const revokedCredential = deriveNodeOnboardingModel({
+      node,
+      diagnostics: diagnostics({ agent: { node_id: 'node-1', status: 'revoked', token_rotation_status: 'revoked' } }),
+      enrollmentTokens: [activeToken],
+    });
+    expect(revokedCredential.recommendedAction).toBe('reissue_enrollment_token');
+  });
+
+  it('does not recommend reissue for missing heartbeat, missing inventory or queued bootstrap alone', () => {
+    const missingHeartbeat = deriveNodeOnboardingModel({
+      node,
+      diagnostics: registeredDiagnostics(),
+    });
+    expect(missingHeartbeat.recommendedAction).toBe('none');
+
+    const missingInventory = deriveNodeOnboardingModel({
+      node: { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' },
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'job_running' }),
+    });
+    expect(missingInventory.recommendedAction).toBe('none');
+
+    const queued = deriveNodeOnboardingModel({ node, enrollmentTokens: [activeToken], bootstrapRuns: [queuedRun] });
+    expect(queued.recommendedAction).toBe('none');
+
+    const running = deriveNodeOnboardingModel({ node, enrollmentTokens: [activeToken], bootstrapRuns: [runningRun] });
+    expect(running.recommendedAction).toBe('none');
+  });
+
+  it('recommends inventory synchronization only for registered nodes with online heartbeat and safe communication', () => {
+    const eligibleNode = { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' };
+    const eligible = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'healthy' }),
+    });
+    expect(eligible.recommendedAction).toBe('sync_inventory');
+    expect(eligible.inventorySyncEligible).toBe(true);
+    expect(eligible.inventoryJobState).toBe('not_requested');
+    expect(stepStatus(eligible, 'inventory')).toBe('current');
+
+    const cases = [
+      ['missing registration', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: diagnostics({ heartbeat_state: 'online', communication_state: 'healthy' }) })],
+      ['missing heartbeat', deriveNodeOnboardingModel({ node, diagnostics: registeredDiagnostics({ communication_state: 'healthy' }) })],
+      ['offline heartbeat', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'offline', communication_state: 'channel_offline' }) })],
+      ['degraded heartbeat', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'degraded', communication_state: 'degraded' }) })],
+      ['auth failure', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'auth_failure' }) })],
+      ['heartbeat stalled', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'heartbeat_stalled' }) })],
+      ['channel offline', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'channel_offline' }) })],
+      ['unknown communication', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'mystery' }) })],
+      ['retired node', deriveNodeOnboardingModel({ node: { ...eligibleNode, status: 'retired' }, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'healthy' }) })],
+      ['active bootstrap', deriveNodeOnboardingModel({ node: eligibleNode, diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'healthy' }), bootstrapRuns: [runningRun] })],
+    ] as const;
+    for (const [label, model] of cases) {
+      expect(model.inventorySyncEligible, label).toBe(false);
+      expect(model.recommendedAction, label).not.toBe('sync_inventory');
+    }
+
+    const revoked = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'auth_failure',
+        agent: {
+          node_id: 'node-1',
+          status: 'revoked',
+          registered_at: '2026-07-09T08:07:00Z',
+          revoked_at: '2026-07-09T08:08:00Z',
+          token_rotation_status: 'revoked',
+        },
+      }),
+    });
+    expect(revoked.recommendedAction).toBe('reissue_enrollment_token');
+    expect(revoked.inventorySyncEligible).toBe(false);
+
+    const withInventory = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'healthy', latest_inventory: inventory }),
+    });
+    expect(withInventory.inventorySyncEligible).toBe(false);
+    expect(withInventory.recommendedAction).toBe('none');
+  });
+
+  it('derives inventory job states from exact inventory job evidence without completing inventory from acceptance alone', () => {
+    const eligibleNode = { ...node, last_heartbeat_at: '2026-07-09T08:08:00Z' };
+
+    const accepted = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({ heartbeat_state: 'online', communication_state: 'healthy' }),
+      trackedInventoryJobIDs: ['job-inventory'],
+    });
+    expect(accepted.inventoryJobState).toBe('accepted');
+    expect(accepted.inventorySyncInProgress).toBe(true);
+    expect(accepted.inventoryObserved).toBe(false);
+    expect(accepted.recommendedAction).toBe('none');
+
+    const claimed = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'healthy',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_claim_job_id: 'job-inventory',
+          last_job_claim_type: 'node.inventory.sync',
+          last_job_claim_at: '2026-07-09T08:09:00Z',
+        },
+      }),
+    });
+    expect(claimed.inventoryJobState).toBe('running');
+    expect(claimed.recommendedAction).toBe('none');
+
+    const running = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'job_running',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_claim_job_id: 'job-inventory',
+          last_job_claim_type: 'node.inventory',
+          last_job_claim_at: '2026-07-09T08:09:00Z',
+        },
+      }),
+    });
+    expect(running.inventoryJobState).toBe('running');
+    expect(running.overallStatus).toBe('in_progress');
+
+    const stalled = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'job_result_stalled',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_claim_job_id: 'job-inventory',
+          last_job_claim_type: 'node.inventory.sync',
+          last_job_claim_at: '2026-07-09T08:09:00Z',
+        },
+      }),
+    });
+    expect(stalled.inventoryJobState).toBe('stalled');
+    expect(stalled.inventorySyncStalled).toBe(true);
+    expect(stalled.recommendedAction).toBe('none');
+    expect(stepEvidence(stalled, 'inventory')).toBe('inventory_job_result_stalled');
+
+    const failed = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'healthy',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_result_job_id: 'job-inventory',
+          last_job_result_type: 'node.inventory.sync',
+          last_job_result_status: 'failed',
+          last_job_result_at: '2026-07-09T08:10:00Z',
+        },
+      }),
+    });
+    expect(failed.inventoryJobState).toBe('failed');
+    expect(failed.inventorySyncFailed).toBe(true);
+    expect(failed.recommendedAction).toBe('sync_inventory');
+
+    const unrelatedFailed = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'healthy',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_result_job_id: 'job-discovery',
+          last_job_result_type: 'node.discovery.sync',
+          last_job_result_status: 'failed',
+          last_job_result_at: '2026-07-09T08:10:00Z',
+        },
+      }),
+    });
+    expect(unrelatedFailed.inventoryJobState).toBe('not_requested');
+    expect(unrelatedFailed.inventorySyncFailed).toBe(false);
+    expect(unrelatedFailed.recommendedAction).toBe('sync_inventory');
+
+    const succeededWithoutInventory = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'healthy',
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_result_job_id: 'job-inventory',
+          last_job_result_type: 'node.inventory.sync',
+          last_job_result_status: 'succeeded',
+          last_job_result_at: '2026-07-09T08:10:00Z',
+        },
+      }),
+      trackedInventoryJobIDs: ['job-inventory'],
+    });
+    expect(succeededWithoutInventory.inventoryJobState).toBe('unknown');
+    expect(succeededWithoutInventory.inventoryObserved).toBe(false);
+    expect(succeededWithoutInventory.overallStatus).toBe('action_required');
+
+    const superseded = deriveNodeOnboardingModel({
+      node: eligibleNode,
+      diagnostics: registeredDiagnostics({
+        heartbeat_state: 'online',
+        communication_state: 'inventory_ok',
+        latest_inventory: inventory,
+        agent: {
+          node_id: 'node-1',
+          status: 'active',
+          registered_at: '2026-07-09T08:07:00Z',
+          token_rotation_status: 'active',
+          last_job_result_job_id: 'job-inventory',
+          last_job_result_type: 'node.inventory.sync',
+          last_job_result_status: 'failed',
+          last_job_result_at: '2026-07-09T08:08:30Z',
+          last_inventory_sync_at: '2026-07-09T08:09:00Z',
+        },
+      }),
+      inventory,
+      trackedInventoryJobIDs: ['job-inventory'],
+    });
+    expect(superseded.inventoryJobState).toBe('superseded');
+    expect(superseded.inventoryObserved).toBe(true);
+    expect(superseded.overallStatus).toBe('ready');
+  });
+
+  it('recommends guided bootstrap from backend-supported readiness without requiring a browser-visible token', () => {
+    const missingCredential = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'manual_bundle' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      accessMethods: [],
+    });
+    expect(missingCredential.recommendedAction).toBe('start_manual_bundle');
+    expect(missingCredential.recommendedBootstrapMode).toBe('manual_bundle');
+
+    const ssh = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'ssh_bootstrap' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      accessMethods: [sshMethod],
+    });
+    expect(ssh.recommendedAction).toBe('start_ssh_bootstrap');
+    expect(ssh.recommendedBootstrapMode).toBe('ssh_bootstrap');
+
+    const manual = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'manual_bundle' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      accessMethods: [],
+    });
+    expect(manual.recommendedAction).toBe('start_manual_bundle');
+    expect(manual.recommendedBootstrapMode).toBe('manual_bundle');
+  });
+
+  it('requires explicit bootstrap selection for agent-managed nodes with multiple modes', () => {
+    const model = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'agent_managed' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      accessMethods: [sshMethod],
+    });
+
+    expect(model.recommendedAction).toBe('none');
+    expect(model.bootstrapSelectionRequired).toBe(true);
+    expect(model.availableBootstrapModes.filter((mode) => mode.available).map((mode) => mode.mode)).toEqual(['ssh_bootstrap', 'manual_bundle']);
+  });
+
+  it('does not recommend duplicate bootstrap after active or successful runs', () => {
+    const active = deriveNodeOnboardingModel({ node, enrollmentTokens: [], bootstrapRuns: [queuedRun], accessMethods: [sshMethod] });
+    expect(active.recommendedAction).toBe('none');
+    expect(active.latestBootstrapStatus).toBe('queued');
+
+    const succeeded = deriveNodeOnboardingModel({ node, enrollmentTokens: [], bootstrapRuns: [successRun], accessMethods: [sshMethod] });
+    expect(succeeded.recommendedAction).toBe('none');
+    expect(stepStatus(succeeded, 'registration')).toBe('current');
+  });
+
+  it('fails closed and does not recommend bootstrap for unknown run state', () => {
+    const model = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'ssh_bootstrap' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      bootstrapRuns: [{ ...queuedRun, id: 'run-unknown', status: 'mystery', created_at: '2026-07-09T08:10:00Z' }],
+      accessMethods: [sshMethod],
+    });
+
+    expect(stepStatus(model, 'bootstrap')).toBe('pending');
+    expect(stepEvidence(model, 'bootstrap')).toBe('bootstrap_unknown_status');
+    expect(model.recommendedAction).toBe('none');
+    expect(model.bootstrapSelectionRequired).toBe(false);
+  });
+
+  it('allows explicit bootstrap retry after latest failed run', () => {
+    const model = deriveNodeOnboardingModel({
+      node: { ...node, execution_mode: 'ssh_bootstrap' },
+      diagnostics: diagnostics(),
+      enrollmentTokens: [],
+      bootstrapRuns: [successRun, failedRun],
+      accessMethods: [sshMethod],
+    });
+
+    expect(stepStatus(model, 'bootstrap')).toBe('warning');
+    expect(model.recommendedAction).toBe('start_ssh_bootstrap');
+    expect(model.latestBootstrapRunID).toBe('run-failed');
+  });
+});

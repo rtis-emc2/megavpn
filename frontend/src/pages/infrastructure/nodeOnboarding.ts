@@ -1,0 +1,580 @@
+import type {
+  EnrollmentToken,
+  NodeAccessMethod,
+  NodeBootstrapRun,
+  NodeDetail,
+  NodeDiagnostics,
+  NodeInventorySnapshot,
+} from '../../shared/api/types';
+import {
+  deriveNodeBootstrapReadiness,
+  type NodeBootstrapMode,
+  type NodeBootstrapModeAvailability,
+} from './nodeBootstrapReadiness';
+
+export type NodeOnboardingTargetTab = 'overview' | 'runtime' | 'inventory' | 'diagnostics' | 'bootstrap' | 'security' | 'jobs';
+
+export type NodeOnboardingStepKey =
+  | 'profile'
+  | 'credential'
+  | 'bootstrap'
+  | 'registration'
+  | 'heartbeat'
+  | 'inventory';
+
+export type NodeOnboardingStepStatus =
+  | 'complete'
+  | 'current'
+  | 'pending'
+  | 'warning'
+  | 'blocked';
+
+export type NodeOnboardingOverallStatus =
+  | 'not_started'
+  | 'in_progress'
+  | 'action_required'
+  | 'ready'
+  | 'degraded'
+  | 'blocked';
+
+export type NodeOnboardingActionKey =
+  | 'issue_enrollment_token'
+  | 'reissue_enrollment_token'
+  | 'start_ssh_bootstrap'
+  | 'start_manual_bundle'
+  | 'sync_inventory'
+  | 'none';
+
+export type NodeInventoryJobState =
+  | 'not_requested'
+  | 'accepted'
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'stalled'
+  | 'superseded'
+  | 'unknown';
+
+export type NodeOnboardingEvidence = {
+  key: string;
+  value: string;
+};
+
+export type NodeOnboardingStep = {
+  key: NodeOnboardingStepKey;
+  status: NodeOnboardingStepStatus;
+  evidenceCode: string;
+  evidence: NodeOnboardingEvidence[];
+  timestamp?: string;
+  targetTab?: NodeOnboardingTargetTab;
+};
+
+export type NodeOnboardingModel = {
+  overallStatus: NodeOnboardingOverallStatus;
+  currentStep: NodeOnboardingStepKey;
+  steps: NodeOnboardingStep[];
+  communicationState: string;
+  heartbeatState: string;
+  tokenRotationStatus: string;
+  targetTab?: NodeOnboardingTargetTab;
+  recommendedAction: NodeOnboardingActionKey;
+  bootstrapSelectionRequired: boolean;
+  availableBootstrapModes: NodeBootstrapModeAvailability[];
+  recommendedBootstrapMode?: NodeBootstrapMode;
+  latestBootstrapRunID?: string;
+  latestBootstrapStatus?: string;
+  inventorySyncEligible: boolean;
+  inventorySyncInProgress: boolean;
+  inventorySyncFailed: boolean;
+  inventorySyncStalled: boolean;
+  inventoryJobState: NodeInventoryJobState;
+  latestInventoryJobID?: string;
+  latestInventoryJobStatus?: string;
+  latestInventoryJobAt?: string;
+  registered: boolean;
+  heartbeatObserved: boolean;
+  inventoryObserved: boolean;
+};
+
+export type NodeOnboardingInput = {
+  node?: NodeDetail;
+  diagnostics?: NodeDiagnostics;
+  enrollmentTokens?: EnrollmentToken[];
+  bootstrapRuns?: NodeBootstrapRun[];
+  inventory?: NodeInventorySnapshot;
+  accessMethods?: NodeAccessMethod[];
+  trackedInventoryJobIDs?: string[];
+};
+
+const terminalCommunicationStates = new Set(['inventory_ok', 'discovery_ok', 'healthy']);
+const inventoryActionCommunicationStates = new Set(['discovery_ok', 'healthy']);
+const strongActionCommunicationStates = new Set(['auth_failure', 'heartbeat_stalled', 'channel_offline', 'job_result_stalled']);
+const unhealthyCommunicationStates = new Set(['degraded', 'auth_failure', 'heartbeat_stalled', 'channel_offline', 'job_result_stalled']);
+const inProgressBootstrapStatuses = new Set(['queued', 'running', 'retrying', 'pending']);
+const successfulBootstrapStatuses = new Set(['succeeded', 'success', 'completed']);
+const failedBootstrapStatuses = new Set(['failed', 'cancelled', 'canceled']);
+const inventoryJobTypes = new Set(['node.inventory', 'node.inventory.sync']);
+const failedJobResultStatuses = new Set(['failed', 'error', 'cancelled', 'canceled']);
+const successfulJobResultStatuses = new Set(['succeeded', 'success', 'completed']);
+
+function normalize(value?: string | null): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function present(value?: string | null): string | undefined {
+  const trimmed = String(value || '').trim();
+  return trimmed || undefined;
+}
+
+function timestamp(value?: string | null): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function latestByCreatedAt<T extends { created_at?: string | null }>(items: T[]): T | undefined {
+  return [...items].sort((left, right) => timestamp(right.created_at) - timestamp(left.created_at))[0];
+}
+
+function latestBootstrapByStatus(runs: NodeBootstrapRun[], statuses: Set<string>): NodeBootstrapRun | undefined {
+  return latestByCreatedAt(runs.filter((run) => statuses.has(normalize(run.status))));
+}
+
+function isRetiredNode(node?: NodeDetail): boolean {
+  const status = normalize(node?.status);
+  return status === 'retired' || status === 'deleted';
+}
+
+function isMaintenanceNode(node?: NodeDetail): boolean {
+  return normalize(node?.status) === 'maintenance';
+}
+
+function safeActiveEnrollmentToken(diagnostics?: NodeDiagnostics, tokens: EnrollmentToken[] = []): EnrollmentToken | undefined {
+  const diagnosticToken = diagnostics?.active_enrollment_token;
+  if (diagnosticToken && normalize(diagnosticToken.status) === 'active') {
+    return diagnosticToken;
+  }
+  return tokens.find((token) => normalize(token.status) === 'active');
+}
+
+function latestBootstrapRun(diagnostics?: NodeDiagnostics, runs: NodeBootstrapRun[] = []): NodeBootstrapRun | undefined {
+  return diagnostics?.last_bootstrap || latestByCreatedAt(runs);
+}
+
+function latestSuccessfulBootstrapRun(diagnostics?: NodeDiagnostics, runs: NodeBootstrapRun[] = []): NodeBootstrapRun | undefined {
+  return diagnostics?.last_successful_bootstrap || latestBootstrapByStatus(runs, successfulBootstrapStatuses);
+}
+
+function latestFailedBootstrapRun(diagnostics?: NodeDiagnostics, runs: NodeBootstrapRun[] = []): NodeBootstrapRun | undefined {
+  return diagnostics?.last_failed_bootstrap || latestBootstrapByStatus(runs, failedBootstrapStatuses);
+}
+
+function bootstrapMode(run?: NodeBootstrapRun): string | undefined {
+  return present(run?.bootstrap_mode);
+}
+
+function bootstrapTimestamp(run?: NodeBootstrapRun): string | undefined {
+  return run?.finished_at || run?.started_at || run?.created_at || undefined;
+}
+
+function safeTokenEvidence(token?: EnrollmentToken): NodeOnboardingEvidence[] {
+  if (!token) return [];
+  return [
+    { key: 'token_status', value: token.status || 'unknown' },
+    { key: 'token_hint', value: token.token_hint || 'n/a' },
+    { key: 'token_expires_at', value: token.expires_at || 'n/a' },
+    { key: 'token_used_at', value: token.used_at || 'n/a' },
+  ];
+}
+
+function inventoryJobFailed(diagnostics?: NodeDiagnostics): boolean {
+  const agent = diagnostics?.agent;
+  return failedJobResultStatuses.has(normalize(agent?.last_job_result_status)) && inventoryJobTypes.has(normalize(agent?.last_job_result_type));
+}
+
+function isInventoryJobType(value?: string | null): boolean {
+  return inventoryJobTypes.has(normalize(value));
+}
+
+function latestInventoryEvidenceAt(diagnostics?: NodeDiagnostics, inventory?: NodeInventorySnapshot): string | undefined {
+  const candidates = [
+    diagnostics?.agent?.last_inventory_sync_at,
+    diagnostics?.latest_inventory?.created_at,
+    inventory?.created_at,
+  ].filter(Boolean) as string[];
+  return candidates.sort((left, right) => timestamp(right) - timestamp(left))[0];
+}
+
+type InventoryJobEvidence = {
+  state: NodeInventoryJobState;
+  jobID?: string;
+  status?: string;
+  at?: string;
+};
+
+function deriveInventoryJobEvidence(
+  diagnostics?: NodeDiagnostics,
+  inventory?: NodeInventorySnapshot,
+  trackedJobIDs: string[] = [],
+): InventoryJobEvidence {
+  const agent = diagnostics?.agent;
+  const communicationState = normalize(diagnostics?.communication_state);
+  const trackedJobID = trackedJobIDs.find(Boolean);
+  const claimID = present(agent?.last_job_claim_job_id);
+  const claimType = normalize(agent?.last_job_claim_type);
+  const claimAt = present(agent?.last_job_claim_at);
+  const resultID = present(agent?.last_job_result_job_id);
+  const resultType = normalize(agent?.last_job_result_type);
+  const resultStatus = normalize(agent?.last_job_result_status);
+  const resultAt = present(agent?.last_job_result_at);
+  const inventoryAt = latestInventoryEvidenceAt(diagnostics, inventory);
+  const resultTime = timestamp(resultAt);
+  const claimTime = timestamp(claimAt);
+  const claimIsInventory = isInventoryJobType(claimType);
+  const resultIsInventory = isInventoryJobType(resultType);
+  const claimMatchesTracked = claimIsInventory && (!trackedJobID || !claimID || claimID === trackedJobID);
+  const resultMatchesTracked = resultIsInventory && (!trackedJobID || !resultID || resultID === trackedJobID);
+
+  if (inventoryAt) {
+    return {
+      state: trackedJobID ? 'superseded' : 'succeeded',
+      jobID: trackedJobID || resultID || claimID,
+      status: 'synchronized',
+      at: inventoryAt,
+    };
+  }
+  if (communicationState === 'job_result_stalled' && claimMatchesTracked) {
+    return { state: 'stalled', jobID: claimID || trackedJobID, status: 'job_result_stalled', at: claimAt };
+  }
+  if (communicationState === 'job_running' && claimIsInventory) {
+    return { state: 'running', jobID: claimID || trackedJobID, status: 'running', at: claimAt };
+  }
+  if (claimMatchesTracked && claimID && (!resultID || resultID !== claimID) && claimTime > resultTime) {
+    return { state: 'running', jobID: claimID, status: 'running', at: claimAt };
+  }
+  if (resultMatchesTracked && failedJobResultStatuses.has(resultStatus)) {
+    return { state: 'failed', jobID: resultID || trackedJobID, status: resultStatus || 'failed', at: resultAt };
+  }
+  if (resultMatchesTracked && successfulJobResultStatuses.has(resultStatus)) {
+    return { state: 'unknown', jobID: resultID || trackedJobID, status: resultStatus || 'succeeded_without_inventory', at: resultAt };
+  }
+  if (trackedJobID) {
+    return { state: 'accepted', jobID: trackedJobID, status: 'accepted' };
+  }
+  if (claimIsInventory && communicationState === 'job_running') {
+    return { state: 'running', jobID: claimID, status: 'running', at: claimAt };
+  }
+  return { state: 'not_requested' };
+}
+
+function step(
+  key: NodeOnboardingStepKey,
+  status: NodeOnboardingStepStatus,
+  evidenceCode: string,
+  evidence: NodeOnboardingEvidence[] = [],
+  timestampValue?: string,
+  targetTab?: NodeOnboardingTargetTab,
+): NodeOnboardingStep {
+  return {
+    key,
+    status,
+    evidenceCode,
+    evidence,
+    timestamp: timestampValue || undefined,
+    targetTab,
+  };
+}
+
+function firstProblemStep(steps: NodeOnboardingStep[]): NodeOnboardingStep {
+  return steps.find((item) => item.status === 'blocked')
+    || steps.find((item) => item.status === 'warning')
+    || steps.find((item) => item.status === 'current')
+    || steps.find((item) => item.status === 'pending')
+    || steps[steps.length - 1];
+}
+
+export function shouldPollNodeOnboarding(model: NodeOnboardingModel): boolean {
+  return model.overallStatus !== 'ready' && model.overallStatus !== 'blocked';
+}
+
+export function deriveNodeOnboardingModel(input: NodeOnboardingInput): NodeOnboardingModel {
+  const node = input.node;
+  const diagnostics = input.diagnostics;
+  const tokens = input.enrollmentTokens || [];
+  const runs = input.bootstrapRuns || [];
+  const inventory = input.inventory;
+  const agent = diagnostics?.agent;
+  const retired = isRetiredNode(node);
+  const communicationState = normalize(diagnostics?.communication_state) || 'unknown';
+  const heartbeatState = normalize(diagnostics?.heartbeat_state) || normalize(node?.agent_status) || 'unknown';
+  const tokenRotationStatus = normalize(agent?.token_rotation_status) || 'missing';
+  const activeToken = safeActiveEnrollmentToken(diagnostics, tokens);
+  const latestRun = latestBootstrapRun(diagnostics, runs);
+  const latestSuccess = latestSuccessfulBootstrapRun(diagnostics, runs);
+  const latestFailed = latestFailedBootstrapRun(diagnostics, runs);
+  const bootstrapReadiness = deriveNodeBootstrapReadiness({
+    node,
+    diagnostics,
+    bootstrapRuns: runs,
+    accessMethods: input.accessMethods,
+  });
+  const latestRunStatus = normalize(latestRun?.status);
+  const latestFailureIsCurrent = Boolean(latestFailed) && (!latestSuccess || timestamp(latestFailed?.created_at) >= timestamp(latestSuccess?.created_at));
+  const latestSuccessIsCurrent = Boolean(latestSuccess) && (!latestRun || timestamp(latestSuccess?.created_at) >= timestamp(latestRun?.created_at));
+  const agentStatus = normalize(agent?.status) || normalize(node?.agent_status) || 'unknown';
+  const agentRevoked = agentStatus === 'revoked' || Boolean(agent?.revoked_at) || tokenRotationStatus === 'revoked';
+  const registered = Boolean(agent?.registered_at) && !agentRevoked;
+  const reissueRequired = !registered && (
+    communicationState === 'auth_failure'
+    || tokenRotationStatus === 'pending_reenroll'
+    || tokenRotationStatus === 'revoked'
+    || agentRevoked
+  );
+  const heartbeatTimestamp = node?.last_heartbeat_at || agent?.last_seen_at || node?.agent_last_seen_at || undefined;
+  const heartbeatObserved = Boolean(heartbeatTimestamp);
+  const inventoryObserved = Boolean(diagnostics?.latest_inventory?.id || inventory?.id || agent?.last_inventory_sync_at);
+  const inventoryJob = deriveInventoryJobEvidence(diagnostics, inventory, input.trackedInventoryJobIDs);
+  const inventorySyncInProgress = inventoryJob.state === 'accepted' || inventoryJob.state === 'queued' || inventoryJob.state === 'running';
+  const inventorySyncFailed = inventoryJob.state === 'failed';
+  const inventorySyncStalled = inventoryJob.state === 'stalled';
+  const inventorySyncUnknown = inventoryJob.state === 'unknown';
+  const authOrCredentialProblem = communicationState === 'auth_failure' || tokenRotationStatus === 'revoked';
+  const bootstrapInProgress = inProgressBootstrapStatuses.has(latestRunStatus);
+  const bootstrapSucceeded = latestSuccessIsCurrent;
+
+  const profileStep = retired
+    ? step('profile', 'blocked', 'profile_retired', [
+      { key: 'node_name', value: node?.name || node?.id || 'n/a' },
+      { key: 'node_status', value: node?.status || 'retired' },
+    ], node?.updated_at, 'overview')
+    : step('profile', node ? (isMaintenanceNode(node) ? 'warning' : 'complete') : 'current', node ? (isMaintenanceNode(node) ? 'profile_maintenance' : 'profile_loaded') : 'profile_missing', [
+      { key: 'node_name', value: node?.name || node?.id || 'n/a' },
+      { key: 'execution_mode', value: node?.execution_mode || 'n/a' },
+    ], node?.updated_at || node?.created_at, 'overview');
+
+  let credentialStep: NodeOnboardingStep;
+  if (retired) {
+    credentialStep = step('credential', 'blocked', 'credential_node_blocked', [], undefined, 'overview');
+  } else if (authOrCredentialProblem) {
+    credentialStep = step('credential', 'warning', communicationState === 'auth_failure' ? 'credential_auth_failure' : 'credential_revoked', safeTokenEvidence(activeToken), agent?.last_auth_failure_at || activeToken?.created_at, communicationState === 'auth_failure' ? 'diagnostics' : 'security');
+  } else if (registered) {
+    credentialStep = step('credential', 'complete', 'credential_registered', [
+      { key: 'agent_status', value: agentStatus },
+      { key: 'token_rotation_status', value: tokenRotationStatus },
+      { key: 'token_hint', value: agent?.token_hint || activeToken?.token_hint || 'n/a' },
+    ], agent?.registered_at, 'runtime');
+  } else if (activeToken) {
+    credentialStep = step('credential', 'complete', 'credential_active_token', safeTokenEvidence(activeToken), activeToken.created_at, 'security');
+  } else {
+    credentialStep = step('credential', 'current', 'credential_waiting_for_token', [], undefined, 'security');
+  }
+
+  let bootstrapStep: NodeOnboardingStep;
+  if (retired) {
+    bootstrapStep = step('bootstrap', 'blocked', 'bootstrap_node_blocked', [], undefined, 'overview');
+  } else if (registered) {
+    bootstrapStep = step('bootstrap', 'complete', 'bootstrap_registered_path', [
+      { key: 'agent_status', value: agentStatus },
+      { key: 'bootstrap_mode', value: bootstrapMode(latestRun) || 'n/a' },
+    ], agent?.registered_at, 'runtime');
+  } else if (bootstrapSucceeded && !latestFailureIsCurrent) {
+    bootstrapStep = step('bootstrap', 'complete', 'bootstrap_successful', [
+      { key: 'bootstrap_mode', value: bootstrapMode(latestSuccess) || 'n/a' },
+      { key: 'run_status', value: latestSuccess?.status || 'succeeded' },
+    ], bootstrapTimestamp(latestSuccess), 'bootstrap');
+  } else if (bootstrapInProgress) {
+    bootstrapStep = step('bootstrap', 'current', latestRunStatus === 'running' ? 'bootstrap_running' : 'bootstrap_queued', [
+      { key: 'bootstrap_mode', value: bootstrapMode(latestRun) || 'n/a' },
+      { key: 'run_status', value: latestRun?.status || 'unknown' },
+    ], bootstrapTimestamp(latestRun), 'bootstrap');
+  } else if (latestFailureIsCurrent) {
+    bootstrapStep = step('bootstrap', 'warning', normalize(latestFailed?.status) === 'cancelled' || normalize(latestFailed?.status) === 'canceled' ? 'bootstrap_cancelled' : 'bootstrap_failed', [
+      { key: 'bootstrap_mode', value: bootstrapMode(latestFailed) || 'n/a' },
+      { key: 'run_status', value: latestFailed?.status || 'failed' },
+    ], bootstrapTimestamp(latestFailed), 'bootstrap');
+  } else if (latestRun && latestRunStatus && !successfulBootstrapStatuses.has(latestRunStatus)) {
+    bootstrapStep = step('bootstrap', 'pending', 'bootstrap_unknown_status', [
+      { key: 'bootstrap_mode', value: bootstrapMode(latestRun) || 'n/a' },
+      { key: 'run_status', value: latestRun.status || 'unknown' },
+    ], bootstrapTimestamp(latestRun), 'bootstrap');
+  } else {
+    bootstrapStep = step('bootstrap', 'pending', 'bootstrap_waiting', [], undefined, 'bootstrap');
+  }
+
+  let registrationStep: NodeOnboardingStep;
+  if (retired) {
+    registrationStep = step('registration', 'blocked', 'registration_node_blocked', [], undefined, 'overview');
+  } else if (agentRevoked || communicationState === 'auth_failure') {
+    registrationStep = step('registration', 'warning', agentRevoked ? 'registration_revoked' : 'registration_auth_failure', [
+      { key: 'agent_status', value: agentStatus },
+      { key: 'token_rotation_status', value: tokenRotationStatus },
+    ], agent?.revoked_at || agent?.last_auth_failure_at || agent?.registered_at, 'diagnostics');
+  } else if (registered) {
+    registrationStep = step('registration', 'complete', 'registration_registered', [
+      { key: 'agent_status', value: agentStatus },
+      { key: 'agent_version', value: agent?.agent_version || node?.agent_version || 'n/a' },
+      { key: 'protocol_version', value: agent?.protocol_version || node?.agent_protocol_version || 'n/a' },
+    ], agent?.registered_at, 'runtime');
+  } else if (activeToken || bootstrapInProgress || bootstrapSucceeded) {
+    registrationStep = step('registration', 'current', 'registration_waiting', [
+      { key: 'token_rotation_status', value: tokenRotationStatus },
+      { key: 'bootstrap_status', value: latestRun?.status || 'n/a' },
+    ], latestRun?.created_at || activeToken?.created_at, 'runtime');
+  } else {
+    registrationStep = step('registration', 'pending', 'registration_pending', [], undefined, 'runtime');
+  }
+
+  let heartbeatStep: NodeOnboardingStep;
+  if (retired) {
+    heartbeatStep = step('heartbeat', 'blocked', 'heartbeat_node_blocked', [], undefined, 'overview');
+  } else if (registered && heartbeatObserved && heartbeatState === 'online') {
+    heartbeatStep = step('heartbeat', 'complete', 'heartbeat_online', [
+      { key: 'heartbeat_state', value: heartbeatState },
+      { key: 'heartbeat_drift_seconds', value: diagnostics?.heartbeat_drift_seconds == null ? 'n/a' : String(diagnostics.heartbeat_drift_seconds) },
+    ], heartbeatTimestamp, 'runtime');
+  } else if ((heartbeatObserved && (heartbeatState === 'degraded' || heartbeatState === 'offline')) || ['heartbeat_stalled', 'channel_offline', 'auth_failure'].includes(communicationState)) {
+    heartbeatStep = step('heartbeat', 'warning', communicationState === 'heartbeat_stalled' ? 'heartbeat_stalled' : communicationState === 'channel_offline' ? 'heartbeat_channel_offline' : communicationState === 'auth_failure' ? 'heartbeat_auth_failure' : heartbeatState === 'offline' ? 'heartbeat_offline' : 'heartbeat_degraded', [
+      { key: 'heartbeat_state', value: heartbeatState },
+      { key: 'communication_state', value: communicationState },
+      { key: 'heartbeat_drift_seconds', value: diagnostics?.heartbeat_drift_seconds == null ? 'n/a' : String(diagnostics.heartbeat_drift_seconds) },
+    ], heartbeatTimestamp, communicationState === 'auth_failure' || communicationState === 'channel_offline' ? 'diagnostics' : 'runtime');
+  } else if (registered) {
+    heartbeatStep = step('heartbeat', 'current', 'heartbeat_waiting', [
+      { key: 'heartbeat_state', value: heartbeatState },
+    ], agent?.registered_at, 'runtime');
+  } else {
+    heartbeatStep = step('heartbeat', 'pending', 'heartbeat_pending', [], undefined, 'runtime');
+  }
+
+  let inventoryStep: NodeOnboardingStep;
+  if (retired) {
+    inventoryStep = step('inventory', 'blocked', 'inventory_node_blocked', [], undefined, 'overview');
+  } else if (inventoryObserved) {
+    inventoryStep = step('inventory', 'complete', 'inventory_synchronized', [
+      { key: 'inventory_id', value: diagnostics?.latest_inventory?.id || inventory?.id || 'n/a' },
+      { key: 'last_inventory_sync_at', value: agent?.last_inventory_sync_at || diagnostics?.latest_inventory?.created_at || inventory?.created_at || 'n/a' },
+      { key: 'communication_state', value: communicationState },
+    ], agent?.last_inventory_sync_at || diagnostics?.latest_inventory?.created_at || inventory?.created_at, 'inventory');
+  } else if (inventorySyncStalled || inventorySyncFailed || inventorySyncUnknown || communicationState === 'job_result_stalled' || communicationState === 'auth_failure' || communicationState === 'channel_offline' || inventoryJobFailed(diagnostics)) {
+    inventoryStep = step('inventory', 'warning', inventorySyncUnknown ? 'inventory_job_unknown' : communicationState === 'job_result_stalled' || inventorySyncStalled ? 'inventory_job_result_stalled' : communicationState === 'auth_failure' ? 'inventory_auth_failure' : communicationState === 'channel_offline' ? 'inventory_channel_offline' : 'inventory_job_failed', [
+      { key: 'communication_state', value: communicationState },
+      { key: 'inventory_job_status', value: inventoryJob.status || 'n/a' },
+      { key: 'inventory_job_id', value: inventoryJob.jobID || 'n/a' },
+      { key: 'last_inventory_sync_at', value: agent?.last_inventory_sync_at || 'n/a' },
+    ], inventoryJob.at || agent?.last_job_result_at || agent?.last_inventory_sync_at, 'diagnostics');
+  } else if (inventorySyncInProgress) {
+    inventoryStep = step('inventory', 'current', inventoryJob.state === 'running' ? 'inventory_job_running' : inventoryJob.state === 'queued' ? 'inventory_job_queued' : 'inventory_job_accepted', [
+      { key: 'communication_state', value: communicationState },
+      { key: 'inventory_job_status', value: inventoryJob.status || inventoryJob.state },
+      { key: 'inventory_job_id', value: inventoryJob.jobID || 'n/a' },
+    ], inventoryJob.at || heartbeatTimestamp, 'jobs');
+  } else if (registered && heartbeatObserved) {
+    inventoryStep = step('inventory', 'current', 'inventory_waiting', [
+      { key: 'communication_state', value: communicationState },
+      { key: 'heartbeat_state', value: heartbeatState },
+    ], heartbeatTimestamp, 'inventory');
+  } else {
+    inventoryStep = step('inventory', 'pending', 'inventory_pending', [], undefined, 'inventory');
+  }
+
+  const steps = [profileStep, credentialStep, bootstrapStep, registrationStep, heartbeatStep, inventoryStep];
+  const problem = firstProblemStep(steps);
+  const hasBootstrapRun = Boolean(latestRun);
+  const hasFailedBootstrapAction = latestFailureIsCurrent && !registered;
+  const nonInventoryJobRunning = communicationState === 'job_running' && Boolean(agent?.last_job_claim_type) && !isInventoryJobType(agent?.last_job_claim_type);
+  const heartbeatHealthyForInventory = heartbeatState === 'online';
+  const inventorySyncEligible = Boolean(node)
+    && !retired
+    && registered
+    && heartbeatObserved
+    && heartbeatHealthyForInventory
+    && !inventoryObserved
+    && !inventorySyncInProgress
+    && !inventorySyncStalled
+    && !inventorySyncUnknown
+    && !agentRevoked
+    && !reissueRequired
+    && !bootstrapInProgress
+    && !bootstrapReadiness.hasUnknownBootstrap
+    && inventoryActionCommunicationStates.has(communicationState)
+    && !strongActionCommunicationStates.has(communicationState)
+    && !nonInventoryJobRunning;
+  let overallStatus: NodeOnboardingOverallStatus;
+
+  if (retired) {
+    overallStatus = 'blocked';
+  } else if (registered && heartbeatObserved && inventoryObserved && terminalCommunicationStates.has(communicationState)) {
+    overallStatus = 'ready';
+  } else if (strongActionCommunicationStates.has(communicationState) || agentRevoked || hasFailedBootstrapAction || inventorySyncFailed || inventorySyncUnknown) {
+    overallStatus = 'action_required';
+  } else if (registered && heartbeatObserved && inventoryObserved && (unhealthyCommunicationStates.has(communicationState) || heartbeatState === 'degraded' || heartbeatState === 'offline')) {
+    overallStatus = 'degraded';
+  } else if (!activeToken && !hasBootstrapRun && !agent?.registered_at) {
+    overallStatus = 'not_started';
+  } else {
+    overallStatus = 'in_progress';
+  }
+
+  const targetTab = overallStatus === 'ready'
+    ? 'runtime'
+    : strongActionCommunicationStates.has(communicationState)
+      ? 'diagnostics'
+      : problem.targetTab;
+  const bootstrapModeAction = bootstrapReadiness.defaultMode === 'ssh_bootstrap'
+    ? 'start_ssh_bootstrap'
+    : bootstrapReadiness.defaultMode === 'manual_bundle'
+      ? 'start_manual_bundle'
+      : 'none';
+  const bootstrapModeAvailable = bootstrapReadiness.modes.some((mode) => mode.available);
+  const bootstrapCanStart = Boolean(node)
+    && !bootstrapInProgress
+    && !bootstrapReadiness.hasUnknownBootstrap
+    && !registered
+    && (bootstrapStep.status === 'pending' || bootstrapStep.status === 'warning')
+    && bootstrapModeAction !== 'none';
+  const bootstrapSelectionCanStart = Boolean(node)
+    && !bootstrapInProgress
+    && !bootstrapReadiness.hasUnknownBootstrap
+    && !registered
+    && (bootstrapStep.status === 'pending' || bootstrapStep.status === 'warning')
+    && bootstrapReadiness.selectionRequired;
+  const recommendedAction: NodeOnboardingActionKey = retired
+    ? 'none'
+    : reissueRequired || (credentialStep.status === 'warning' && (authOrCredentialProblem || agentRevoked))
+      ? 'reissue_enrollment_token'
+      : bootstrapCanStart
+          ? bootstrapModeAction
+          : node && !registered && !activeToken && !bootstrapModeAvailable && !bootstrapInProgress && !bootstrapReadiness.hasUnknownBootstrap && !strongActionCommunicationStates.has(communicationState) && (credentialStep.status === 'current' || credentialStep.status === 'pending')
+            ? 'issue_enrollment_token'
+            : inventorySyncEligible
+              ? 'sync_inventory'
+              : 'none';
+
+  return {
+    overallStatus,
+    currentStep: problem.key,
+    steps,
+    communicationState,
+    heartbeatState,
+    tokenRotationStatus,
+    targetTab,
+    recommendedAction,
+    bootstrapSelectionRequired: !retired && bootstrapSelectionCanStart,
+    availableBootstrapModes: bootstrapReadiness.modes,
+    recommendedBootstrapMode: bootstrapReadiness.defaultMode,
+    latestBootstrapRunID: latestRun?.id,
+    latestBootstrapStatus: latestRun?.status,
+    inventorySyncEligible,
+    inventorySyncInProgress,
+    inventorySyncFailed,
+    inventorySyncStalled,
+    inventoryJobState: inventoryJob.state,
+    latestInventoryJobID: inventoryJob.jobID,
+    latestInventoryJobStatus: inventoryJob.status,
+    latestInventoryJobAt: inventoryJob.at,
+    registered,
+    heartbeatObserved,
+    inventoryObserved,
+  };
+}

@@ -1,0 +1,719 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/netip"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+type firewallRuleSpec struct {
+	Direction string
+	Action    string
+	Protocol  string
+	Port      int
+	Source    string
+	Interface string
+	Comment   string
+}
+
+type routeSpec struct {
+	Destination string
+	Via         string
+	Dev         string
+	Source      string
+	Table       string
+	Metric      int
+}
+
+type natRuleSpec struct {
+	Type         string
+	Family       string
+	Source       string
+	OutInterface string
+	Comment      string
+}
+
+func applyNetworkPolicy(ctx context.Context, payload instanceJobPayload) (map[string]any, error) {
+	script, counts, hasPolicy, err := renderNetworkPolicyScript(payload)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPolicy {
+		return map[string]any{"applied": false}, nil
+	}
+
+	slug := slugifyLocal(first(payload.Slug, payload.InstanceID, payload.Name, "instance"))
+	scriptPath := filepath.Join("/usr/local/lib/megavpn/netpolicy", slug+".sh")
+	unitName := "megavpn-netpolicy-" + slug + ".service"
+	unitPath := filepath.Join("/etc/systemd/system", unitName)
+	if !isSafeNetworkPolicyManagedPath(scriptPath) || !isSafeNetworkPolicyManagedPath(unitPath) || !isSafeNetworkPolicyUnit(unitName) {
+		return nil, fmt.Errorf("network policy managed path is not allowed")
+	}
+	if err := writeManagedFile(managedFileSpec{Path: scriptPath, Content: script, Mode: "0700"}); err != nil {
+		return nil, err
+	}
+	if err := writeManagedFile(managedFileSpec{Path: unitPath, Content: renderNetworkPolicyUnit(unitName, scriptPath, payload), Mode: "0644"}); err != nil {
+		return nil, err
+	}
+	reloadResult, err := runSystemdDaemonReload(ctx)
+	if err != nil {
+		return map[string]any{
+			"applied":        false,
+			"unit":           unitName,
+			"unit_path":      unitPath,
+			"script_path":    scriptPath,
+			"sysctl_count":   counts["sysctl"],
+			"firewall_count": counts["firewall"],
+			"nat_count":      counts["nat"],
+			"route_count":    counts["routes"],
+			"systemd_reload": reloadResult,
+			"error":          err.Error(),
+		}, err
+	}
+	code, out := runInstallCommand(ctx, "systemctl", "enable", "--now", unitName)
+	result := map[string]any{
+		"applied":        code == 0,
+		"unit":           unitName,
+		"unit_path":      unitPath,
+		"script_path":    scriptPath,
+		"sysctl_count":   counts["sysctl"],
+		"firewall_count": counts["firewall"],
+		"nat_count":      counts["nat"],
+		"route_count":    counts["routes"],
+		"output":         truncate(out, 2000),
+		"systemd_reload": reloadResult,
+	}
+	if code != 0 {
+		result["error"] = "network policy apply failed"
+		return result, fmt.Errorf("network policy apply failed: %s", truncate(out, 2000))
+	}
+	return result, nil
+}
+
+func cleanupNetworkPolicy(ctx context.Context, payload instanceJobPayload) map[string]any {
+	slug := slugifyLocal(first(payload.Slug, payload.InstanceID, payload.Name, "instance"))
+	scriptPath := filepath.Join("/usr/local/lib/megavpn/netpolicy", slug+".sh")
+	unitName := "megavpn-netpolicy-" + slug + ".service"
+	unitPath := filepath.Join("/etc/systemd/system", unitName)
+	result := map[string]any{
+		"unit":        unitName,
+		"unit_path":   unitPath,
+		"script_path": scriptPath,
+	}
+	if !isSafeNetworkPolicyManagedPath(scriptPath) || !isSafeNetworkPolicyManagedPath(unitPath) || !isSafeNetworkPolicyUnit(unitName) {
+		result["error"] = "network policy managed path is not allowed"
+		return result
+	}
+	removedPaths := []string{}
+	skippedItems := []string{}
+	warnings := []string{}
+
+	if code, out := runInstallCommand(ctx, "systemctl", "disable", "--now", unitName); code != 0 {
+		if isMissingSystemdUnitOutput(out) || networkPolicyUnitNotFound(unitName) {
+			skippedItems = append(skippedItems, unitName+": unit not found - skip")
+		} else {
+			warnings = append(warnings, "systemd disable warning for "+unitName+": "+firstLine(out))
+		}
+		result["systemd_disable_output"] = truncate(out, 2000)
+	} else {
+		result["systemd_disable_output"] = "disabled"
+	}
+
+	if firewallRules, err := parseFirewallRules(payload.Spec["firewall_rules"]); err != nil {
+		warnings = append(warnings, "firewall cleanup skipped: "+err.Error())
+	} else {
+		removedRules := 0
+		for _, rule := range firewallRules {
+			comment := firewallRuleComment(payload, rule)
+			count, warning := deleteNFTRulesByComment(ctx, rule.Direction, comment)
+			removedRules += count
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
+		}
+		result["removed_firewall_rules"] = removedRules
+	}
+	if natRules, err := parseNATRules(payload.Spec["nat_rules"]); err != nil {
+		warnings = append(warnings, "nat cleanup skipped: "+err.Error())
+	} else {
+		removedRules := 0
+		for _, rule := range natRules {
+			comment := natRuleComment(payload, rule)
+			count, warning := deleteNFTRulesByCommentIn(ctx, rule.Family, "megavpn_nat", "postrouting", comment)
+			removedRules += count
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
+		}
+		result["removed_nat_rules"] = removedRules
+	}
+	if routes, err := parseRoutes(payload.Spec["routes"]); err != nil {
+		warnings = append(warnings, "route cleanup skipped: "+err.Error())
+	} else {
+		removedRoutes := 0
+		for _, route := range routes {
+			code, out := runInstallCommand(ctx, "ip", ipRouteDeleteArgs(route)...)
+			if code == 0 {
+				removedRoutes++
+				continue
+			}
+			if out = strings.ToLower(out); strings.Contains(out, "no such process") || strings.Contains(out, "not found") {
+				continue
+			}
+			warnings = append(warnings, "route cleanup warning for "+route.Destination+": "+firstLine(out))
+		}
+		result["removed_routes"] = removedRoutes
+	}
+
+	for _, path := range []string{unitPath, scriptPath} {
+		removed, err := removeManagedPath(path, false)
+		if err != nil {
+			warnings = append(warnings, path+": "+err.Error())
+			continue
+		}
+		if removed {
+			removedPaths = append(removedPaths, path)
+		} else {
+			skippedItems = append(skippedItems, path+": not found - skip")
+		}
+	}
+	result["removed_paths"] = removedPaths
+	result["skipped_items"] = skippedItems
+	result["warnings"] = warnings
+	if len(warnings) > 0 {
+		result["error"] = strings.Join(warnings, " · ")
+	}
+	return result
+}
+
+func deleteNFTRulesByComment(ctx context.Context, chain, comment string) (int, string) {
+	return deleteNFTRulesByCommentIn(ctx, "inet", "megavpn", chain, comment)
+}
+
+func deleteNFTRulesByCommentIn(ctx context.Context, family, table, chain, comment string) (int, string) {
+	if strings.TrimSpace(comment) == "" {
+		return 0, ""
+	}
+	code, out := runInstallCommand(ctx, "nft", "-a", "list", "chain", family, table, chain)
+	if code != 0 {
+		text := strings.ToLower(out)
+		if strings.Contains(text, "no such file") || strings.Contains(text, "does not exist") || strings.Contains(text, "not found") {
+			return 0, ""
+		}
+		return 0, "nft list warning for " + chain + ": " + firstLine(out)
+	}
+	removed := 0
+	for _, handle := range nftHandlesForComment(out, comment) {
+		code, deleteOut := runInstallCommand(ctx, "nft", "delete", "rule", family, table, chain, "handle", handle)
+		if code != 0 {
+			return removed, "nft delete warning for " + chain + " handle " + handle + ": " + firstLine(deleteOut)
+		}
+		removed++
+	}
+	return removed, ""
+}
+
+func nftHandlesForComment(output, comment string) []string {
+	handles := []string{}
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, comment) {
+			continue
+		}
+		idx := strings.LastIndex(line, " handle ")
+		if idx < 0 {
+			continue
+		}
+		fields := strings.Fields(line[idx+len(" handle "):])
+		if len(fields) == 0 {
+			continue
+		}
+		if _, err := strconv.Atoi(fields[0]); err == nil {
+			handles = append(handles, fields[0])
+		}
+	}
+	return handles
+}
+
+func ipRouteDeleteArgs(route routeSpec) []string {
+	parts := []string{"route", "delete", route.Destination}
+	if route.Via != "" {
+		parts = append(parts, "via", route.Via)
+	}
+	if route.Dev != "" {
+		parts = append(parts, "dev", route.Dev)
+	}
+	if route.Source != "" {
+		parts = append(parts, "src", route.Source)
+	}
+	if route.Metric > 0 {
+		parts = append(parts, "metric", strconv.Itoa(route.Metric))
+	}
+	if route.Table != "" {
+		parts = append(parts, "table", route.Table)
+	}
+	return parts
+}
+
+func networkPolicyUnitNotFound(unit string) bool {
+	unit = strings.TrimSpace(unit)
+	if !isSafeNetworkPolicyUnit(unit) {
+		return false
+	}
+	state := strings.ToLower(strings.TrimSpace(runOutput("systemctl", "show", unit, "-p", "LoadState", "--value")))
+	return state == "" || state == "not-found"
+}
+
+func renderNetworkPolicyUnit(unitName, scriptPath string, payload instanceJobPayload) string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=RTIS MegaVPN network policy for " + first(payload.Name, payload.Slug, payload.InstanceID, unitName),
+		"After=network-online.target",
+		"Wants=network-online.target",
+		"",
+		"[Service]",
+		"Type=oneshot",
+		"ExecStart=" + scriptPath,
+		"RemainAfterExit=yes",
+		"",
+		"[Install]",
+		"WantedBy=multi-user.target",
+		"",
+	}, "\n")
+}
+
+func isSafeNetworkPolicyManagedPath(path string) bool {
+	path = cleanAbsPath(path)
+	if path == "" || hasUnsafePathToken(path) {
+		return false
+	}
+	if strings.HasPrefix(path, "/usr/local/lib/megavpn/netpolicy/") && strings.HasSuffix(path, ".sh") {
+		return true
+	}
+	if strings.HasPrefix(path, "/etc/systemd/system/megavpn-netpolicy-") && strings.HasSuffix(path, ".service") {
+		unit := strings.TrimPrefix(path, "/etc/systemd/system/")
+		return isSafeNetworkPolicyUnit(unit)
+	}
+	return false
+}
+
+func isSafeNetworkPolicyUnit(unit string) bool {
+	unit = strings.TrimSpace(unit)
+	return strings.HasPrefix(unit, "megavpn-netpolicy-") &&
+		strings.HasSuffix(unit, ".service") &&
+		!strings.Contains(unit, "/") &&
+		!strings.Contains(unit, "..") &&
+		!strings.ContainsAny(unit, " \t\r\n;{}")
+}
+
+func renderNetworkPolicyScript(payload instanceJobPayload) (string, map[string]int, bool, error) {
+	sysctlValues, err := parseSysctlSpec(payload.Spec["sysctl"])
+	if err != nil {
+		return "", nil, false, err
+	}
+	firewallRules, err := parseFirewallRules(payload.Spec["firewall_rules"])
+	if err != nil {
+		return "", nil, false, err
+	}
+	routes, err := parseRoutes(payload.Spec["routes"])
+	if err != nil {
+		return "", nil, false, err
+	}
+	natRules, err := parseNATRules(payload.Spec["nat_rules"])
+	if err != nil {
+		return "", nil, false, err
+	}
+	counts := map[string]int{"sysctl": len(sysctlValues), "firewall": len(firewallRules), "nat": len(natRules), "routes": len(routes)}
+	if len(sysctlValues) == 0 && len(firewallRules) == 0 && len(natRules) == 0 && len(routes) == 0 {
+		return "", counts, false, nil
+	}
+
+	lines := []string{
+		"#!/usr/bin/env sh",
+		"set -eu",
+		"",
+		"# Generated by megavpn-agent. Do not edit manually.",
+	}
+	if len(sysctlValues) > 0 {
+		keys := make([]string, 0, len(sysctlValues))
+		for key := range sysctlValues {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		lines = append(lines, "", "# Kernel networking policy")
+		for _, key := range keys {
+			lines = append(lines, "sysctl -w "+shellQuote(key+"="+sysctlValues[key]))
+		}
+	}
+	if len(firewallRules) > 0 {
+		lines = append(lines, "", "# nftables ingress policy")
+		lines = append(lines,
+			"if ! command -v nft >/dev/null 2>&1; then echo 'nft is required for firewall_rules' >&2; exit 1; fi",
+			"nft list table inet megavpn >/dev/null 2>&1 || nft add table inet megavpn",
+		)
+		for _, chain := range requiredFirewallChains(firewallRules) {
+			lines = append(lines, fmt.Sprintf("nft list chain inet megavpn %s >/dev/null 2>&1 || nft add chain inet megavpn %s '{ type filter hook %s priority 0; policy accept; }'", chain, chain, chain))
+		}
+		for _, rule := range firewallRules {
+			comment := firewallRuleComment(payload, rule)
+			expr := nftRuleExpression(rule, comment)
+			lines = append(lines, "if ! nft list chain inet megavpn "+rule.Direction+" | grep -Fq "+shellQuote(comment)+"; then "+expr+"; fi")
+		}
+	}
+	if len(natRules) > 0 {
+		lines = append(lines, "", "# nftables NAT policy")
+		lines = append(lines, "if ! command -v nft >/dev/null 2>&1; then echo 'nft is required for nat_rules' >&2; exit 1; fi")
+		for _, family := range requiredNATFamilies(natRules) {
+			lines = append(lines,
+				"nft list table "+family+" megavpn_nat >/dev/null 2>&1 || nft add table "+family+" megavpn_nat",
+				"nft list chain "+family+" megavpn_nat postrouting >/dev/null 2>&1 || nft add chain "+family+" megavpn_nat postrouting '{ type nat hook postrouting priority srcnat; policy accept; }'",
+			)
+		}
+		for _, family := range requiredNATFamilies(natRules) {
+			lines = append(lines, nftDeleteRulesByCommentPrefixLines(family, "megavpn_nat", "postrouting", natRuleCommentPrefix(payload))...)
+		}
+		for _, rule := range natRules {
+			comment := natRuleComment(payload, rule)
+			expr := nftNATRuleExpression(rule, comment)
+			lines = append(lines, expr)
+		}
+	}
+	if len(routes) > 0 {
+		lines = append(lines, "", "# Kernel route policy")
+		lines = append(lines, "if ! command -v ip >/dev/null 2>&1; then echo 'iproute2 is required for routes' >&2; exit 1; fi")
+		for _, route := range routes {
+			lines = append(lines, ipRouteReplaceCommand(route))
+		}
+	}
+	return strings.Join(lines, "\n") + "\n", counts, true, nil
+}
+
+func parseSysctlSpec(raw any) (map[string]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("spec.sysctl must be an object")
+	}
+	out := map[string]string{}
+	for key, value := range m {
+		key = strings.TrimSpace(key)
+		if !isSafeSysctlKey(key) {
+			return nil, fmt.Errorf("invalid sysctl key %q", key)
+		}
+		text := stringify(value)
+		if text == "" {
+			return nil, fmt.Errorf("sysctl %s value is empty", key)
+		}
+		out[key] = text
+	}
+	return out, nil
+}
+
+func parseFirewallRules(raw any) ([]firewallRuleSpec, error) {
+	items, err := objectList(raw, "spec.firewall_rules")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]firewallRuleSpec, 0, len(items))
+	for idx, item := range items {
+		rule := firewallRuleSpec{
+			Direction: strings.ToLower(first(stringify(item["direction"]), "input")),
+			Action:    strings.ToLower(first(stringify(item["action"]), "allow")),
+			Protocol:  strings.ToLower(first(stringify(item["protocol"]), stringify(item["proto"]))),
+			Port:      intFromAny(item["port"], item["dport"], item["listen_port"]),
+			Source:    stringify(firstAny(item["source"], item["src"])),
+			Interface: stringify(firstAny(item["interface"], item["iifname"], item["dev"])),
+			Comment:   stringify(item["comment"]),
+		}
+		if rule.Direction != "input" && rule.Direction != "forward" {
+			return nil, fmt.Errorf("spec.firewall_rules[%d].direction must be input or forward", idx)
+		}
+		if rule.Action != "allow" && rule.Action != "drop" && rule.Action != "reject" {
+			return nil, fmt.Errorf("spec.firewall_rules[%d].action must be allow, drop or reject", idx)
+		}
+		if rule.Protocol != "tcp" && rule.Protocol != "udp" {
+			return nil, fmt.Errorf("spec.firewall_rules[%d].protocol must be tcp or udp", idx)
+		}
+		if rule.Port <= 0 || rule.Port > 65535 {
+			return nil, fmt.Errorf("spec.firewall_rules[%d].port must be between 1 and 65535", idx)
+		}
+		if rule.Source != "" && !isSafeNetworkToken(rule.Source) {
+			return nil, fmt.Errorf("spec.firewall_rules[%d].source is invalid", idx)
+		}
+		if rule.Interface != "" && !isSafeNetworkToken(rule.Interface) {
+			return nil, fmt.Errorf("spec.firewall_rules[%d].interface is invalid", idx)
+		}
+		out = append(out, rule)
+	}
+	return out, nil
+}
+
+func parseNATRules(raw any) ([]natRuleSpec, error) {
+	items, err := objectList(raw, "spec.nat_rules")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]natRuleSpec, 0, len(items))
+	for idx, item := range items {
+		rule := natRuleSpec{
+			Type:         strings.ToLower(first(stringify(item["type"]), "masquerade")),
+			Family:       strings.ToLower(first(stringify(item["family"]), "ip")),
+			Source:       first(stringify(item["source"]), stringify(item["src"]), stringify(item["cidr"])),
+			OutInterface: stringify(firstAny(item["out_interface"], item["oifname"], item["interface"])),
+			Comment:      stringify(item["comment"]),
+		}
+		if rule.Type != "masquerade" {
+			return nil, fmt.Errorf("spec.nat_rules[%d].type must be masquerade", idx)
+		}
+		if rule.Family != "ip" && rule.Family != "ip6" {
+			return nil, fmt.Errorf("spec.nat_rules[%d].family must be ip or ip6", idx)
+		}
+		prefix, err := netip.ParsePrefix(rule.Source)
+		if err != nil {
+			return nil, fmt.Errorf("spec.nat_rules[%d].source must be a CIDR prefix", idx)
+		}
+		prefix = prefix.Masked()
+		if rule.Family == "ip" && !prefix.Addr().Is4() {
+			return nil, fmt.Errorf("spec.nat_rules[%d].source must be IPv4 for family ip", idx)
+		}
+		if rule.Family == "ip6" && !prefix.Addr().Is6() {
+			return nil, fmt.Errorf("spec.nat_rules[%d].source must be IPv6 for family ip6", idx)
+		}
+		rule.Source = prefix.String()
+		if rule.OutInterface != "" && !isSafeNetworkToken(rule.OutInterface) {
+			return nil, fmt.Errorf("spec.nat_rules[%d].out_interface is invalid", idx)
+		}
+		out = append(out, rule)
+	}
+	return out, nil
+}
+
+func parseRoutes(raw any) ([]routeSpec, error) {
+	items, err := objectList(raw, "spec.routes")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]routeSpec, 0, len(items))
+	for idx, item := range items {
+		route := routeSpec{
+			Destination: first(stringify(item["destination"]), stringify(item["dst"]), stringify(item["cidr"]), stringify(item["to"])),
+			Via:         first(stringify(item["via"]), stringify(item["gateway"])),
+			Dev:         first(stringify(item["dev"]), stringify(item["interface"])),
+			Source:      first(stringify(item["source"]), stringify(item["src"])),
+			Table:       stringify(item["table"]),
+			Metric:      intFromAny(item["metric"]),
+		}
+		if route.Destination == "" {
+			return nil, fmt.Errorf("spec.routes[%d].destination is required", idx)
+		}
+		for _, token := range []string{route.Destination, route.Via, route.Dev, route.Source, route.Table} {
+			if token != "" && !isSafeNetworkToken(token) {
+				return nil, fmt.Errorf("spec.routes[%d] contains invalid token %q", idx, token)
+			}
+		}
+		out = append(out, route)
+	}
+	return out, nil
+}
+
+func objectList(raw any, field string) ([]map[string]any, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array", field)
+	}
+	out := make([]map[string]any, 0, len(list))
+	for idx, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d] must be an object", field, idx)
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func requiredNATFamilies(rules []natRuleSpec) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, rule := range rules {
+		if !seen[rule.Family] {
+			seen[rule.Family] = true
+			out = append(out, rule.Family)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func requiredFirewallChains(rules []firewallRuleSpec) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, rule := range rules {
+		if !seen[rule.Direction] {
+			seen[rule.Direction] = true
+			out = append(out, rule.Direction)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func nftRuleExpression(rule firewallRuleSpec, comment string) string {
+	parts := []string{"nft", "add", "rule", "inet", "megavpn", rule.Direction}
+	if rule.Interface != "" {
+		parts = append(parts, "iifname", "\""+rule.Interface+"\"")
+	}
+	if rule.Source != "" {
+		parts = append(parts, "ip", "saddr", rule.Source)
+	}
+	parts = append(parts, rule.Protocol, "dport", strconv.Itoa(rule.Port), nftVerdict(rule.Action), "comment", nftStringLiteral(comment))
+	return strings.Join(parts, " ")
+}
+
+func nftNATRuleExpression(rule natRuleSpec, comment string) string {
+	parts := []string{"nft", "add", "rule", rule.Family, "megavpn_nat", "postrouting"}
+	if rule.OutInterface != "" {
+		parts = append(parts, "oifname", "\""+rule.OutInterface+"\"")
+	}
+	sourceExpr := "saddr"
+	if rule.Family == "ip6" {
+		parts = append(parts, "ip6", sourceExpr, rule.Source)
+	} else {
+		parts = append(parts, "ip", sourceExpr, rule.Source)
+	}
+	parts = append(parts, "masquerade", "comment", nftStringLiteral(comment))
+	return strings.Join(parts, " ")
+}
+
+func nftDeleteRulesByCommentPrefixLines(family, table, chain, prefix string) []string {
+	return []string{
+		"handles=$(nft -a list chain " + family + " " + table + " " + chain + " 2>/dev/null | awk -v c=" + shellQuote(prefix) + " 'index($0, c) > 0 {print $NF}')",
+		"for handle in $handles; do nft delete rule " + family + " " + table + " " + chain + " handle \"$handle\" >/dev/null 2>&1 || true; done",
+	}
+}
+
+func nftVerdict(action string) string {
+	switch action {
+	case "allow":
+		return "accept"
+	default:
+		return action
+	}
+}
+
+func firewallRuleComment(payload instanceJobPayload, rule firewallRuleSpec) string {
+	base := "megavpn:" + slugifyLocal(first(payload.Slug, payload.InstanceID, payload.Name, "instance"))
+	return base + ":" + rule.Direction + ":" + rule.Protocol + ":" + strconv.Itoa(rule.Port) + ":" + rule.Action
+}
+
+func natRuleComment(payload instanceJobPayload, rule natRuleSpec) string {
+	out := natRuleCommentPrefix(payload) + rule.Type + ":" + strings.ReplaceAll(rule.Source, "/", "_")
+	if rule.OutInterface != "" {
+		out += ":" + rule.OutInterface
+	}
+	return out
+}
+
+func natRuleCommentPrefix(payload instanceJobPayload) string {
+	return "megavpn:" + slugifyLocal(first(payload.Slug, payload.InstanceID, payload.Name, "instance")) + ":nat:"
+}
+
+func ipRouteReplaceCommand(route routeSpec) string {
+	parts := []string{"ip", "route", "replace", shellQuote(route.Destination)}
+	if route.Via != "" {
+		parts = append(parts, "via", shellQuote(route.Via))
+	}
+	if route.Dev != "" {
+		parts = append(parts, "dev", shellQuote(route.Dev))
+	}
+	if route.Source != "" {
+		parts = append(parts, "src", shellQuote(route.Source))
+	}
+	if route.Metric > 0 {
+		parts = append(parts, "metric", strconv.Itoa(route.Metric))
+	}
+	if route.Table != "" {
+		parts = append(parts, "table", shellQuote(route.Table))
+	}
+	return strings.Join(parts, " ")
+}
+
+func intFromAny(values ...any) int {
+	for _, value := range values {
+		switch x := value.(type) {
+		case int:
+			if x != 0 {
+				return x
+			}
+		case int64:
+			if x != 0 {
+				return int(x)
+			}
+		case float64:
+			if x != 0 {
+				return int(x)
+			}
+		case string:
+			if n, err := strconv.Atoi(strings.TrimSpace(x)); err == nil && n != 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+func firstAny(values ...any) any {
+	for _, value := range values {
+		if stringify(value) != "" {
+			return value
+		}
+	}
+	return nil
+}
+
+func isSafeSysctlKey(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isSafeNetworkToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		switch r {
+		case '.', ':', '/', '_', '-', '@':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func nftStringLiteral(value string) string {
+	return shellQuote(strconv.Quote(value))
+}

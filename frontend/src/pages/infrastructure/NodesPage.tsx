@@ -1,0 +1,3127 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { Activity, Boxes, CheckCircle2, Copy, DownloadCloud, FilePenLine, Fingerprint, KeyRound, PackageCheck, PlusCircle, Play, RefreshCw, RotateCcw, Search, ServerCog, ShieldAlert, ShieldCheck, TerminalSquare, Trash2, Wrench } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { APIError } from '../../shared/api/client';
+import { extractEnrollmentTokenSecret } from '../../shared/api/endpoints';
+import { useAuth } from '../../shared/auth/AuthProvider';
+import type {
+  APIRecord,
+  BootstrapRequest,
+  EnrollmentToken,
+  HostKeyScanEntry,
+  HostKeyScanResult,
+  Job,
+  NodeAccessMethod,
+  NodeAgentIdentityRevokeInput,
+  NodeCapability,
+  NodeCapabilityInstallInput,
+  NodeCreateInput,
+  NodeDetail,
+  NodeDiagnostics,
+  NodeDiagnosticsAction,
+  NodeEmergencyCleanupInput,
+  NodeMutationResult,
+  NodeBootstrapBundleRevealResult,
+  NodeBootstrapRun,
+  NodeInventorySnapshot,
+  NodeRebootInput,
+  NodeServiceDiscovery,
+  NodeServiceInstaller,
+  NodeStaleRotationClearInput,
+  NodeStaleRotationPreview,
+} from '../../shared/api/types';
+import { hasPermission } from '../../shared/permissions/permissions';
+import {
+  useAcceptNodeHostKey,
+  useBootstrapNode,
+  useClearNodeStaleRotation,
+  useCreateNode,
+  useCreateEnrollmentToken,
+  useCreateNodeEmergencyCleanupJob,
+  useCreateNodeRebootJob,
+  useCreateNodeSSHAccessMethod,
+  useDiscoverNodeServices,
+  useForceRetireNode,
+  useImportAllNodeServiceDiscoveries,
+  useImportNodeServiceDiscovery,
+  useInstallNodeCapability,
+  useLaunchNodeSshSession,
+  useNodeAccessMethods,
+  useNodeBootstrapRuns,
+  useNodeCapabilities,
+  useNodeCapabilityDrift,
+  useNodeCapabilityInstallEvents,
+  useNodeDetail,
+  useNodeDiagnostics,
+  useNodeEnrollmentTokens,
+  useNodeInventory,
+  useNodeServiceDiscoveries,
+  useNodeServiceDiscoverySummary,
+  useNodeServiceInstallers,
+  useNodeStaleRotationPreview,
+  useNodes,
+  useReinstallOrUpdateNodeAgent,
+  useRevealNodeBootstrapBundle,
+  useRetireNode,
+  useRevokeEnrollmentToken,
+  useRevokeNodeAgentIdentity,
+  useRotateEnrollmentToken,
+  useRotateNodeAgentToken,
+  useRunNodeDiagnosticsAction,
+  useScanNodeHostKey,
+  useSetNodeMaintenance,
+  useSyncNodeInventory,
+  useUpdateNode,
+  useDownloadNodeBootstrapBundle,
+  useVerifyNodeCapability,
+} from '../../shared/query/hooks';
+import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, Modal, OneTimeSecretPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
+import { NodeTerminal, type NodeTerminalSession } from './NodeTerminal';
+import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
+import { PageScaffold, QueryBoundary } from '../common';
+import {
+  ENROLLMENT_TOKEN_TTL_DEFAULT_HOURS,
+  ENROLLMENT_TOKEN_TTL_MAX_HOURS,
+  ENROLLMENT_TOKEN_TTL_MIN_HOURS,
+  validateEnrollmentTokenTTL,
+} from './enrollmentTokenControls';
+import { NodeLifecycleControlsPanel } from './NodeLifecycleControlsPanel';
+import { NodeOnboardingTab } from './NodeOnboardingTab';
+import { deriveNodeOnboardingModel, shouldPollNodeOnboarding, type NodeOnboardingTargetTab } from './nodeOnboarding';
+import {
+  defaultSSHAccessMethod,
+  deriveNodeBootstrapReadiness,
+  nodeAccessMethodHasConfiguredSecret,
+  safeSSHAccessMethods,
+  type NodeBootstrapMode,
+  type NodeBootstrapModeAvailability,
+} from './nodeBootstrapReadiness';
+import { NodeAgentIdentityRevokeDialog } from './NodeAgentIdentityRevokeDialog';
+import { NodeRebootDialog } from './NodeRebootDialog';
+import { NodeEmergencyCleanupDialog } from './NodeEmergencyCleanupDialog';
+import { NodeStaleRotationClearDialog } from './NodeStaleRotationClearDialog';
+import {
+  deriveNodeEmergencyCleanupActionState,
+  nodeEmergencyCleanupExpectedConfirmation,
+  validateQueuedNodeEmergencyCleanupResult,
+  type SafeQueuedNodeEmergencyCleanupResult,
+} from './nodeEmergencyCleanup';
+import {
+  deriveNodeStaleRotationClearContext,
+  nodeStaleRotationExpectedConfirmation,
+  validateNodeStaleRotationClearResult,
+  type SafeNodeStaleRotationClearResult,
+} from './nodeStaleRotationClear';
+import { describeStaleRotationReason } from './nodeLifecycleControls';
+
+type NodeTab = 'overview' | 'runtime' | 'onboarding' | 'inventory' | 'capabilities' | 'diagnostics' | 'discovery' | 'bootstrap' | 'security' | 'terminal' | 'lifecycle' | 'jobs';
+
+type ConfirmAction =
+  | { type: 'maintenance-enable'; node: NodeDetail }
+  | { type: 'maintenance-disable'; node: NodeDetail }
+  | { type: 'inventory-sync'; node: NodeDetail; source: 'inventory' | 'onboarding'; heartbeatAt?: string; communicationState?: string; retry?: boolean }
+  | { type: 'capability-install'; node: NodeDetail; input: NodeCapabilityInstallInput }
+  | { type: 'capability-verify'; node: NodeDetail; serviceCode: string }
+  | { type: 'diagnostics'; node: NodeDetail; action: NodeDiagnosticsAction }
+  | { type: 'service-discover'; node: NodeDetail }
+  | { type: 'service-import'; node: NodeDetail; discovery: NodeServiceDiscovery }
+  | { type: 'service-import-all'; node: NodeDetail }
+  | { type: 'enrollment-create'; node: NodeDetail; ttlHours: number; source: 'security' | 'onboarding' }
+  | { type: 'enrollment-rotate'; node: NodeDetail; ttlHours: number; source: 'security' | 'onboarding' }
+  | { type: 'enrollment-revoke'; node: NodeDetail; token: EnrollmentToken }
+  | { type: 'bootstrap'; node: NodeDetail; input: BootstrapRequest; source: 'bootstrap' | 'onboarding'; modeAvailability?: NodeBootstrapModeAvailability; retry?: boolean }
+  | { type: 'agent-reinstall'; node: NodeDetail; input: BootstrapRequest }
+  | { type: 'host-key-pin'; node: NodeDetail; method: NodeAccessMethod; fingerprint: string }
+  | { type: 'agent-token-rotate'; node: NodeDetail }
+  | { type: 'ssh-session-launch'; node: NodeDetail }
+  | { type: 'node-retire'; node: NodeDetail }
+  | { type: 'node-force-retire'; node: NodeDetail; confirmation: string; reason: string };
+
+type OneTimePanelState = {
+  nodeId: string;
+  requestId: string;
+  label: string;
+  value: string;
+  expiresAt?: string;
+};
+
+type BootstrapBundleConfirmAction = {
+  type: 'reveal' | 'download';
+  run: NodeBootstrapRun;
+};
+
+type RevealedBootstrapBundle = {
+  nodeId: string;
+  runId: string;
+  filename: string;
+  agentBootstrapEnv: string;
+  revealedAt: string;
+};
+
+type InitialNodeBootstrapRequest = {
+  bootstrap_mode: NodeBootstrapMode;
+};
+
+type SafeQueuedNodeRebootJob = Pick<Job, 'id' | 'type' | 'status' | 'created_at' | 'node_id' | 'scope_id'>;
+
+type NodeEmergencyCleanupTarget = {
+  nodeId: string;
+  confirmationName: string;
+};
+
+type QueuedNodeEmergencyCleanupResult = SafeQueuedNodeEmergencyCleanupResult & {
+  nodeId: string;
+};
+
+type NodeStaleRotationClearTarget = {
+  nodeId: string;
+  confirmationName: string;
+  fingerprint: string;
+};
+
+type ClearedNodeStaleRotationResult = SafeNodeStaleRotationClearResult & {
+  nodeId: string;
+};
+
+type NodeProfileFormState = {
+  name: string;
+  address: string;
+  kind: NodeCreateInput['kind'];
+  role: NodeCreateInput['role'];
+  locationLabel: string;
+  osFamily: string;
+  osVersion: string;
+  architecture: string;
+  executionMode: NodeCreateInput['execution_mode'];
+};
+
+const defaultNodeProfileForm: NodeProfileFormState = {
+  name: '',
+  address: '',
+  kind: 'remote',
+  role: 'egress',
+  locationLabel: '',
+  osFamily: 'linux',
+  osVersion: 'unknown',
+  architecture: 'amd64',
+  executionMode: 'agent_managed',
+};
+
+function formatAPIError(error: unknown): string {
+  if (!(error instanceof APIError)) {
+    return error instanceof Error ? error.message : 'Request failed';
+  }
+  const prefix = error.status === 403
+    ? 'Permission denied'
+    : error.status === 409
+      ? 'Conflict'
+      : error.status === 422 || error.status === 400
+        ? 'Validation failed'
+        : `HTTP ${error.status}`;
+  return `${prefix}: ${error.message}`;
+}
+
+function bundleErrorKey(error: unknown): string {
+  if (!(error instanceof APIError)) return 'nodes.manualBundleErrors.generic';
+  switch (error.status) {
+    case 400:
+      return 'nodes.manualBundleErrors.badRequest';
+    case 403:
+      return 'nodes.manualBundleErrors.forbidden';
+    case 404:
+      return 'nodes.manualBundleErrors.notAvailable';
+    case 409:
+      return 'nodes.manualBundleErrors.unresolved';
+    case 413:
+      return 'nodes.manualBundleErrors.tooLarge';
+    case 500:
+      return String(error.message || '').toLowerCase().includes('audit')
+        ? 'nodes.manualBundleErrors.auditFailed'
+        : 'nodes.manualBundleErrors.server';
+    case 503:
+      return 'nodes.manualBundleErrors.secretStorageUnavailable';
+    default:
+      return 'nodes.manualBundleErrors.generic';
+  }
+}
+
+function enrollmentTokenActionErrorKey(error: unknown): string {
+  if (error instanceof Error && error.message === 'enrollment token value was not returned') {
+    return 'nodes.onboarding.tokenValueMissing';
+  }
+  if (!(error instanceof APIError)) return 'nodes.onboarding.tokenIssueErrors.generic';
+  switch (error.status) {
+    case 400:
+    case 422:
+      return 'nodes.onboarding.tokenIssueErrors.invalidTTL';
+    case 403:
+      return 'nodes.onboarding.tokenIssueErrors.forbidden';
+    case 404:
+      return 'nodes.onboarding.tokenIssueErrors.nodeMissing';
+    case 409:
+      return 'nodes.onboarding.tokenIssueErrors.conflict';
+    case 429:
+      return 'nodes.onboarding.tokenIssueErrors.rateLimited';
+    case 500:
+      return 'nodes.onboarding.tokenIssueErrors.server';
+    case 503:
+      return 'nodes.onboarding.tokenIssueErrors.unavailable';
+    default:
+      return 'nodes.onboarding.tokenIssueErrors.generic';
+  }
+}
+
+function bootstrapActionErrorKey(error: unknown): string {
+  if (!(error instanceof APIError)) return 'nodes.onboarding.bootstrapErrors.generic';
+  const message = String(error.message || '').toLowerCase();
+  if (message.includes('firewall')) return 'nodes.onboarding.bootstrapErrors.firewall';
+  if (message.includes('ssh')) return 'nodes.onboarding.bootstrapErrors.sshPrerequisite';
+  switch (error.status) {
+    case 400:
+    case 422:
+      return 'nodes.onboarding.bootstrapErrors.invalid';
+    case 403:
+      return 'nodes.onboarding.bootstrapErrors.forbidden';
+    case 404:
+      return 'nodes.onboarding.bootstrapErrors.notFound';
+    case 409:
+      return 'nodes.onboarding.bootstrapErrors.conflict';
+    case 429:
+      return 'nodes.onboarding.bootstrapErrors.rateLimited';
+    case 500:
+      return 'nodes.onboarding.bootstrapErrors.server';
+    case 503:
+      return 'nodes.onboarding.bootstrapErrors.unavailable';
+    default:
+      return 'nodes.onboarding.bootstrapErrors.generic';
+  }
+}
+
+function inventorySyncActionErrorKey(error: unknown): string {
+  if (!(error instanceof APIError)) return 'nodes.onboarding.inventoryErrors.generic';
+  switch (error.status) {
+    case 400:
+    case 422:
+      return 'nodes.onboarding.inventoryErrors.invalid';
+    case 403:
+      return 'nodes.onboarding.inventoryErrors.forbidden';
+    case 404:
+      return 'nodes.onboarding.inventoryErrors.notFound';
+    case 409:
+      return 'nodes.onboarding.inventoryErrors.conflict';
+    case 429:
+      return 'nodes.onboarding.inventoryErrors.rateLimited';
+    case 500:
+      return 'nodes.onboarding.inventoryErrors.server';
+    case 503:
+      return 'nodes.onboarding.inventoryErrors.unavailable';
+    default:
+      return 'nodes.onboarding.inventoryErrors.generic';
+  }
+}
+
+function fieldErrors(error: unknown): Record<string, string> {
+  if (!(error instanceof APIError) || typeof error.payload !== 'object' || error.payload === null) return {};
+  const payload = error.payload as { fields?: unknown };
+  if (!payload.fields || typeof payload.fields !== 'object') return {};
+  return Object.fromEntries(Object.entries(payload.fields as Record<string, unknown>).map(([key, value]) => [key, String(value)]));
+}
+
+function nodeLabel(node?: NodeDetail | null): string {
+  if (!node) return 'n/a';
+  return text(node.name || node.address || node.id);
+}
+
+function endpoint(node: NodeDetail): string {
+  return [node.address, node.location_label].filter(Boolean).join(' / ') || 'n/a';
+}
+
+function safeJSON(value: unknown): string {
+  if (value == null || value === '') return 'n/a';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function runtimePlatform(node: NodeDetail): string {
+  return [node.os_family, node.os_version, node.architecture].filter(Boolean).join(' / ') || 'n/a';
+}
+
+function nodeFormFromNode(node?: NodeDetail | null): NodeProfileFormState {
+  if (!node) return defaultNodeProfileForm;
+  return {
+    name: node.name || '',
+    address: node.address || '',
+    kind: (node.kind || defaultNodeProfileForm.kind) as NodeProfileFormState['kind'],
+    role: (node.role || defaultNodeProfileForm.role) as NodeProfileFormState['role'],
+    locationLabel: node.location_label || '',
+    osFamily: node.os_family || defaultNodeProfileForm.osFamily,
+    osVersion: node.os_version || defaultNodeProfileForm.osVersion,
+    architecture: node.architecture || defaultNodeProfileForm.architecture,
+    executionMode: (node.execution_mode || defaultNodeProfileForm.executionMode) as NodeProfileFormState['executionMode'],
+  };
+}
+
+function nodeInputFromForm(form: NodeProfileFormState): NodeCreateInput {
+  return {
+    name: form.name.trim(),
+    address: form.address.trim(),
+    kind: form.kind,
+    role: form.role,
+    location_label: form.locationLabel.trim(),
+    os_family: form.osFamily.trim(),
+    os_version: form.osVersion.trim(),
+    architecture: form.architecture.trim(),
+    execution_mode: form.executionMode,
+  };
+}
+
+function recordJobsFrom(result: unknown): Job[] {
+  if (!result || typeof result !== 'object') return [];
+  const candidate = result as { id?: unknown; job?: unknown; jobs?: unknown };
+  if (typeof candidate.id === 'string' && 'status' in candidate && 'type' in candidate) {
+    return [candidate as Job];
+  }
+  if (candidate.job && typeof candidate.job === 'object') {
+    return recordJobsFrom(candidate.job);
+  }
+  if (Array.isArray(candidate.jobs)) {
+    return candidate.jobs.flatMap(recordJobsFrom);
+  }
+  return [];
+}
+
+function nodeRebootJobBelongsToNode(job: Job, nodeId: string): boolean {
+  const nodeRef = typeof job.node_id === 'string' ? job.node_id : '';
+  const scopeRef = typeof job.scope_id === 'string' ? job.scope_id : '';
+  return (!nodeRef || nodeRef === nodeId) && (!scopeRef || scopeRef === nodeId);
+}
+
+function safeQueuedNodeRebootJob(job: Job, nodeId: string): SafeQueuedNodeRebootJob | null {
+  if (job.type !== 'node.reboot' || job.status !== 'queued' || !nodeRebootJobBelongsToNode(job, nodeId)) return null;
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    created_at: job.created_at,
+    node_id: job.node_id,
+    scope_id: job.scope_id,
+  };
+}
+
+function compactDiagnostics(diagnostics?: NodeDiagnostics): APIRecord {
+  if (!diagnostics) return {};
+  return {
+    heartbeat_state: diagnostics.heartbeat_state,
+    heartbeat_drift_seconds: diagnostics.heartbeat_drift_seconds,
+    communication_state: diagnostics.communication_state,
+    communication_hint: diagnostics.communication_hint,
+    agent: diagnostics.agent,
+    latest_inventory: diagnostics.latest_inventory ? {
+      id: diagnostics.latest_inventory.id,
+      node_id: diagnostics.latest_inventory.node_id,
+      created_at: diagnostics.latest_inventory.created_at,
+    } : undefined,
+    discovery_summary: diagnostics.discovery_summary,
+    recent_discoveries: diagnostics.recent_discoveries,
+  };
+}
+
+export function NodesPage() {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const auth = useAuth();
+  const canWriteNodes = hasPermission(auth.permissions, auth.roles, 'node.write');
+  const nodes = useNodes();
+  const [selectedId, setSelectedId] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const rows = nodes.data || [];
+  const statuses = Array.from(new Set(rows.map((row) => row.status).filter(Boolean))).sort();
+  const roles = Array.from(new Set(rows.map((row) => row.role).filter(Boolean))).sort();
+  const filteredRows = rows.filter((row) => {
+    const haystack = `${row.id} ${row.name || ''} ${row.role || ''} ${row.status || ''} ${row.agent_status || ''} ${row.address || ''}`.toLowerCase();
+    return (!search || haystack.includes(search.toLowerCase()))
+      && (statusFilter === 'all' || row.status === statusFilter)
+      && (roleFilter === 'all' || row.role === roleFilter);
+  });
+  const selected = rows.find((row) => row.id === selectedId);
+
+  return (
+    <PageScaffold
+      title={t('nodes.title')}
+      subtitle={t('nodes.subtitle')}
+      actions={(
+        <Button
+          icon={<PlusCircle size={16} />}
+          variant="primary"
+          disabled={!canWriteNodes}
+          title={!canWriteNodes ? t('common.permissionRequired', { permission: 'node.write' }) : undefined}
+          onClick={() => setCreateOpen(true)}
+        >
+          {t('nodes.createNode')}
+        </Button>
+      )}
+    >
+      <NodeProfileModal
+        mode="create"
+        open={createOpen}
+        canWrite={canWriteNodes}
+        onClose={() => setCreateOpen(false)}
+        onDone={(created) => {
+          setSelectedId(created.id);
+          setCreateOpen(false);
+        }}
+      />
+      <Card>
+        <CardBody>
+          <Toolbar>
+            <FormField label={t('common.search')}>
+              <div className="input-with-icon">
+                <Search size={16} />
+                <TextField value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('nodes.searchPlaceholder')} />
+              </div>
+            </FormField>
+            <FormField label={t('common.status')}>
+              <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <option value="all">{t('common.all')}</option>
+                {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+              </Select>
+            </FormField>
+            <FormField label={t('nodes.role')}>
+              <Select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+                <option value="all">{t('common.all')}</option>
+                {roles.map((role) => <option key={role} value={role}>{role}</option>)}
+              </Select>
+            </FormField>
+            <Button icon={<RefreshCw size={16} />} onClick={() => void nodes.refetch()}>{t('common.refresh')}</Button>
+          </Toolbar>
+        </CardBody>
+      </Card>
+      <QueryBoundary isLoading={nodes.isLoading} isError={nodes.isError} error={nodes.error} refetch={() => void nodes.refetch()}>
+        <DataTable
+          rows={filteredRows}
+          columns={[
+            { key: 'node', header: t('nodes.node'), render: (row) => <strong>{nodeLabel(row)}</strong> },
+            { key: 'role', header: t('nodes.role'), render: (row) => text(row.role || row.kind) },
+            { key: 'address', header: t('nodes.address'), render: (row) => <code>{text(row.address)}</code> },
+            { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+            { key: 'agent', header: t('nodes.agent'), render: (row) => <StatusBadge status={row.agent_status || 'unknown'} /> },
+            { key: 'heartbeat', header: t('nodes.heartbeat'), render: (row) => fmt.date(row.last_heartbeat_at || row.agent_last_seen_at) },
+            { key: 'updated', header: t('common.updated'), render: (row) => fmt.date(row.updated_at) },
+            { key: 'actions', header: t('common.actions'), render: (row) => <Button onClick={() => setSelectedId(row.id)}>{t('common.open')}</Button> },
+          ]}
+        />
+      </QueryBoundary>
+      <NodeDrawer
+        key={selectedId || 'closed'}
+        node={selected}
+        nodeId={selectedId}
+        open={Boolean(selectedId)}
+        onClose={() => setSelectedId('')}
+      />
+    </PageScaffold>
+  );
+}
+
+function NodeProfileModal({ mode, node, open, canWrite, onClose, onDone }: {
+  mode: 'create' | 'edit';
+  node?: NodeDetail;
+  open: boolean;
+  canWrite: boolean;
+  onClose: () => void;
+  onDone: (node: NodeDetail) => void;
+}) {
+  const { t } = useTranslation();
+  const createNode = useCreateNode();
+  const updateNode = useUpdateNode();
+  const [form, setForm] = useState<NodeProfileFormState>(nodeFormFromNode(node));
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
+  const mutation = mode === 'create' ? createNode : updateNode;
+  const mutationErrors = fieldErrors(mutation.error);
+  const errors = { ...mutationErrors, ...localErrors };
+  const busy = createNode.isPending || updateNode.isPending;
+
+  const patch = (patchValue: Partial<NodeProfileFormState>) => {
+    setForm((current) => ({ ...current, ...patchValue }));
+    setLocalErrors((current) => {
+      const next = { ...current };
+      Object.keys(patchValue).forEach((key) => {
+        delete next[key];
+      });
+      return next;
+    });
+  };
+
+  const validate = () => {
+    const next: Record<string, string> = {};
+    if (!form.name.trim()) next.name = t('nodes.validation.nameRequired');
+    if (!form.address.trim()) next.address = t('nodes.validation.addressRequired');
+    setLocalErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  const close = () => {
+    createNode.reset();
+    updateNode.reset();
+    setForm(nodeFormFromNode(mode === 'edit' ? node : null));
+    setLocalErrors({});
+    onClose();
+  };
+
+  const submit = async () => {
+    if (!canWrite || !validate()) return;
+    const input = nodeInputFromForm(form);
+    try {
+      const saved = mode === 'create'
+        ? await createNode.mutateAsync(input)
+        : await updateNode.mutateAsync({ nodeId: node?.id || '', input });
+      createNode.reset();
+      updateNode.reset();
+      setForm(defaultNodeProfileForm);
+      setLocalErrors({});
+      onDone(saved);
+    } catch {
+      // The mutation error is rendered below; keep operator input intact for correction/retry.
+    }
+  };
+
+  return (
+    <Modal title={mode === 'create' ? t('nodes.createNode') : t('nodes.editNode')} open={open} onClose={close}>
+      <div className="page-stack">
+        {!canWrite ? <div role="alert" className="error-state-inline">{t('common.permissionRequired', { permission: 'node.write' })}</div> : null}
+        {mutation.error ? <div role="alert" className="error-state-inline">{formatAPIError(mutation.error)}</div> : null}
+        <FormGrid>
+          <FormField label={t('common.name')}>
+            <TextField value={form.name} onChange={(event) => patch({ name: event.target.value })} autoComplete="off" />
+            {errors.name ? <span role="alert">{errors.name}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.address')}>
+            <TextField value={form.address} onChange={(event) => patch({ address: event.target.value })} autoComplete="off" />
+            {errors.address ? <span role="alert">{errors.address}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.kind')}>
+            <Select value={form.kind} onChange={(event) => patch({ kind: event.target.value as NodeProfileFormState['kind'] })}>
+              <option value="local">{t('nodes.kindOptions.local')}</option>
+              <option value="remote">{t('nodes.kindOptions.remote')}</option>
+            </Select>
+            {errors.kind ? <span role="alert">{errors.kind}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.role')}>
+            <Select value={form.role} onChange={(event) => patch({ role: event.target.value as NodeProfileFormState['role'] })}>
+              <option value="ingress">{t('nodes.roleOptions.ingress')}</option>
+              <option value="egress">{t('nodes.roleOptions.egress')}</option>
+            </Select>
+            {errors.role ? <span role="alert">{errors.role}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.locationLabel')}>
+            <TextField value={form.locationLabel} onChange={(event) => patch({ locationLabel: event.target.value })} />
+            {errors.location_label ? <span role="alert">{errors.location_label}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.osFamily')}>
+            <TextField value={form.osFamily} onChange={(event) => patch({ osFamily: event.target.value })} />
+            {errors.os_family ? <span role="alert">{errors.os_family}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.osVersion')}>
+            <TextField value={form.osVersion} onChange={(event) => patch({ osVersion: event.target.value })} />
+            {errors.os_version ? <span role="alert">{errors.os_version}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.architecture')}>
+            <TextField value={form.architecture} onChange={(event) => patch({ architecture: event.target.value })} />
+            {errors.architecture ? <span role="alert">{errors.architecture}</span> : null}
+          </FormField>
+          <FormField label={t('nodes.executionMode')}>
+            <Select value={form.executionMode} onChange={(event) => patch({ executionMode: event.target.value as NodeProfileFormState['executionMode'] })}>
+              <option value="agent_managed">{t('nodes.executionModeOptions.agentManaged')}</option>
+              <option value="ssh_bootstrap">{t('nodes.executionModeOptions.sshBootstrap')}</option>
+              <option value="manual_bundle">{t('nodes.executionModeOptions.manualBundle')}</option>
+              <option value="local_managed">{t('nodes.executionModeOptions.localManaged')}</option>
+            </Select>
+            {errors.execution_mode ? <span role="alert">{errors.execution_mode}</span> : null}
+          </FormField>
+        </FormGrid>
+        <p className="muted">{t('nodes.profileSafeFieldsNote')}</p>
+        <Toolbar>
+          <Button variant="primary" disabled={!canWrite || busy} onClick={() => void submit()}>{mode === 'create' ? t('nodes.createNode') : t('common.save')}</Button>
+          <Button onClick={close}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </div>
+    </Modal>
+  );
+}
+
+function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId: string; open: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
+  const auth = useAuth();
+  const canReadNodes = hasPermission(auth.permissions, auth.roles, 'node.read');
+  const canWriteNodes = hasPermission(auth.permissions, auth.roles, 'node.write');
+  const canBootstrapNodes = hasPermission(auth.permissions, auth.roles, 'node.bootstrap');
+  const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<NodeTab>('overview');
+  const [editOpen, setEditOpen] = useState(false);
+  const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
+  const [notice, setNotice] = useState('');
+  const [jobIds, setJobIds] = useState<string[]>([]);
+  const [guidedBootstrapJobIds, setGuidedBootstrapJobIds] = useState<string[]>([]);
+  const [guidedBootstrapRunIds, setGuidedBootstrapRunIds] = useState<string[]>([]);
+  const [guidedInventoryJobIds, setGuidedInventoryJobIds] = useState<string[]>([]);
+  const [oneTimePanel, setOneTimePanel] = useState<OneTimePanelState | null>(null);
+  const [terminalSession, setTerminalSession] = useState<NodeTerminalSession | null>(null);
+  const [agentRevokeNodeId, setAgentRevokeNodeId] = useState<string | null>(null);
+  const [nodeRebootNodeId, setNodeRebootNodeId] = useState<string | null>(null);
+  const [queuedNodeRebootJob, setQueuedNodeRebootJob] = useState<SafeQueuedNodeRebootJob | null>(null);
+  const [emergencyCleanupTarget, setEmergencyCleanupTarget] = useState<NodeEmergencyCleanupTarget | null>(null);
+  const [queuedEmergencyCleanup, setQueuedEmergencyCleanup] = useState<QueuedNodeEmergencyCleanupResult | null>(null);
+  const [staleRotationClearTarget, setStaleRotationClearTarget] = useState<NodeStaleRotationClearTarget | null>(null);
+  const [clearedStaleRotation, setClearedStaleRotation] = useState<ClearedNodeStaleRotationResult | null>(null);
+  const secretRequestRef = useRef(0);
+  const agentRevokeRequestRef = useRef(0);
+  const nodeRebootRequestRef = useRef(0);
+  const emergencyCleanupRequestRef = useRef(0);
+  const staleRotationClearRequestRef = useRef(0);
+  const selectedNodeIdRef = useRef(nodeId);
+  const canBootstrapRef = useRef(canBootstrapNodes);
+  const cachedOnboardingNode = queryClient.getQueryData<NodeDetail>(['node', nodeId]) || node;
+  const cachedOnboardingModel = cachedOnboardingNode ? deriveNodeOnboardingModel({
+    node: cachedOnboardingNode,
+    diagnostics: queryClient.getQueryData<NodeDiagnostics>(['node-diagnostics', nodeId]),
+    enrollmentTokens: queryClient.getQueryData<EnrollmentToken[]>(['node-enrollment-tokens', nodeId]),
+    bootstrapRuns: queryClient.getQueryData<NodeBootstrapRun[]>(['node-bootstrap-runs', nodeId]),
+    accessMethods: queryClient.getQueryData<NodeAccessMethod[]>(['node-access-methods', nodeId]),
+    inventory: queryClient.getQueryData<NodeInventorySnapshot>(['node-inventory', nodeId]),
+    trackedInventoryJobIDs: guidedInventoryJobIds,
+  }) : null;
+  const onboardingPollInterval: number | false = open && activeTab === 'onboarding' && cachedOnboardingModel && shouldPollNodeOnboarding(cachedOnboardingModel) ? 10_000 : false;
+  const staleRotationPreviewEnabled = open && activeTab === 'lifecycle' && canReadNodes && Boolean(nodeId);
+  const detail = useNodeDetail(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
+  const diagnostics = useNodeDiagnostics(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : 15_000 });
+  const staleRotationPreview = useNodeStaleRotationPreview(nodeId, { retry: false, enabled: staleRotationPreviewEnabled, refetchInterval: false });
+  const inventory = useNodeInventory(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
+  const capabilities = useNodeCapabilities(nodeId, { retry: false });
+  const capabilityDrift = useNodeCapabilityDrift(nodeId, { retry: false });
+  const capabilityEvents = useNodeCapabilityInstallEvents(nodeId, { retry: false });
+  const installers = useNodeServiceInstallers({ retry: false });
+  const discoveries = useNodeServiceDiscoveries(nodeId, { retry: false });
+  const discoverySummary = useNodeServiceDiscoverySummary(nodeId, { retry: false });
+  const enrollmentTokens = useNodeEnrollmentTokens(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
+  const accessMethods = useNodeAccessMethods(nodeId, { retry: false });
+  const bootstrapRuns = useNodeBootstrapRuns(nodeId, { retry: false, refetchInterval: activeTab === 'onboarding' ? onboardingPollInterval : false });
+  const maintenance = useSetNodeMaintenance();
+  const syncInventory = useSyncNodeInventory();
+  const installCapability = useInstallNodeCapability();
+  const verifyCapability = useVerifyNodeCapability();
+  const runDiagnostics = useRunNodeDiagnosticsAction();
+  const discoverServices = useDiscoverNodeServices();
+  const importDiscovery = useImportNodeServiceDiscovery();
+  const importAllDiscoveries = useImportAllNodeServiceDiscoveries();
+  const createEnrollment = useCreateEnrollmentToken();
+  const createSSHAccess = useCreateNodeSSHAccessMethod();
+  const rotateEnrollment = useRotateEnrollmentToken();
+  const revokeEnrollment = useRevokeEnrollmentToken();
+  const bootstrap = useBootstrapNode();
+  const reinstallAgent = useReinstallOrUpdateNodeAgent();
+  const scanHostKey = useScanNodeHostKey();
+  const acceptHostKey = useAcceptNodeHostKey();
+  const rotateAgentToken = useRotateNodeAgentToken();
+  const launchSSH = useLaunchNodeSshSession();
+  const retire = useRetireNode();
+  const forceRetire = useForceRetireNode();
+  const revokeAgentIdentity = useRevokeNodeAgentIdentity();
+  const createRebootJob = useCreateNodeRebootJob();
+  const createEmergencyCleanupJob = useCreateNodeEmergencyCleanupJob();
+  const clearStaleRotation = useClearNodeStaleRotation();
+  const resetAgentIdentityRevoke = revokeAgentIdentity.reset;
+  const resetNodeReboot = createRebootJob.reset;
+  const resetEmergencyCleanup = createEmergencyCleanupJob.reset;
+  const resetStaleRotationClear = clearStaleRotation.reset;
+  const current = detail.data || node;
+  const busy = maintenance.isPending
+    || syncInventory.isPending
+    || installCapability.isPending
+    || verifyCapability.isPending
+    || runDiagnostics.isPending
+    || discoverServices.isPending
+    || importDiscovery.isPending
+    || importAllDiscoveries.isPending
+    || createEnrollment.isPending
+    || createSSHAccess.isPending
+    || rotateEnrollment.isPending
+    || revokeEnrollment.isPending
+    || bootstrap.isPending
+    || reinstallAgent.isPending
+    || scanHostKey.isPending
+    || acceptHostKey.isPending
+    || rotateAgentToken.isPending
+    || launchSSH.isPending
+    || retire.isPending
+    || forceRetire.isPending
+    || revokeAgentIdentity.isPending
+    || createRebootJob.isPending
+    || createEmergencyCleanupJob.isPending
+    || clearStaleRotation.isPending;
+
+  useEffect(() => {
+    selectedNodeIdRef.current = nodeId;
+    secretRequestRef.current += 1;
+    agentRevokeRequestRef.current += 1;
+    nodeRebootRequestRef.current += 1;
+    emergencyCleanupRequestRef.current += 1;
+    staleRotationClearRequestRef.current += 1;
+    const timeout = window.setTimeout(() => {
+      setOneTimePanel(null);
+      setTerminalSession(null);
+      setAgentRevokeNodeId(null);
+      setNodeRebootNodeId(null);
+      setQueuedNodeRebootJob(null);
+      setEmergencyCleanupTarget(null);
+      setQueuedEmergencyCleanup(null);
+      setStaleRotationClearTarget(null);
+      setClearedStaleRotation(null);
+      resetAgentIdentityRevoke();
+      resetNodeReboot();
+      resetEmergencyCleanup();
+      resetStaleRotationClear();
+      setGuidedBootstrapJobIds([]);
+      setGuidedBootstrapRunIds([]);
+      setGuidedInventoryJobIds([]);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [nodeId, resetAgentIdentityRevoke, resetEmergencyCleanup, resetNodeReboot, resetStaleRotationClear]);
+
+  useEffect(() => {
+    canBootstrapRef.current = canBootstrapNodes;
+    if (!canBootstrapNodes) {
+      secretRequestRef.current += 1;
+      nodeRebootRequestRef.current += 1;
+      emergencyCleanupRequestRef.current += 1;
+      staleRotationClearRequestRef.current += 1;
+      const timeout = window.setTimeout(() => {
+        setOneTimePanel(null);
+        setTerminalSession(null);
+        setNodeRebootNodeId(null);
+        setEmergencyCleanupTarget(null);
+        setStaleRotationClearTarget(null);
+        resetNodeReboot();
+        resetEmergencyCleanup();
+        resetStaleRotationClear();
+      }, 0);
+      return () => window.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [canBootstrapNodes, resetEmergencyCleanup, resetNodeReboot, resetStaleRotationClear]);
+
+  useEffect(() => {
+    if (!open) {
+      secretRequestRef.current += 1;
+      agentRevokeRequestRef.current += 1;
+      nodeRebootRequestRef.current += 1;
+      emergencyCleanupRequestRef.current += 1;
+      staleRotationClearRequestRef.current += 1;
+      const timeout = window.setTimeout(() => {
+        setOneTimePanel(null);
+        setTerminalSession(null);
+        setAgentRevokeNodeId(null);
+        setNodeRebootNodeId(null);
+        setQueuedNodeRebootJob(null);
+        setEmergencyCleanupTarget(null);
+        setQueuedEmergencyCleanup(null);
+        setStaleRotationClearTarget(null);
+        setClearedStaleRotation(null);
+        resetAgentIdentityRevoke();
+        resetNodeReboot();
+        resetEmergencyCleanup();
+        resetStaleRotationClear();
+        setGuidedBootstrapJobIds([]);
+        setGuidedBootstrapRunIds([]);
+        setGuidedInventoryJobIds([]);
+      }, 0);
+      return () => window.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [open, resetAgentIdentityRevoke, resetEmergencyCleanup, resetNodeReboot, resetStaleRotationClear]);
+
+  useEffect(() => {
+    if (inventory.data?.id && guidedInventoryJobIds.length) {
+      const timeout = window.setTimeout(() => setGuidedInventoryJobIds([]), 0);
+      return () => window.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [inventory.data?.id, guidedInventoryJobIds.length]);
+
+  useEffect(() => () => {
+    secretRequestRef.current += 1;
+    staleRotationClearRequestRef.current += 1;
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'terminal' && terminalSession) {
+      const timeout = window.setTimeout(() => setTerminalSession(null), 0);
+      return () => window.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [activeTab, terminalSession]);
+
+  useEffect(() => {
+    if (canReadNodes) return undefined;
+    staleRotationClearRequestRef.current += 1;
+    const timeout = window.setTimeout(() => {
+      setStaleRotationClearTarget(null);
+      resetStaleRotationClear();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [canReadNodes, resetStaleRotationClear]);
+
+  useEffect(() => {
+    if (!oneTimePanel?.expiresAt) return undefined;
+    const expiresAt = Date.parse(oneTimePanel.expiresAt);
+    if (!Number.isFinite(expiresAt)) return undefined;
+    const delayMs = expiresAt - Date.now();
+    if (delayMs <= 0) {
+      const timeout = window.setTimeout(() => setOneTimePanel(null), 0);
+      return () => window.clearTimeout(timeout);
+    }
+    const delay = Math.min(delayMs, 2_147_483_647);
+    const timeout = window.setTimeout(() => setOneTimePanel(null), delay);
+    return () => window.clearTimeout(timeout);
+  }, [oneTimePanel?.expiresAt]);
+
+  const clearOneTimePanel = () => {
+    secretRequestRef.current += 1;
+    setOneTimePanel(null);
+  };
+
+  const beginOneTimeSecretRequest = (): number => {
+    secretRequestRef.current += 1;
+    setOneTimePanel(null);
+    return secretRequestRef.current;
+  };
+
+  const openConfirm = (action: ConfirmAction) => {
+    if (action.type === 'enrollment-create' || action.type === 'enrollment-rotate') {
+      clearOneTimePanel();
+    }
+    setConfirm(action);
+  };
+
+  const openAgentIdentityRevokeDialog = () => {
+    if (!current || !canBootstrapNodes) return;
+    agentRevokeRequestRef.current += 1;
+    resetAgentIdentityRevoke();
+    setAgentRevokeNodeId(current.id);
+  };
+
+  const closeAgentIdentityRevokeDialog = () => {
+    agentRevokeRequestRef.current += 1;
+    setAgentRevokeNodeId(null);
+    resetAgentIdentityRevoke();
+  };
+
+  const openNodeRebootDialog = () => {
+    if (!current || !canBootstrapNodes) return;
+    nodeRebootRequestRef.current += 1;
+    resetNodeReboot();
+    setNodeRebootNodeId(current.id);
+  };
+
+  const closeNodeRebootDialog = () => {
+    nodeRebootRequestRef.current += 1;
+    setNodeRebootNodeId(null);
+    resetNodeReboot();
+  };
+
+  const openEmergencyCleanupDialog = () => {
+    if (!current || !canBootstrapNodes) return;
+    const actionState = deriveNodeEmergencyCleanupActionState({
+      node: current,
+      diagnostics: diagnostics.data,
+      canBootstrapNode: canBootstrapNodes,
+      lifecycleDataCurrent,
+    });
+    if (!actionState.available) return;
+    emergencyCleanupRequestRef.current += 1;
+    resetEmergencyCleanup();
+    setEmergencyCleanupTarget({
+      nodeId: current.id,
+      confirmationName: nodeEmergencyCleanupExpectedConfirmation(current),
+    });
+  };
+
+  const closeEmergencyCleanupDialog = () => {
+    emergencyCleanupRequestRef.current += 1;
+    setEmergencyCleanupTarget(null);
+    resetEmergencyCleanup();
+  };
+
+  const openStaleRotationClearDialog = () => {
+    if (
+      !current
+      || !canReadNodes
+      || !canBootstrapNodes
+      || !lifecycleDataCurrent
+      || staleRotationPreview.isLoading
+      || staleRotationPreview.isFetching
+      || staleRotationPreview.isError
+    ) return;
+    const preview = staleRotationPreview.data?.node_id === current.id ? staleRotationPreview.data : undefined;
+    const context = deriveNodeStaleRotationClearContext(current.id, preview);
+    if (!context.valid) return;
+    staleRotationClearRequestRef.current += 1;
+    resetStaleRotationClear();
+    setStaleRotationClearTarget({
+      nodeId: current.id,
+      confirmationName: nodeStaleRotationExpectedConfirmation(current),
+      fingerprint: context.context.fingerprint,
+    });
+  };
+
+  const closeStaleRotationClearDialog = () => {
+    staleRotationClearRequestRef.current += 1;
+    setStaleRotationClearTarget(null);
+    resetStaleRotationClear();
+  };
+
+  const submitAgentIdentityRevoke = async (input: NodeAgentIdentityRevokeInput) => {
+    const targetNodeId = agentRevokeNodeId;
+    if (!targetNodeId || targetNodeId !== current?.id || !canBootstrapNodes) return;
+    const requestId = agentRevokeRequestRef.current + 1;
+    agentRevokeRequestRef.current = requestId;
+    const result = await revokeAgentIdentity.mutateAsync({ nodeId: targetNodeId, input });
+    if (agentRevokeRequestRef.current !== requestId || selectedNodeIdRef.current !== targetNodeId || current?.id !== targetNodeId || result.node_id !== targetNodeId) {
+      setNotice(t('nodes.lifecycleControls.agentIdentityRevoke.errors.contractMismatch'));
+      void detail.refetch();
+      void diagnostics.refetch();
+      void staleRotationPreview.refetch();
+      return;
+    }
+    closeAgentIdentityRevokeDialog();
+    setActiveTab('lifecycle');
+    const count = Number(result.revoked_enrollment_tokens || 0);
+    const countText = count > 0 ? ` ${t('nodes.lifecycleControls.agentIdentityRevoke.revokedEnrollmentTokenCount', { count })}` : '';
+    const revokedAt = result.revoked_at ? ` ${t('nodes.lifecycleControls.agentIdentityRevoke.revokedAt', { value: text(result.revoked_at) })}` : '';
+    setNotice(`${t(result.already_revoked ? 'nodes.lifecycleControls.agentIdentityRevoke.alreadyRevokedNotice' : 'nodes.lifecycleControls.agentIdentityRevoke.success')}${countText}${revokedAt}`.trim());
+    void detail.refetch();
+    void diagnostics.refetch();
+    void enrollmentTokens.refetch();
+    void staleRotationPreview.refetch();
+  };
+
+  const submitNodeReboot = async (input: NodeRebootInput) => {
+    const targetNodeId = nodeRebootNodeId;
+    if (!targetNodeId || targetNodeId !== current?.id || !canBootstrapNodes) return;
+    const requestId = nodeRebootRequestRef.current + 1;
+    nodeRebootRequestRef.current = requestId;
+    try {
+      const job = await createRebootJob.mutateAsync({ nodeId: targetNodeId, input });
+      const safeJob = safeQueuedNodeRebootJob(job, targetNodeId);
+      if (
+        nodeRebootRequestRef.current !== requestId
+        || selectedNodeIdRef.current !== targetNodeId
+        || current?.id !== targetNodeId
+        || !safeJob
+      ) {
+        setNotice(t('nodes.lifecycleControls.nodeReboot.errors.contractMismatch'));
+        void detail.refetch();
+        void diagnostics.refetch();
+        return;
+      }
+      closeNodeRebootDialog();
+      setActiveTab('lifecycle');
+      setQueuedNodeRebootJob({ ...safeJob, node_id: targetNodeId });
+      setNotice(t('nodes.lifecycleControls.nodeReboot.queuedSuccess'));
+      void detail.refetch();
+      void diagnostics.refetch();
+    } catch (error) {
+      if (error instanceof APIError && (error.status === 403 || error.status === 404 || error.status === 409 || error.status === 500 || error.status === 503)) {
+        void detail.refetch();
+        void diagnostics.refetch();
+      }
+      throw error;
+    }
+  };
+
+  const submitEmergencyCleanup = async (input: NodeEmergencyCleanupInput) => {
+    const target = emergencyCleanupTarget;
+    if (!target || target.nodeId !== current?.id || !canBootstrapNodes || input.confirmation !== target.confirmationName) return;
+    const actionState = deriveNodeEmergencyCleanupActionState({
+      node: current,
+      diagnostics: diagnostics.data,
+      canBootstrapNode: canBootstrapNodes,
+      lifecycleDataCurrent,
+    });
+    if (!actionState.available) return;
+    const requestId = emergencyCleanupRequestRef.current + 1;
+    emergencyCleanupRequestRef.current = requestId;
+    try {
+      const result = await createEmergencyCleanupJob.mutateAsync({ nodeId: target.nodeId, input });
+      const safeResult = validateQueuedNodeEmergencyCleanupResult(result, target.nodeId, input);
+      if (
+        emergencyCleanupRequestRef.current !== requestId
+        || selectedNodeIdRef.current !== target.nodeId
+        || current?.id !== target.nodeId
+      ) {
+        return;
+      }
+      if (!safeResult) {
+        setNotice(t('nodes.lifecycleControls.emergencyCleanup.errors.contractMismatch'));
+        void detail.refetch();
+        void diagnostics.refetch();
+        void staleRotationPreview.refetch();
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        void queryClient.invalidateQueries({ queryKey: ['instances'] });
+        return;
+      }
+      closeEmergencyCleanupDialog();
+      setActiveTab('lifecycle');
+      setQueuedEmergencyCleanup({ ...safeResult, nodeId: target.nodeId });
+      setNotice(t('nodes.lifecycleControls.emergencyCleanup.queuedSuccess'));
+      void detail.refetch();
+      void diagnostics.refetch();
+      void staleRotationPreview.refetch();
+    } catch (error) {
+      if (error instanceof APIError) {
+        if ([403, 404, 409, 422, 500, 503].includes(error.status)) {
+          void detail.refetch();
+          void diagnostics.refetch();
+          void staleRotationPreview.refetch();
+          void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        }
+        if (error.status === 422) {
+          void queryClient.invalidateQueries({ queryKey: ['instances'] });
+        }
+      }
+      throw error;
+    }
+  };
+
+  const submitStaleRotationClear = async (input: NodeStaleRotationClearInput, fingerprint: string) => {
+    const target = staleRotationClearTarget;
+    if (
+      !target
+      || target.nodeId !== current?.id
+      || selectedNodeIdRef.current !== target.nodeId
+      || !canReadNodes
+      || !canBootstrapNodes
+      || !lifecycleDataCurrent
+      || staleRotationPreview.isLoading
+      || staleRotationPreview.isFetching
+      || staleRotationPreview.isError
+      || input.confirmation !== target.confirmationName
+    ) return;
+
+    const preview = staleRotationPreview.data?.node_id === target.nodeId ? staleRotationPreview.data : undefined;
+    const context = deriveNodeStaleRotationClearContext(target.nodeId, preview);
+    if (!context.valid || context.context.fingerprint !== fingerprint) return;
+    if (
+      input.expected_job_ids.length !== context.context.expectedJobIds.length
+      || input.expected_job_ids.some((jobID, index) => jobID !== context.context.expectedJobIds[index])
+    ) return;
+
+    const requestId = staleRotationClearRequestRef.current + 1;
+    staleRotationClearRequestRef.current = requestId;
+    try {
+      const result = await clearStaleRotation.mutateAsync({ nodeId: target.nodeId, input });
+      const safeResult = validateNodeStaleRotationClearResult(result, target.nodeId, input.expected_job_ids);
+      if (
+        staleRotationClearRequestRef.current !== requestId
+        || selectedNodeIdRef.current !== target.nodeId
+        || current?.id !== target.nodeId
+      ) return;
+      if (!safeResult) {
+        setNotice(t('nodes.lifecycleControls.staleRotationClear.errors.contractMismatch'));
+        void detail.refetch();
+        void diagnostics.refetch();
+        void staleRotationPreview.refetch();
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        return;
+      }
+      closeStaleRotationClearDialog();
+      setActiveTab('lifecycle');
+      setClearedStaleRotation({ ...safeResult, nodeId: target.nodeId });
+      setNotice(t('nodes.lifecycleControls.staleRotationClear.success'));
+      void detail.refetch();
+      void diagnostics.refetch();
+      void staleRotationPreview.refetch();
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    } catch (error) {
+      if (error instanceof APIError) {
+        if ([403, 404, 409, 500, 503].includes(error.status)) {
+          void detail.refetch();
+          void diagnostics.refetch();
+          void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        }
+        if (error.status === 409) void staleRotationPreview.refetch();
+      }
+      throw error;
+    }
+  };
+
+  const visibleOneTimePanel = open && canBootstrapNodes && oneTimePanel?.nodeId === current?.id ? oneTimePanel : null;
+
+  const recordJobs = (result: unknown) => {
+    const ids = recordJobsFrom(result).map((job) => job.id).filter(Boolean);
+    if (ids.length) {
+      setJobIds((existing) => Array.from(new Set([...ids, ...existing])).slice(0, 5));
+    }
+  };
+
+  const refreshOnboardingStatus = async () => {
+    const results = await Promise.allSettled([
+      detail.refetch(),
+      diagnostics.refetch(),
+      enrollmentTokens.refetch(),
+      bootstrapRuns.refetch(),
+      inventory.refetch(),
+    ]);
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+  };
+
+  const refreshAfterEnrollmentTokenAction = async () => {
+    await Promise.allSettled([
+      detail.refetch(),
+      diagnostics.refetch(),
+      enrollmentTokens.refetch(),
+      bootstrapRuns.refetch(),
+    ]);
+  };
+
+  const refreshAfterGuidedBootstrapAction = async () => {
+    await Promise.allSettled([
+      detail.refetch(),
+      diagnostics.refetch(),
+      bootstrapRuns.refetch(),
+      enrollmentTokens.refetch(),
+    ]);
+  };
+
+  const refreshAfterGuidedInventoryAction = async () => {
+    await Promise.allSettled([
+      detail.refetch(),
+      diagnostics.refetch(),
+      inventory.refetch(),
+    ]);
+  };
+
+  const runConfirmed = async () => {
+    if (!confirm) return;
+    setNotice('');
+    try {
+      let result: NodeMutationResult | undefined;
+      if (confirm.type === 'maintenance-enable') {
+        result = await maintenance.mutateAsync({ nodeId: confirm.node.id, enabled: true });
+        setNotice(t('nodes.maintenanceUpdated'));
+        setActiveTab('overview');
+      } else if (confirm.type === 'maintenance-disable') {
+        result = await maintenance.mutateAsync({ nodeId: confirm.node.id, enabled: false });
+        setNotice(t('nodes.maintenanceUpdated'));
+        setActiveTab('overview');
+      } else if (confirm.type === 'inventory-sync') {
+        const job = await syncInventory.mutateAsync({ nodeId: confirm.node.id });
+        result = job;
+        if (confirm.source === 'onboarding') {
+          setGuidedInventoryJobIds((existing) => Array.from(new Set([job.id, ...existing].filter(Boolean))).slice(0, 5));
+          setNotice(t('nodes.onboarding.inventoryJobAccepted'));
+          setActiveTab('onboarding');
+          await refreshAfterGuidedInventoryAction();
+        } else {
+          setNotice(t('nodes.actionAccepted'));
+          setActiveTab('jobs');
+        }
+      } else if (confirm.type === 'capability-install') {
+        result = await installCapability.mutateAsync({ nodeId: confirm.node.id, input: confirm.input });
+        setNotice(t('nodes.actionAccepted'));
+        setActiveTab('jobs');
+      } else if (confirm.type === 'capability-verify') {
+        result = await verifyCapability.mutateAsync({ nodeId: confirm.node.id, input: { service_code: confirm.serviceCode } });
+        setNotice(t('nodes.actionAccepted'));
+        setActiveTab('jobs');
+      } else if (confirm.type === 'diagnostics') {
+        result = await runDiagnostics.mutateAsync({ nodeId: confirm.node.id, action: confirm.action });
+        setNotice(t('nodes.actionAccepted'));
+        setActiveTab('jobs');
+      } else if (confirm.type === 'service-discover') {
+        result = await discoverServices.mutateAsync({ nodeId: confirm.node.id });
+        setNotice(t('nodes.actionAccepted'));
+        setActiveTab('jobs');
+      } else if (confirm.type === 'service-import') {
+        result = await importDiscovery.mutateAsync({ nodeId: confirm.node.id, discoveryId: confirm.discovery.id });
+        setNotice(t('nodes.importAccepted'));
+        setActiveTab('discovery');
+      } else if (confirm.type === 'service-import-all') {
+        result = await importAllDiscoveries.mutateAsync({ nodeId: confirm.node.id });
+        setNotice(t('nodes.importAccepted'));
+        setActiveTab('discovery');
+      } else if (confirm.type === 'enrollment-create') {
+        const requestId = beginOneTimeSecretRequest();
+        await createEnrollment.mutateAsync({
+          nodeId: confirm.node.id,
+          input: { ttl_hours: confirm.ttlHours },
+          consume: (tokenResult) => {
+            const value = extractEnrollmentTokenSecret(tokenResult);
+            if (secretRequestRef.current !== requestId || selectedNodeIdRef.current !== confirm.node.id || !canBootstrapRef.current) return;
+            setOneTimePanel({
+              nodeId: confirm.node.id,
+              requestId: String(requestId),
+              label: t('nodes.enrollmentOneTimeToken'),
+              value,
+              expiresAt: tokenResult.expires_at,
+            });
+          },
+        });
+        if (secretRequestRef.current !== requestId || selectedNodeIdRef.current !== confirm.node.id || !canBootstrapRef.current) {
+          setConfirm(null);
+          return;
+        }
+        setNotice(t('nodes.tokenCreated'));
+        setActiveTab(confirm.source === 'onboarding' ? 'onboarding' : 'security');
+        await refreshAfterEnrollmentTokenAction();
+      } else if (confirm.type === 'enrollment-rotate') {
+        const requestId = beginOneTimeSecretRequest();
+        await rotateEnrollment.mutateAsync({
+          nodeId: confirm.node.id,
+          input: { ttl_hours: confirm.ttlHours },
+          consume: (tokenResult) => {
+            const value = extractEnrollmentTokenSecret(tokenResult);
+            if (secretRequestRef.current !== requestId || selectedNodeIdRef.current !== confirm.node.id || !canBootstrapRef.current) return;
+            setOneTimePanel({
+              nodeId: confirm.node.id,
+              requestId: String(requestId),
+              label: t('nodes.enrollmentOneTimeToken'),
+              value,
+              expiresAt: tokenResult.expires_at,
+            });
+          },
+        });
+        if (secretRequestRef.current !== requestId || selectedNodeIdRef.current !== confirm.node.id || !canBootstrapRef.current) {
+          setConfirm(null);
+          return;
+        }
+        setNotice(t('nodes.tokenRotated'));
+        setActiveTab(confirm.source === 'onboarding' ? 'onboarding' : 'security');
+        await refreshAfterEnrollmentTokenAction();
+      } else if (confirm.type === 'enrollment-revoke') {
+        result = await revokeEnrollment.mutateAsync({ nodeId: confirm.node.id, tokenId: confirm.token.id });
+        setNotice(t('nodes.tokenRevoked'));
+        setActiveTab('security');
+      } else if (confirm.type === 'bootstrap') {
+        const bootstrapResult = await bootstrap.mutateAsync({ nodeId: confirm.node.id, input: confirm.input });
+        result = bootstrapResult;
+        if (confirm.source === 'onboarding') {
+          const jobs = recordJobsFrom(bootstrapResult).map((job) => job.id).filter(Boolean);
+          const runId = bootstrapResult.bootstrap_run?.id;
+          setGuidedBootstrapJobIds((existing) => Array.from(new Set([...jobs, ...existing])).slice(0, 5));
+          if (runId) setGuidedBootstrapRunIds((existing) => Array.from(new Set([runId, ...existing])).slice(0, 5));
+          setNotice(t('nodes.onboarding.bootstrapJobAccepted'));
+          setActiveTab('onboarding');
+          await refreshAfterGuidedBootstrapAction();
+        } else {
+          setNotice(t('nodes.bootstrapQueued'));
+          setActiveTab('jobs');
+        }
+      } else if (confirm.type === 'agent-reinstall') {
+        result = await reinstallAgent.mutateAsync({ nodeId: confirm.node.id, input: confirm.input });
+        setNotice(t('nodes.bootstrapQueued'));
+        setActiveTab('jobs');
+      } else if (confirm.type === 'host-key-pin') {
+        result = await acceptHostKey.mutateAsync({ nodeId: confirm.node.id, methodId: confirm.method.id, fingerprint: confirm.fingerprint });
+        setNotice(t('nodes.hostKeyPinned'));
+        setActiveTab('security');
+      } else if (confirm.type === 'agent-token-rotate') {
+        result = await rotateAgentToken.mutateAsync({ nodeId: confirm.node.id });
+        setNotice(t('nodes.actionAccepted'));
+        setActiveTab('jobs');
+      } else if (confirm.type === 'ssh-session-launch') {
+        const sessionResult = await launchSSH.mutateAsync({ nodeId: confirm.node.id });
+        result = sessionResult;
+        if (sessionResult.terminal_url && selectedNodeIdRef.current === confirm.node.id) {
+          setTerminalSession({
+            nodeId: confirm.node.id,
+            url: sessionResult.terminal_url,
+            expiresAt: sessionResult.expires_at,
+          });
+        }
+        setNotice(t('nodes.sshSessionCreated'));
+        setActiveTab('terminal');
+      } else if (confirm.type === 'node-retire') {
+        result = await retire.mutateAsync({ nodeId: confirm.node.id });
+        setNotice(t('nodes.nodeRetired'));
+        setActiveTab('lifecycle');
+      } else if (confirm.type === 'node-force-retire') {
+        result = await forceRetire.mutateAsync({ nodeId: confirm.node.id, confirmation: confirm.confirmation, reason: confirm.reason });
+        setNotice(t('nodes.nodeRetired'));
+        setActiveTab('lifecycle');
+      }
+      recordJobs(result);
+      setConfirm(null);
+    } catch (error) {
+      if (confirm.type === 'enrollment-create' || confirm.type === 'enrollment-rotate') {
+        setNotice(t(enrollmentTokenActionErrorKey(error)));
+        if (error instanceof APIError && (error.status === 403 || error.status === 404)) {
+          clearOneTimePanel();
+          setConfirm(null);
+          void detail.refetch();
+        }
+      } else if (confirm.type === 'bootstrap' && confirm.source === 'onboarding') {
+        setNotice(t(bootstrapActionErrorKey(error)));
+        if (error instanceof APIError && (error.status === 403 || error.status === 404)) {
+          setConfirm(null);
+          void detail.refetch();
+          void bootstrapRuns.refetch();
+        }
+      } else if (confirm.type === 'inventory-sync' && confirm.source === 'onboarding') {
+        setNotice(t(inventorySyncActionErrorKey(error)));
+        if (error instanceof APIError && (error.status === 403 || error.status === 404)) {
+          setConfirm(null);
+          setGuidedInventoryJobIds([]);
+          void detail.refetch();
+          void diagnostics.refetch();
+          void inventory.refetch();
+        } else if (error instanceof APIError && error.status === 409) {
+          void diagnostics.refetch();
+          void inventory.refetch();
+        }
+      } else {
+        setNotice(formatAPIError(error));
+      }
+    }
+  };
+
+  const firstAgentJob = diagnostics.data?.agent?.last_job_result_job_id || diagnostics.data?.agent?.last_job_claim_job_id || diagnostics.data?.agent?.last_job_claim_job_id || '';
+  const effectiveJobIds = jobIds.length ? jobIds : firstAgentJob ? [firstAgentJob] : [];
+  const currentStaleRotationPreview = staleRotationPreview.data?.node_id === current?.id ? staleRotationPreview.data : undefined;
+  const diagnosticsBelongsToCurrent = !diagnostics.data?.node?.id || diagnostics.data.node.id === current?.id;
+  const diagnosticsAgentBelongsToCurrent = !diagnostics.data?.agent?.node_id || diagnostics.data.agent.node_id === current?.id;
+  const lifecycleDataCurrent = Boolean(current && diagnosticsBelongsToCurrent && diagnosticsAgentBelongsToCurrent);
+  const agentRevokeDialogNode = current && agentRevokeNodeId === current.id ? current : undefined;
+  const nodeRebootDialogNode = current && nodeRebootNodeId === current.id ? current : undefined;
+  const currentQueuedNodeRebootJob = queuedNodeRebootJob?.node_id === current?.id ? queuedNodeRebootJob : null;
+  const emergencyCleanupDialogNode = current && emergencyCleanupTarget?.nodeId === current.id
+    ? { ...current, name: emergencyCleanupTarget.confirmationName }
+    : undefined;
+  const currentQueuedEmergencyCleanup = queuedEmergencyCleanup?.nodeId === current?.id ? queuedEmergencyCleanup : null;
+  const staleRotationClearDialogNode = current && staleRotationClearTarget?.nodeId === current.id
+    ? { ...current, name: staleRotationClearTarget.confirmationName }
+    : undefined;
+  const currentClearedStaleRotation = clearedStaleRotation?.nodeId === current?.id ? clearedStaleRotation : null;
+
+  return (
+    <Drawer title={nodeLabel(current)} open={open} onClose={onClose}>
+      <QueryBoundary isLoading={detail.isLoading} isError={detail.isError} error={detail.error} refetch={() => void detail.refetch()}>
+        {current ? (
+          <div className="page-stack">
+            <div className="tabs" role="tablist" aria-label={t('nodes.detailTabs')}>
+              {(['overview', 'runtime', 'onboarding', 'inventory', 'capabilities', 'diagnostics', 'discovery', 'bootstrap', 'security', 'terminal', 'lifecycle', 'jobs'] as NodeTab[]).map((tab) => (
+                <button
+                  key={tab}
+                  className={`tab-link ${activeTab === tab ? 'active' : ''}`.trim()}
+                  role="tab"
+                  aria-selected={activeTab === tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                >
+                  {t(`nodes.tabs.${tab}`)}
+                </button>
+              ))}
+            </div>
+            {notice ? <div role={notice.includes(':') ? 'alert' : 'status'}>{notice}</div> : null}
+            {visibleOneTimePanel ? (
+              <OneTimeSecretPanel
+                label={visibleOneTimePanel.label}
+                value={visibleOneTimePanel.value}
+                expiresAt={visibleOneTimePanel.expiresAt}
+                onClose={clearOneTimePanel}
+              />
+            ) : null}
+            {activeTab === 'overview' ? <OverviewTab node={current} busy={busy} onConfirm={openConfirm} canWrite={canWriteNodes} onEdit={() => setEditOpen(true)} /> : null}
+            {activeTab === 'runtime' ? <RuntimeTab node={current} diagnostics={diagnostics} /> : null}
+            {activeTab === 'onboarding' ? (
+              <NodeOnboardingTab
+                node={current}
+                diagnostics={diagnostics.data}
+                diagnosticsError={diagnostics.isError ? diagnostics.error : undefined}
+                enrollmentTokens={enrollmentTokens.data}
+                enrollmentTokensError={enrollmentTokens.isError ? enrollmentTokens.error : undefined}
+                bootstrapRuns={bootstrapRuns.data}
+                bootstrapRunsError={bootstrapRuns.isError ? bootstrapRuns.error : undefined}
+                accessMethods={accessMethods.data}
+                accessMethodsError={accessMethods.isError ? accessMethods.error : undefined}
+                inventory={inventory.data}
+                inventoryError={inventory.isError ? inventory.error : undefined}
+                canBootstrap={canBootstrapNodes}
+                canSyncInventory={canWriteNodes}
+                busy={busy}
+                bootstrapBusy={bootstrap.isPending}
+                inventorySyncBusy={syncInventory.isPending}
+                trackedBootstrapJobIDs={guidedBootstrapJobIds}
+                trackedBootstrapRunIDs={guidedBootstrapRunIds}
+                trackedInventoryJobIDs={guidedInventoryJobIds}
+                onOpenTab={(tab: NodeOnboardingTargetTab) => setActiveTab(tab)}
+                onRefresh={refreshOnboardingStatus}
+                onRequestEnrollmentToken={(input) => openConfirm({
+                  type: input.mode === 'issue' ? 'enrollment-create' : 'enrollment-rotate',
+                  node: current,
+                  ttlHours: input.ttlHours,
+                  source: 'onboarding',
+                })}
+                onRequestBootstrap={(input) => {
+                  const readiness = deriveNodeBootstrapReadiness({
+                    node: current,
+                    diagnostics: diagnostics.data,
+                    bootstrapRuns: bootstrapRuns.data,
+                    accessMethods: accessMethods.data,
+                  });
+                  const modeAvailability = readiness.modes.find((mode) => mode.mode === input.bootstrapMode);
+                  const request: InitialNodeBootstrapRequest = { bootstrap_mode: input.bootstrapMode };
+                  openConfirm({
+                    type: 'bootstrap',
+                    node: current,
+                    input: request,
+                    source: 'onboarding',
+                    modeAvailability,
+                    retry: readiness.latestFailedRun?.id === readiness.latestRun?.id,
+                  });
+                }}
+                onRequestInventorySync={() => {
+                  const model = deriveNodeOnboardingModel({
+                    node: current,
+                    diagnostics: diagnostics.data,
+                    enrollmentTokens: enrollmentTokens.data,
+                    bootstrapRuns: bootstrapRuns.data,
+                    accessMethods: accessMethods.data,
+                    inventory: inventory.data,
+                    trackedInventoryJobIDs: guidedInventoryJobIds,
+                  });
+                  openConfirm({
+                    type: 'inventory-sync',
+                    node: current,
+                    source: 'onboarding',
+                    heartbeatAt: current.last_heartbeat_at || diagnostics.data?.agent?.last_seen_at || current.agent_last_seen_at,
+                    communicationState: diagnostics.data?.communication_state,
+                    retry: model.inventorySyncFailed,
+                  });
+                }}
+                formatError={formatAPIError}
+              />
+            ) : null}
+            {activeTab === 'inventory' ? <InventoryTab node={current} inventory={inventory} busy={busy} onConfirm={openConfirm} /> : null}
+            {activeTab === 'capabilities' ? (
+              <CapabilitiesTab
+                node={current}
+                capabilities={capabilities}
+                drift={capabilityDrift}
+                events={capabilityEvents}
+                installers={installers.data || []}
+                installersError={installers.isError ? installers.error : null}
+                busy={busy}
+                onConfirm={openConfirm}
+              />
+            ) : null}
+            {activeTab === 'diagnostics' ? <DiagnosticsTab node={current} diagnostics={diagnostics} busy={busy} onConfirm={openConfirm} /> : null}
+            {activeTab === 'discovery' ? <DiscoveryTab node={current} discoveries={discoveries} summary={discoverySummary} busy={busy} onConfirm={openConfirm} /> : null}
+            {activeTab === 'bootstrap' ? (
+              <BootstrapTab
+                key={`${current.id}:${canBootstrapNodes ? 'bootstrap-allowed' : 'bootstrap-denied'}`}
+                node={current}
+                accessMethods={accessMethods}
+                runs={bootstrapRuns}
+                busy={busy}
+                canBootstrap={canBootstrapNodes}
+                onConfirm={openConfirm}
+              />
+            ) : null}
+            {activeTab === 'security' ? (
+              <SecurityTab
+                node={current}
+                diagnostics={diagnostics.data}
+                tokens={enrollmentTokens}
+                accessMethods={accessMethods}
+                scanHostKey={scanHostKey}
+                createSSHAccess={createSSHAccess}
+                canBootstrap={canBootstrapNodes}
+                busy={busy}
+                onSSHAccessCreated={() => {
+                  setNotice(t('nodes.sshAccessMethodCreated'));
+                  void accessMethods.refetch();
+                }}
+                onConfirm={openConfirm}
+              />
+            ) : null}
+            {activeTab === 'terminal' ? (
+              <TerminalTab
+                node={current}
+                accessMethods={accessMethods}
+                busy={busy}
+                session={terminalSession?.nodeId === current.id ? terminalSession : null}
+                onDisconnect={() => setTerminalSession(null)}
+                onConfirm={openConfirm}
+              />
+            ) : null}
+            {activeTab === 'lifecycle' ? (
+              <LifecycleTab
+                node={current}
+                busy={busy}
+                onConfirm={openConfirm}
+                diagnostics={diagnostics.data}
+                staleRotationPreview={currentStaleRotationPreview}
+                staleRotationPreviewLoading={staleRotationPreview.isLoading}
+                staleRotationPreviewFetching={staleRotationPreview.isFetching}
+                staleRotationPreviewError={staleRotationPreview.isError ? staleRotationPreview.error : undefined}
+                canReadNode={canReadNodes}
+                canBootstrapNode={canBootstrapNodes}
+                lifecycleDataCurrent={lifecycleDataCurrent}
+                revokePending={revokeAgentIdentity.isPending}
+                rebootPending={createRebootJob.isPending}
+                emergencyCleanupPending={createEmergencyCleanupJob.isPending}
+                staleRotationClearPending={clearStaleRotation.isPending}
+                queuedNodeRebootJob={currentQueuedNodeRebootJob}
+                queuedEmergencyCleanup={currentQueuedEmergencyCleanup}
+                clearedStaleRotation={currentClearedStaleRotation}
+                onOpenAgentIdentityRevoke={openAgentIdentityRevokeDialog}
+                onOpenNodeReboot={openNodeRebootDialog}
+                onOpenEmergencyCleanup={openEmergencyCleanupDialog}
+                onOpenStaleRotationClear={openStaleRotationClearDialog}
+                onOpenJobs={() => setActiveTab('jobs')}
+                onRefreshStaleRotationPreview={() => void staleRotationPreview.refetch()}
+              />
+            ) : null}
+            {activeTab === 'jobs' ? <NodeJobsTab jobIds={effectiveJobIds} diagnostics={diagnostics.data} /> : null}
+            <NodeProfileModal
+              mode="edit"
+              node={current}
+              open={editOpen}
+              canWrite={canWriteNodes}
+              onClose={() => setEditOpen(false)}
+              onDone={(updated) => {
+                setNotice(t('nodes.profileUpdated'));
+                setEditOpen(false);
+                setActiveTab('overview');
+                if (updated.id) void detail.refetch();
+              }}
+            />
+            <NodeConfirmDialog
+              key={confirm ? `${confirm.type}:${confirm.node.id}:${confirm.type === 'bootstrap' ? `${confirm.source}:${confirm.input.bootstrap_mode || ''}` : confirm.type === 'inventory-sync' ? confirm.source : ''}` : 'closed'}
+              action={confirm}
+              busy={busy}
+              onConfirm={() => void runConfirmed()}
+              onClose={() => setConfirm(null)}
+            />
+            {agentRevokeDialogNode ? (
+              <NodeAgentIdentityRevokeDialog
+                open={Boolean(agentRevokeDialogNode)}
+                node={agentRevokeDialogNode}
+                diagnostics={diagnostics.data}
+                pending={revokeAgentIdentity.isPending}
+                error={revokeAgentIdentity.error}
+                canBootstrapNode={canBootstrapNodes}
+                onCancel={closeAgentIdentityRevokeDialog}
+                onConfirm={submitAgentIdentityRevoke}
+              />
+            ) : null}
+            {nodeRebootDialogNode ? (
+              <NodeRebootDialog
+                open={Boolean(nodeRebootDialogNode)}
+                node={nodeRebootDialogNode}
+                diagnostics={diagnostics.data}
+                pending={createRebootJob.isPending}
+                error={createRebootJob.error}
+                canBootstrapNode={canBootstrapNodes}
+                onCancel={closeNodeRebootDialog}
+                onConfirm={submitNodeReboot}
+              />
+            ) : null}
+            {emergencyCleanupDialogNode ? (
+              <NodeEmergencyCleanupDialog
+                open={Boolean(emergencyCleanupDialogNode)}
+                node={emergencyCleanupDialogNode}
+                diagnostics={diagnostics.data}
+                pending={createEmergencyCleanupJob.isPending}
+                error={createEmergencyCleanupJob.error}
+                canBootstrapNode={canBootstrapNodes}
+                onCancel={closeEmergencyCleanupDialog}
+                onConfirm={submitEmergencyCleanup}
+              />
+            ) : null}
+            {staleRotationClearDialogNode && staleRotationClearTarget ? (
+              <NodeStaleRotationClearDialog
+                open
+                node={staleRotationClearDialogNode}
+                preview={currentStaleRotationPreview}
+                capturedFingerprint={staleRotationClearTarget.fingerprint}
+                previewFetching={staleRotationPreview.isLoading || staleRotationPreview.isFetching}
+                previewError={staleRotationPreview.isError ? staleRotationPreview.error : undefined}
+                pending={clearStaleRotation.isPending}
+                mutationError={clearStaleRotation.error}
+                canBootstrapNode={canBootstrapNodes}
+                lifecycleDataCurrent={lifecycleDataCurrent}
+                onRefreshPreview={() => {
+                  resetStaleRotationClear();
+                  return staleRotationPreview.refetch();
+                }}
+                onCancel={closeStaleRotationClearDialog}
+                onConfirm={submitStaleRotationClear}
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </QueryBoundary>
+    </Drawer>
+  );
+}
+
+function OverviewTab({ node, busy, onConfirm, canWrite, onEdit }: { node: NodeDetail; busy: boolean; onConfirm: (action: ConfirmAction) => void; canWrite: boolean; onEdit: () => void }) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const maintenanceEnabled = node.status === 'maintenance';
+  return (
+    <Card>
+      <CardBody>
+        <div className="page-stack">
+          <div className="definition-grid">
+            <span>{t('common.id')}</span><strong>{node.id}</strong>
+            <span>{t('common.name')}</span><strong>{nodeLabel(node)}</strong>
+            <span>{t('nodes.role')}</span><strong>{node.role || node.kind || 'n/a'}</strong>
+            <span>{t('common.status')}</span><strong>{node.status || 'n/a'}</strong>
+            <span>{t('nodes.address')}</span><strong>{endpoint(node)}</strong>
+            <span>{t('nodes.platform')}</span><strong>{runtimePlatform(node)}</strong>
+            <span>{t('nodes.executionMode')}</span><strong>{node.execution_mode || 'n/a'}</strong>
+            <span>{t('nodes.agent')}</span><strong>{node.agent_status || 'n/a'}</strong>
+            <span>{t('nodes.heartbeat')}</span><strong>{fmt.date(node.last_heartbeat_at || node.agent_last_seen_at)}</strong>
+            <span>{t('common.created')}</span><strong>{fmt.date(node.created_at)}</strong>
+            <span>{t('common.updated')}</span><strong>{fmt.date(node.updated_at)}</strong>
+          </div>
+          <Toolbar>
+            <StatusBadge status={node.status} />
+            <Button
+              icon={<FilePenLine size={16} />}
+              disabled={!canWrite || busy}
+              title={!canWrite ? t('common.permissionRequired', { permission: 'node.write' }) : undefined}
+              onClick={onEdit}
+            >
+              {t('nodes.editNode')}
+            </Button>
+            <Button
+              variant={maintenanceEnabled ? 'secondary' : 'danger'}
+              icon={<Wrench size={16} />}
+              disabled={busy}
+              onClick={() => onConfirm({ type: maintenanceEnabled ? 'maintenance-disable' : 'maintenance-enable', node })}
+            >
+              {maintenanceEnabled ? t('nodes.disableMaintenance') : t('nodes.enableMaintenance')}
+            </Button>
+          </Toolbar>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+function RuntimeTab({ node, diagnostics }: { node: NodeDetail; diagnostics: ReturnType<typeof useNodeDiagnostics> }) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const data = diagnostics.data;
+  const agent = data?.agent;
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <Toolbar>
+            <StatusBadge status={data?.heartbeat_state || node.status} />
+            <StatusBadge status={data?.communication_state || node.agent_status} />
+            <Button icon={<RefreshCw size={16} />} onClick={() => void diagnostics.refetch()}>{t('common.refresh')}</Button>
+          </Toolbar>
+          {diagnostics.isError ? <div role="alert" className="error-state-inline">{t('nodes.diagnosticsUnavailable')}: {formatAPIError(diagnostics.error)}</div> : null}
+          <div className="definition-grid">
+            <span>{t('nodes.heartbeatState')}</span><strong>{data?.heartbeat_state || node.status || 'n/a'}</strong>
+            <span>{t('nodes.communicationState')}</span><strong>{data?.communication_state || 'n/a'}</strong>
+            <span>{t('nodes.communicationHint')}</span><strong>{data?.communication_hint || 'n/a'}</strong>
+            <span>{t('nodes.agentStatus')}</span><strong>{agent?.status || node.agent_status || 'n/a'}</strong>
+            <span>{t('nodes.agentVersion')}</span><strong>{agent?.agent_version || node.agent_version || 'n/a'}</strong>
+            <span>{t('nodes.protocolVersion')}</span><strong>{agent?.protocol_version || node.agent_protocol_version || 'n/a'}</strong>
+            <span>{t('nodes.lastSeen')}</span><strong>{fmt.date(agent?.last_seen_at || node.agent_last_seen_at)}</strong>
+            <span>{t('nodes.lastJobPoll')}</span><strong>{fmt.date(agent?.last_job_poll_at)}</strong>
+            <span>{t('nodes.lastJobResult')}</span><strong>{fmt.date(agent?.last_job_result_at)}</strong>
+            <span>{t('nodes.lastInventory')}</span><strong>{fmt.date(agent?.last_inventory_sync_at || data?.latest_inventory?.created_at)}</strong>
+            <span>{t('nodes.lastDiscovery')}</span><strong>{fmt.date(agent?.last_discovery_sync_at)}</strong>
+            <span>{t('nodes.lastRuntime')}</span><strong>{fmt.date(agent?.last_runtime_sync_at)}</strong>
+          </div>
+        </CardBody>
+      </Card>
+      <Card>
+        <CardBody>
+          <pre className="code-block">{safeJSON(compactDiagnostics(data))}</pre>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function InventoryTab({ node, inventory, busy, onConfirm }: { node: NodeDetail; inventory: ReturnType<typeof useNodeInventory>; busy: boolean; onConfirm: (action: ConfirmAction) => void }) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <Toolbar>
+            <Button variant="primary" icon={<DownloadCloud size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'inventory-sync', node, source: 'inventory' })}>{t('nodes.syncInventory')}</Button>
+            <Button icon={<RefreshCw size={16} />} onClick={() => void inventory.refetch()}>{t('common.refresh')}</Button>
+          </Toolbar>
+          {inventory.isError ? <div role="alert" className="error-state-inline">{t('nodes.inventoryUnavailable')}: {formatAPIError(inventory.error)}</div> : null}
+          {inventory.data ? (
+            <div className="definition-grid">
+              <span>{t('common.id')}</span><strong>{inventory.data.id}</strong>
+              <span>{t('common.created')}</span><strong>{fmt.date(inventory.data.created_at)}</strong>
+            </div>
+          ) : null}
+        </CardBody>
+      </Card>
+      <Card>
+        <CardBody>
+          <pre className="code-block">{safeJSON(inventory.data?.payload || inventory.data || {})}</pre>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function CapabilitiesTab({ node, capabilities, drift, events, installers, installersError, busy, onConfirm }: {
+  node: NodeDetail;
+  capabilities: ReturnType<typeof useNodeCapabilities>;
+  drift: ReturnType<typeof useNodeCapabilityDrift>;
+  events: ReturnType<typeof useNodeCapabilityInstallEvents>;
+  installers: NodeServiceInstaller[];
+  installersError: Error | null;
+  busy: boolean;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const [serviceCode, setServiceCode] = useState('');
+  const [installerKey, setInstallerKey] = useState('');
+  const serviceCodes = useMemo(() => Array.from(new Set(installers.map((installer) => installer.service_code).filter(Boolean))).sort(), [installers]);
+  const matchingInstallers = installers.filter((installer) => !serviceCode || installer.service_code === serviceCode);
+  const selectedInstaller = matchingInstallers.find((installer) => `${installer.strategy || ''}|${installer.channel || ''}` === installerKey);
+  const installInput: NodeCapabilityInstallInput = {
+    service_code: serviceCode,
+    strategy: selectedInstaller?.strategy || undefined,
+    channel: selectedInstaller?.channel || undefined,
+  };
+
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <FormGrid>
+              <FormField label={t('nodes.capabilityService')}>
+                <TextField list="node-capability-services" value={serviceCode} onChange={(event) => { setServiceCode(event.target.value); setInstallerKey(''); }} />
+              </FormField>
+              <FormField label={t('nodes.capabilityStrategy')}>
+                <Select value={installerKey} onChange={(event) => setInstallerKey(event.target.value)}>
+                  <option value="">{t('nodes.backendDefault')}</option>
+                  {matchingInstallers.map((installer) => (
+                    <option key={`${installer.service_code}:${installer.strategy}:${installer.channel}`} value={`${installer.strategy || ''}|${installer.channel || ''}`}>
+                      {[installer.service_code, installer.strategy, installer.channel].filter(Boolean).join(' / ')}
+                    </option>
+                  ))}
+                </Select>
+              </FormField>
+            </FormGrid>
+            <datalist id="node-capability-services">
+              {serviceCodes.map((code) => <option key={code} value={code} />)}
+            </datalist>
+            {installersError ? <div role="alert" className="error-state-inline">{t('nodes.installersUnavailable')}: {formatAPIError(installersError)}</div> : null}
+            {selectedInstaller?.description ? <p className="muted">{selectedInstaller.description}</p> : null}
+            <Toolbar>
+              <Button variant="primary" icon={<PackageCheck size={16} />} disabled={busy || !serviceCode} onClick={() => onConfirm({ type: 'capability-install', node, input: installInput })}>{t('nodes.installCapability')}</Button>
+              <Button icon={<CheckCircle2 size={16} />} disabled={busy || !serviceCode} onClick={() => onConfirm({ type: 'capability-verify', node, serviceCode })}>{t('nodes.verifyCapability')}</Button>
+              <Button icon={<RefreshCw size={16} />} onClick={() => { void capabilities.refetch(); void drift.refetch(); void events.refetch(); }}>{t('common.refresh')}</Button>
+            </Toolbar>
+          </div>
+        </CardBody>
+      </Card>
+      <QueryBoundary isLoading={capabilities.isLoading} isError={capabilities.isError} error={capabilities.error} refetch={() => void capabilities.refetch()}>
+        <DataTable
+          rows={capabilities.data || []}
+          columns={[
+            { key: 'capability', header: t('nodes.capability'), render: (row) => <code>{text(row.capability_code)}</code> },
+            { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+            { key: 'version', header: t('nodes.version'), render: (row) => text(row.version) },
+            { key: 'source', header: t('nodes.source'), render: (row) => text(row.source) },
+            { key: 'detected', header: t('nodes.detected'), render: (row) => fmt.date(row.detected_at) },
+            { key: 'actions', header: t('common.actions'), render: (row: NodeCapability) => (
+              <Button icon={<CheckCircle2 size={16} />} disabled={busy || !row.capability_code} onClick={() => onConfirm({ type: 'capability-verify', node, serviceCode: row.capability_code || '' })}>
+                {t('nodes.verifyCapability')}
+              </Button>
+            ) },
+          ]}
+        />
+      </QueryBoundary>
+      {drift.isError ? <div role="alert" className="error-state-inline">{t('nodes.driftUnavailable')}: {formatAPIError(drift.error)}</div> : null}
+      {drift.data?.drift?.length ? (
+        <DataTable
+          rows={drift.data.drift}
+          title={t('nodes.capabilityDrift')}
+          columns={[
+            { key: 'capability', header: t('nodes.capability'), render: (row) => <code>{text(row.capability_code)}</code> },
+            { key: 'desired', header: t('nodes.desired'), render: (row) => text(row.desired) },
+            { key: 'actual', header: t('nodes.actual'), render: (row) => <StatusBadge status={row.actual} /> },
+            { key: 'sync', header: t('nodes.inSync'), render: (row) => row.in_sync ? t('common.yes') : t('common.no') },
+          ]}
+        />
+      ) : null}
+      {events.isError ? <div role="alert" className="error-state-inline">{t('nodes.eventsUnavailable')}: {formatAPIError(events.error)}</div> : null}
+      {events.data?.length ? (
+        <DataTable
+          rows={events.data}
+          title={t('nodes.capabilityEvents')}
+          columns={[
+            { key: 'job', header: t('nodes.job'), render: (row) => <code>{shortID(row.job_id || undefined)}</code> },
+            { key: 'capability', header: t('nodes.capability'), render: (row) => <code>{text(row.capability_code)}</code> },
+            { key: 'strategy', header: t('nodes.capabilityStrategy'), render: (row) => text(row.strategy) },
+            { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+            { key: 'summary', header: t('common.description'), render: (row) => text(row.summary) },
+            { key: 'created', header: t('common.created'), render: (row) => fmt.date(row.created_at) },
+          ]}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DiagnosticsTab({ node, diagnostics, busy, onConfirm }: { node: NodeDetail; diagnostics: ReturnType<typeof useNodeDiagnostics>; busy: boolean; onConfirm: (action: ConfirmAction) => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <Toolbar>
+            <Button variant="primary" icon={<Activity size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'diagnostics', node, action: 'channel-probe' })}>{t('nodes.probeChannel')}</Button>
+            <Button icon={<DownloadCloud size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'diagnostics', node, action: 'retry-inventory' })}>{t('nodes.retryInventory')}</Button>
+            <Button icon={<RefreshCw size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'diagnostics', node, action: 'retry-discovery' })}>{t('nodes.retryDiscovery')}</Button>
+            <Button icon={<ServerCog size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'diagnostics', node, action: 'reconcile-runtime' })}>{t('nodes.reconcileRuntime')}</Button>
+            <Button icon={<Play size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'diagnostics', node, action: 'requeue-stuck-job' })}>{t('nodes.requeueStuckJob')}</Button>
+            <Button icon={<RefreshCw size={16} />} onClick={() => void diagnostics.refetch()}>{t('common.refresh')}</Button>
+          </Toolbar>
+        </CardBody>
+      </Card>
+      <QueryBoundary isLoading={diagnostics.isLoading} isError={diagnostics.isError} error={diagnostics.error} refetch={() => void diagnostics.refetch()}>
+        <Card>
+          <CardBody>
+            <pre className="code-block">{safeJSON(compactDiagnostics(diagnostics.data))}</pre>
+          </CardBody>
+        </Card>
+      </QueryBoundary>
+    </div>
+  );
+}
+
+function DiscoveryTab({ node, discoveries, summary, busy, onConfirm }: {
+  node: NodeDetail;
+  discoveries: ReturnType<typeof useNodeServiceDiscoveries>;
+  summary: ReturnType<typeof useNodeServiceDiscoverySummary>;
+  busy: boolean;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <Toolbar>
+            <Button variant="primary" icon={<Boxes size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'service-discover', node })}>{t('nodes.discoverServices')}</Button>
+            <Button icon={<ShieldCheck size={16} />} disabled={busy || !(summary.data?.importable_count || 0)} onClick={() => onConfirm({ type: 'service-import-all', node })}>{t('nodes.importAllDiscoveries')}</Button>
+            <Button icon={<RefreshCw size={16} />} onClick={() => { void discoveries.refetch(); void summary.refetch(); }}>{t('common.refresh')}</Button>
+          </Toolbar>
+          {summary.isError ? <div role="alert" className="error-state-inline">{t('nodes.discoverySummaryUnavailable')}: {formatAPIError(summary.error)}</div> : null}
+          {summary.data ? (
+            <div className="definition-grid">
+              <span>{t('nodes.discovered')}</span><strong>{summary.data.discovered ?? summary.data.total ?? 0}</strong>
+              <span>{t('nodes.imported')}</span><strong>{summary.data.imported ?? 0}</strong>
+              <span>{t('nodes.ignored')}</span><strong>{summary.data.ignored ?? 0}</strong>
+              <span>{t('nodes.importable')}</span><strong>{summary.data.importable_count ?? 0}</strong>
+            </div>
+          ) : null}
+        </CardBody>
+      </Card>
+      <QueryBoundary isLoading={discoveries.isLoading} isError={discoveries.isError} error={discoveries.error} refetch={() => void discoveries.refetch()}>
+        <DataTable
+          rows={discoveries.data || []}
+          columns={[
+            { key: 'service', header: t('nodes.service'), render: (row) => <code>{text(row.service_code)}</code> },
+            { key: 'name', header: t('common.name'), render: (row) => <strong>{text(row.name || row.systemd_unit || row.id)}</strong> },
+            { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+            { key: 'endpoint', header: t('nodes.endpoint'), render: (row) => [row.endpoint_host, row.endpoint_port].filter(Boolean).join(':') || 'n/a' },
+            { key: 'source', header: t('nodes.source'), render: (row) => text(row.source) },
+            { key: 'confidence', header: t('nodes.confidence'), render: (row) => String(row.confidence ?? 'n/a') },
+            { key: 'detected', header: t('nodes.detected'), render: (row) => fmt.date(row.detected_at) },
+            { key: 'actions', header: t('common.actions'), render: (row) => (
+              <Button icon={<ShieldCheck size={16} />} disabled={busy || row.status === 'imported'} onClick={() => onConfirm({ type: 'service-import', node, discovery: row })}>
+                {t('nodes.importDiscovery')}
+              </Button>
+            ) },
+          ]}
+        />
+      </QueryBoundary>
+    </div>
+  );
+}
+
+function BootstrapTab({ node, accessMethods, runs, busy, canBootstrap, onConfirm }: {
+  node: NodeDetail;
+  accessMethods: ReturnType<typeof useNodeAccessMethods>;
+  runs: ReturnType<typeof useNodeBootstrapRuns>;
+  busy: boolean;
+  canBootstrap: boolean;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const [mode, setMode] = useState<BootstrapRequest['bootstrap_mode']>('ssh_bootstrap');
+  const [forceReenroll, setForceReenroll] = useState(false);
+  const [bundleConfirm, setBundleConfirm] = useState<BootstrapBundleConfirmAction | null>(null);
+  const [bundleAcknowledged, setBundleAcknowledged] = useState(false);
+  const [revealedBundle, setRevealedBundle] = useState<RevealedBootstrapBundle | null>(null);
+  const [bundleStatus, setBundleStatus] = useState('');
+  const [bundleError, setBundleError] = useState('');
+  const [copyStatus, setCopyStatus] = useState('');
+  const [copyError, setCopyError] = useState('');
+  const revealBundle = useRevealNodeBootstrapBundle();
+  const downloadBundle = useDownloadNodeBootstrapBundle();
+  const hasEnabledSSH = Boolean(defaultSSHAccessMethod(accessMethods.data)?.is_enabled);
+  const input: BootstrapRequest = { bootstrap_mode: mode, force_reenroll: forceReenroll };
+  const bundleBusy = revealBundle.isPending || downloadBundle.isPending;
+  const clearBundle = () => {
+    setRevealedBundle(null);
+    setBundleStatus('');
+    setBundleError('');
+    setCopyStatus('');
+    setCopyError('');
+  };
+  useEffect(() => {
+    if (!revealedBundle || !runs.data) return;
+    const current = runs.data.find((run) => run.id === revealedBundle.runId);
+    if (!current || current.manual_bundle_available !== true || (current.node_id && current.node_id !== node.id)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRevealedBundle(null);
+      setBundleStatus('');
+      setBundleError('');
+      setCopyStatus('');
+      setCopyError('');
+    }
+  }, [node.id, revealedBundle, runs.data]);
+
+  const closeBundleConfirm = () => {
+    setBundleConfirm(null);
+    setBundleAcknowledged(false);
+  };
+  const openBundleConfirm = (type: BootstrapBundleConfirmAction['type'], run: NodeBootstrapRun) => {
+    setBundleError('');
+    setBundleStatus('');
+    setCopyStatus('');
+    setCopyError('');
+    setBundleAcknowledged(false);
+    setBundleConfirm({ type, run });
+  };
+  const handleBundleError = (error: unknown, runId: string) => {
+    const key = bundleErrorKey(error);
+    setBundleError(t(key));
+    if (error instanceof APIError) {
+      if (error.status === 403) {
+        setRevealedBundle(null);
+      }
+      if (error.status === 404) {
+        setRevealedBundle((current) => (current?.runId === runId ? null : current));
+        void runs.refetch();
+      }
+    }
+    revealBundle.reset();
+    downloadBundle.reset();
+  };
+  const triggerDownload = (result: { blob: Blob; filename: string }) => {
+    const objectURL = URL.createObjectURL(result.blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectURL;
+    anchor.download = result.filename;
+    anchor.rel = 'noopener noreferrer';
+    anchor.className = 'download-anchor';
+    document.body.appendChild(anchor);
+    try {
+      anchor.click();
+      setBundleStatus(t('nodes.manualBundleDownloadStarted'));
+    } finally {
+      anchor.remove();
+      URL.revokeObjectURL(objectURL);
+    }
+  };
+  const runBundleAction = async () => {
+    if (!bundleConfirm || !canBootstrap || !bundleAcknowledged) return;
+    const runId = bundleConfirm.run.id;
+    setBundleError('');
+    setBundleStatus('');
+    setCopyStatus('');
+    setCopyError('');
+    try {
+      if (bundleConfirm.type === 'reveal') {
+        setRevealedBundle(null);
+        await revealBundle.mutateAsync({
+          nodeId: node.id,
+          runId,
+          consume: (result: NodeBootstrapBundleRevealResult) => {
+            setRevealedBundle({
+              nodeId: result.node_id,
+              runId: result.bootstrap_run_id,
+              filename: result.filename,
+              agentBootstrapEnv: result.agent_bootstrapenv,
+              revealedAt: result.revealed_at,
+            });
+          },
+        });
+      } else {
+        await downloadBundle.mutateAsync({
+          nodeId: node.id,
+          runId,
+          consume: triggerDownload,
+        });
+      }
+      closeBundleConfirm();
+    } catch (error) {
+      closeBundleConfirm();
+      handleBundleError(error, runId);
+    } finally {
+      revealBundle.reset();
+      downloadBundle.reset();
+    }
+  };
+  const copyRevealedBundle = async () => {
+    if (!revealedBundle) return;
+    setCopyStatus('');
+    setCopyError('');
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('clipboard unavailable');
+      }
+      await navigator.clipboard.writeText(revealedBundle.agentBootstrapEnv);
+      setCopyStatus(t('nodes.manualBundleCopied'));
+    } catch {
+      setCopyError(t('nodes.manualBundleCopyFailed'));
+    }
+  };
+  const downloadableRunFromPanel = (): NodeBootstrapRun | null => {
+    if (!revealedBundle) return null;
+    return (runs.data || []).find((run) => run.id === revealedBundle.runId) || {
+      id: revealedBundle.runId,
+      node_id: node.id,
+      manual_bundle_available: true,
+    };
+  };
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <FormGrid>
+              <FormField label={t('nodes.bootstrapMode')}>
+                <Select value={mode} onChange={(event) => setMode(event.target.value as BootstrapRequest['bootstrap_mode'])}>
+                  <option value="ssh_bootstrap">{t('nodes.sshBootstrap')}</option>
+                  <option value="manual_bundle">{t('nodes.manualBundle')}</option>
+                </Select>
+              </FormField>
+              <FormField label={t('nodes.forceReenroll')}>
+                <Checkbox checked={forceReenroll} onChange={(event) => setForceReenroll(event.target.checked)} label={t('nodes.forceReenrollLabel')} />
+              </FormField>
+            </FormGrid>
+            <p className="muted">{t('nodes.bootstrapImpact')}</p>
+            {mode === 'ssh_bootstrap' && !hasEnabledSSH ? <div role="alert" className="error-state-inline">{t('nodes.sshAccessMissing')}</div> : null}
+            <Toolbar>
+              <Button variant="primary" icon={<Play size={16} />} disabled={busy || (mode === 'ssh_bootstrap' && !hasEnabledSSH)} onClick={() => onConfirm({ type: 'bootstrap', node, input, source: 'bootstrap' })}>
+                {t('nodes.queueBootstrap')}
+              </Button>
+              <Button icon={<RotateCcw size={16} />} disabled={busy || !hasEnabledSSH} onClick={() => onConfirm({ type: 'agent-reinstall', node, input: { ...input, bootstrap_mode: 'ssh_bootstrap', reinstall_agent: true } })}>
+                {t('nodes.reinstallAgent')}
+              </Button>
+              <Button icon={<RefreshCw size={16} />} onClick={() => { void accessMethods.refetch(); void runs.refetch(); }}>{t('common.refresh')}</Button>
+            </Toolbar>
+          </div>
+        </CardBody>
+      </Card>
+      {accessMethods.isError ? <div role="alert" className="error-state-inline">{t('nodes.accessMethodsUnavailable')}: {formatAPIError(accessMethods.error)}</div> : null}
+      <AccessMethodsTable methods={accessMethods.data || []} />
+      {runs.isError ? <div role="alert" className="error-state-inline">{t('nodes.bootstrapRunsUnavailable')}: {formatAPIError(runs.error)}</div> : null}
+      {!canBootstrap && (runs.data || []).some((run) => run.manual_bundle_available === true) ? <p className="muted">{t('nodes.manualBundlePermissionHint')}</p> : null}
+      {bundleStatus ? <div role="status">{bundleStatus}</div> : null}
+      {bundleError ? <div role="alert" className="error-state-inline">{bundleError}</div> : null}
+      {revealedBundle ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <h3 className="card-title">{t('nodes.manualBundleSensitiveTitle')}</h3>
+              <p className="muted">{t('nodes.manualBundlePanelWarning')}</p>
+              <div className="definition-grid">
+                <span>{t('nodes.manualBundleFilename')}</span><strong>{revealedBundle.filename}</strong>
+                <span>{t('nodes.manualBundleRevealedAt')}</span><strong>{fmt.date(revealedBundle.revealedAt)}</strong>
+                <span>{t('nodes.bootstrapRun')}</span><strong><code>{shortID(revealedBundle.runId)}</code></strong>
+              </div>
+              <FormField label={t('nodes.manualBundleContentLabel')}>
+                <Textarea readOnly rows={10} value={revealedBundle.agentBootstrapEnv} aria-label={t('nodes.manualBundleContentLabel')} />
+              </FormField>
+              {copyStatus ? <div role="status">{copyStatus}</div> : null}
+              {copyError ? <div role="alert" className="error-state-inline">{copyError}</div> : null}
+              <Toolbar>
+                <Button icon={<Copy size={16} />} onClick={() => void copyRevealedBundle()}>
+                  {t('nodes.manualBundleCopy')}
+                </Button>
+                <Button
+                  icon={<DownloadCloud size={16} />}
+                  disabled={bundleBusy}
+                  onClick={() => {
+                    const run = downloadableRunFromPanel();
+                    if (run) openBundleConfirm('download', run);
+                  }}
+                >
+                  {t('nodes.manualBundleDownload')}
+                </Button>
+                <Button onClick={clearBundle}>{t('nodes.manualBundleCloseClear')}</Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
+      <DataTable
+        rows={runs.data || []}
+        title={t('nodes.bootstrapRuns')}
+        columns={[
+          { key: 'id', header: t('common.id'), render: (row) => <code>{shortID(row.id)}</code> },
+          { key: 'job', header: t('nodes.job'), render: (row) => <code>{shortID(row.job_id || undefined)}</code> },
+          { key: 'mode', header: t('nodes.bootstrapMode'), render: (row) => text(row.bootstrap_mode) },
+          { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+          { key: 'bundle', header: t('nodes.manualBundleAvailability'), render: (row) => row.manual_bundle_available === true ? <Badge>{t('nodes.manualBundleAvailable')}</Badge> : <span className="muted">{t('nodes.manualBundleUnavailable')}</span> },
+          { key: 'created', header: t('common.created'), render: (row) => fmt.date(row.created_at) },
+          { key: 'started', header: t('nodes.started'), render: (row) => fmt.date(row.started_at || undefined), priority: 'low' },
+          { key: 'finished', header: t('nodes.finished'), render: (row) => fmt.date(row.finished_at || undefined), priority: 'low' },
+          { key: 'actions', header: t('common.actions'), render: (row) => (
+            row.manual_bundle_available === true && canBootstrap && (!row.node_id || row.node_id === node.id) ? (
+              <Toolbar>
+                <Button icon={<ShieldAlert size={16} />} disabled={bundleBusy} onClick={() => openBundleConfirm('reveal', row)}>
+                  {t('nodes.manualBundleReveal')}
+                </Button>
+                <Button icon={<DownloadCloud size={16} />} disabled={bundleBusy} onClick={() => openBundleConfirm('download', row)}>
+                  {t('nodes.manualBundleDownload')}
+                </Button>
+              </Toolbar>
+            ) : row.manual_bundle_available === true && !canBootstrap ? (
+              <span className="muted">{t('common.permissionRequired', { permission: 'node.bootstrap' })}</span>
+            ) : null
+          ) },
+        ]}
+      />
+      <BootstrapBundleConfirmDialog
+        action={bundleConfirm}
+        node={node}
+        busy={bundleBusy}
+        acknowledged={bundleAcknowledged}
+        onAcknowledged={setBundleAcknowledged}
+        onConfirm={() => void runBundleAction()}
+        onClose={closeBundleConfirm}
+      />
+    </div>
+  );
+}
+
+function BootstrapBundleConfirmDialog({
+  action,
+  node,
+  busy,
+  acknowledged,
+  onAcknowledged,
+  onConfirm,
+  onClose,
+}: {
+  action: BootstrapBundleConfirmAction | null;
+  node: NodeDetail;
+  busy: boolean;
+  acknowledged: boolean;
+  onAcknowledged: (value: boolean) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  if (!action) return null;
+  const operation = action.type === 'reveal' ? t('nodes.manualBundleReveal') : t('nodes.manualBundleDownload');
+  return (
+    <ConfirmDialog title={t('nodes.manualBundleConfirmTitle', { operation })} open={Boolean(action)} onClose={onClose}>
+      <div className="page-stack">
+        <p>{t('nodes.manualBundleConfirmIntro')}</p>
+        <div className="definition-grid">
+          <span>{t('nodes.node')}</span><strong>{nodeLabel(node)}</strong>
+          <span>{t('nodes.bootstrapRun')}</span><strong><code>{shortID(action.run.id)}</code></strong>
+          <span>{t('nodes.manualBundleAction')}</span><strong>{operation}</strong>
+        </div>
+        <ul className="muted">
+          <li>{t('nodes.manualBundleContainsSensitive')}</li>
+          <li>{t('nodes.manualBundleActionAudited')}</li>
+          <li>{t('nodes.manualBundleRepeatedAudited')}</li>
+          <li>{t('nodes.manualBundleLiveOnboardingNotVerified')}</li>
+        </ul>
+        <Checkbox
+          checked={acknowledged}
+          onChange={(event) => onAcknowledged(event.target.checked)}
+          label={t('nodes.manualBundleAcknowledge')}
+        />
+        <Toolbar>
+          <Button variant="danger" disabled={busy || !acknowledged} onClick={onConfirm}>{operation}</Button>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </div>
+    </ConfirmDialog>
+  );
+}
+
+function SecurityTab({ node, diagnostics, tokens, accessMethods, scanHostKey, createSSHAccess, canBootstrap, busy, onSSHAccessCreated, onConfirm }: {
+  node: NodeDetail;
+  diagnostics?: NodeDiagnostics;
+  tokens: ReturnType<typeof useNodeEnrollmentTokens>;
+  accessMethods: ReturnType<typeof useNodeAccessMethods>;
+  scanHostKey: ReturnType<typeof useScanNodeHostKey>;
+  createSSHAccess: ReturnType<typeof useCreateNodeSSHAccessMethod>;
+  canBootstrap: boolean;
+  busy: boolean;
+  onSSHAccessCreated: () => void;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const [ttlHours, setTTLHours] = useState(String(ENROLLMENT_TOKEN_TTL_DEFAULT_HOURS));
+  const [methodId, setMethodId] = useState('');
+  const [scanResult, setScanResult] = useState<HostKeyScanResult | null>(null);
+  const [sshAccessOpen, setSSHAccessOpen] = useState(false);
+  const ttlValidation = validateEnrollmentTokenTTL(ttlHours);
+  const methods = safeSSHAccessMethods(accessMethods.data);
+  const selectedMethod = methods.find((method) => method.id === methodId) || defaultSSHAccessMethod(accessMethods.data);
+  const runScan = async () => {
+    if (!selectedMethod) return;
+    const result = await scanHostKey.mutateAsync({
+      nodeId: node.id,
+      input: {
+        ssh_host: selectedMethod.ssh_host || node.address,
+        ssh_port: selectedMethod.ssh_port || 22,
+      },
+    });
+    setScanResult(result);
+  };
+  const firstFingerprint = scanResult?.fingerprints?.[0]?.fingerprint || '';
+  const currentPin = selectedMethod?.ssh_host_key_sha256 || '';
+  const changedPin = Boolean(firstFingerprint && currentPin && firstFingerprint !== currentPin);
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <h3 className="card-title">{t('nodes.enrollmentTokens')}</h3>
+            <FormGrid>
+              <FormField label={t('nodes.tokenTTL')}>
+                <TextField
+                  type="number"
+                  min={ENROLLMENT_TOKEN_TTL_MIN_HOURS}
+                  max={ENROLLMENT_TOKEN_TTL_MAX_HOURS}
+                  step={1}
+                  value={ttlHours}
+                  onChange={(event) => setTTLHours(event.target.value)}
+                />
+              </FormField>
+            </FormGrid>
+            {ttlValidation.errorKey ? (
+              <div role="alert" className="error-state-inline">
+                {t(`nodes.onboarding.tokenTTLErrors.${ttlValidation.errorKey}`, {
+                  min: ENROLLMENT_TOKEN_TTL_MIN_HOURS,
+                  max: ENROLLMENT_TOKEN_TTL_MAX_HOURS,
+                })}
+              </div>
+            ) : null}
+            <Toolbar>
+              <Button variant="primary" icon={<KeyRound size={16} />} disabled={busy || Boolean(ttlValidation.errorKey)} onClick={() => onConfirm({ type: 'enrollment-create', node, ttlHours: ttlValidation.ttlHours, source: 'security' })}>{t('nodes.createEnrollmentToken')}</Button>
+              <Button icon={<RotateCcw size={16} />} disabled={busy || Boolean(ttlValidation.errorKey)} onClick={() => onConfirm({ type: 'enrollment-rotate', node, ttlHours: ttlValidation.ttlHours, source: 'security' })}>{t('nodes.rotateEnrollmentToken')}</Button>
+              <Button icon={<RefreshCw size={16} />} onClick={() => void tokens.refetch()}>{t('common.refresh')}</Button>
+            </Toolbar>
+            {tokens.isError ? <div role="alert" className="error-state-inline">{t('nodes.enrollmentTokensUnavailable')}: {formatAPIError(tokens.error)}</div> : null}
+          </div>
+        </CardBody>
+      </Card>
+      <DataTable
+        rows={tokens.data || []}
+        columns={[
+          { key: 'hint', header: t('nodes.tokenHint'), render: (row) => <code>{text(row.token_hint)}</code> },
+          { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+          { key: 'expires', header: t('nodes.expires'), render: (row) => fmt.date(row.expires_at) },
+          { key: 'used', header: t('nodes.used'), render: (row) => fmt.date(row.used_at || undefined) },
+          { key: 'created', header: t('common.created'), render: (row) => fmt.date(row.created_at) },
+          { key: 'actions', header: t('common.actions'), render: (row) => (
+            <Button icon={<Trash2 size={16} />} variant="danger" disabled={busy || row.status === 'revoked'} onClick={() => onConfirm({ type: 'enrollment-revoke', node, token: row })}>
+              {t('nodes.revokeToken')}
+            </Button>
+          ) },
+        ]}
+      />
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <h3 className="card-title">{t('nodes.hostKeyTrust')}</h3>
+            <FormGrid>
+              <FormField label={t('nodes.sshAccessMethod')}>
+                <Select value={selectedMethod?.id || ''} onChange={(event) => setMethodId(event.target.value)}>
+                  {methods.map((method) => (
+                    <option key={method.id} value={method.id}>
+                      {[method.ssh_user, method.ssh_host || node.address, method.ssh_port || 22].filter(Boolean).join('@')}
+                    </option>
+                  ))}
+                </Select>
+              </FormField>
+            </FormGrid>
+            {!selectedMethod ? <div role="alert" className="error-state-inline">{t('nodes.sshAccessMissing')}</div> : null}
+            <Toolbar>
+              <Button variant="primary" icon={<Fingerprint size={16} />} disabled={busy || !selectedMethod} onClick={() => void runScan()}>{t('nodes.scanHostKey')}</Button>
+              <Button
+                icon={<PlusCircle size={16} />}
+                disabled={busy || !canBootstrap}
+                title={!canBootstrap ? t('common.permissionRequired', { permission: 'node.bootstrap' }) : undefined}
+                onClick={() => setSSHAccessOpen(true)}
+              >
+                {t('nodes.addSSHAccessMethod')}
+              </Button>
+              <Button icon={<RefreshCw size={16} />} onClick={() => void accessMethods.refetch()}>{t('common.refresh')}</Button>
+            </Toolbar>
+            {!canBootstrap ? <p className="muted">{t('nodes.addSSHAccessPermissionHint')}</p> : null}
+            {accessMethods.isError ? <div role="alert" className="error-state-inline">{t('nodes.accessMethodsUnavailable')}: {formatAPIError(accessMethods.error)}</div> : null}
+            {scanHostKey.isError ? <div role="alert" className="error-state-inline">{formatAPIError(scanHostKey.error)}</div> : null}
+            {changedPin ? <div role="alert" className="error-state-inline">{t('nodes.hostKeyChangedWarning')}</div> : null}
+            {scanResult ? (
+              <div className="page-stack">
+                <div className="definition-grid">
+                  <span>{t('nodes.scanHost')}</span><strong>{scanResult.host || selectedMethod?.ssh_host || node.address}</strong>
+                  <span>{t('nodes.scanPort')}</span><strong>{scanResult.port || selectedMethod?.ssh_port || 22}</strong>
+                  <span>{t('nodes.currentPin')}</span><strong>{currentPin || 'n/a'}</strong>
+                </div>
+                <DataTable
+                  rows={scanResult.fingerprints || []}
+                  columns={[
+                    { key: 'fingerprint', header: t('nodes.fingerprint'), render: (row) => <code>{text(row.fingerprint)}</code> },
+                    { key: 'algorithm', header: t('nodes.algorithm'), render: (row) => text(row.algorithm) },
+                    { key: 'bits', header: t('nodes.bits'), render: (row) => String(row.bits ?? 'n/a') },
+                    { key: 'actions', header: t('common.actions'), render: (row) => (
+                      <Toolbar>
+                        <Button icon={<ShieldCheck size={16} />} disabled={busy || !selectedMethod || !row.fingerprint} onClick={() => selectedMethod && row.fingerprint && onConfirm({ type: 'host-key-pin', node, method: selectedMethod, fingerprint: row.fingerprint })}>
+                          {t('nodes.pinFingerprint')}
+                        </Button>
+                        <Button onClick={() => setScanResult(null)}>{t('nodes.rejectScan')}</Button>
+                      </Toolbar>
+                    ) },
+                  ]}
+                />
+              </div>
+            ) : null}
+          </div>
+        </CardBody>
+      </Card>
+      <AccessMethodsTable methods={accessMethods.data || []} />
+      {sshAccessOpen ? (
+        <NodeSSHAccessMethodModal
+          node={node}
+          open={sshAccessOpen}
+          canBootstrap={canBootstrap}
+          busy={busy}
+          scanHostKey={scanHostKey}
+          createSSHAccess={createSSHAccess}
+          onClose={() => setSSHAccessOpen(false)}
+          onDone={() => {
+            setSSHAccessOpen(false);
+            onSSHAccessCreated();
+          }}
+        />
+      ) : null}
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <h3 className="card-title">{t('nodes.agentTrust')}</h3>
+            <div className="definition-grid">
+              <span>{t('nodes.tokenHint')}</span><strong>{diagnostics?.agent?.token_hint || 'n/a'}</strong>
+              <span>{t('nodes.tokenRotationStatus')}</span><strong>{diagnostics?.agent?.token_rotation_status || 'n/a'}</strong>
+              <span>{t('nodes.lastAuthFailure')}</span><strong>{fmt.date(diagnostics?.agent?.last_auth_failure_at)}</strong>
+            </div>
+            <Toolbar>
+              <Button variant="danger" icon={<ShieldAlert size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'agent-token-rotate', node })}>{t('nodes.rotateAgentToken')}</Button>
+            </Toolbar>
+          </div>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function parseSSHPort(value: string): number | null {
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+}
+
+function NodeSSHAccessMethodModal({ node, open, canBootstrap, busy, scanHostKey, createSSHAccess, onClose, onDone }: {
+  node: NodeDetail;
+  open: boolean;
+  canBootstrap: boolean;
+  busy: boolean;
+  scanHostKey: ReturnType<typeof useScanNodeHostKey>;
+  createSSHAccess: ReturnType<typeof useCreateNodeSSHAccessMethod>;
+  onClose: () => void;
+  onDone: (method: NodeAccessMethod) => void;
+}) {
+  const { t } = useTranslation();
+  const [sshHost, setSSHHost] = useState(node.address || '');
+  const [sshPort, setSSHPort] = useState('22');
+  const [sshUser, setSSHUser] = useState('');
+  const [scanResult, setScanResult] = useState<HostKeyScanResult | null>(null);
+  const [selectedFingerprint, setSelectedFingerprint] = useState('');
+  const [fingerprintVerified, setFingerprintVerified] = useState(false);
+  const [privateKey, setPrivateKey] = useState('');
+  const [isEnabled, setIsEnabled] = useState(true);
+  const [error, setError] = useState('');
+  const fingerprints = scanResult?.fingerprints || [];
+  const port = parseSSHPort(sshPort);
+  const targetReady = Boolean(sshHost.trim() && port && sshUser.trim());
+  const verifiedReady = Boolean(selectedFingerprint && fingerprintVerified);
+  const createReady = Boolean(targetReady && verifiedReady && privateKey);
+  const pending = busy || scanHostKey.isPending || createSSHAccess.isPending;
+
+  const clearTrustState = () => {
+    setScanResult(null);
+    setSelectedFingerprint('');
+    setFingerprintVerified(false);
+    setPrivateKey('');
+  };
+
+  const close = () => {
+    setPrivateKey('');
+    createSSHAccess.reset();
+    scanHostKey.reset();
+    onClose();
+  };
+
+  const runScan = async () => {
+    setError('');
+    setSelectedFingerprint('');
+    setFingerprintVerified(false);
+    if (!sshHost.trim() || !port) {
+      setError(t('nodes.sshAccessTargetInvalid'));
+      setScanResult(null);
+      return;
+    }
+    try {
+      const result = await scanHostKey.mutateAsync({
+        nodeId: node.id,
+        input: {
+          ssh_host: sshHost.trim(),
+          ssh_port: port,
+        },
+      });
+      setScanResult(result);
+      if (!(result.fingerprints || []).length) {
+        setError(t('nodes.sshAccessNoFingerprints'));
+      }
+    } catch (scanError) {
+      setScanResult(null);
+      setError(formatAPIError(scanError));
+    }
+  };
+
+  const selectFingerprint = (entry: HostKeyScanEntry) => {
+    const fingerprint = entry.fingerprint || '';
+    setSelectedFingerprint(fingerprint);
+    setFingerprintVerified(false);
+    setPrivateKey('');
+  };
+
+  const submit = async () => {
+    setError('');
+    const normalizedPort = parseSSHPort(sshPort);
+    if (!canBootstrap) {
+      setError(t('common.permissionRequired', { permission: 'node.bootstrap' }));
+      return;
+    }
+    if (!sshHost.trim() || !normalizedPort || !sshUser.trim()) {
+      setError(t('nodes.sshAccessTargetInvalid'));
+      return;
+    }
+    if (!selectedFingerprint || !fingerprintVerified) {
+      setError(t('nodes.sshAccessFingerprintRequired'));
+      return;
+    }
+    if (!privateKey) {
+      setError(t('nodes.sshAccessPrivateKeyRequired'));
+      return;
+    }
+
+    let privateKeyForRequest = privateKey;
+    setPrivateKey('');
+    try {
+      const created = await createSSHAccess.mutateAsync({
+        nodeId: node.id,
+        ssh_host: sshHost.trim(),
+        ssh_port: normalizedPort,
+        ssh_user: sshUser.trim(),
+        ssh_host_key_sha256: selectedFingerprint,
+        is_enabled: isEnabled,
+        readPrivateKey: () => {
+          const value = privateKeyForRequest;
+          privateKeyForRequest = '';
+          return value;
+        },
+      });
+      setError('');
+      onDone(created);
+    } catch (submitError) {
+      setError(formatAPIError(submitError));
+    } finally {
+      privateKeyForRequest = '';
+      createSSHAccess.reset();
+    }
+  };
+
+  return (
+    <Modal title={t('nodes.addSSHAccessMethod')} open={open} onClose={close}>
+      <div className="page-stack">
+        <p className="muted">{t('nodes.sshAccessCreateIntro')}</p>
+        <FormGrid>
+          <FormField label={t('nodes.sshHost')}>
+            <TextField
+              value={sshHost}
+              onChange={(event) => {
+                setSSHHost(event.target.value);
+                clearTrustState();
+              }}
+            />
+          </FormField>
+          <FormField label={t('nodes.sshPort')}>
+            <TextField
+              type="number"
+              min={1}
+              max={65535}
+              value={sshPort}
+              onChange={(event) => {
+                setSSHPort(event.target.value);
+                clearTrustState();
+              }}
+            />
+          </FormField>
+          <FormField label={t('nodes.sshUser')}>
+            <TextField value={sshUser} onChange={(event) => setSSHUser(event.target.value)} />
+          </FormField>
+        </FormGrid>
+        <Toolbar>
+          <Button variant="primary" icon={<Fingerprint size={16} />} disabled={pending || !sshHost.trim() || !port} onClick={() => void runScan()}>
+            {scanHostKey.isPending ? t('nodes.scanningHostKey') : t('nodes.scanFingerprints')}
+          </Button>
+        </Toolbar>
+        {scanResult ? (
+          <div className="page-stack">
+            <div className="definition-grid">
+              <span>{t('nodes.scanHost')}</span><strong>{scanResult.host || sshHost.trim()}</strong>
+              <span>{t('nodes.scanPort')}</span><strong>{scanResult.port || port || 'n/a'}</strong>
+            </div>
+            <DataTable
+              rows={fingerprints}
+              title={t('nodes.sshAccessScannedFingerprints')}
+              columns={[
+                {
+                  key: 'select',
+                  header: t('common.select'),
+                  render: (row) => (
+                    <input
+                      type="radio"
+                      name="new-ssh-access-fingerprint"
+                      aria-label={`${t('nodes.selectFingerprint')} ${row.fingerprint || ''}`.trim()}
+                      checked={Boolean(row.fingerprint && row.fingerprint === selectedFingerprint)}
+                      disabled={!row.fingerprint}
+                      onChange={() => selectFingerprint(row)}
+                    />
+                  ),
+                },
+                { key: 'fingerprint', header: t('nodes.fingerprint'), render: (row) => <code>{text(row.fingerprint)}</code> },
+                { key: 'algorithm', header: t('nodes.algorithm'), render: (row) => text(row.algorithm) },
+                { key: 'bits', header: t('nodes.bits'), render: (row) => String(row.bits ?? 'n/a') },
+                { key: 'known-host', header: t('nodes.knownHostLine'), render: (row) => <code>{text(row.known_host_line)}</code> },
+              ]}
+            />
+            <Checkbox
+              checked={fingerprintVerified}
+              disabled={!selectedFingerprint}
+              onChange={(event) => setFingerprintVerified(event.target.checked)}
+              label={t('nodes.fingerprintIndependentVerification')}
+            />
+          </div>
+        ) : null}
+        {verifiedReady ? (
+          <div className="page-stack">
+            <p className="muted">{t('nodes.sshPrivateKeyWarning')}</p>
+            <FormField label={t('nodes.privateKey')} full>
+              <Textarea
+                rows={9}
+                value={privateKey}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => setPrivateKey(event.target.value)}
+              />
+            </FormField>
+            <Checkbox
+              checked={isEnabled}
+              onChange={(event) => setIsEnabled(event.target.checked)}
+              label={t('nodes.enableSSHAccessMethod')}
+            />
+          </div>
+        ) : null}
+        {error ? <div role="alert" className="error-state-inline">{error}</div> : null}
+        <Toolbar>
+          <Button
+            variant="primary"
+            icon={<ShieldCheck size={16} />}
+            disabled={pending || !canBootstrap || !createReady}
+            title={!canBootstrap ? t('common.permissionRequired', { permission: 'node.bootstrap' }) : undefined}
+            onClick={() => void submit()}
+          >
+            {t('nodes.createSSHAccessMethod')}
+          </Button>
+          <Button onClick={close}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </div>
+    </Modal>
+  );
+}
+
+function AccessMethodsTable({ methods }: { methods: NodeAccessMethod[] }) {
+  const { t } = useTranslation();
+  return (
+    <DataTable
+      rows={methods}
+      title={t('nodes.accessMethods')}
+      columns={[
+        { key: 'method', header: t('nodes.method'), render: (row) => <code>{text(row.method)}</code> },
+        { key: 'enabled', header: t('nodes.enabled'), render: (row) => row.is_enabled ? t('common.yes') : t('common.no') },
+        { key: 'host', header: t('nodes.sshHost'), render: (row) => text(row.ssh_host) },
+        { key: 'port', header: t('nodes.sshPort'), render: (row) => String(row.ssh_port || 'n/a') },
+        { key: 'user', header: t('nodes.sshUser'), render: (row) => text(row.ssh_user) },
+        { key: 'auth', header: t('nodes.authType'), render: (row) => text(row.auth_type) },
+        { key: 'pin', header: t('nodes.currentPin'), render: (row) => <code>{text(row.ssh_host_key_sha256)}</code> },
+        { key: 'secret', header: t('nodes.secretAvailable'), render: (row) => nodeAccessMethodHasConfiguredSecret(row) ? t('common.yes') : t('common.no') },
+      ]}
+    />
+  );
+}
+
+function TerminalTab({ node, accessMethods, busy, session, onDisconnect, onConfirm }: {
+  node: NodeDetail;
+  accessMethods: ReturnType<typeof useNodeAccessMethods>;
+  busy: boolean;
+  session: NodeTerminalSession | null;
+  onDisconnect: () => void;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  const { t } = useTranslation();
+  const method = defaultSSHAccessMethod(accessMethods.data);
+  const canLaunch = Boolean(method?.is_enabled && nodeAccessMethodHasConfiguredSecret(method) && method.ssh_host_key_sha256);
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <p className="muted">{t('nodes.terminalSecurityNote')}</p>
+            {!canLaunch ? <div role="alert" className="error-state-inline">{t('nodes.terminalUnavailable')}</div> : null}
+            <Toolbar>
+              {!session ? <Button variant="primary" icon={<TerminalSquare size={16} />} disabled={busy || !canLaunch} onClick={() => onConfirm({ type: 'ssh-session-launch', node })}>{t('nodes.launchSshSession')}</Button> : null}
+              <Button icon={<RefreshCw size={16} />} onClick={() => void accessMethods.refetch()}>{t('common.refresh')}</Button>
+            </Toolbar>
+            {session ? <NodeTerminal session={session} onDisconnect={onDisconnect} /> : null}
+          </div>
+        </CardBody>
+      </Card>
+      {accessMethods.isError ? <div role="alert" className="error-state-inline">{t('nodes.accessMethodsUnavailable')}: {formatAPIError(accessMethods.error)}</div> : null}
+      <AccessMethodsTable methods={accessMethods.data || []} />
+    </div>
+  );
+}
+
+function LifecycleTab({
+  node,
+  busy,
+  onConfirm,
+  diagnostics,
+  staleRotationPreview,
+  staleRotationPreviewLoading,
+  staleRotationPreviewFetching,
+  staleRotationPreviewError,
+  canReadNode,
+  canBootstrapNode,
+  lifecycleDataCurrent,
+  revokePending,
+  rebootPending,
+  emergencyCleanupPending,
+  staleRotationClearPending,
+  queuedNodeRebootJob,
+  queuedEmergencyCleanup,
+  clearedStaleRotation,
+  onOpenAgentIdentityRevoke,
+  onOpenNodeReboot,
+  onOpenEmergencyCleanup,
+  onOpenStaleRotationClear,
+  onOpenJobs,
+  onRefreshStaleRotationPreview,
+}: {
+  node: NodeDetail;
+  busy: boolean;
+  onConfirm: (action: ConfirmAction) => void;
+  diagnostics?: NodeDiagnostics;
+  staleRotationPreview?: NodeStaleRotationPreview;
+  staleRotationPreviewLoading: boolean;
+  staleRotationPreviewFetching: boolean;
+  staleRotationPreviewError?: unknown;
+  canReadNode: boolean;
+  canBootstrapNode: boolean;
+  lifecycleDataCurrent: boolean;
+  revokePending: boolean;
+  rebootPending: boolean;
+  emergencyCleanupPending: boolean;
+  staleRotationClearPending: boolean;
+  queuedNodeRebootJob?: SafeQueuedNodeRebootJob | null;
+  queuedEmergencyCleanup?: QueuedNodeEmergencyCleanupResult | null;
+  clearedStaleRotation?: ClearedNodeStaleRotationResult | null;
+  onOpenAgentIdentityRevoke: () => void;
+  onOpenNodeReboot: () => void;
+  onOpenEmergencyCleanup: () => void;
+  onOpenStaleRotationClear: () => void;
+  onOpenJobs: () => void;
+  onRefreshStaleRotationPreview: () => void;
+}) {
+  const { t } = useTranslation();
+  const fmt = useLocaleFormat();
+  const [confirmation, setConfirmation] = useState('');
+  const [reason, setReason] = useState('');
+  const expected = nodeLabel(node);
+  const forceReady = confirmation.trim() === expected;
+  return (
+    <div className="page-stack">
+      <NodeLifecycleControlsPanel
+        node={node}
+        diagnostics={diagnostics}
+        staleRotationPreview={staleRotationPreview}
+        staleRotationPreviewError={staleRotationPreviewError}
+        staleRotationPreviewLoading={staleRotationPreviewLoading}
+        staleRotationPreviewFetching={staleRotationPreviewFetching}
+        canReadNode={canReadNode}
+        canBootstrapNode={canBootstrapNode}
+        lifecycleDataCurrent={lifecycleDataCurrent}
+        revokePending={revokePending}
+        rebootPending={rebootPending}
+        emergencyCleanupPending={emergencyCleanupPending}
+        staleRotationClearPending={staleRotationClearPending}
+        onOpenRevokeDialog={onOpenAgentIdentityRevoke}
+        onOpenRebootDialog={onOpenNodeReboot}
+        onOpenEmergencyCleanupDialog={onOpenEmergencyCleanup}
+        onOpenStaleRotationClearDialog={onOpenStaleRotationClear}
+        onRefreshStaleRotationPreview={onRefreshStaleRotationPreview}
+      />
+      {queuedNodeRebootJob ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <Toolbar>
+                <StatusBadge status={queuedNodeRebootJob.status || 'queued'} />
+                <Badge>{t('nodes.lifecycleControls.nodeReboot.queuedSuccess')}</Badge>
+              </Toolbar>
+              <p className="muted">{t('nodes.lifecycleControls.nodeReboot.queueOnlyDisclaimer')}</p>
+              <div className="definition-grid">
+                <span>{t('nodes.lifecycleControls.nodeReboot.jobId')}</span><strong><code title={queuedNodeRebootJob.id}>{shortID(queuedNodeRebootJob.id)}</code></strong>
+                <span>{t('nodes.lifecycleControls.nodeReboot.jobType')}</span><strong>{queuedNodeRebootJob.type}</strong>
+                <span>{t('nodes.lifecycleControls.nodeReboot.jobStatus')}</span><strong>{queuedNodeRebootJob.status}</strong>
+                <span>{t('nodes.lifecycleControls.nodeReboot.createdAt')}</span><strong>{fmt.date(queuedNodeRebootJob.created_at)}</strong>
+              </div>
+              <Toolbar>
+                <Button type="button" onClick={onOpenJobs}>{t('nodes.lifecycleControls.nodeReboot.openJobs')}</Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
+      {queuedEmergencyCleanup ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <Toolbar>
+                <StatusBadge status={queuedEmergencyCleanup.job.status || 'queued'} />
+                <Badge>{t('nodes.lifecycleControls.emergencyCleanup.queuedSuccess')}</Badge>
+              </Toolbar>
+              <p className="muted">{t('nodes.lifecycleControls.emergencyCleanup.queueOnlyDisclaimer')}</p>
+              {queuedEmergencyCleanup.planSummary.agent_removal_requested ? (
+                <div role="status" className="error-state-inline">
+                  {t('nodes.lifecycleControls.emergencyCleanup.agentRemovalQueuedDisclaimer')}
+                </div>
+              ) : null}
+              <div className="definition-grid">
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.jobId')}</span>
+                <strong><code>{shortID(queuedEmergencyCleanup.job.id)}</code></strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.jobType')}</span>
+                <strong>{queuedEmergencyCleanup.job.type}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.jobStatus')}</span>
+                <strong>{queuedEmergencyCleanup.job.status}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.createdAt')}</span>
+                <strong>{fmt.date(queuedEmergencyCleanup.job.created_at)}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.scopeSummary')}</span>
+                <strong>{t(`nodes.lifecycleControls.emergencyCleanup.${queuedEmergencyCleanup.planSummary.cleanup_scope === 'services_only' ? 'servicesOnlyOption' : 'fullNodeOption'}`)}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.includeAgentSummary')}</span>
+                <strong>{queuedEmergencyCleanup.planSummary.include_agent ? t('common.yes') : t('common.no')}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.targetCount')}</span>
+                <strong>{queuedEmergencyCleanup.planSummary.instance_target_count}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.serviceCounts')}</span>
+                <strong>
+                  {Object.entries(queuedEmergencyCleanup.planSummary.service_counts).length
+                    ? Object.entries(queuedEmergencyCleanup.planSummary.service_counts)
+                      .sort(([left], [right]) => left.localeCompare(right))
+                      .map(([serviceCode, count]) => <span key={serviceCode}><code>{serviceCode}</code>: {count} </span>)
+                    : t('nodes.lifecycleControls.emergencyCleanup.noServiceTargets')}
+                </strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.nodeRuntimeCleanup')}</span>
+                <strong>{queuedEmergencyCleanup.planSummary.node_runtime_cleanup ? t('common.yes') : t('common.no')}</strong>
+                <span>{t('nodes.lifecycleControls.emergencyCleanup.agentRemovalRequested')}</span>
+                <strong>{queuedEmergencyCleanup.planSummary.agent_removal_requested ? t('common.yes') : t('common.no')}</strong>
+              </div>
+              <p className="muted">{t('nodes.lifecycleControls.emergencyCleanup.planSummaryBoundary')}</p>
+              <Toolbar>
+                <Button type="button" onClick={onOpenJobs}>{t('nodes.lifecycleControls.emergencyCleanup.openJobs')}</Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
+      {clearedStaleRotation ? (
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <Toolbar>
+                <StatusBadge status="cancelled" />
+                <Badge>{t('nodes.lifecycleControls.staleRotationClear.success')}</Badge>
+              </Toolbar>
+              <p className="muted">{t('nodes.lifecycleControls.staleRotationClear.tokenNotRotated')}</p>
+              <div role="status" className="inline-panel">
+                {t('nodes.lifecycleControls.staleRotationClear.activeIdentityPreserved')}
+              </div>
+              <div className="definition-grid">
+                <span>{t('nodes.lifecycleControls.staleRotationClear.clearedCount')}</span>
+                <strong>{clearedStaleRotation.clearedCount}</strong>
+                <span>{t('nodes.lifecycleControls.staleRotationClear.pendingStateCleared')}</span>
+                <strong>{clearedStaleRotation.pendingRotationStateCleared ? t('common.yes') : t('common.no')}</strong>
+              </div>
+              <DataTable
+                rows={[...clearedStaleRotation.clearedJobs]}
+                title={t('nodes.lifecycleControls.staleRotationClear.resultTitle')}
+                columns={[
+                  { key: 'job', header: t('nodes.lifecycleControls.staleRotationClear.jobId'), render: (row) => <code>{shortID(row.job_id)}</code> },
+                  { key: 'previous', header: t('nodes.lifecycleControls.staleRotationClear.previousStatus'), render: (row) => <StatusBadge status={row.previous_status} /> },
+                  { key: 'final', header: t('nodes.lifecycleControls.staleRotationClear.finalStatus'), render: (row) => <StatusBadge status={row.status} /> },
+                  { key: 'reason', header: t('nodes.lifecycleControls.reason'), render: (row) => t(describeStaleRotationReason(row.stale_reason).labelKey) },
+                  { key: 'finished', header: t('nodes.lifecycleControls.staleRotationClear.finishedAt'), render: (row) => fmt.date(row.finished_at) },
+                ]}
+              />
+              <Toolbar>
+                <Button type="button" onClick={onOpenJobs}>{t('nodes.lifecycleControls.staleRotationClear.openJobs')}</Button>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <h3 className="card-title">{t('nodes.retireNode')}</h3>
+            <p className="muted">{t('nodes.retireImpact')}</p>
+            <Toolbar>
+              <Button variant="danger" icon={<Trash2 size={16} />} disabled={busy || node.status === 'retired'} onClick={() => onConfirm({ type: 'node-retire', node })}>{t('nodes.retireNode')}</Button>
+            </Toolbar>
+          </div>
+        </CardBody>
+      </Card>
+      <Card>
+        <CardBody>
+          <div className="page-stack">
+            <h3 className="card-title">{t('nodes.forceRetireNode')}</h3>
+            <p className="muted">{t('nodes.forceRetireImpact', { node: expected })}</p>
+            <FormGrid>
+              <FormField label={t('nodes.forceRetireConfirmation')}>
+                <TextField value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder={expected} />
+              </FormField>
+              <FormField label={t('nodes.forceRetireReason')}>
+                <TextField value={reason} onChange={(event) => setReason(event.target.value)} />
+              </FormField>
+            </FormGrid>
+            <Toolbar>
+              <Button variant="danger" icon={<ShieldAlert size={16} />} disabled={busy || !forceReady || node.status === 'retired'} onClick={() => onConfirm({ type: 'node-force-retire', node, confirmation, reason })}>{t('nodes.forceRetireNode')}</Button>
+            </Toolbar>
+          </div>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function NodeJobsTab({ jobIds, diagnostics }: { jobIds: string[]; diagnostics?: NodeDiagnostics }) {
+  const { t } = useTranslation();
+  const agent = diagnostics?.agent;
+  return (
+    <div className="page-stack">
+      <Card>
+        <CardBody>
+          <Toolbar>
+            <Link to="/operations/jobs">{t('nodes.openJobs')}</Link>
+            {agent?.last_job_result_type ? <Badge>{agent.last_job_result_type}</Badge> : null}
+            {agent?.last_job_result_status ? <StatusBadge status={agent.last_job_result_status} /> : null}
+          </Toolbar>
+        </CardBody>
+      </Card>
+      {jobIds.length ? jobIds.map((jobId) => <JobStatusPanel key={jobId} jobID={jobId} />) : <Card><CardBody>{t('nodes.noJob')}</CardBody></Card>}
+    </div>
+  );
+}
+
+function NodeConfirmDialog({ action, busy, onConfirm, onClose }: { action: ConfirmAction | null; busy: boolean; onConfirm: () => void; onClose: () => void }) {
+  const { t } = useTranslation();
+  const [acknowledged, setAcknowledged] = useState(false);
+  if (!action) return null;
+  const operation = t(`nodes.confirmOperations.${action.type}`);
+  const enrollmentCreate = action.type === 'enrollment-create';
+  const enrollmentRotate = action.type === 'enrollment-rotate';
+  const enrollmentIssueAction = enrollmentCreate || enrollmentRotate;
+  const guidedBootstrapAction = action.type === 'bootstrap' && action.source === 'onboarding';
+  const guidedInventoryAction = action.type === 'inventory-sync' && action.source === 'onboarding';
+  const service = action.type === 'capability-install'
+    ? action.input.service_code
+    : action.type === 'capability-verify'
+      ? action.serviceCode
+      : action.type === 'service-import'
+        ? action.discovery.service_code || action.discovery.name || action.discovery.id
+        : undefined;
+  const dangerous = [
+    'maintenance-enable',
+    'enrollment-rotate',
+    'enrollment-revoke',
+    'agent-token-rotate',
+    'node-retire',
+    'node-force-retire',
+  ].includes(action.type);
+  return (
+    <ConfirmDialog title={t('nodes.confirmTitle', { operation })} open={Boolean(action)} onClose={onClose}>
+      <div className="page-stack">
+        <p>{t('nodes.confirmImpact', {
+          operation,
+          node: nodeLabel(action.node),
+          status: action.node.status || 'n/a',
+          service: service || 'n/a',
+        })}</p>
+        {action.type === 'diagnostics' && action.action === 'reconcile-runtime' ? <p>{t('nodes.reconcileRuntimeImpact')}</p> : null}
+        {guidedInventoryAction ? (
+          <>
+            <div className="definition-grid">
+              <span>{t('common.name')}</span><strong>{nodeLabel(action.node)}</strong>
+              <span>{t('common.id')}</span><strong>{shortID(action.node.id)}</strong>
+              <span>{t('nodes.onboarding.inventoryActionType')}</span><strong>{action.retry ? t('nodes.onboarding.retryInventorySynchronization') : t('nodes.onboarding.synchronizeInventory')}</strong>
+              <span>{t('nodes.lastSeen')}</span><strong>{text(action.heartbeatAt)}</strong>
+              <span>{t('nodes.communicationState')}</span><strong>{text(action.communicationState)}</strong>
+            </div>
+            <ul>
+              <li>{t('nodes.onboarding.inventoryAsyncJob')}</li>
+              <li>{t('nodes.onboarding.inventoryAcceptanceDoesNotProveSync')}</li>
+            </ul>
+            <Checkbox
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+              label={t('nodes.onboarding.inventorySyncAcknowledge')}
+            />
+          </>
+        ) : null}
+        {guidedBootstrapAction ? (
+          <>
+            <div className="definition-grid">
+              <span>{t('common.name')}</span><strong>{nodeLabel(action.node)}</strong>
+              <span>{t('common.id')}</span><strong>{shortID(action.node.id)}</strong>
+              <span>{t('nodes.bootstrapMode')}</span><strong>{action.input.bootstrap_mode === 'manual_bundle' ? t('nodes.onboarding.manualBootstrapBundle') : t('nodes.onboarding.sshBootstrap')}</strong>
+              <span>{t('nodes.onboarding.bootstrapActionType')}</span><strong>{action.retry ? t('nodes.onboarding.retryBootstrap') : t('nodes.onboarding.startBootstrap')}</strong>
+              {action.input.bootstrap_mode === 'ssh_bootstrap' ? (
+                <>
+                  <span>{t('nodes.sshHost')}</span><strong>{text(action.modeAvailability?.sshTarget?.host)}</strong>
+                  <span>{t('nodes.sshPort')}</span><strong>{action.modeAvailability?.sshTarget?.port || 'n/a'}</strong>
+                  <span>{t('nodes.sshUser')}</span><strong>{text(action.modeAvailability?.sshTarget?.user)}</strong>
+                  <span>{t('nodes.onboarding.sshHostKeyConfirmed')}</span><strong>{action.modeAvailability?.sshTarget?.hostKeyConfigured ? t('common.yes') : t('common.no')}</strong>
+                  <span>{t('nodes.onboarding.sshCredentialConfigured')}</span><strong>{action.modeAvailability?.sshTarget?.secretConfigured ? t('common.yes') : t('common.no')}</strong>
+                </>
+              ) : null}
+            </div>
+            <ul>
+              {action.input.bootstrap_mode === 'ssh_bootstrap' ? (
+                <>
+                  <li>{t('nodes.onboarding.sshBootstrapConfirmServerConnect')}</li>
+                  <li>{t('nodes.onboarding.sshBootstrapConfirmCredentialUse')}</li>
+                  <li>{t('nodes.onboarding.serverFirewallValidationWillRun')}</li>
+                  <li>{t('nodes.onboarding.bootstrapAcceptanceDoesNotProveInstallation')}</li>
+                </>
+              ) : (
+                <>
+                  <li>{t('nodes.onboarding.manualBundleGeneratesSensitiveMaterial')}</li>
+                  <li>{t('nodes.onboarding.bundleGenerationDoesNotExecute')}</li>
+                  <li>{t('nodes.onboarding.manualBundleSeparateAuditedReveal')}</li>
+                  <li>{t('nodes.onboarding.bootstrapAcceptanceDoesNotProveOnboarding')}</li>
+                </>
+              )}
+            </ul>
+            <Checkbox
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+              label={action.input.bootstrap_mode === 'manual_bundle' ? t('nodes.onboarding.manualBundleAcknowledge') : t('nodes.onboarding.sshBootstrapAcknowledge')}
+            />
+          </>
+        ) : null}
+        {enrollmentIssueAction ? (
+          <>
+            <div className="definition-grid">
+              <span>{t('common.name')}</span><strong>{nodeLabel(action.node)}</strong>
+              <span>{t('common.id')}</span><strong>{shortID(action.node.id)}</strong>
+              <span>{t('nodes.onboarding.enrollmentTokenTTL')}</span><strong>{t('nodes.onboarding.ttlHoursValue', { value: action.ttlHours })}</strong>
+              <span>{t('nodes.onboarding.tokenActionType')}</span><strong>{enrollmentCreate ? t('nodes.onboarding.issueEnrollmentToken') : t('nodes.onboarding.reissueEnrollmentToken')}</strong>
+            </div>
+            <ul>
+              <li>{t('nodes.onboarding.tokenShownOnlyOnce')}</li>
+              <li>{t('nodes.onboarding.tokenCannotBeRetrievedAgain')}</li>
+              {enrollmentRotate ? <li>{t('nodes.onboarding.existingCredentialMayBeReplaced')}</li> : null}
+              {enrollmentRotate ? <li>{t('nodes.onboarding.remoteNodeMustBeUpdatedManually')}</li> : null}
+              {enrollmentRotate ? <li>{t('nodes.onboarding.reissueDoesNotProveRecovery')}</li> : null}
+              <li>{t('nodes.onboarding.tokenIssueDoesNotProveConnectivity')}</li>
+            </ul>
+            <Checkbox
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+              label={enrollmentRotate ? t('nodes.onboarding.reissueAcknowledge') : t('nodes.onboarding.issueAcknowledge')}
+            />
+          </>
+        ) : null}
+        {action.type === 'capability-install' ? <pre className="code-block">{safeJSON(action.input)}</pre> : null}
+        {((action.type === 'bootstrap' && action.source !== 'onboarding') || action.type === 'agent-reinstall') ? <pre className="code-block">{safeJSON(action.input)}</pre> : null}
+        {action.type === 'enrollment-revoke' ? <pre className="code-block">{safeJSON({ token_id: action.token.id, token_hint: action.token.token_hint, status: action.token.status })}</pre> : null}
+        {action.type === 'host-key-pin' ? <pre className="code-block">{safeJSON({ method_id: action.method.id, ssh_host: action.method.ssh_host, ssh_port: action.method.ssh_port, fingerprint: action.fingerprint })}</pre> : null}
+        {action.type === 'node-force-retire' ? <pre className="code-block">{safeJSON({ confirmation: action.confirmation, reason: action.reason || 'operator force retire' })}</pre> : null}
+        {action.type === 'service-import' ? <pre className="code-block">{safeJSON({ id: action.discovery.id, service_code: action.discovery.service_code, name: action.discovery.name, endpoint: [action.discovery.endpoint_host, action.discovery.endpoint_port].filter(Boolean).join(':') })}</pre> : null}
+        <Toolbar>
+          <Button variant={dangerous ? 'danger' : 'primary'} disabled={busy || ((enrollmentIssueAction || guidedBootstrapAction || guidedInventoryAction) && !acknowledged)} onClick={onConfirm}>{t('clients.core.confirm')}</Button>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
+        </Toolbar>
+      </div>
+    </ConfirmDialog>
+  );
+}

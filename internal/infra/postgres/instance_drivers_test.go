@@ -1,0 +1,1203 @@
+package postgres
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/rtis-emc2/megavpn/internal/domain"
+)
+
+func TestBuildXrayServerConfigGRPCBackend(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-xray-grpc",
+		Slug:         "edge-xray-grpc",
+		EndpointHost: "edge.example.com",
+		EndpointPort: 7443,
+	}, map[string]any{
+		"security":     "none",
+		"network":      "grpc",
+		"service_name": "vless-grpc",
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	inbounds, ok := cfg["inbounds"].([]any)
+	if !ok || len(inbounds) != 1 {
+		t.Fatalf("expected one inbound, got %#v", cfg["inbounds"])
+	}
+	inbound, ok := inbounds[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected inbound object, got %#v", inbounds[0])
+	}
+	stream, ok := inbound["streamSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected streamSettings object, got %#v", inbound["streamSettings"])
+	}
+	if got := stringify(stream["security"]); got != "none" {
+		t.Fatalf("expected security=none, got %q", got)
+	}
+	if got := stringify(stream["network"]); got != "grpc" {
+		t.Fatalf("expected network=grpc, got %q", got)
+	}
+	if _, exists := stream["realitySettings"]; exists {
+		t.Fatalf("did not expect realitySettings for backend profile")
+	}
+	grpcSettings, ok := stream["grpcSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected grpcSettings object, got %#v", stream["grpcSettings"])
+	}
+	if got := stringify(grpcSettings["serviceName"]); got != "vless-grpc" {
+		t.Fatalf("expected serviceName=vless-grpc, got %q", got)
+	}
+}
+
+func TestBuildXrayServerConfigEnablesLoopbackStatsAPI(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-xray-ws",
+		Slug:         "edge-xray-ws",
+		EndpointHost: "portal.example.com",
+		EndpointPort: 7080,
+	}, map[string]any{
+		"security":                   "none",
+		"network":                    "ws",
+		"path":                       "/assets/sync",
+		"traffic_accounting_enabled": true,
+		"managed_clients": []any{
+			map[string]any{
+				"id":    "11111111-1111-4111-8111-111111111111",
+				"email": "client-one",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	api, ok := cfg["api"].(map[string]any)
+	if !ok {
+		t.Fatalf("api object missing: %#v", cfg)
+	}
+	if got := stringify(api["tag"]); got != "api" {
+		t.Fatalf("api tag = %q, want api", got)
+	}
+	if services := stringList(api["services"]); len(services) != 1 || services[0] != "StatsService" {
+		t.Fatalf("api services = %#v, want StatsService", api["services"])
+	}
+	policy := cfg["policy"].(map[string]any)
+	levelZero := policy["levels"].(map[string]any)["0"].(map[string]any)
+	if !truthy(levelZero["statsUserUplink"]) || !truthy(levelZero["statsUserDownlink"]) {
+		t.Fatalf("stats user policy not enabled: %#v", levelZero)
+	}
+	inbounds := cfg["inbounds"].([]any)
+	var statsInbound map[string]any
+	for _, item := range inbounds {
+		inbound, _ := item.(map[string]any)
+		if stringify(inbound["tag"]) == "api" {
+			statsInbound = inbound
+		}
+	}
+	if statsInbound == nil {
+		t.Fatalf("loopback stats inbound missing from %#v", inbounds)
+	}
+	if got := stringify(statsInbound["listen"]); got != "127.0.0.1" {
+		t.Fatalf("stats listen = %q, want loopback", got)
+	}
+	if got := firstIntValue(statsInbound["port"]); got != 17080 {
+		t.Fatalf("stats port = %d, want deterministic endpoint+10000", got)
+	}
+	rules := cfg["routing"].(map[string]any)["rules"].([]any)
+	firstRule := rules[0].(map[string]any)
+	if got := stringify(firstRule["outboundTag"]); got != "api" {
+		t.Fatalf("first routing outboundTag = %q, want api", got)
+	}
+}
+
+func TestVLESSTemplateSpecGroupCarriesCatalogPolicy(t *testing.T) {
+	group := vlessAccessPolicySpecGroup(domain.VLESSAccessPolicy{
+		Key:          "ads_blocked",
+		Label:        "Ads blocked",
+		AccessMode:   "instance_default",
+		EgressMode:   "default",
+		OutboundTag:  "direct",
+		AdBlock:      true,
+		EgressNodeID: "00000000-0000-0000-0000-000000000001",
+		Rules: []map[string]any{
+			{"type": "field", "domain": []string{"geosite:category-ads-all"}, "outbound_tag": "block"},
+		},
+	})
+
+	specGroups := xrayVLESSGroups(map[string]any{"vless_groups": []any{group}})
+	if len(specGroups) != 1 {
+		t.Fatalf("spec groups = %#v, want one group", specGroups)
+	}
+	if specGroups[0].Key != "ads_blocked" || !specGroups[0].AdBlock {
+		t.Fatalf("group = %#v, want ads_blocked with ad block policy", specGroups[0])
+	}
+	if got := stringify(group["egress_node_id"]); got == "" {
+		t.Fatalf("template egress node id was not copied into spec group: %#v", group)
+	}
+}
+
+func TestAttachDefaultNetworkPolicyWireGuard(t *testing.T) {
+	t.Parallel()
+
+	spec := attachDefaultNetworkPolicy(domain.Instance{
+		ServiceCode:  "wireguard",
+		EndpointPort: 51820,
+	}, map[string]any{})
+
+	sysctl, ok := spec["sysctl"].(map[string]any)
+	if !ok || stringify(sysctl["net.ipv4.ip_forward"]) != "1" {
+		t.Fatalf("expected net.ipv4.ip_forward sysctl, got %#v", spec["sysctl"])
+	}
+	rules, ok := spec["firewall_rules"].([]any)
+	if !ok || len(rules) != 1 {
+		t.Fatalf("expected one firewall rule, got %#v", spec["firewall_rules"])
+	}
+	rule, ok := rules[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected firewall rule object, got %#v", rules[0])
+	}
+	if got := stringify(rule["protocol"]); got != "udp" {
+		t.Fatalf("protocol = %q, want udp", got)
+	}
+	if got := firstIntValue(rule["port"]); got != 51820 {
+		t.Fatalf("port = %d, want 51820", got)
+	}
+}
+
+func TestAttachDefaultNetworkPolicyOpenVPNFullTunnelAddsNAT(t *testing.T) {
+	t.Parallel()
+
+	spec := attachDefaultNetworkPolicy(domain.Instance{
+		ServiceCode:  "openvpn",
+		EndpointPort: 1194,
+	}, map[string]any{
+		"proto":             "udp",
+		"address_pool_cidr": "10.82.7.0/24",
+		"server_extra_lines": []any{
+			`push "redirect-gateway def1 bypass-dhcp"`,
+		},
+	})
+
+	sysctl, ok := spec["sysctl"].(map[string]any)
+	if !ok || stringify(sysctl["net.ipv4.ip_forward"]) != "1" {
+		t.Fatalf("expected net.ipv4.ip_forward sysctl, got %#v", spec["sysctl"])
+	}
+	firewallRules, ok := spec["firewall_rules"].([]any)
+	if !ok || len(firewallRules) != 1 {
+		t.Fatalf("expected one firewall rule, got %#v", spec["firewall_rules"])
+	}
+	natRules, ok := spec["nat_rules"].([]any)
+	if !ok || len(natRules) != 1 {
+		t.Fatalf("expected one nat rule, got %#v", spec["nat_rules"])
+	}
+	rule, ok := natRules[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nat rule object, got %#v", natRules[0])
+	}
+	if got := stringify(rule["type"]); got != "masquerade" {
+		t.Fatalf("nat rule type = %q, want masquerade", got)
+	}
+	if got := stringify(rule["source"]); got != "10.82.7.0/24" {
+		t.Fatalf("nat rule source = %q, want 10.82.7.0/24", got)
+	}
+}
+
+func TestAttachDefaultNetworkPolicyCanBeDisabled(t *testing.T) {
+	t.Parallel()
+
+	spec := attachDefaultNetworkPolicy(domain.Instance{
+		ServiceCode:  "openvpn",
+		EndpointPort: 1194,
+	}, map[string]any{
+		"network_policy_enabled": false,
+	})
+
+	if spec["sysctl"] != nil {
+		t.Fatalf("did not expect sysctl when network policy disabled: %#v", spec["sysctl"])
+	}
+	if spec["firewall_rules"] != nil {
+		t.Fatalf("did not expect firewall rules when network policy disabled: %#v", spec["firewall_rules"])
+	}
+}
+
+func TestBuildOpenVPNServerConfigAddsManagedStatusFile(t *testing.T) {
+	t.Parallel()
+
+	cfg := buildOpenVPNServerConfig(domain.Instance{
+		Slug:         "edge-openvpn-udp",
+		EndpointPort: 1194,
+	}, map[string]any{
+		"proto": "udp",
+	}, "/etc/openvpn/server/megavpn-edge-openvpn-udp")
+
+	for _, want := range []string{
+		managedRuntimeConfigHeader,
+		"ifconfig-pool-persist /etc/openvpn/server/megavpn-edge-openvpn-udp/ipp.txt",
+		"status-version 2",
+		"status /etc/openvpn/server/megavpn-edge-openvpn-udp/status.log 60",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Fatalf("openvpn config missing %q:\n%s", want, cfg)
+		}
+	}
+}
+
+func TestBuildWireGuardServerConfigAddsPeerAttributionComments(t *testing.T) {
+	t.Parallel()
+
+	store := &Store{}
+	cfg, err := store.buildWireGuardServerConfig(context.Background(), domain.Instance{}, map[string]any{
+		"server_private_key": "server-private-key",
+		"server_address":     "10.66.0.1/24",
+		"managed_peers": []any{
+			map[string]any{
+				"service_access_id": "3d7f9a79-8738-41fa-9322-58b8bc12b10e",
+				"username":          "nlgate.999-iphone",
+				"public_key":        "client-public-key",
+				"allowed_ips":       "10.66.0.2/32",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildWireGuardServerConfig returned error: %v", err)
+	}
+	for _, want := range []string{
+		managedRuntimeConfigHeader,
+		"# megavpn-service-access-id = 3d7f9a79-8738-41fa-9322-58b8bc12b10e",
+		"# megavpn-client = nlgate.999-iphone",
+		"PublicKey = client-public-key",
+		"AllowedIPs = 10.66.0.2/32",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Fatalf("wireguard config missing %q:\n%s", want, cfg)
+		}
+	}
+}
+
+func TestBuildHTTPProxyServerConfigFailsClosedWithoutManagedAccounts(t *testing.T) {
+	t.Parallel()
+
+	instance := domain.Instance{Name: "edge-proxy", Slug: "edge-proxy", EndpointPort: 3128}
+	config, passwd, err := buildHTTPProxyServerConfig(instance, map[string]any{}, "/etc/squid/edge-proxy.passwd")
+	if err != nil {
+		t.Fatalf("buildHTTPProxyServerConfig returned error: %v", err)
+	}
+	if passwd != "" {
+		t.Fatalf("passwd = %q, want empty", passwd)
+	}
+	if !strings.Contains(config, "http_access deny all") {
+		t.Fatalf("proxy without managed accounts must deny access:\n%s", config)
+	}
+	if strings.Contains(config, "http_access allow all") {
+		t.Fatalf("proxy without managed accounts rendered open access:\n%s", config)
+	}
+}
+
+func TestBuildHTTPProxyServerConfigRequiresAuthenticationForManagedAccounts(t *testing.T) {
+	t.Parallel()
+
+	instance := domain.Instance{Name: "edge-proxy", Slug: "edge-proxy", EndpointPort: 3128}
+	config, passwd, err := buildHTTPProxyServerConfig(instance, map[string]any{
+		"managed_accounts": []any{
+			map[string]any{"username": "client-one", "password_hash": "{SHA}example"},
+		},
+	}, "/etc/squid/edge-proxy.passwd")
+	if err != nil {
+		t.Fatalf("buildHTTPProxyServerConfig returned error: %v", err)
+	}
+	if passwd != "client-one:{SHA}example" {
+		t.Fatalf("passwd = %q, want managed account", passwd)
+	}
+	for _, directive := range []string{
+		"acl authenticated_users proxy_auth REQUIRED",
+		"http_access allow authenticated_users",
+		"http_access deny all",
+	} {
+		if !strings.Contains(config, directive) {
+			t.Fatalf("authenticated proxy config missing %q:\n%s", directive, config)
+		}
+	}
+	if strings.Contains(config, "http_access allow all") {
+		t.Fatalf("authenticated proxy rendered open access:\n%s", config)
+	}
+}
+
+func TestBuildNginxServerConfigGRPCProxy(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-grpc",
+		Slug:         "edge-nginx-grpc",
+		EndpointHost: "edge.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"mode":          "grpc_proxy",
+		"tls_enabled":   true,
+		"tls_cert_path": "/etc/ssl/certs/test.crt",
+		"tls_key_path":  "/etc/ssl/private/test.key",
+		"location_path": "/vless-grpc",
+		"upstream_url":  "grpc://127.0.0.1:7443",
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+
+	checks := []string{
+		"listen 80;",
+		"return 301 https://$host$request_uri;",
+		"listen 443 ssl http2;",
+		"location /vless-grpc {",
+		"grpc_pass grpc://127.0.0.1:7443;",
+		"grpc_set_header Host $host;",
+	}
+	for _, check := range checks {
+		if !strings.Contains(cfg, check) {
+			t.Fatalf("expected config to contain %q, got:\n%s", check, cfg)
+		}
+	}
+}
+
+func TestBuildNginxServerConfigGRPCCamouflageClearsClientIdentityHeaders(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-grpc",
+		Slug:         "edge-nginx-grpc",
+		EndpointHost: "edge.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"service_profile":        "grpc_edge",
+		"mode":                   "grpc_proxy",
+		"tls_enabled":            true,
+		"tls_cert_path":          "/etc/ssl/certs/test.crt",
+		"tls_key_path":           "/etc/ssl/private/test.key",
+		"location_path":          "/vless-grpc",
+		"upstream_url":           "grpc://127.0.0.1:7443",
+		"fallback_upstream_url":  "https://example.com",
+		"fallback_host_header":   "example.com",
+		"fallback_sni":           "example.com",
+		"fallback_loop_guard":    true,
+		"fallback_proxy_headers": true,
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	for _, check := range []string{
+		"grpc_set_header X-Real-IP \"\";",
+		"grpc_set_header X-Forwarded-For \"\";",
+		"grpc_set_header Forwarded \"\";",
+		"proxy_set_header X-Real-IP \"\";",
+		"proxy_set_header X-Forwarded-For \"\";",
+		"proxy_set_header Forwarded \"\";",
+	} {
+		if !strings.Contains(cfg, check) {
+			t.Fatalf("expected camouflage gRPC config to contain %q, got:\n%s", check, cfg)
+		}
+	}
+	if strings.Contains(cfg, "X-Forwarded-For $remote_addr;") {
+		t.Fatalf("camouflage gRPC config must not forward client IP by default:\n%s", cfg)
+	}
+}
+
+func TestBuildNginxServerConfigReverseProxyWithWebsiteFallback(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"service_profile":       "ws_camouflage_edge",
+		"mode":                  "reverse_proxy",
+		"tls_enabled":           true,
+		"tls_cert_path":         "/etc/ssl/certs/enter.crt",
+		"tls_key_path":          "/etc/ssl/private/enter.key",
+		"location_path":         "/assets/rtis-sync",
+		"upstream_url":          "http://127.0.0.1:7080",
+		"fallback_upstream_url": "https://example.com",
+		"fallback_host_header":  "example.com",
+		"fallback_sni":          "example.com",
+		"websocket_upgrade":     true,
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+
+	checks := []string{
+		"listen 80;",
+		"return 301 https://$host$request_uri;",
+		"server_name enter.example.com;",
+		"location /assets/rtis-sync {",
+		"proxy_pass http://127.0.0.1:7080;",
+		"proxy_set_header Upgrade $http_upgrade;",
+		"proxy_set_header Connection \"upgrade\";",
+		"proxy_read_timeout 3600s;",
+		"proxy_send_timeout 3600s;",
+		"proxy_buffering off;",
+		"location / {",
+		"proxy_pass https://example.com;",
+		"proxy_set_header Host example.com;",
+		"proxy_set_header X-Real-IP \"\";",
+		"proxy_set_header X-Forwarded-For \"\";",
+		"proxy_set_header Forwarded \"\";",
+		"proxy_set_header Connection \"\";",
+		"proxy_connect_timeout 10s;",
+		"proxy_read_timeout 60s;",
+		"proxy_ssl_server_name on;",
+		"proxy_ssl_name example.com;",
+	}
+	for _, check := range checks {
+		if !strings.Contains(cfg, check) {
+			t.Fatalf("expected config to contain %q, got:\n%s", check, cfg)
+		}
+	}
+	if strings.Contains(cfg, "proxy_set_header X-Forwarded-For $remote_addr;") {
+		t.Fatalf("camouflage config must not forward client IP by default:\n%s", cfg)
+	}
+}
+
+func TestBuildNginxServerConfigReverseProxyCanForwardClientIPWhenExplicitlyEnabled(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"service_profile":       "ws_camouflage_edge",
+		"mode":                  "reverse_proxy",
+		"tls_enabled":           true,
+		"tls_cert_path":         "/etc/ssl/certs/enter.crt",
+		"tls_key_path":          "/etc/ssl/private/enter.key",
+		"location_path":         "/assets/rtis-sync",
+		"upstream_url":          "http://127.0.0.1:7080",
+		"fallback_upstream_url": "https://example.com",
+		"fallback_host_header":  "example.com",
+		"fallback_sni":          "example.com",
+		"websocket_upgrade":     true,
+		"forward_client_ip":     true,
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	if !strings.Contains(cfg, "proxy_set_header X-Forwarded-For $remote_addr;") {
+		t.Fatalf("explicit forward_client_ip=true must preserve client IP forwarding:\n%s", cfg)
+	}
+}
+
+func TestBuildNginxServerConfigFallbackCanDisableClientIPLeakageIndependently(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"service_profile":            "ws_camouflage_edge",
+		"mode":                       "reverse_proxy",
+		"tls_enabled":                true,
+		"tls_cert_path":              "/etc/ssl/certs/enter.crt",
+		"tls_key_path":               "/etc/ssl/private/enter.key",
+		"location_path":              "/assets/rtis-sync",
+		"upstream_url":               "http://127.0.0.1:7080",
+		"fallback_upstream_url":      "https://example.com",
+		"fallback_host_header":       "example.com",
+		"fallback_sni":               "example.com",
+		"websocket_upgrade":          true,
+		"forward_client_ip":          true,
+		"fallback_forward_client_ip": false,
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	if strings.Count(cfg, "proxy_set_header X-Forwarded-For $remote_addr;") != 1 {
+		t.Fatalf("primary path should be the only place that forwards client IP:\n%s", cfg)
+	}
+	fallbackIndex := strings.Index(cfg, "    location / {")
+	if fallbackIndex < 0 {
+		t.Fatalf("fallback location not found:\n%s", cfg)
+	}
+	fallbackBlock := cfg[fallbackIndex:]
+	for _, check := range []string{
+		"proxy_set_header X-Real-IP \"\";",
+		"proxy_set_header X-Forwarded-For \"\";",
+		"proxy_set_header X-Forwarded-Host \"\";",
+		"proxy_set_header X-Forwarded-Port \"\";",
+		"proxy_set_header Forwarded \"\";",
+	} {
+		if !strings.Contains(fallbackBlock, check) {
+			t.Fatalf("fallback block must clear %q to avoid header leakage:\n%s", check, cfg)
+		}
+	}
+}
+
+func TestBuildNginxServerConfigRedirectsHTTPToNonStandardHTTPSPort(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 8443,
+	}, map[string]any{
+		"mode":          "reverse_proxy",
+		"tls_enabled":   true,
+		"tls_cert_path": "/etc/ssl/certs/enter.crt",
+		"tls_key_path":  "/etc/ssl/private/enter.key",
+		"location_path": "/assets/rtis-sync",
+		"upstream_url":  "http://127.0.0.1:7080",
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	if !strings.Contains(cfg, "return 301 https://$host:8443$request_uri;") {
+		t.Fatalf("expected non-standard HTTPS redirect target, got:\n%s", cfg)
+	}
+}
+
+func TestBuildNginxServerConfigCanDisableHTTPRedirect(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"mode":                   "reverse_proxy",
+		"tls_enabled":            true,
+		"http_to_https_redirect": false,
+		"tls_cert_path":          "/etc/ssl/certs/enter.crt",
+		"tls_key_path":           "/etc/ssl/private/enter.key",
+		"location_path":          "/assets/rtis-sync",
+		"upstream_url":           "http://127.0.0.1:7080",
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	if strings.Contains(cfg, "listen 80;") || strings.Contains(cfg, "return 301 https://$host$request_uri;") {
+		t.Fatalf("expected HTTP redirect server block to be disabled, got:\n%s", cfg)
+	}
+}
+
+func TestBuildNginxServerConfigSupportsWildcardHTTPRedirectServerName(t *testing.T) {
+	cfg, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "portal1.nlgate.ru",
+		EndpointPort: 443,
+	}, map[string]any{
+		"mode":                      "reverse_proxy",
+		"tls_enabled":               true,
+		"http_to_https_redirect":    true,
+		"http_redirect_server_name": "*.nlgate.ru",
+		"tls_cert_path":             "/etc/ssl/certs/enter.crt",
+		"tls_key_path":              "/etc/ssl/private/enter.key",
+		"location_path":             "/assets/rtis-sync",
+		"upstream_url":              "http://127.0.0.1:7080",
+	})
+	if err != nil {
+		t.Fatalf("buildNginxServerConfig returned error: %v", err)
+	}
+	if !strings.Contains(cfg, "server_name *.nlgate.ru;") {
+		t.Fatalf("expected wildcard redirect server_name, got:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, "server_name portal1.nlgate.ru;") {
+		t.Fatalf("expected TLS server block to keep instance server_name, got:\n%s", cfg)
+	}
+}
+
+func TestBuildNginxServerConfigRejectsUnsafeLocationPath(t *testing.T) {
+	for _, path := range []string{
+		"/assets/rtis-sync; return 200",
+		"/assets/rtis-sync?token=1",
+		"/assets/rtis-sync#fragment",
+		"/assets/rtis-sync\"",
+	} {
+		_, err := buildNginxServerConfig(domain.Instance{
+			Name:         "edge-nginx-ws",
+			Slug:         "edge-nginx-ws",
+			EndpointHost: "enter.example.com",
+			EndpointPort: 443,
+		}, map[string]any{
+			"mode":          "reverse_proxy",
+			"tls_enabled":   false,
+			"location_path": path,
+			"upstream_url":  "http://127.0.0.1:7080",
+		})
+		if err == nil {
+			t.Fatalf("expected unsafe location_path %q to be rejected", path)
+		}
+	}
+}
+
+func TestBuildNginxServerConfigRejectsUnsafeServerName(t *testing.T) {
+	_, err := buildNginxServerConfig(domain.Instance{
+		Name:         "edge-nginx-ws",
+		Slug:         "edge-nginx-ws",
+		EndpointHost: "enter.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"mode":          "reverse_proxy",
+		"tls_enabled":   false,
+		"server_name":   "edge.example.com;\nroot /tmp;",
+		"location_path": "/assets/rtis-sync",
+		"upstream_url":  "http://127.0.0.1:7080",
+	})
+	if err == nil {
+		t.Fatal("expected unsafe server_name to be rejected")
+	}
+}
+
+func TestBuildNginxServerConfigRejectsUnsafeFallbackDirectiveValues(t *testing.T) {
+	cases := []map[string]any{
+		{"fallback_upstream_url": "https://example.com/#fragment"},
+		{"fallback_upstream_url": "ftp://example.com/"},
+		{"fallback_upstream_url": "https://user:pass@example.com/"},
+		{"fallback_upstream_url": "/relative-site"},
+		{"fallback_host_header": "example.com\""},
+		{"fallback_sni": "example.com;"},
+	}
+	for _, overrides := range cases {
+		spec := map[string]any{
+			"mode":                  "reverse_proxy",
+			"tls_enabled":           false,
+			"location_path":         "/assets/rtis-sync",
+			"upstream_url":          "http://127.0.0.1:7080",
+			"fallback_upstream_url": "https://example.com",
+			"fallback_host_header":  "example.com",
+			"fallback_sni":          "example.com",
+		}
+		for key, value := range overrides {
+			spec[key] = value
+		}
+		_, err := buildNginxServerConfig(domain.Instance{
+			Name:         "edge-nginx-ws",
+			Slug:         "edge-nginx-ws",
+			EndpointHost: "enter.example.com",
+			EndpointPort: 443,
+		}, spec)
+		if err == nil {
+			t.Fatalf("expected unsafe fallback spec to be rejected: %#v", overrides)
+		}
+	}
+}
+
+func TestBuildNginxServerConfigRejectsCamouflageFallbackLoop(t *testing.T) {
+	cases := []map[string]any{
+		{"fallback_upstream_url": "https://enter.example.com/site"},
+		{"fallback_upstream_url": "https://target.example.com", "fallback_host_header": "enter.example.com"},
+		{"fallback_upstream_url": "https://target.example.com", "fallback_sni": "enter.example.com"},
+		{"server_name": "*.example.com", "fallback_upstream_url": "https://enter.example.com"},
+	}
+	for _, overrides := range cases {
+		spec := map[string]any{
+			"service_profile":        "ws_camouflage_edge",
+			"mode":                   "reverse_proxy",
+			"tls_enabled":            false,
+			"location_path":          "/assets/rtis-sync",
+			"upstream_url":           "http://127.0.0.1:7080",
+			"fallback_upstream_url":  "https://target.example.com",
+			"fallback_host_header":   "target.example.com",
+			"fallback_sni":           "target.example.com",
+			"websocket_upgrade":      true,
+			"fallback_loop_guard":    true,
+			"traffic_camouflage":     true,
+			"proxy_headers_enabled":  true,
+			"fallback_proxy_headers": true,
+		}
+		for key, value := range overrides {
+			spec[key] = value
+		}
+		_, err := buildNginxServerConfig(domain.Instance{
+			Name:         "edge-nginx-ws",
+			Slug:         "edge-nginx-ws",
+			EndpointHost: "enter.example.com",
+			EndpointPort: 443,
+		}, spec)
+		if err == nil {
+			t.Fatalf("expected fallback loop rejection for overrides %#v", overrides)
+		}
+	}
+}
+
+func TestValidateNginxServerNameAllowsDNSWildcardAndIP(t *testing.T) {
+	for _, name := range []string{"edge.example.com", "*.edge.example.com", "127.0.0.1", "[2001:db8::1]", "_"} {
+		if err := validateNginxServerName(name); err != nil {
+			t.Fatalf("validateNginxServerName(%q) = %v", name, err)
+		}
+	}
+}
+
+func TestValidateNginxServerNameRejectsMalformedIPLiteral(t *testing.T) {
+	for _, name := range []string{"[2001:db8::1", "2001:db8::zz"} {
+		if err := validateNginxServerName(name); err == nil {
+			t.Fatalf("expected malformed IP literal %q to be rejected", name)
+		}
+	}
+}
+
+func TestBuildXrayServerConfigTLS(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-xray-tls",
+		Slug:         "edge-xray-tls",
+		EndpointHost: "edge.example.com",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":      "tls",
+		"network":       "ws",
+		"path":          "/ws",
+		"tls_cert_path": "/etc/megavpn/certs/edge/fullchain.pem",
+		"tls_key_path":  "/etc/megavpn/certs/edge/privkey.pem",
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	inbounds, ok := cfg["inbounds"].([]any)
+	if !ok || len(inbounds) != 1 {
+		t.Fatalf("expected one inbound, got %#v", cfg["inbounds"])
+	}
+	inbound, ok := inbounds[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected inbound object, got %#v", inbounds[0])
+	}
+	stream, ok := inbound["streamSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected streamSettings object, got %#v", inbound["streamSettings"])
+	}
+	if got := stringify(stream["security"]); got != "tls" {
+		t.Fatalf("expected security=tls, got %q", got)
+	}
+	tlsSettings, ok := stream["tlsSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tlsSettings object, got %#v", stream["tlsSettings"])
+	}
+	certs, ok := tlsSettings["certificates"].([]any)
+	if !ok || len(certs) != 1 {
+		t.Fatalf("expected one tls certificate entry, got %#v", tlsSettings["certificates"])
+	}
+}
+
+func TestBuildXrayServerConfigAddsVLESSGroupRouting(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "default",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "11111111-1111-4111-8111-111111111111",
+				"email":       "direct-user",
+				"vless_group": "default",
+			},
+			map[string]any{
+				"id":          "22222222-2222-4222-8222-222222222222",
+				"email":       "restricted-user",
+				"vless_group": "restricted",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{
+				"key":          "default",
+				"label":        "Default direct",
+				"outbound_tag": "direct",
+			},
+			map[string]any{
+				"key":          "restricted",
+				"label":        "Restricted",
+				"outbound_tag": "block",
+				"rules": []any{
+					map[string]any{
+						"domain":       []any{"geosite:category-ads-all"},
+						"outbound_tag": "block",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	inbounds := cfg["inbounds"].([]any)
+	settings := inbounds[0].(map[string]any)["settings"].(map[string]any)
+	clients := settings["clients"].([]any)
+	if len(clients) != 2 {
+		t.Fatalf("clients = %#v, want 2", clients)
+	}
+	if _, leaked := clients[0].(map[string]any)["vless_group"]; leaked {
+		t.Fatalf("internal vless_group leaked into xray client: %#v", clients[0])
+	}
+
+	routing, ok := cfg["routing"].(map[string]any)
+	if !ok {
+		t.Fatalf("routing missing: %#v", cfg)
+	}
+	rules, ok := routing["rules"].([]any)
+	if !ok || len(rules) != 3 {
+		t.Fatalf("routing rules = %#v, want 3", routing["rules"])
+	}
+	if got := stringify(rules[0].(map[string]any)["outboundTag"]); got != "direct" {
+		t.Fatalf("first routing outboundTag = %q, want direct", got)
+	}
+	if got := stringify(rules[1].(map[string]any)["outboundTag"]); got != "block" {
+		t.Fatalf("restricted domain rule outboundTag = %q, want block", got)
+	}
+	if got := stringify(rules[2].(map[string]any)["outboundTag"]); got != "block" {
+		t.Fatalf("restricted fallback outboundTag = %q, want block", got)
+	}
+}
+
+func TestXrayVLESSGroupRoutingFallsBackUnknownClientGroupToDefault(t *testing.T) {
+	spec := map[string]any{
+		"default_vless_group": "default",
+		"vless_groups": []any{
+			map[string]any{
+				"key":          "default",
+				"label":        "Default access",
+				"outbound_tag": "direct",
+			},
+			map[string]any{
+				"key":          "blocked",
+				"label":        "Blocked",
+				"outbound_tag": "block",
+			},
+		},
+	}
+	rules := xrayVLESSGroupRoutingRules(spec, xrayVLESSGroups(spec), []map[string]any{
+		{"email": "default-user", "vless_group": "default"},
+		{"email": "missing-group-user", "vless_group": "deleted-group"},
+	})
+	if len(rules) != 1 {
+		t.Fatalf("routing rules = %#v, want one default fallback rule", rules)
+	}
+	rule := rules[0].(map[string]any)
+	if got := stringify(rule["outboundTag"]); got != "direct" {
+		t.Fatalf("fallback outboundTag = %q, want direct", got)
+	}
+	users, _ := rule["user"].([]any)
+	if len(users) != 2 || stringify(users[0]) != "default-user" || stringify(users[1]) != "missing-group-user" {
+		t.Fatalf("fallback users = %#v, want default and missing-group users", users)
+	}
+}
+
+func TestBuildXrayServerConfigAddsVLESSRemoteEgressOutbound(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "default",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "33333333-3333-4333-8333-333333333333",
+				"email":       "remote-user",
+				"vless_group": "default",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{
+				"key":          "default",
+				"label":        "Default access",
+				"outbound_tag": "direct",
+			},
+		},
+		"xray_default_outbound": map[string]any{
+			"tag":         "egress-default",
+			"protocol":    "freedom",
+			"sendThrough": "10.240.35.245",
+			"settings":    map[string]any{"domainStrategy": "UseIP"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	outbounds, ok := cfg["outbounds"].([]any)
+	if !ok {
+		t.Fatalf("outbounds missing: %#v", cfg["outbounds"])
+	}
+	found := false
+	for _, item := range outbounds {
+		outbound, _ := item.(map[string]any)
+		if stringify(outbound["tag"]) != "egress-default" {
+			continue
+		}
+		found = true
+		if got := stringify(outbound["sendThrough"]); got != "10.240.35.245" {
+			t.Fatalf("sendThrough = %q, want backhaul ingress address", got)
+		}
+	}
+	if !found {
+		t.Fatalf("remote egress outbound missing from %#v", outbounds)
+	}
+	routing := cfg["routing"].(map[string]any)
+	rules := routing["rules"].([]any)
+	if got := stringify(rules[len(rules)-1].(map[string]any)["outboundTag"]); got != "egress-default" {
+		t.Fatalf("fallback outboundTag = %q, want egress-default", got)
+	}
+}
+
+func TestBuildXrayServerConfigKeepsExplicitGroupBlockWithDefaultEgress(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "default",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "44444444-4444-4444-8444-444444444444",
+				"email":       "default-user",
+				"vless_group": "default",
+			},
+			map[string]any{
+				"id":          "55555555-5555-4555-8555-555555555555",
+				"email":       "blocked-user",
+				"vless_group": "blocked",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{"key": "default", "label": "Default access", "outbound_tag": "direct"},
+			map[string]any{"key": "blocked", "label": "Blocked", "outbound_tag": "block"},
+		},
+		"xray_default_outbound": map[string]any{
+			"tag":         "egress-default",
+			"protocol":    "freedom",
+			"sendThrough": "10.240.35.245",
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	routing := cfg["routing"].(map[string]any)
+	rules := routing["rules"].([]any)
+	if len(rules) != 3 {
+		t.Fatalf("routing rules = %#v, want 3", rules)
+	}
+	if got := stringify(rules[0].(map[string]any)["outboundTag"]); got != "egress-default" {
+		t.Fatalf("default group outboundTag = %q, want egress-default", got)
+	}
+	if got := stringify(rules[1].(map[string]any)["outboundTag"]); got != "block" {
+		t.Fatalf("blocked group outboundTag = %q, want block", got)
+	}
+	if got := stringify(rules[2].(map[string]any)["outboundTag"]); got != "egress-default" {
+		t.Fatalf("catch-all outboundTag = %q, want egress-default", got)
+	}
+}
+
+func TestBuildXrayServerConfigAddsGroupSpecificRemoteEgressOutbound(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "default",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "66666666-6666-4666-8666-666666666666",
+				"email":       "remote-group-user",
+				"vless_group": "remote-egress",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{"key": "default", "label": "Default access", "outbound_tag": "direct"},
+			map[string]any{
+				"key":          "remote-egress",
+				"label":        "Remote egress",
+				"egress_mode":  "egress_node",
+				"outbound_tag": "egress-remote-egress",
+				"outbound": map[string]any{
+					"tag":         "egress-remote-egress",
+					"protocol":    "freedom",
+					"sendThrough": "10.240.35.245",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	outbounds := cfg["outbounds"].([]any)
+	found := false
+	for _, item := range outbounds {
+		outbound, _ := item.(map[string]any)
+		if stringify(outbound["tag"]) != "egress-remote-egress" {
+			continue
+		}
+		found = true
+		if got := stringify(outbound["sendThrough"]); got != "10.240.35.245" {
+			t.Fatalf("sendThrough = %q, want group-specific source address", got)
+		}
+	}
+	if !found {
+		t.Fatalf("group-specific egress outbound missing from %#v", outbounds)
+	}
+	routing := cfg["routing"].(map[string]any)
+	rules := routing["rules"].([]any)
+	if got := stringify(rules[0].(map[string]any)["outboundTag"]); got != "egress-remote-egress" {
+		t.Fatalf("group outboundTag = %q, want egress-remote-egress", got)
+	}
+}
+
+func TestBuildXrayServerConfigPreservesExternalEgressMarkForSelectedGroup(t *testing.T) {
+	const (
+		providerTag  = "external-egress-provider-users"
+		providerMark = 0x4d590123
+	)
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "default",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "88888888-8888-4888-8888-888888888888",
+				"email":       "direct-user",
+				"vless_group": "default",
+			},
+			map[string]any{
+				"id":          "99999999-9999-4999-8999-999999999999",
+				"email":       "provider-user",
+				"vless_group": "provider-users",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{"key": "default", "label": "Default access", "outbound_tag": "direct"},
+			map[string]any{
+				"key":          "provider-users",
+				"label":        "Provider users",
+				"egress_mode":  "external_provider",
+				"outbound_tag": providerTag,
+				"outbound": map[string]any{
+					"tag":      providerTag,
+					"protocol": "freedom",
+					"settings": map[string]any{"domainStrategy": "UseIP"},
+					"streamSettings": map[string]any{
+						"sockopt": map[string]any{"mark": providerMark},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	var providerOutbound map[string]any
+	for _, item := range cfg["outbounds"].([]any) {
+		outbound, _ := item.(map[string]any)
+		if stringify(outbound["tag"]) == providerTag {
+			providerOutbound = outbound
+			break
+		}
+	}
+	if providerOutbound == nil {
+		t.Fatalf("provider outbound %q missing from %#v", providerTag, cfg["outbounds"])
+	}
+	stream, _ := providerOutbound["streamSettings"].(map[string]any)
+	sockopt, _ := stream["sockopt"].(map[string]any)
+	if got := firstIntValue(sockopt["mark"]); got != providerMark {
+		t.Fatalf("provider outbound mark = %#x, want %#x", got, providerMark)
+	}
+
+	routing := cfg["routing"].(map[string]any)
+	rules := routing["rules"].([]any)
+	providerUsers := []any(nil)
+	for _, item := range rules {
+		rule, _ := item.(map[string]any)
+		if stringify(rule["outboundTag"]) == providerTag {
+			providerUsers, _ = rule["user"].([]any)
+			break
+		}
+	}
+	if len(providerUsers) != 1 || stringify(providerUsers[0]) != "provider-user" {
+		t.Fatalf("provider route users = %#v, want only provider-user", providerUsers)
+	}
+}
+
+func TestBuildXrayServerConfigAddsInstanceOnlyVLESSGroup(t *testing.T) {
+	cfg, err := buildXrayServerConfig(domain.Instance{
+		Name:         "edge-vless",
+		Slug:         "edge-vless",
+		EndpointHost: "vpn.example.test",
+		EndpointPort: 443,
+	}, map[string]any{
+		"security":            "none",
+		"default_vless_group": "openvpn-only",
+		"managed_clients": []any{
+			map[string]any{
+				"id":          "77777777-7777-4777-8777-777777777777",
+				"email":       "openvpn-only-user",
+				"vless_group": "openvpn-only",
+			},
+		},
+		"vless_groups": []any{
+			map[string]any{
+				"key":          "openvpn-only",
+				"label":        "OpenVPN only",
+				"access_mode":  "instance_only",
+				"outbound_tag": "block",
+				"rules": []any{
+					map[string]any{
+						"domain":       []any{"vpn.example.test"},
+						"port":         "1194",
+						"outbound_tag": "direct",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildXrayServerConfig returned error: %v", err)
+	}
+
+	routing := cfg["routing"].(map[string]any)
+	rules := routing["rules"].([]any)
+	if len(rules) != 2 {
+		t.Fatalf("routing rules = %#v, want allow rule plus fallback block", rules)
+	}
+	if got := stringify(rules[0].(map[string]any)["outboundTag"]); got != "direct" {
+		t.Fatalf("instance allow outboundTag = %q, want direct", got)
+	}
+	if got := stringify(rules[0].(map[string]any)["port"]); got != "1194" {
+		t.Fatalf("instance allow port = %q, want 1194", got)
+	}
+	if got := stringify(rules[1].(map[string]any)["outboundTag"]); got != "block" {
+		t.Fatalf("instance fallback outboundTag = %q, want block", got)
+	}
+}
+
+func TestBuildXrayUnitFileDoesNotUseShell(t *testing.T) {
+	t.Parallel()
+
+	unit := buildXrayUnitFile("megavpn-xray-edge", "/usr/local/etc/xray/edge.json", domain.Instance{Name: "edge", Slug: "edge"})
+	if strings.Contains(unit, "/bin/sh") || strings.Contains(unit, " -c ") {
+		t.Fatalf("unit must not use shell execution:\n%s", unit)
+	}
+	if !strings.Contains(unit, "ExecStart=/usr/bin/env xray run -config /usr/local/etc/xray/edge.json") {
+		t.Fatalf("unit missing direct xray ExecStart:\n%s", unit)
+	}
+}
+
+func TestValidateSystemdExecPathArgRejectsShellTokens(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"/tmp/$(id>/root/pwn)", "/tmp/a;reboot", "/tmp/with space.json", "../relative.json"} {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			if err := validateSystemdExecPathArg(path); err == nil {
+				t.Fatalf("expected path %q to be rejected", path)
+			}
+		})
+	}
+}

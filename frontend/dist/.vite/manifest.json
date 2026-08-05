@@ -1,0 +1,663 @@
+{
+  "_ServicesTabs-Bm2bXyWj.js": {
+    "file": "assets/ServicesTabs-Bm2bXyWj.js",
+    "name": "ServicesTabs",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_activity-sc8Vq4dO.js": {
+    "file": "assets/activity-sc8Vq4dO.js",
+    "name": "activity",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_ban-B410c0Cl.js": {
+    "file": "assets/ban-B410c0Cl.js",
+    "name": "ban",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_common-BSKJmi2F.js": {
+    "file": "assets/common-BSKJmi2F.js",
+    "name": "common",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_eraser-BFA3tA84.js": {
+    "file": "assets/eraser-BFA3tA84.js",
+    "name": "eraser",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_file-pen-line-BaGk7cTn.js": {
+    "file": "assets/file-pen-line-BaGk7cTn.js",
+    "name": "file-pen-line",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_format-CkHXDfYv.js": {
+    "file": "assets/format-CkHXDfYv.js",
+    "name": "format",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_git-branch-oy4Lucwe.js": {
+    "file": "assets/git-branch-oy4Lucwe.js",
+    "name": "git-branch",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_hooks-JTPEEml6.js": {
+    "file": "assets/hooks-JTPEEml6.js",
+    "name": "hooks",
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_key-round-Qa-gf0NE.js": {
+    "file": "assets/key-round-Qa-gf0NE.js",
+    "name": "key-round",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_mail-C-1z74uH.js": {
+    "file": "assets/mail-C-1z74uH.js",
+    "name": "mail",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_pencil-C-KSAwhs.js": {
+    "file": "assets/pencil-C-KSAwhs.js",
+    "name": "pencil",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_permissions-BlcBS8Ev.js": {
+    "file": "assets/permissions-BlcBS8Ev.js",
+    "name": "permissions",
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js"
+    ]
+  },
+  "_play-CIHOQcyg.js": {
+    "file": "assets/play-CIHOQcyg.js",
+    "name": "play",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_plug-zap-BMfziyMJ.js": {
+    "file": "assets/plug-zap-BMfziyMJ.js",
+    "name": "plug-zap",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_plus-6DWsNzei.js": {
+    "file": "assets/plus-6DWsNzei.js",
+    "name": "plus",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_power-DEiLlURb.js": {
+    "file": "assets/power-DEiLlURb.js",
+    "name": "power",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_refresh-cw-B0Kvumez.js": {
+    "file": "assets/refresh-cw-B0Kvumez.js",
+    "name": "refresh-cw",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_rolldown-runtime-Bh1tDfsg.js": {
+    "file": "assets/rolldown-runtime-Bh1tDfsg.js",
+    "name": "rolldown-runtime"
+  },
+  "_rotate-ccw-ml_OmEp1.js": {
+    "file": "assets/rotate-ccw-ml_OmEp1.js",
+    "name": "rotate-ccw",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_route-aDiQ541Z.js": {
+    "file": "assets/route-aDiQ541Z.js",
+    "name": "route",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_save-BQ5C9j-Z.js": {
+    "file": "assets/save-BQ5C9j-Z.js",
+    "name": "save",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_search-Wxs_DuaB.js": {
+    "file": "assets/search-Wxs_DuaB.js",
+    "name": "search",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_shield-check-HNxUNKuo.js": {
+    "file": "assets/shield-check-HNxUNKuo.js",
+    "name": "shield-check",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_trash-2-DZToAJgc.js": {
+    "file": "assets/trash-2-DZToAJgc.js",
+    "name": "trash-2",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_triangle-alert-CyK0sSin.js": {
+    "file": "assets/triangle-alert-CyK0sSin.js",
+    "name": "triangle-alert",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_ui-DnHbVcEc.js": {
+    "file": "assets/ui-DnHbVcEc.js",
+    "name": "ui",
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js"
+    ]
+  },
+  "_unplug-CDO-Z0WY.js": {
+    "file": "assets/unplug-CDO-Z0WY.js",
+    "name": "unplug",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_upload-BoVLwtZT.js": {
+    "file": "assets/upload-BoVLwtZT.js",
+    "name": "upload",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_users-CoJQ30tk.js": {
+    "file": "assets/users-CoJQ30tk.js",
+    "name": "users",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "_wrench-NHJpLW3l.js": {
+    "file": "assets/wrench-NHJpLW3l.js",
+    "name": "wrench",
+    "imports": [
+      "_ui-DnHbVcEc.js"
+    ]
+  },
+  "index.html": {
+    "file": "assets/index-C1PhM0Zz.js",
+    "name": "index",
+    "src": "index.html",
+    "isEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_permissions-BlcBS8Ev.js",
+      "_activity-sc8Vq4dO.js",
+      "_plug-zap-BMfziyMJ.js",
+      "_git-branch-oy4Lucwe.js",
+      "_key-round-Qa-gf0NE.js",
+      "_users-CoJQ30tk.js",
+      "_mail-C-1z74uH.js",
+      "_refresh-cw-B0Kvumez.js",
+      "_route-aDiQ541Z.js"
+    ],
+    "dynamicImports": [
+      "src/pages/dashboard/DashboardPage.tsx",
+      "src/pages/infrastructure/NodesPage.tsx",
+      "src/pages/infrastructure/NodeMapPage.tsx",
+      "src/pages/infrastructure/BackhaulPage.tsx",
+      "src/pages/infrastructure/ExternalEgressPage.tsx",
+      "src/pages/infrastructure/AddressPoolsPage.tsx",
+      "src/pages/services/InstancesPage.tsx",
+      "src/pages/services/ServicePacksPage.tsx",
+      "src/pages/services/RuntimeArtifactsPage.tsx",
+      "src/pages/services/RevisionsPage.tsx",
+      "src/pages/clients/ClientsPage.tsx",
+      "src/pages/clients/ClientGroupsPage.tsx",
+      "src/pages/clients/DeliveryPage.tsx",
+      "src/pages/clients/SubscriptionsPage.tsx",
+      "src/pages/network-policy/FirewallPage.tsx",
+      "src/pages/network-policy/RoutePolicyPage.tsx",
+      "src/pages/network-policy/TrafficPage.tsx",
+      "src/pages/operations/JobsPage.tsx",
+      "src/pages/operations/AuditPage.tsx",
+      "src/pages/operations/DiagnosticsPage.tsx",
+      "src/pages/operations/BackupRestorePage.tsx",
+      "src/pages/platform/SettingsPage.tsx",
+      "src/pages/platform/CertificatesPage.tsx",
+      "src/pages/platform/AccessPage.tsx",
+      "src/pages/platform/MailPage.tsx"
+    ],
+    "css": [
+      "assets/index-W58g7Zlp.css"
+    ]
+  },
+  "src/pages/clients/ClientGroupsPage.tsx": {
+    "file": "assets/ClientGroupsPage-C2XqL4Ol.js",
+    "name": "ClientGroupsPage",
+    "src": "src/pages/clients/ClientGroupsPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_permissions-BlcBS8Ev.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/clients/ClientsPage.tsx": {
+    "file": "assets/ClientsPage-CXhMPzQb.js",
+    "name": "ClientsPage",
+    "src": "src/pages/clients/ClientsPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_ban-B410c0Cl.js",
+      "_eraser-BFA3tA84.js",
+      "_key-round-Qa-gf0NE.js",
+      "_mail-C-1z74uH.js",
+      "_plus-6DWsNzei.js",
+      "_refresh-cw-B0Kvumez.js",
+      "_route-aDiQ541Z.js",
+      "_search-Wxs_DuaB.js",
+      "_shield-check-HNxUNKuo.js",
+      "_trash-2-DZToAJgc.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/clients/DeliveryPage.tsx": {
+    "file": "assets/DeliveryPage-DIdaQ08M.js",
+    "name": "DeliveryPage",
+    "src": "src/pages/clients/DeliveryPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/clients/SubscriptionsPage.tsx": {
+    "file": "assets/SubscriptionsPage-BmzF6IBf.js",
+    "name": "SubscriptionsPage",
+    "src": "src/pages/clients/SubscriptionsPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_ui-DnHbVcEc.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/dashboard/DashboardPage.tsx": {
+    "file": "assets/DashboardPage-1wZOGdXk.js",
+    "name": "DashboardPage",
+    "src": "src/pages/dashboard/DashboardPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_activity-sc8Vq4dO.js",
+      "_users-CoJQ30tk.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/infrastructure/AddressPoolsPage.tsx": {
+    "file": "assets/AddressPoolsPage-DfbdCivb.js",
+    "name": "AddressPoolsPage",
+    "src": "src/pages/infrastructure/AddressPoolsPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/infrastructure/BackhaulPage.tsx": {
+    "file": "assets/BackhaulPage-DNBO3uFj.js",
+    "name": "BackhaulPage",
+    "src": "src/pages/infrastructure/BackhaulPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_activity-sc8Vq4dO.js",
+      "_git-branch-oy4Lucwe.js",
+      "_play-CIHOQcyg.js",
+      "_refresh-cw-B0Kvumez.js",
+      "_shield-check-HNxUNKuo.js",
+      "_wrench-NHJpLW3l.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/infrastructure/ExternalEgressPage.tsx": {
+    "file": "assets/ExternalEgressPage-Bahbh25y.js",
+    "name": "ExternalEgressPage",
+    "src": "src/pages/infrastructure/ExternalEgressPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_permissions-BlcBS8Ev.js",
+      "_activity-sc8Vq4dO.js",
+      "_pencil-C-KSAwhs.js",
+      "_play-CIHOQcyg.js",
+      "_plus-6DWsNzei.js",
+      "_shield-check-HNxUNKuo.js",
+      "_trash-2-DZToAJgc.js",
+      "_unplug-CDO-Z0WY.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/infrastructure/NodeMapPage.tsx": {
+    "file": "assets/NodeMapPage-Dpco73JG.js",
+    "name": "NodeMapPage",
+    "src": "src/pages/infrastructure/NodeMapPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/infrastructure/NodesPage.tsx": {
+    "file": "assets/NodesPage-T4EzeZ2u.js",
+    "name": "NodesPage",
+    "src": "src/pages/infrastructure/NodesPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_permissions-BlcBS8Ev.js",
+      "_activity-sc8Vq4dO.js",
+      "_eraser-BFA3tA84.js",
+      "_file-pen-line-BaGk7cTn.js",
+      "_plug-zap-BMfziyMJ.js",
+      "_key-round-Qa-gf0NE.js",
+      "_play-CIHOQcyg.js",
+      "_refresh-cw-B0Kvumez.js",
+      "_rotate-ccw-ml_OmEp1.js",
+      "_search-Wxs_DuaB.js",
+      "_shield-check-HNxUNKuo.js",
+      "_trash-2-DZToAJgc.js",
+      "_triangle-alert-CyK0sSin.js",
+      "_unplug-CDO-Z0WY.js",
+      "_wrench-NHJpLW3l.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/network-policy/FirewallPage.tsx": {
+    "file": "assets/FirewallPage-43A3QBBA.js",
+    "name": "FirewallPage",
+    "src": "src/pages/network-policy/FirewallPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_ban-B410c0Cl.js",
+      "_pencil-C-KSAwhs.js",
+      "_play-CIHOQcyg.js",
+      "_plus-6DWsNzei.js",
+      "_save-BQ5C9j-Z.js",
+      "_shield-check-HNxUNKuo.js",
+      "_trash-2-DZToAJgc.js",
+      "_triangle-alert-CyK0sSin.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/network-policy/RoutePolicyPage.tsx": {
+    "file": "assets/RoutePolicyPage-CQnXsnc8.js",
+    "name": "RoutePolicyPage",
+    "src": "src/pages/network-policy/RoutePolicyPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_ban-B410c0Cl.js",
+      "_play-CIHOQcyg.js",
+      "_rotate-ccw-ml_OmEp1.js",
+      "_route-aDiQ541Z.js",
+      "_shield-check-HNxUNKuo.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/network-policy/TrafficPage.tsx": {
+    "file": "assets/TrafficPage-BE92CWQL.js",
+    "name": "TrafficPage",
+    "src": "src/pages/network-policy/TrafficPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/operations/AuditPage.tsx": {
+    "file": "assets/AuditPage-Ba_ed-AN.js",
+    "name": "AuditPage",
+    "src": "src/pages/operations/AuditPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_ui-DnHbVcEc.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/operations/BackupRestorePage.tsx": {
+    "file": "assets/BackupRestorePage-XmDFYFgS.js",
+    "name": "BackupRestorePage",
+    "src": "src/pages/operations/BackupRestorePage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_ui-DnHbVcEc.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/operations/DiagnosticsPage.tsx": {
+    "file": "assets/DiagnosticsPage-DRMU-xtk.js",
+    "name": "DiagnosticsPage",
+    "src": "src/pages/operations/DiagnosticsPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/operations/JobsPage.tsx": {
+    "file": "assets/JobsPage-Bt0kVyyx.js",
+    "name": "JobsPage",
+    "src": "src/pages/operations/JobsPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/platform/AccessPage.tsx": {
+    "file": "assets/AccessPage-BsE5dQsf.js",
+    "name": "AccessPage",
+    "src": "src/pages/platform/AccessPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_permissions-BlcBS8Ev.js",
+      "_refresh-cw-B0Kvumez.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/platform/CertificatesPage.tsx": {
+    "file": "assets/CertificatesPage-DwElkC2A.js",
+    "name": "CertificatesPage",
+    "src": "src/pages/platform/CertificatesPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_ban-B410c0Cl.js",
+      "_key-round-Qa-gf0NE.js",
+      "_refresh-cw-B0Kvumez.js",
+      "_shield-check-HNxUNKuo.js",
+      "_trash-2-DZToAJgc.js",
+      "_upload-BoVLwtZT.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/platform/MailPage.tsx": {
+    "file": "assets/MailPage-BoqmYFXb.js",
+    "name": "MailPage",
+    "src": "src/pages/platform/MailPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_permissions-BlcBS8Ev.js",
+      "_save-BQ5C9j-Z.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/platform/SettingsPage.tsx": {
+    "file": "assets/SettingsPage-CTL5aFrD.js",
+    "name": "SettingsPage",
+    "src": "src/pages/platform/SettingsPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_permissions-BlcBS8Ev.js",
+      "_save-BQ5C9j-Z.js",
+      "_shield-check-HNxUNKuo.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/services/InstancesPage.tsx": {
+    "file": "assets/InstancesPage-DFlY8t1D.js",
+    "name": "InstancesPage",
+    "src": "src/pages/services/InstancesPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_activity-sc8Vq4dO.js",
+      "_file-pen-line-BaGk7cTn.js",
+      "_power-DEiLlURb.js",
+      "_play-CIHOQcyg.js",
+      "_refresh-cw-B0Kvumez.js",
+      "_rotate-ccw-ml_OmEp1.js",
+      "_search-Wxs_DuaB.js",
+      "_trash-2-DZToAJgc.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js",
+      "_ServicesTabs-Bm2bXyWj.js"
+    ]
+  },
+  "src/pages/services/RevisionsPage.tsx": {
+    "file": "assets/RevisionsPage-BZclSQBr.js",
+    "name": "RevisionsPage",
+    "src": "src/pages/services/RevisionsPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js"
+    ]
+  },
+  "src/pages/services/RuntimeArtifactsPage.tsx": {
+    "file": "assets/RuntimeArtifactsPage-t6E6p6XP.js",
+    "name": "RuntimeArtifactsPage",
+    "src": "src/pages/services/RuntimeArtifactsPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_refresh-cw-B0Kvumez.js",
+      "_upload-BoVLwtZT.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js",
+      "_ServicesTabs-Bm2bXyWj.js"
+    ]
+  },
+  "src/pages/services/ServicePacksPage.tsx": {
+    "file": "assets/ServicePacksPage-DLz_ii7B.js",
+    "name": "ServicePacksPage",
+    "src": "src/pages/services/ServicePacksPage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
+      "_ui-DnHbVcEc.js",
+      "_hooks-JTPEEml6.js",
+      "_file-pen-line-BaGk7cTn.js",
+      "_power-DEiLlURb.js",
+      "_refresh-cw-B0Kvumez.js",
+      "_trash-2-DZToAJgc.js",
+      "_format-CkHXDfYv.js",
+      "_common-BSKJmi2F.js",
+      "_ServicesTabs-Bm2bXyWj.js"
+    ]
+  }
+}
