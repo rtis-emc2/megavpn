@@ -929,14 +929,14 @@ body.overlay-open {
   background: var(--color-surface);
 }
 
-.node-detail-tabs {
+.drawer .node-detail-tabs {
   display: grid !important;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--space-6, 6px);
   overflow: visible;
 }
 
-.node-detail-tabs .tab-link {
+.drawer .node-detail-tabs .tab-link {
   min-width: 0;
   min-height: 36px;
   padding: var(--space-8) var(--space-12);
@@ -1244,6 +1244,10 @@ body.overlay-open {
   .drawer-wide {
     width: 100vw;
   }
+
+  .drawer .node-detail-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @container (max-width: 1040px) {
@@ -1338,7 +1342,7 @@ body.overlay-open {
     flex-direction: column;
   }
 
-  .node-detail-tabs {
+  .drawer .node-detail-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

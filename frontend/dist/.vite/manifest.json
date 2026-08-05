@@ -210,7 +210,7 @@
     ]
   },
   "index.html": {
-    "file": "assets/index-tO7g18lU.js",
+    "file": "assets/index-Bd_-q-Ll.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -255,7 +255,7 @@
       "src/pages/platform/MailPage.tsx"
     ],
     "css": [
-      "assets/index-DkLF8ahi.css"
+      "assets/index-D6x31l_9.css"
     ]
   },
   "src/pages/clients/ClientGroupsPage.tsx": {
