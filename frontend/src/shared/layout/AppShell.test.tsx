@@ -50,12 +50,15 @@ describe('AppShell navigation', () => {
 
     expect(closeButton).toHaveClass('app-sidebar-toggle');
     expect(closeButton).toHaveAttribute('aria-expanded', 'true');
+    expect(closeButton.querySelector('.lucide-chevron-left')).not.toBeNull();
     await userEvent.click(closeButton);
 
     expect(shell).toHaveClass('sidebar-collapsed');
-    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+    const openButton = screen.getByRole('button', { name: 'Open navigation' });
+    expect(openButton).toHaveAttribute('aria-expanded', 'false');
+    expect(openButton.querySelector('.lucide-chevron-right')).not.toBeNull();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    await userEvent.click(openButton);
     expect(shell).not.toHaveClass('sidebar-collapsed');
   });
 

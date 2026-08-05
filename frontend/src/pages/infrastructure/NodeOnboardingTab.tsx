@@ -286,15 +286,28 @@ export function NodeOnboardingTab({
 
   return (
     <div className="page-stack">
-      <Card>
+      <Card className="node-workspace-actions">
+        <CardBody>
+          <Toolbar>
+            <RefreshButton type="button" onRefresh={refresh}>
+              {t('nodes.onboarding.refreshStatus')}
+            </RefreshButton>
+            {model.targetTab ? (
+              <Button type="button" onClick={() => onOpenTab(model.targetTab as NodeOnboardingTargetTab)}>
+                {t(targetLabelKey(model.targetTab))}
+              </Button>
+            ) : null}
+          </Toolbar>
+          {refreshStatus ? <div role="status">{refreshStatus}</div> : null}
+          {refreshError ? <div role="alert" className="error-state-inline">{refreshError}</div> : null}
+        </CardBody>
+      </Card>
+      <Card className="node-workspace-status">
         <CardBody>
           <div className="page-stack">
             <h3 className="card-title">{t('nodes.onboarding.agentOnboarding')}</h3>
-            <Toolbar>
-              <OverallStatusBadge status={model.overallStatus} />
-            </Toolbar>
             <div className="definition-grid">
-              <span>{t('nodes.onboarding.statusTitle')}</span><strong>{t(statusLabelKey(model.overallStatus))}</strong>
+              <span>{t('nodes.onboarding.statusTitle')}</span><strong><OverallStatusBadge status={model.overallStatus} /></strong>
               <span>{t('nodes.onboarding.currentStep')}</span><strong>{t(`nodes.onboarding.steps.${model.currentStep}.title`)}</strong>
               <span>{t('nodes.communicationState')}</span><strong>{model.communicationState}</strong>
               <span>{t('nodes.heartbeatState')}</span><strong>{model.heartbeatState}</strong>
@@ -306,18 +319,6 @@ export function NodeOnboardingTab({
                 {t(`nodes.${item.key}`)}: {formatError(item.error)}
               </div>
             ))}
-            {refreshStatus ? <div role="status">{refreshStatus}</div> : null}
-            {refreshError ? <div role="alert" className="error-state-inline">{refreshError}</div> : null}
-            <Toolbar>
-              <RefreshButton type="button" onRefresh={refresh}>
-                {t('nodes.onboarding.refreshStatus')}
-              </RefreshButton>
-              {model.targetTab ? (
-                <Button type="button" onClick={() => onOpenTab(model.targetTab as NodeOnboardingTargetTab)}>
-                  {t(targetLabelKey(model.targetTab))}
-                </Button>
-              ) : null}
-            </Toolbar>
           </div>
         </CardBody>
       </Card>

@@ -110,13 +110,13 @@
 .app-sidebar-toggle {
   flex: 0 0 auto;
   color: #e5e7eb;
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.04);
+  border-color: transparent;
+  background: transparent;
 }
 
 .app-sidebar-toggle:hover {
   color: #fff;
-  border-color: rgba(255, 255, 255, 0.24);
+  border-color: transparent;
   background: rgba(255, 255, 255, 0.1);
 }
 

@@ -1004,7 +1004,7 @@ describe('NodesPage', () => {
 
     await screen.findByRole('heading', { name: 'Edge Two' });
     expect((await screen.findAllByText('draft')).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText('unknown')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('Unknown')).length).toBeGreaterThan(0);
     expect(calls.filter((call) => call.method === 'GET' && call.path === '/api/v1/nodes').length).toBeGreaterThan(1);
     expect(calls.every((call) => !call.path.startsWith('/legacy'))).toBe(true);
     expect(storageSet).not.toHaveBeenCalled();
@@ -1108,15 +1108,23 @@ describe('NodesPage', () => {
 
   it('loads node detail, observability data and renders backend text safely', async () => {
     await openNode();
+    const drawer = activeDialog();
     expect(calls.some((call) => call.method === 'GET' && call.path === '/api/v1/nodes')).toBe(true);
     expect(calls.some((call) => call.method === 'GET' && call.path === '/api/v1/nodes/node-1')).toBe(true);
+    expect(within(drawer).getAllByRole('tab')).toHaveLength(12);
+    expect(drawer.querySelector('.node-detail-context .status-badge')).toBeNull();
 
     await userEvent.click(screen.getByRole('tab', { name: 'Runtime / Agent' }));
+    expect(drawer.querySelector('.node-workspace-actions')).not.toBeNull();
+    expect(drawer.querySelectorAll('.node-workspace-status .status-badge')).toHaveLength(3);
     expect((await screen.findAllByText('connected')).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/<script>alert\(1\)<\/script>/).length).toBeGreaterThan(0);
     expect(document.querySelector('script')).toBeNull();
 
     await userEvent.click(screen.getByRole('tab', { name: 'Inventory' }));
+    expect(drawer.querySelector('.node-workspace-actions')).not.toBeNull();
+    expect(drawer.querySelector('.node-workspace-status')).not.toBeNull();
+    expect(drawer.querySelector('.node-workspace-data')).not.toBeNull();
     expect(await screen.findByText(/<script>inventory\(\)<\/script>/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('tab', { name: 'Capabilities' }));

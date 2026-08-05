@@ -650,7 +650,12 @@ body.overlay-open {
 }
 
 .drawer-wide {
-  width: min(1120px, calc(100vw - 48px));
+  width: calc(100vw - 268px);
+  max-width: none;
+}
+
+.sidebar-collapsed .drawer-wide {
+  width: calc(100vw - 76px);
 }
 
 .modal {
@@ -925,27 +930,44 @@ body.overlay-open {
 }
 
 .node-detail-tabs {
-  display: flex !important;
-  flex-wrap: nowrap;
+  display: grid !important;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--space-6, 6px);
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
+  overflow: visible;
 }
 
 .node-detail-tabs .tab-link {
-  flex: 0 0 auto;
+  min-width: 0;
   min-height: 36px;
   padding: var(--space-8) var(--space-12);
-  white-space: nowrap;
+  justify-content: center;
+  text-align: center;
+  white-space: normal;
 }
 
 .node-detail-context {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-12);
   min-width: 0;
+}
+
+.node-workspace-actions .card-body {
+  padding-block: var(--space-12);
+}
+
+.node-workspace-actions .toolbar {
+  justify-content: flex-start;
+}
+
+.node-workspace-status .status-badge {
+  vertical-align: middle;
+}
+
+.node-workspace-status .definition-grid > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .node-detail-identity {
@@ -1218,6 +1240,12 @@ body.overlay-open {
   }
 }
 
+@media (max-width: 1023px) {
+  .drawer-wide {
+    width: 100vw;
+  }
+}
+
 @container (max-width: 1040px) {
   .data-table-wrap {
     display: none;
@@ -1308,6 +1336,10 @@ body.overlay-open {
   .node-detail-context {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .node-detail-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .modal-actions {

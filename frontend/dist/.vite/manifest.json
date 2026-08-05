@@ -210,7 +210,7 @@
     ]
   },
   "index.html": {
-    "file": "assets/index-CmbvAbUM.js",
+    "file": "assets/index-tO7g18lU.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -255,7 +255,7 @@
       "src/pages/platform/MailPage.tsx"
     ],
     "css": [
-      "assets/index-B8srnMvO.css"
+      "assets/index-DkLF8ahi.css"
     ]
   },
   "src/pages/clients/ClientGroupsPage.tsx": {
@@ -394,7 +394,7 @@
     ]
   },
   "src/pages/infrastructure/NodesPage.tsx": {
-    "file": "assets/NodesPage-DMbobq3X.js",
+    "file": "assets/NodesPage-GeNum-rD.js",
     "name": "NodesPage",
     "src": "src/pages/infrastructure/NodesPage.tsx",
     "isDynamicEntry": true,

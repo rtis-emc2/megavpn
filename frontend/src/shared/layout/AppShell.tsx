@@ -1,4 +1,4 @@
-import { ChevronDown, KeyRound, LogOut, Menu, UserRound, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, KeyRound, LogOut, Menu, UserRound, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -134,7 +134,9 @@ export function AppShell() {
             aria-expanded={compactViewport ? mobileNavigationOpen : !sidebarCollapsed}
             onClick={toggleNavigation}
           >
-            {compactViewport && mobileNavigationOpen ? <X size={18} /> : <Menu size={18} />}
+            {compactViewport
+              ? (mobileNavigationOpen ? <X size={18} /> : <Menu size={18} />)
+              : (sidebarCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />)}
           </IconButton>
         </div>
 

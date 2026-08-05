@@ -1436,13 +1436,6 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                   <strong>{current.role || current.kind || t('common.notAvailable')}</strong>
                   <span>{endpoint(current)}</span>
                 </div>
-                <Toolbar>
-                  <StatusBadge status={current.status} />
-                  <StatusBadge status={diagnostics.data?.communication_state || current.agent_status || 'unknown'} />
-                  <RefreshButton onRefresh={() => Promise.all([detail.refetch(), diagnostics.refetch()])}>
-                    {t('common.refresh')}
-                  </RefreshButton>
-                </Toolbar>
               </div>
             </div>
             {notice ? <div role={notice.includes(':') ? 'alert' : 'status'}>{notice}</div> : null}
@@ -1454,7 +1447,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
                 onClose={clearOneTimePanel}
               />
             ) : null}
-            {activeTab === 'overview' ? <OverviewTab node={current} busy={busy} onConfirm={openConfirm} canWrite={canWriteNodes} onEdit={() => setEditOpen(true)} /> : null}
+            {activeTab === 'overview' ? <OverviewTab node={current} busy={busy} onConfirm={openConfirm} canWrite={canWriteNodes} onEdit={() => setEditOpen(true)} onRefresh={() => detail.refetch()} /> : null}
             {activeTab === 'runtime' ? <RuntimeTab node={current} diagnostics={diagnostics} /> : null}
             {activeTab === 'onboarding' ? (
               <NodeOnboardingTab
@@ -1690,27 +1683,14 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
   );
 }
 
-function OverviewTab({ node, busy, onConfirm, canWrite, onEdit }: { node: NodeDetail; busy: boolean; onConfirm: (action: ConfirmAction) => void; canWrite: boolean; onEdit: () => void }) {
+function OverviewTab({ node, busy, onConfirm, canWrite, onEdit, onRefresh }: { node: NodeDetail; busy: boolean; onConfirm: (action: ConfirmAction) => void; canWrite: boolean; onEdit: () => void; onRefresh: () => Promise<unknown> }) {
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
   const maintenanceEnabled = node.status === 'maintenance';
   return (
-    <Card>
-      <CardBody>
-        <div className="page-stack">
-          <div className="definition-grid">
-            <span>{t('common.id')}</span><strong>{node.id}</strong>
-            <span>{t('common.name')}</span><strong>{nodeLabel(node)}</strong>
-            <span>{t('nodes.role')}</span><strong>{node.role || node.kind || 'n/a'}</strong>
-            <span>{t('common.status')}</span><strong>{node.status || 'n/a'}</strong>
-            <span>{t('nodes.address')}</span><strong>{endpoint(node)}</strong>
-            <span>{t('nodes.platform')}</span><strong>{runtimePlatform(node)}</strong>
-            <span>{t('nodes.executionMode')}</span><strong>{node.execution_mode || 'n/a'}</strong>
-            <span>{t('nodes.agent')}</span><strong>{node.agent_status || 'n/a'}</strong>
-            <span>{t('nodes.heartbeat')}</span><strong>{fmt.date(node.last_heartbeat_at || node.agent_last_seen_at)}</strong>
-            <span>{t('common.created')}</span><strong>{fmt.date(node.created_at)}</strong>
-            <span>{t('common.updated')}</span><strong>{fmt.date(node.updated_at)}</strong>
-          </div>
+    <div className="page-stack node-workspace">
+      <Card className="node-workspace-actions">
+        <CardBody>
           <Toolbar>
             <Button
               icon={<FilePenLine size={16} />}
@@ -1728,10 +1708,28 @@ function OverviewTab({ node, busy, onConfirm, canWrite, onEdit }: { node: NodeDe
             >
               {maintenanceEnabled ? t('nodes.disableMaintenance') : t('nodes.enableMaintenance')}
             </Button>
+            <RefreshButton onRefresh={onRefresh}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
-        </div>
-      </CardBody>
-    </Card>
+        </CardBody>
+      </Card>
+      <Card className="node-workspace-status">
+        <CardBody>
+          <div className="definition-grid">
+            <span>{t('common.id')}</span><strong>{node.id}</strong>
+            <span>{t('common.name')}</span><strong>{nodeLabel(node)}</strong>
+            <span>{t('nodes.role')}</span><strong>{node.role || node.kind || 'n/a'}</strong>
+            <span>{t('common.status')}</span><strong><StatusBadge status={node.status || 'unknown'} /></strong>
+            <span>{t('nodes.address')}</span><strong>{endpoint(node)}</strong>
+            <span>{t('nodes.platform')}</span><strong>{runtimePlatform(node)}</strong>
+            <span>{t('nodes.executionMode')}</span><strong>{node.execution_mode || 'n/a'}</strong>
+            <span>{t('nodes.agent')}</span><strong><StatusBadge status={node.agent_status || 'unknown'} /></strong>
+            <span>{t('nodes.heartbeat')}</span><strong>{fmt.date(node.last_heartbeat_at || node.agent_last_seen_at)}</strong>
+            <span>{t('common.created')}</span><strong>{fmt.date(node.created_at)}</strong>
+            <span>{t('common.updated')}</span><strong>{fmt.date(node.updated_at)}</strong>
+          </div>
+        </CardBody>
+      </Card>
+    </div>
   );
 }
 
@@ -1742,14 +1740,21 @@ function RuntimeTab({ node, diagnostics }: { node: NodeDetail; diagnostics: Retu
   const agent = data?.agent;
   return (
     <div className="page-stack">
-      <Card>
+      <Card className="node-workspace-actions">
+        <CardBody>
+          <Toolbar>
+            <RefreshButton onRefresh={() => diagnostics.refetch()}>{t('common.refresh')}</RefreshButton>
+          </Toolbar>
+        </CardBody>
+      </Card>
+      <Card className="node-workspace-status">
         <CardBody>
           {diagnostics.isError ? <div role="alert" className="error-state-inline">{t('nodes.diagnosticsUnavailable')}: {formatAPIError(diagnostics.error)}</div> : null}
           <div className="definition-grid">
-            <span>{t('nodes.heartbeatState')}</span><strong>{data?.heartbeat_state || node.status || 'n/a'}</strong>
-            <span>{t('nodes.communicationState')}</span><strong>{data?.communication_state || 'n/a'}</strong>
+            <span>{t('nodes.heartbeatState')}</span><strong><StatusBadge status={data?.heartbeat_state || node.status || 'unknown'} /></strong>
+            <span>{t('nodes.communicationState')}</span><strong><StatusBadge status={data?.communication_state || 'unknown'} /></strong>
             <span>{t('nodes.communicationHint')}</span><strong>{data?.communication_hint || 'n/a'}</strong>
-            <span>{t('nodes.agentStatus')}</span><strong>{agent?.status || node.agent_status || 'n/a'}</strong>
+            <span>{t('nodes.agentStatus')}</span><strong><StatusBadge status={agent?.status || node.agent_status || 'unknown'} /></strong>
             <span>{t('nodes.agentVersion')}</span><strong>{agent?.agent_version || node.agent_version || 'n/a'}</strong>
             <span>{t('nodes.protocolVersion')}</span><strong>{agent?.protocol_version || node.agent_protocol_version || 'n/a'}</strong>
             <span>{t('nodes.lastSeen')}</span><strong>{fmt.date(agent?.last_seen_at || node.agent_last_seen_at)}</strong>
@@ -1761,7 +1766,7 @@ function RuntimeTab({ node, diagnostics }: { node: NodeDetail; diagnostics: Retu
           </div>
         </CardBody>
       </Card>
-      <Card>
+      <Card className="node-workspace-data">
         <CardBody>
           <pre className="code-block">{safeJSON(compactDiagnostics(data))}</pre>
         </CardBody>
@@ -1775,12 +1780,16 @@ function InventoryTab({ node, inventory, busy, onConfirm }: { node: NodeDetail; 
   const fmt = useLocaleFormat();
   return (
     <div className="page-stack">
-      <Card>
+      <Card className="node-workspace-actions">
         <CardBody>
           <Toolbar>
             <Button variant="primary" icon={<DownloadCloud size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'inventory-sync', node, source: 'inventory' })}>{t('nodes.syncInventory')}</Button>
             <RefreshButton onRefresh={() => inventory.refetch()}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
+        </CardBody>
+      </Card>
+      <Card className="node-workspace-status">
+        <CardBody>
           {inventory.isError ? <div role="alert" className="error-state-inline">{t('nodes.inventoryUnavailable')}: {formatAPIError(inventory.error)}</div> : null}
           {inventory.data ? (
             <div className="definition-grid">
@@ -1790,7 +1799,7 @@ function InventoryTab({ node, inventory, busy, onConfirm }: { node: NodeDetail; 
           ) : null}
         </CardBody>
       </Card>
-      <Card>
+      <Card className="node-workspace-data">
         <CardBody>
           <pre className="code-block">{safeJSON(inventory.data?.payload || inventory.data || {})}</pre>
         </CardBody>
@@ -1824,7 +1833,7 @@ function CapabilitiesTab({ node, capabilities, drift, events, installers, instal
 
   return (
     <div className="page-stack">
-      <Card>
+      <Card className="node-workspace-controls">
         <CardBody>
           <div className="page-stack">
             <FormGrid>
@@ -1908,7 +1917,7 @@ function DiagnosticsTab({ node, diagnostics, busy, onConfirm }: { node: NodeDeta
   const { t } = useTranslation();
   return (
     <div className="page-stack">
-      <Card>
+      <Card className="node-workspace-actions">
         <CardBody>
           <Toolbar>
             <Button variant="primary" icon={<Activity size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'diagnostics', node, action: 'channel-probe' })}>{t('nodes.probeChannel')}</Button>
@@ -1942,13 +1951,17 @@ function DiscoveryTab({ node, discoveries, summary, busy, onConfirm }: {
   const fmt = useLocaleFormat();
   return (
     <div className="page-stack">
-      <Card>
+      <Card className="node-workspace-actions">
         <CardBody>
           <Toolbar>
             <Button variant="primary" icon={<Boxes size={16} />} disabled={busy} onClick={() => onConfirm({ type: 'service-discover', node })}>{t('nodes.discoverServices')}</Button>
             <Button icon={<ShieldCheck size={16} />} disabled={busy || !(summary.data?.importable_count || 0)} onClick={() => onConfirm({ type: 'service-import-all', node })}>{t('nodes.importAllDiscoveries')}</Button>
             <RefreshButton onRefresh={() => Promise.all([discoveries.refetch(), summary.refetch()])}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
+        </CardBody>
+      </Card>
+      <Card className="node-workspace-status">
+        <CardBody>
           {summary.isError ? <div role="alert" className="error-state-inline">{t('nodes.discoverySummaryUnavailable')}: {formatAPIError(summary.error)}</div> : null}
           {summary.data ? (
             <div className="definition-grid">
