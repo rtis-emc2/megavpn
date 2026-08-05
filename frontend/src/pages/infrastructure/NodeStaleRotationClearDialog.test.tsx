@@ -168,8 +168,12 @@ describe('NodeStaleRotationClearDialog', () => {
     expect(screen.getByText(/node.bootstrap permission is required/)).toBeInTheDocument();
     expect(screen.getByText(/Lifecycle data does not belong to the selected node/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clear stale rotation state' })).toBeDisabled();
-    await userEvent.click(screen.getByRole('button', { name: 'Refresh preview' }));
+    const refreshPreview = screen.getByRole('button', { name: 'Refresh preview' });
+    await userEvent.click(refreshPreview);
     expect(noPermission.onRefreshPreview).toHaveBeenCalledTimes(1);
+    expect(refreshPreview).toBeDisabled();
+    expect(refreshPreview).toHaveAttribute('aria-busy', 'true');
+    expect(refreshPreview).toHaveClass('is-refreshing');
     expect(noPermission.onConfirm).not.toHaveBeenCalled();
   });
 

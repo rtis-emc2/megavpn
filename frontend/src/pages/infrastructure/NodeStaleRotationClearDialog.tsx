@@ -1,9 +1,9 @@
-import { Eraser, RefreshCw, ShieldAlert } from 'lucide-react';
+import { Eraser, ShieldAlert } from 'lucide-react';
 import type { FormEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { NodeDetail, NodeStaleRotationCandidate, NodeStaleRotationClearInput, NodeStaleRotationPreview } from '../../shared/api/types';
-import { Badge, Button, Checkbox, ConfirmDialog, DataTable, FormField, FormGrid, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Checkbox, ConfirmDialog, DataTable, FormField, FormGrid, RefreshButton, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { describeStaleRotationReason, formatAgeSeconds } from './nodeLifecycleControls';
 import {
@@ -288,14 +288,13 @@ export function NodeStaleRotationClearDialog({
         {(pending || localSubmitting) ? <div role="status" aria-live="polite">{t('nodes.lifecycleControls.staleRotationClear.pending')}</div> : null}
 
         <Toolbar>
-          <Button
+          <RefreshButton
             type="button"
-            icon={<RefreshCw size={16} />}
             disabled={pending || localSubmitting || previewFetching}
-            onClick={() => void onRefreshPreview()}
+            onRefresh={onRefreshPreview}
           >
             {previewFetching ? t('nodes.lifecycleControls.staleRotationClear.refreshingPreview') : t('nodes.lifecycleControls.staleRotationClear.refreshPreview')}
-          </Button>
+          </RefreshButton>
           <Button type="submit" variant="danger" icon={<Eraser size={16} />} disabled={disabled}>
             {(pending || localSubmitting) ? t('nodes.lifecycleControls.staleRotationClear.pending') : t('nodes.lifecycleControls.staleRotationClear.submit')}
           </Button>

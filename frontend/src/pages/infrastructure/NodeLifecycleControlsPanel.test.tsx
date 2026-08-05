@@ -220,8 +220,12 @@ describe('NodeLifecycleControlsPanel', () => {
     expect(screen.queryByRole('button', { name: 'Clear stale rotation state' })).not.toBeInTheDocument();
     const table = screen.getByRole('table');
     expect(within(table).getAllByText('Yes').length).toBeGreaterThan(0);
-    await userEvent.click(screen.getByRole('button', { name: 'Refresh preview' }));
+    const refreshPreview = screen.getByRole('button', { name: 'Refresh preview' });
+    await userEvent.click(refreshPreview);
     expect(onRefreshStaleRotationPreview).toHaveBeenCalledTimes(1);
+    expect(refreshPreview).toBeDisabled();
+    expect(refreshPreview).toHaveAttribute('aria-busy', 'true');
+    expect(refreshPreview).toHaveClass('is-refreshing');
   });
 
   it('offers the exact backend-safe remediation without maintenance or online-channel gating', async () => {

@@ -1,7 +1,7 @@
-import { Eraser, RefreshCw, RotateCcw, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { Eraser, RotateCcw, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { NodeDetail, NodeDiagnostics, NodeStaleRotationCandidate, NodeStaleRotationPreview } from '../../shared/api/types';
-import { Badge, Button, Card, CardBody, DataTable, EmptyState, LoadingSkeleton, StatusBadge, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, DataTable, EmptyState, LoadingSkeleton, RefreshButton, StatusBadge, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import {
   deriveNodeLifecycleStatusModel,
@@ -274,13 +274,12 @@ export function NodeLifecycleControlsPanel({
           <div className="page-stack">
             <Toolbar>
               <StatusBadge status={statusForSeverity(model.staleRotation.severity)} />
-              <Button
-                icon={<RefreshCw size={16} />}
+              <RefreshButton
                 disabled={!canReadNode || staleRotationPreviewLoading || staleRotationPreviewFetching}
-                onClick={onRefreshStaleRotationPreview}
+                onRefresh={onRefreshStaleRotationPreview}
               >
                 {staleRotationPreviewFetching ? t('nodes.lifecycleControls.refreshingPreview') : t('nodes.lifecycleControls.refreshPreview')}
-              </Button>
+              </RefreshButton>
             </Toolbar>
             <div>
               <h3 className="card-title">{t('nodes.lifecycleControls.staleRotationTitle')}</h3>
