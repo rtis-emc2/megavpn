@@ -11,6 +11,18 @@ function inviteTokenFromSearch(search: string): string {
   return new URLSearchParams(search).get('invite_token') || '';
 }
 
+function AuthBrand() {
+  return (
+    <div className="auth-brand" aria-label="RTIS MegaVPN Control Plane">
+      <div className="auth-brand-mark" aria-hidden="true">RTIS</div>
+      <div className="auth-brand-copy">
+        <strong>MegaVPN</strong>
+        <span>Control Plane</span>
+      </div>
+    </div>
+  );
+}
+
 export function AuthGate() {
   const auth = useAuth();
   const location = useLocation();
@@ -49,6 +61,7 @@ export function LoginPage() {
       <Card className="auth-panel">
         <CardBody>
           <form className="page-stack" onSubmit={submit}>
+            <AuthBrand />
             <div>
               <h1>{t('auth.loginTitle')}</h1>
               <p>{t('auth.loginSubtitle')}</p>
@@ -62,9 +75,7 @@ export function LoginPage() {
               </FormField>
             </FormGrid>
             {error ? <ErrorState body={error} /> : null}
-            <div className="toolbar">
-              <Button variant="primary" type="submit">{t('auth.signIn')}</Button>
-            </div>
+            <Button className="auth-primary-action" variant="primary" type="submit">{t('auth.signIn')}</Button>
           </form>
         </CardBody>
       </Card>
@@ -107,6 +118,7 @@ export function InvitePage({ token }: { token: string }) {
       <Card className="auth-panel">
         <CardBody>
           <form className="page-stack" onSubmit={submit}>
+            <AuthBrand />
             <div>
               <h1>{t('auth.inviteTitle')}</h1>
               <p>{t('auth.inviteSubtitle')}</p>

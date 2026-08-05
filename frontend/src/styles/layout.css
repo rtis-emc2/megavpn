@@ -1,12 +1,58 @@
 .auth-page {
   min-height: 100dvh;
   display: grid;
-  grid-template-columns: minmax(0, 430px);
-  place-items: center;
+  grid-template-columns: minmax(0, 440px);
+  justify-content: center;
+  align-content: safe center;
+  align-items: center;
   padding: var(--space-16);
 }
 
 .auth-panel {
+  width: 100%;
+}
+
+.auth-panel > .card-body {
+  padding: 32px;
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding-bottom: var(--space-16);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.auth-brand-mark {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  place-items: center;
+  border-radius: var(--radius-md);
+  color: #fff;
+  background: var(--color-primary);
+  font-size: var(--text-small);
+  font-weight: 800;
+}
+
+.auth-brand-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.auth-brand-copy strong {
+  color: var(--color-text);
+  font-size: var(--text-h3);
+}
+
+.auth-brand-copy span {
+  color: var(--color-text-muted);
+  font-size: var(--text-small);
+}
+
+.auth-primary-action {
   width: 100%;
 }
 
@@ -332,6 +378,10 @@
 }
 
 @media (max-width: 767px) {
+  .auth-panel > .card-body {
+    padding: var(--space-20, 20px);
+  }
+
   .topbar {
     position: static;
     width: 100%;
