@@ -12,6 +12,7 @@ ENV_FILE="${MEGAVPN_DEPLOY_ENV_FILE:-/etc/megavpn/megavpn.env}"
 SYNC_MODE="${MEGAVPN_DEPLOY_SYNC_MODE:-auto}"
 ALLOW_HISTORY_REWRITE="${MEGAVPN_DEPLOY_ALLOW_HISTORY_REWRITE:-0}"
 INSTALL_RUNTIME_DEPS="${MEGAVPN_DEPLOY_INSTALL_RUNTIME_DEPS:-1}"
+REEXEC_DEPTH="${MEGAVPN_DEPLOY_REEXEC_DEPTH:-0}"
 
 SERVICES=("megavpn-api" "megavpn-worker" "megavpn-agent" "megavpn-migrate")
 CORE_SERVICES=("megavpn-api" "megavpn-worker")
@@ -37,6 +38,10 @@ is_true() {
 }
 
 confirm_update() {
+  if (( REEXEC_DEPTH > 0 )); then
+    log "continue deployment after source update (reexec $REEXEC_DEPTH)"
+    return 0
+  fi
   if is_true "$AUTO_YES"; then
     return 0
   fi
@@ -217,6 +222,23 @@ update_from_git() {
   esac
 }
 
+reexec_after_source_update() {
+  local previous_sha="$1"
+  shift
+  local current_sha
+  current_sha="$(git rev-parse HEAD 2>/dev/null)" || die "unable to resolve updated HEAD"
+  if [[ "$previous_sha" == "$current_sha" ]]; then
+    return 0
+  fi
+  if (( REEXEC_DEPTH >= 3 )); then
+    die "source revision changed repeatedly during deployment; aborting after $REEXEC_DEPTH reexec attempts"
+  fi
+
+  log "source changed from $previous_sha to $current_sha; restart deployment with the updated script"
+  export MEGAVPN_DEPLOY_REEXEC_DEPTH="$((REEXEC_DEPTH + 1))"
+  exec "$APP_DIR/deploy-local.sh" "$@"
+}
+
 run_health_check() {
   log "health check: $HEALTH_URL"
   if command -v jq >/dev/null 2>&1; then
@@ -233,6 +255,8 @@ require_command systemctl
 require_command curl
 require_command rsync
 
+[[ "$REEXEC_DEPTH" =~ ^[0-9]+$ ]] || die "MEGAVPN_DEPLOY_REEXEC_DEPTH must be a non-negative integer"
+
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "deployment must run as root"
 [[ -d "$APP_DIR" ]] || die "application directory does not exist: $APP_DIR"
 cd "$APP_DIR"
@@ -240,6 +264,7 @@ load_runtime_env
 
 confirm_update
 assert_git_repo_ready
+deploy_start_sha="$(git rev-parse HEAD 2>/dev/null)" || die "unable to resolve deployment start revision"
 AGENT_WAS_ACTIVE=0
 if service_active "megavpn-agent"; then
   AGENT_WAS_ACTIVE=1
@@ -247,6 +272,7 @@ fi
 
 log "[1/10] Update source from GitHub"
 update_from_git
+reexec_after_source_update "$deploy_start_sha" "$@"
 assert_git_repo_ready
 ensure_control_plane_runtime_dependencies
 

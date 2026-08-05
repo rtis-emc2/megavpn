@@ -38,6 +38,9 @@ matching production bundle is therefore not releasable.
 `deploy-local.sh` runs the verified frontend installer. The installer copies
 `frontend/dist` to `/opt/megavpn/web` with deletion of obsolete hashed assets.
 It rejects custom destinations by default and rejects symbolic-link targets.
+When Git synchronization changes the checked-out revision, `deploy-local.sh`
+restarts itself before build or installation. This prevents an old in-flight
+script body from calling removed deployment entrypoints from the new revision.
 
 The frontend and API use one origin. The browser cannot configure an alternate
 API origin, and authentication material is never stored in browser storage.

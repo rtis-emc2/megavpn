@@ -43,6 +43,12 @@ Use:
     `Upgrade`/`Connection` headers and uses read/send timeouts suitable for the
     two-hour maximum browser terminal session.
 
+`deploy-local.sh` is self-updating. When step 1 changes the checked-out
+revision, it re-executes the updated script before tests, build, migrations or
+service changes. A deployment interrupted while moving from a release that
+predates this guard can be rerun safely; frontend installation and migrations
+are idempotent.
+
 ## Database Integrity Audit
 
 Run the read-only audit before and after applying database hardening migrations:

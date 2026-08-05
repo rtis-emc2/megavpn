@@ -37,6 +37,9 @@ CI пересобирает `frontend/dist` и запрещает незаком
 `deploy-local.sh` запускает проверенный frontend installer. Он синхронизирует
 `frontend/dist` в `/opt/megavpn/web` и удаляет устаревшие hashed assets.
 Произвольный target по умолчанию запрещен, symbolic-link target отклоняется.
+Если Git-синхронизация изменила revision, `deploy-local.sh` перезапускает себя
+до сборки и установки. Старое тело уже запущенного скрипта поэтому не сможет
+вызвать удаленный deployment entrypoint из новой revision.
 
 Frontend и API работают на одном origin. Оператор не может указать браузеру
 другой API origin, а authentication material не сохраняется в browser storage.

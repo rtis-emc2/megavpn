@@ -48,6 +48,16 @@ assert_precedes scripts/ops/control-plane-install.sh \
 assert_precedes scripts/ops/install-runtime.sh \
   'systemctl stop megavpn-api.service megavpn-worker.service' \
   'systemctl start megavpn-migrate.service'
+assert_precedes deploy-local.sh \
+  'reexec_after_source_update "$deploy_start_sha" "$@"' \
+  './scripts/build.sh'
+grep -Fq './scripts/install-frontend.sh "$APP_DIR/web"' deploy-local.sh ||
+  fail "deploy-local.sh must install the verified React frontend"
+if grep -Fq 'scripts/install-web.sh' deploy-local.sh; then
+  fail "deploy-local.sh references the removed legacy Web UI installer"
+fi
+grep -Fq 'exec "$APP_DIR/deploy-local.sh" "$@"' deploy-local.sh ||
+  fail "deploy-local.sh must restart itself after a source revision change"
 
 expect_failure "Frontend install into filesystem root" "safe absolute directory" scripts/ops/install-frontend.sh /
 expect_failure "Frontend install into protected system directory" "protected system directory" scripts/ops/install-frontend.sh /etc
