@@ -232,10 +232,11 @@ describe('FirewallPage', () => {
 
   async function loaded() {
     renderPage();
-    await screen.findByText('Default node firewall');
+    await screen.findAllByText('Default node firewall');
   }
 
   async function selectNodeAndPolicy() {
+    await openTab('Apply');
     await userEvent.selectOptions(screen.getByLabelText('Target node'), 'node-1');
     await userEvent.selectOptions(screen.getByLabelText('Policy'), 'policy-1');
   }
@@ -246,72 +247,79 @@ describe('FirewallPage', () => {
 
   it('loads policies and address groups from mocked API', async () => {
     await loaded();
+    await openTab('Address groups');
     expect(screen.getAllByText('Trusted operators').length).toBeGreaterThan(0);
     expect(calls.some((call) => call.method === 'GET' && call.path === '/api/v1/firewall')).toBe(true);
   });
 
   it('creates address group through the real API wrapper path', async () => {
     await loaded();
-    await userEvent.type(screen.getByLabelText('Address group key'), 'ops');
-    await userEvent.type(screen.getByLabelText('Address group label'), 'Ops CIDRs');
-    await userEvent.click(screen.getByRole('button', { name: /create address group/i }));
+    await openTab('Address groups');
+    await userEvent.click(screen.getByRole('button', { name: 'New group' }));
+    const dialog = screen.getByRole('dialog', { name: 'New group' });
+    await userEvent.type(within(dialog).getByLabelText('Address group label'), 'Ops CIDRs');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/firewall/address-lists' && call.body?.label === 'Ops CIDRs')).toBe(true));
   });
 
   it('updates address group through the real API wrapper path', async () => {
     await loaded();
+    await openTab('Address groups');
     await userEvent.click(screen.getAllByRole('button', { name: /edit group/i })[0]);
     await userEvent.clear(screen.getByLabelText('Address group label'));
     await userEvent.type(screen.getByLabelText('Address group label'), 'Operators updated');
-    await userEvent.click(screen.getByRole('button', { name: /update address group/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'PUT' && call.path === '/api/v1/firewall/address-lists/group-1' && call.body?.label === 'Operators updated')).toBe(true));
   });
 
   it('deletes address group through the real API wrapper path', async () => {
     await loaded();
+    await openTab('Address groups');
     await userEvent.click(screen.getAllByRole('button', { name: /delete group/i })[0]);
     await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/firewall/address-lists/group-1')).toBe(true));
   });
 
   it('shows DNS-only and empty renderable address group warnings', async () => {
     await loaded();
-    expect(screen.getAllByText(/DNS-only entries are not rendered into nftables/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Blocking warning: active accept rule references this group without renderable entries/i).length).toBeGreaterThan(0);
+    await openTab('Address groups');
+    expect(screen.getAllByText(/DNS entr(?:y|ies) (?:is|are) not used by the firewall/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/used by an allow rule but contains no IP addresses/i).length).toBeGreaterThan(0);
   });
 
   it('creates rule through the real API wrapper path', async () => {
     await loaded();
-    await userEvent.selectOptions(screen.getByLabelText('Policy'), 'policy-1');
     await openTab('Rules');
+    await userEvent.selectOptions(screen.getByLabelText('Policy'), 'policy-1');
+    await userEvent.click(screen.getByRole('button', { name: 'New rule' }));
     await userEvent.clear(screen.getByLabelText('Rule priority'));
     await userEvent.type(screen.getByLabelText('Rule priority'), '300');
     await userEvent.type(screen.getByLabelText('Rule comment'), 'Allow HTTPS');
-    await userEvent.click(screen.getByRole('button', { name: /create rule/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/firewall/policies/policy-1/rules' && call.body?.comment === 'Allow HTTPS')).toBe(true));
   });
 
   it('updates rule through the real API wrapper path', async () => {
     await loaded();
-    await userEvent.selectOptions(screen.getByLabelText('Policy'), 'policy-1');
     await openTab('Rules');
+    await userEvent.selectOptions(screen.getByLabelText('Policy'), 'policy-1');
     await userEvent.click(screen.getAllByRole('button', { name: /edit rule/i })[0]);
     await userEvent.clear(screen.getByLabelText('Rule comment'));
     await userEvent.type(screen.getByLabelText('Rule comment'), 'SSH bootstrap updated');
-    await userEvent.click(screen.getByRole('button', { name: /update rule/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'PUT' && call.path === '/api/v1/firewall/policies/policy-1/rules/rule-1' && call.body?.comment === 'SSH bootstrap updated')).toBe(true));
   });
 
   it('deletes rule through the real API wrapper path', async () => {
     await loaded();
-    await userEvent.selectOptions(screen.getByLabelText('Policy'), 'policy-1');
     await openTab('Rules');
+    await userEvent.selectOptions(screen.getByLabelText('Policy'), 'policy-1');
     await userEvent.click(screen.getAllByRole('button', { name: /delete rule/i })[0]);
     await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/firewall/policies/policy-1/rules/rule-1')).toBe(true));
   });
 
   it('keeps Preview disabled until node and policy are selected', async () => {
     await loaded();
-    await openTab('Preview & Apply');
+    await openTab('Apply');
     expect(screen.getByRole('button', { name: 'Preview' })).toBeDisabled();
     await selectNodeAndPolicy();
     expect(screen.getByRole('button', { name: 'Preview' })).toBeEnabled();
@@ -320,20 +328,18 @@ describe('FirewallPage', () => {
   it('enables Apply after successful backend preview', async () => {
     await loaded();
     await selectNodeAndPolicy();
-    await openTab('Preview & Apply');
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled());
-    expect(screen.getByText('preview-hash')).toBeInTheDocument();
+    expect(screen.getByText(/"payload_hash": "preview-hash"/)).toBeInTheDocument();
   });
 
   it('marks preview stale and disables Apply after policy changes', async () => {
     await loaded();
     await selectNodeAndPolicy();
-    await openTab('Preview & Apply');
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled());
     await userEvent.selectOptions(screen.getByLabelText('Policy'), 'policy-2');
-    expect(screen.getByText('Preview is stale')).toBeInTheDocument();
+    expect(screen.getByText('Preview is outdated')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 
@@ -344,7 +350,6 @@ describe('FirewallPage', () => {
     };
     await loaded();
     await selectNodeAndPolicy();
-    await openTab('Preview & Apply');
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await waitFor(() => expect(screen.getByText(/strict input drop/i)).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
@@ -353,33 +358,31 @@ describe('FirewallPage', () => {
   it('opens Apply confirmation and sends real backend apply request', async () => {
     await loaded();
     await selectNodeAndPolicy();
-    await openTab('Preview & Apply');
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled());
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
-    await userEvent.click(screen.getByRole('button', { name: /confirm apply/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Apply policy' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/firewall/apply' && call.body?.policy_id === 'policy-1')).toBe(true));
   });
 
   it('shows Apply job link after backend accepts apply', async () => {
     await loaded();
     await selectNodeAndPolicy();
-    await openTab('Preview & Apply');
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled());
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
-    await userEvent.click(screen.getByRole('button', { name: /confirm apply/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Apply policy' }));
     await screen.findByText('job-apply');
-    expect(screen.getAllByRole('link', { name: /open jobs page/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: /open jobs/i }).length).toBeGreaterThan(0);
   });
 
   it('opens Disable confirmation and sends real backend disable request', async () => {
     await loaded();
-    await userEvent.selectOptions(screen.getByLabelText('Target node'), 'node-1');
     await openTab('Node state');
+    await userEvent.selectOptions(screen.getByLabelText('Disable target node'), 'node-1');
     await userEvent.click(screen.getByRole('button', { name: /emergency disable/i }));
-    expect(screen.getAllByText('Disable removes only managed table inet megavpn_firewall and does not remove instances/backhaul/route policy.').length).toBeGreaterThan(0);
-    await userEvent.click(screen.getByRole('button', { name: /confirm disable/i }));
+    expect(screen.getByText(/removes the firewall managed by MegaVPN/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Disable firewall' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/nodes/node-1/firewall/disable')).toBe(true));
   });
 
@@ -387,7 +390,6 @@ describe('FirewallPage', () => {
     endpointError = { method: 'POST', path: '/api/v1/nodes/node-1/firewall/preview', status: 403, message: 'firewall.apply permission required' };
     await loaded();
     await selectNodeAndPolicy();
-    await openTab('Preview & Apply');
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await screen.findByText(/Permission denied \(403\): firewall.apply permission required/i);
   });
@@ -395,18 +397,20 @@ describe('FirewallPage', () => {
   it('maps backend 422 validation error', async () => {
     endpointError = { method: 'POST', path: '/api/v1/firewall/address-lists', status: 422, message: 'invalid CIDR' };
     await loaded();
+    await openTab('Address groups');
+    await userEvent.click(screen.getByRole('button', { name: 'New group' }));
     await userEvent.type(screen.getByLabelText('Address group label'), 'Broken');
-    await userEvent.click(screen.getByRole('button', { name: /create address group/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/Validation error \(422\): invalid CIDR/i);
   });
 
   it('shows backend 409 conflict', async () => {
     endpointError = { method: 'PUT', path: '/api/v1/firewall/policies/policy-1/rules/rule-1', status: 409, message: 'policy changed after preview' };
     await loaded();
-    await userEvent.selectOptions(screen.getByLabelText('Policy'), 'policy-1');
     await openTab('Rules');
+    await userEvent.selectOptions(screen.getByLabelText('Policy'), 'policy-1');
     await userEvent.click(screen.getAllByRole('button', { name: /edit rule/i })[0]);
-    await userEvent.click(screen.getByRole('button', { name: /update rule/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/Conflict \(409\): policy changed after preview/i);
   });
 
@@ -417,7 +421,6 @@ describe('FirewallPage', () => {
     };
     await loaded();
     await selectNodeAndPolicy();
-    await openTab('Preview & Apply');
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await screen.findByText(/<img src=x onerror=alert\(1\)> table inet megavpn_firewall/i);
     expect(document.querySelector('img')).toBeNull();
@@ -431,19 +434,23 @@ describe('FirewallPage', () => {
 
   it('supports adding IP/CIDR/range entries through the backend entry route', async () => {
     await loaded();
-    await userEvent.selectOptions(screen.getByLabelText('Entry address group'), 'group-1');
-    await userEvent.selectOptions(screen.getByLabelText('Entry value type'), 'range');
-    await userEvent.type(screen.getByLabelText('Entry value'), '10.10.0.10-10.10.0.20');
-    await userEvent.click(screen.getByRole('button', { name: /add entry/i }));
+    await openTab('Address groups');
+    await userEvent.click(screen.getByRole('button', { name: 'Add address' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add address' });
+    await userEvent.selectOptions(within(dialog).getByLabelText('Entry address group'), 'group-1');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Entry value type'), 'range');
+    await userEvent.type(within(dialog).getByLabelText('Entry value'), '10.10.0.10-10.10.0.20');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add address' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/firewall/address-lists/group-1/entries' && call.body?.value_type === 'range')).toBe(true));
   });
 
   it('shows strict safety state and selected node state', async () => {
     await loaded();
-    await selectNodeAndPolicy();
-    await openTab('Safety');
-    expect(screen.getByText(/trusted_control_plane: present/i)).toBeInTheDocument();
-    expect(screen.getByText(/vpn_client_sources: absent/i)).toBeInTheDocument();
+    await openTab('Management access');
+    expect(screen.getByText('Control-plane access')).toBeInTheDocument();
+    expect(screen.getAllByText('Configured').length).toBeGreaterThan(0);
+    expect(screen.getByText('VPN client forwarding')).toBeInTheDocument();
+    expect(screen.getAllByText('Not configured').length).toBeGreaterThan(0);
     await openTab('Node state');
     const edgeRow = screen.getAllByText('Edge One').map((element) => element.closest('tr')).find(Boolean) as HTMLElement;
     expect(within(edgeRow).getByText('applied')).toBeInTheDocument();

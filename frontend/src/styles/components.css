@@ -148,6 +148,74 @@ body.overlay-open {
   font-size: var(--text-small);
 }
 
+.settings-health-card .card-body {
+  display: grid;
+  gap: var(--space-16);
+}
+
+.settings-health-head,
+.settings-check-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.settings-health-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-12);
+}
+
+.settings-health-meta > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+  padding: var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.settings-health-meta span {
+  color: var(--color-text-muted);
+  font-size: var(--text-small);
+  font-weight: 700;
+}
+
+.settings-checks > summary,
+.technical-details > summary {
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-weight: 700;
+}
+
+.settings-check-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-8);
+  margin-top: var(--space-12);
+}
+
+.settings-check {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-8);
+  padding: var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.technical-details {
+  color: var(--color-text-muted);
+  font-size: var(--text-small);
+}
+
+.technical-details > div {
+  margin-top: var(--space-6, 6px);
+  overflow-wrap: break-word;
+}
+
 .external-egress-flow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
@@ -251,6 +319,8 @@ body.overlay-open {
 
 .status-ready,
 .status-active,
+.status-enabled,
+.status-applied,
 .status-ok,
 .status-succeeded,
 .status-configured {
@@ -269,9 +339,14 @@ body.overlay-open {
 .status-failed,
 .status-error,
 .status-danger,
+.status-blocked,
 .status-offline,
 .status-deleted {
   color: var(--status-failed);
+}
+
+.status-degraded {
+  color: var(--status-pending);
 }
 
 .status-disabled,
@@ -301,7 +376,8 @@ body.overlay-open {
   text-align: left;
   vertical-align: top;
   border-bottom: 1px solid var(--color-border);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .data-table th {
@@ -309,6 +385,7 @@ body.overlay-open {
   background: var(--color-surface-muted);
   font-size: var(--text-small);
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .record-list {
@@ -353,12 +430,52 @@ body.overlay-open {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: var(--space-12);
+}
+
+.checkbox-stack,
+.table-cell-stack {
+  display: grid;
+  gap: var(--space-6, 6px);
+}
+
+.checkbox-stack label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.table-cell-stack .status-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6, 6px);
+  max-width: 440px;
+}
+
+.firewall-rules-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 480px) auto;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.icon-button-danger {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 32%, var(--color-border));
+  background: color-mix(in srgb, var(--color-danger) 5%, var(--color-surface));
+}
+
+.icon-button-danger:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--color-danger);
+  background: var(--color-danger);
 }
 
 .form-field {
   display: grid;
+  min-width: 0;
   gap: var(--space-6, 6px);
 }
 
@@ -753,6 +870,10 @@ body.overlay-open {
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .settings-health-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 767px) {
@@ -762,7 +883,13 @@ body.overlay-open {
 
   .metric-grid,
   .form-grid,
-  .definition-grid {
+  .definition-grid,
+  .settings-health-meta,
+  .settings-check-list {
+    grid-template-columns: 1fr;
+  }
+
+  .firewall-rules-toolbar {
     grid-template-columns: 1fr;
   }
 

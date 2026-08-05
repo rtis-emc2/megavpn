@@ -29,6 +29,21 @@ export type ReadyStatus = {
   time?: string;
 };
 
+export type RuntimePreflightCheck = {
+  code: string;
+  status: string;
+  summary: string;
+  detail?: string;
+};
+
+export type RuntimePreflight = {
+  status: string;
+  version: string;
+  production_mode: boolean;
+  generated_at: string;
+  checks: RuntimePreflightCheck[];
+};
+
 export type VersionInfo = {
   service?: string;
   version?: string;

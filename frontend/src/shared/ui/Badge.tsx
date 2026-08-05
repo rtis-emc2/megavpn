@@ -8,12 +8,12 @@ function normalizeStatus(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
 }
 
-export function StatusBadge({ status }: { status?: string | null }) {
+export function StatusBadge({ status, label, title }: { status?: string | null; label?: ReactNode; title?: string }) {
   const value = status || 'unknown';
   return (
-    <span className={`badge status-${normalizeStatus(value)}`}>
+    <span className={`badge status-${normalizeStatus(value)}`} title={title}>
       <span className="badge-dot" aria-hidden="true" />
-      {value}
+      {label || value}
     </span>
   );
 }

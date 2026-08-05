@@ -2,11 +2,11 @@ import { Save, ShieldCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { APIError } from '../../shared/api/client';
-import type { PlatformSettingsInput } from '../../shared/api/types';
+import type { PlatformSettingsInput, RuntimePreflightCheck } from '../../shared/api/types';
 import { useAuth } from '../../shared/auth/AuthProvider';
 import { hasPermission } from '../../shared/permissions/permissions';
 import { useApplyTlsSettings, useCertificates, usePlatformSettings, useRuntimePreflight, useUpdatePlatformSettings } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, ConfirmDialog, DataTable, FormField, FormGrid, JobStatusPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, ConfirmDialog, FormField, FormGrid, JobStatusPanel, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
@@ -86,6 +86,34 @@ function toInput(form: TLSForm): PlatformSettingsInput {
   };
 }
 
+function normalizePreflightChecks(payload: unknown): RuntimePreflightCheck[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const record = payload as Record<string, unknown>;
+  if (Array.isArray(record.checks)) {
+    return record.checks.flatMap((value) => {
+      if (!value || typeof value !== 'object') return [];
+      const check = value as Record<string, unknown>;
+      return [{
+        code: text(check.code),
+        status: text(check.status, 'unknown'),
+        summary: text(check.summary),
+        detail: text(check.detail, ''),
+      }];
+    });
+  }
+  return Object.entries(record).flatMap(([code, value]) => {
+    if (!value || typeof value !== 'object') return [];
+    const check = value as Record<string, unknown>;
+    if (!('status' in check)) return [];
+    return [{
+      code,
+      status: text(check.status, 'unknown'),
+      summary: text(check.summary, code.replaceAll('_', ' ')),
+      detail: text(check.detail, ''),
+    }];
+  });
+}
+
 export function SettingsPage() {
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
@@ -106,7 +134,21 @@ export function SettingsPage() {
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(serverForm);
 
   const certificateOptions = useMemo(() => (certificates.data || []).filter((item) => item.kind === 'leaf' && item.status === 'active' && item.key_secret_ref_id), [certificates.data]);
-  const checks = Object.entries(preflight.data || {}).map(([key, value]) => ({ key, value }));
+  const checks = useMemo(() => normalizePreflightChecks(preflight.data), [preflight.data]);
+  const preflightStatus = preflight.data?.status || (checks.some((check) => check.status === 'failed')
+    ? 'blocked'
+    : checks.some((check) => check.status === 'warning')
+      ? 'degraded'
+      : checks.length
+        ? 'ready'
+        : 'unknown');
+  const preflightLabel = preflightStatus === 'ready'
+    ? t('settings.systemHealthy')
+    : preflightStatus === 'degraded'
+      ? t('settings.systemDegraded')
+      : preflightStatus === 'blocked'
+        ? t('settings.systemBlocked')
+        : t('common.unknown');
 
   const patch = (partial: Partial<TLSForm>) => setDraft((current) => ({ ...(current || serverForm), ...partial }));
   const save = async () => {
@@ -134,15 +176,37 @@ export function SettingsPage() {
   return (
     <PageScaffold title={t('settings.title')} subtitle={t('settings.subtitle')} actions={<Button icon={<Save size={16} />} variant="primary" disabled={!canManage || !dirty || update.isPending} onClick={() => void save()}>{t('common.save')}</Button>}>
       <QueryBoundary isLoading={preflight.isLoading} isError={preflight.isError} error={preflight.error} refetch={() => void preflight.refetch()}>
-        <DataTable
-          title={t('settings.preflight')}
-          rows={checks}
-          columns={[
-            { key: 'key', header: t('common.name'), render: (row) => <code>{row.key}</code> },
-            { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={typeof row.value === 'object' && row.value && 'status' in row.value ? String(row.value.status) : 'unknown'} /> },
-            { key: 'value', header: t('common.description'), render: (row) => <code>{text(JSON.stringify(row.value))}</code> },
-          ]}
-        />
+        <Card className="settings-health-card">
+          <CardBody>
+            <div className="settings-health-head">
+              <div>
+                <div className="metric-label">{t('settings.systemStatus')}</div>
+                <h2 className="card-title">{preflightLabel}</h2>
+              </div>
+            </div>
+            <div className="settings-health-meta">
+              <div><span>{t('settings.release')}</span><strong>{text(preflight.data?.version, 'n/a')}</strong></div>
+              <div><span>{t('settings.mode')}</span><strong>{preflight.data?.production_mode ? t('settings.production') : t('settings.development')}</strong></div>
+              <div><span>{t('settings.checkedAt')}</span><strong>{fmt.date(preflight.data?.generated_at)}</strong></div>
+              <div><span>{t('settings.checkCount')}</span><strong>{fmt.number(checks.length)}</strong></div>
+            </div>
+            <details className="settings-checks">
+              <summary>{t('settings.systemChecks', { count: checks.length })}</summary>
+              <div className="settings-check-list">
+                {checks.map((check) => (
+                  <article className="settings-check" key={check.code}>
+                    <div className="settings-check-head">
+                      <strong>{t(`settings.checkNames.${check.code}`, { defaultValue: check.code.replaceAll('_', ' ') })}</strong>
+                      <StatusBadge status={check.status} />
+                    </div>
+                    <div>{check.summary}</div>
+                    {check.detail ? <details className="technical-details"><summary>{t('settings.details')}</summary><div>{check.detail}</div></details> : null}
+                  </article>
+                ))}
+              </div>
+            </details>
+          </CardBody>
+        </Card>
       </QueryBoundary>
       <QueryBoundary isLoading={settings.isLoading || certificates.isLoading} isError={settings.isError || certificates.isError} error={(settings.error || certificates.error) as Error | null} refetch={() => { void settings.refetch(); void certificates.refetch(); }}>
         <Card>

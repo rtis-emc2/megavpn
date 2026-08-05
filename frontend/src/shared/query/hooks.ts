@@ -331,6 +331,7 @@ import type {
   PlatformSettings,
   PlatformSettingsInput,
   ReadyStatus,
+  RuntimePreflight,
   RoutePolicy,
   RoutePolicyApplyResult,
   RoutePolicyCleanupResult,
@@ -398,7 +399,7 @@ export function useReady(options?: QueryOptions<ReadyStatus>) {
   return useQuery({ queryKey: ['ready'], queryFn: endpoints.ready, staleTime: stale.fast, refetchInterval: 10_000, ...options });
 }
 
-export function useRuntimePreflight(options?: QueryOptions<Record<string, unknown>>) {
+export function useRuntimePreflight(options?: QueryOptions<RuntimePreflight>) {
   return useQuery({ queryKey: ['runtime-preflight'], queryFn: endpoints.runtimePreflight, staleTime: stale.normal, ...options });
 }
 
