@@ -106,6 +106,20 @@ export function NodeLifecycleControlsPanel({
               ? staleRotationClearContext.errorKey
               : '';
   const staleRotationClearAvailable = !staleRotationClearBlockedKey && staleRotationClearContext.valid;
+  const staleRotationStatus = !canReadNode
+    ? 'unknown'
+    : staleRotationPreviewError
+      ? 'danger'
+      : staleRotationPreviewLoading || staleRotationPreviewFetching
+        ? 'pending'
+        : staleRotationPreview
+          ? statusForSeverity(model.staleRotation.severity)
+          : 'unknown';
+  const showStaleRotationClearBlocked = candidates.length > 0
+    && !staleRotationPreviewLoading
+    && !staleRotationPreviewFetching
+    && !staleRotationPreviewError
+    && Boolean(staleRotationClearBlockedKey);
   const backendSafeCount = candidates.filter((candidate) => candidate.safe_to_clear === true).length;
   const excludedCount = candidates.length - backendSafeCount;
 
@@ -273,7 +287,7 @@ export function NodeLifecycleControlsPanel({
         <CardBody>
           <div className="page-stack">
             <Toolbar>
-              <StatusBadge status={statusForSeverity(model.staleRotation.severity)} />
+              <StatusBadge status={staleRotationStatus} />
               <RefreshButton
                 disabled={!canReadNode || staleRotationPreviewLoading || staleRotationPreviewFetching}
                 onRefresh={onRefreshStaleRotationPreview}
@@ -295,7 +309,7 @@ export function NodeLifecycleControlsPanel({
             {canReadNode && staleRotationPreview && !candidates.length ? (
               <EmptyState title={t('nodes.lifecycleControls.noCandidatesTitle')} body={t('nodes.lifecycleControls.noCandidatesBody')} />
             ) : null}
-            {staleRotationClearBlockedKey ? (
+            {showStaleRotationClearBlocked ? (
               <div role="alert" className="error-state-inline">{t(staleRotationClearBlockedKey)}</div>
             ) : null}
             {canReadNode && staleRotationPreview && candidates.length ? (

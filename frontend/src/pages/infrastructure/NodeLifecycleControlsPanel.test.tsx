@@ -154,6 +154,7 @@ describe('NodeLifecycleControlsPanel', () => {
       />,
     );
     expect(screen.getByText('No stale rotation candidates')).toBeInTheDocument();
+    expect(screen.queryByText('The backend currently reports no safe stale-rotation candidates. No cleanup action is available.')).not.toBeInTheDocument();
 
     rerender(
       <NodeLifecycleControlsPanel
@@ -178,7 +179,11 @@ describe('NodeLifecycleControlsPanel', () => {
       />,
     );
     expect(screen.getByText('Stale-rotation preview requires node.read permission.')).toBeInTheDocument();
+    expect(screen.queryByText('The stale-rotation preview is unavailable. No cleanup action is allowed.')).not.toBeInTheDocument();
     expect(screen.queryByText(/secret_ref raw backend message/)).not.toBeInTheDocument();
+    const staleRotationCard = screen.getByRole('heading', { name: 'Stale rotation preview' }).closest('.card');
+    expect(staleRotationCard).not.toBeNull();
+    expect(within(staleRotationCard as HTMLElement).getByText('Error')).toBeInTheDocument();
 
     rerender(
       <NodeLifecycleControlsPanel

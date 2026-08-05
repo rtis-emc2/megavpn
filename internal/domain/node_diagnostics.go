@@ -1,6 +1,17 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var (
+	ErrNodeStaleRotationNodeNotFound         = errors.New("node stale rotation node not found")
+	ErrNodeStaleRotationConfirmationMismatch = errors.New("node stale rotation confirmation mismatch")
+	ErrNodeStaleRotationNotFound             = errors.New("node stale rotation candidates not found")
+	ErrNodeStaleRotationPreviewChanged       = errors.New("node stale rotation preview changed")
+	ErrNodeStaleRotationEvidenceAmbiguous    = errors.New("node stale rotation evidence is ambiguous")
+)
 
 type NodeAgentState struct {
 	NodeID                string     `json:"node_id"`
@@ -43,4 +54,49 @@ type NodeDiagnostics struct {
 	LastFailedBootstrap     *NodeBootstrapRun           `json:"last_failed_bootstrap,omitempty"`
 	ActiveEnrollmentToken   *NodeEnrollmentToken        `json:"active_enrollment_token,omitempty"`
 	LatestEnrollmentToken   *NodeEnrollmentToken        `json:"latest_enrollment_token,omitempty"`
+}
+
+type NodeStaleRotationCandidate struct {
+	JobID        string     `json:"job_id"`
+	Status       string     `json:"status"`
+	CreatedAt    time.Time  `json:"created_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	LastClaimAt  *time.Time `json:"last_claim_at,omitempty"`
+	LastResultAt *time.Time `json:"last_result_at,omitempty"`
+	LastSeenAt   *time.Time `json:"last_seen_at,omitempty"`
+	LastPollAt   *time.Time `json:"last_poll_at,omitempty"`
+	AgeSeconds   int64      `json:"age_seconds"`
+	StaleReason  string     `json:"stale_reason"`
+	SafeToClear  bool       `json:"safe_to_clear"`
+}
+
+type NodeStaleRotationPreview struct {
+	NodeID                string                       `json:"node_id"`
+	StaleRotationDetected bool                         `json:"stale_rotation_detected"`
+	TokenRotationStatus   string                       `json:"token_rotation_status"`
+	EvaluatedAt           time.Time                    `json:"evaluated_at"`
+	Candidates            []NodeStaleRotationCandidate `json:"candidates"`
+}
+
+type NodeStaleRotationClearCommand struct {
+	Confirmation   string
+	Reason         string
+	ExpectedJobIDs []string
+}
+
+type NodeStaleRotationClearedJob struct {
+	JobID          string    `json:"job_id"`
+	PreviousStatus string    `json:"previous_status"`
+	Status         string    `json:"status"`
+	StaleReason    string    `json:"stale_reason"`
+	FinishedAt     time.Time `json:"finished_at"`
+}
+
+type NodeStaleRotationClearResult struct {
+	Status                       string                        `json:"status"`
+	NodeID                       string                        `json:"node_id"`
+	ClearedCount                 int                           `json:"cleared_count"`
+	ClearedJobs                  []NodeStaleRotationClearedJob `json:"cleared_jobs"`
+	PendingRotationStateCleared  bool                          `json:"pending_rotation_state_cleared"`
+	ActiveAgentIdentityPreserved bool                          `json:"active_agent_identity_preserved"`
 }

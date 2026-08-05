@@ -351,11 +351,13 @@ export function deriveNodeLifecycleStatusModel(input: {
   const candidates = staleRotationPreview?.candidates || [];
   const unknownReasonCount = candidates.filter((candidate) => !describeStaleRotationReason(candidate.stale_reason).known).length;
   const backendSafeCandidateCount = candidates.filter((candidate) => candidate.safe_to_clear).length;
-  const staleSeverity: NodeLifecycleSeverity = staleRotationPreview?.stale_rotation_detected
-    ? unknownReasonCount > 0 || backendSafeCandidateCount === 0
-      ? 'blocked'
-      : 'warning'
-    : 'healthy';
+  const staleSeverity: NodeLifecycleSeverity = !staleRotationPreview
+    ? 'neutral'
+    : staleRotationPreview.stale_rotation_detected
+      ? unknownReasonCount > 0 || backendSafeCandidateCount === 0
+        ? 'blocked'
+        : 'warning'
+      : 'healthy';
 
   return {
     nodeId: node.id,

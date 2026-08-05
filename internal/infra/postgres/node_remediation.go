@@ -743,96 +743,331 @@ func (s *Store) RequeueNodeStuckJob(ctx context.Context, nodeID string) (domain.
 	return s.GetJob(ctx, requeued.ID)
 }
 
-func (s *Store) ClearNodeStalePendingRotation(ctx context.Context, nodeID string) ([]domain.Job, error) {
+type nodeStaleRotationAgentEvidence struct {
+	Status          string
+	LastSeenAt      *time.Time
+	LastPollAt      *time.Time
+	LastClaimAt     *time.Time
+	LastClaimJobID  *string
+	LastResultAt    *time.Time
+	LastResultJobID *string
+}
+
+type nodeStaleRotationJobEvidence struct {
+	ID          string
+	Status      string
+	CreatedAt   time.Time
+	StartedAt   *time.Time
+	LockedUntil *time.Time
+}
+
+type nodeStaleRotationQuerier interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func (s *Store) PreviewNodeStaleRotation(ctx context.Context, nodeID string) (domain.NodeStaleRotationPreview, error) {
+	now := time.Now().UTC()
 	if _, err := s.GetNode(ctx, nodeID); err != nil {
-		return nil, err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.NodeStaleRotationPreview{}, domain.ErrNodeStaleRotationNodeNotFound
+		}
+		return domain.NodeStaleRotationPreview{}, err
+	}
+	agent, err := loadNodeStaleRotationAgentEvidence(ctx, s.db, nodeID, false)
+	if err != nil {
+		return domain.NodeStaleRotationPreview{}, err
+	}
+	candidates, err := loadNodeStaleRotationCandidates(ctx, s.db, nodeID, agent, now, false)
+	if err != nil {
+		return domain.NodeStaleRotationPreview{}, err
+	}
+	return buildNodeStaleRotationPreview(nodeID, agent, candidates, now), nil
+}
+
+func (s *Store) ClearNodeStalePendingRotation(ctx context.Context, nodeID string, command domain.NodeStaleRotationClearCommand) (domain.NodeStaleRotationClearResult, error) {
+	now := time.Now().UTC()
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.NodeStaleRotationClearResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var nodeName string
+	if err := tx.QueryRow(ctx, `select name from nodes where id=$1 for update`, nodeID).Scan(&nodeName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.NodeStaleRotationClearResult{}, domain.ErrNodeStaleRotationNodeNotFound
+		}
+		return domain.NodeStaleRotationClearResult{}, err
+	}
+	expectedConfirmation := strings.TrimSpace(nodeName)
+	if expectedConfirmation == "" {
+		expectedConfirmation = strings.TrimSpace(nodeID)
+	}
+	if strings.TrimSpace(command.Confirmation) != expectedConfirmation {
+		return domain.NodeStaleRotationClearResult{}, domain.ErrNodeStaleRotationConfirmationMismatch
 	}
 
-	rows, err := s.db.Query(ctx, `select
-		j.id,j.type,j.scope_type,j.scope_id,j.node_id,j.instance_id,j.status,j.priority,j.payload_json,coalesce(j.result_json,'{}'::jsonb),j.locked_by,j.locked_until,j.created_at,j.started_at,j.finished_at,
-		na.last_seen_at
-	from jobs j
-	left join node_agents na on na.node_id=j.node_id
-	where j.node_id=$1
-	  and j.type='node.agent.rotate_token'
-	  and j.status in ('queued','running','retrying')
-	order by j.created_at asc`, nodeID)
+	agent, err := loadNodeStaleRotationAgentEvidence(ctx, tx, nodeID, true)
+	if err != nil {
+		return domain.NodeStaleRotationClearResult{}, err
+	}
+	candidates, err := loadNodeStaleRotationCandidates(ctx, tx, nodeID, agent, now, true)
+	if err != nil {
+		return domain.NodeStaleRotationClearResult{}, err
+	}
+	safeCandidates := make([]domain.NodeStaleRotationCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.SafeToClear {
+			safeCandidates = append(safeCandidates, candidate)
+		}
+	}
+	if len(safeCandidates) == 0 {
+		return domain.NodeStaleRotationClearResult{}, domain.ErrNodeStaleRotationNotFound
+	}
+	if !sameNodeStaleRotationJobIDs(safeCandidates, command.ExpectedJobIDs) {
+		return domain.NodeStaleRotationClearResult{}, domain.ErrNodeStaleRotationPreviewChanged
+	}
+
+	clearedJobs := make([]domain.NodeStaleRotationClearedJob, 0, len(safeCandidates))
+	for _, candidate := range safeCandidates {
+		resultJSON := mustJSON(map[string]any{
+			"message":         "stale pending token rotation was cleared",
+			"operator_reason": strings.TrimSpace(command.Reason),
+			"stale_reason":    candidate.StaleReason,
+		})
+		tag, err := tx.Exec(ctx, `update jobs
+			set status='cancelled', finished_at=$3, locked_by=null, locked_until=null, result_json=$4
+			where id=$1 and status=$2`, candidate.JobID, candidate.Status, now, resultJSON)
+		if err != nil {
+			return domain.NodeStaleRotationClearResult{}, err
+		}
+		if tag.RowsAffected() != 1 {
+			return domain.NodeStaleRotationClearResult{}, domain.ErrNodeStaleRotationPreviewChanged
+		}
+		if _, err := tx.Exec(ctx, `delete from resource_locks where job_id=$1`, candidate.JobID); err != nil {
+			return domain.NodeStaleRotationClearResult{}, err
+		}
+		if _, err := tx.Exec(ctx, `delete from secret_refs sr
+			using jobs j
+			where j.id=$1
+			  and sr.id::text=coalesce(j.payload_json->>'new_agent_token_secret_ref_id','')`, candidate.JobID); err != nil {
+			return domain.NodeStaleRotationClearResult{}, err
+		}
+		clearedJobs = append(clearedJobs, domain.NodeStaleRotationClearedJob{
+			JobID:          candidate.JobID,
+			PreviousStatus: candidate.Status,
+			Status:         "cancelled",
+			StaleReason:    candidate.StaleReason,
+			FinishedAt:     now,
+		})
+	}
+
+	var pending bool
+	if err := tx.QueryRow(ctx, `select exists(
+		select 1 from jobs
+		where node_id=$1 and type='node.agent.rotate_token' and status in ('queued','running','retrying')
+	)`, nodeID).Scan(&pending); err != nil {
+		return domain.NodeStaleRotationClearResult{}, err
+	}
+	var activeIdentity bool
+	if err := tx.QueryRow(ctx, `select exists(
+		select 1 from node_agents where node_id=$1 and status='active' and revoked_at is null
+	)`, nodeID).Scan(&activeIdentity); err != nil {
+		return domain.NodeStaleRotationClearResult{}, err
+	}
+	if !activeIdentity {
+		return domain.NodeStaleRotationClearResult{}, domain.ErrNodeStaleRotationEvidenceAmbiguous
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.NodeStaleRotationClearResult{}, err
+	}
+
+	for _, job := range clearedJobs {
+		_ = s.AddJobLog(ctx, job.JobID, "warn", "stale token rotation was cleared", map[string]any{
+			"node_id":      nodeID,
+			"stale_reason": job.StaleReason,
+		})
+	}
+	_, _ = s.CreateAudit(ctx, "system", "node.agent_token.clear_stale", "node", &nodeID, fmt.Sprintf("%d stale token rotation jobs cleared: %s", len(clearedJobs), strings.TrimSpace(command.Reason)))
+	return domain.NodeStaleRotationClearResult{
+		Status:                       "cleared",
+		NodeID:                       nodeID,
+		ClearedCount:                 len(clearedJobs),
+		ClearedJobs:                  clearedJobs,
+		PendingRotationStateCleared:  !pending,
+		ActiveAgentIdentityPreserved: true,
+	}, nil
+}
+
+func loadNodeStaleRotationAgentEvidence(ctx context.Context, q nodeStaleRotationQuerier, nodeID string, lock bool) (nodeStaleRotationAgentEvidence, error) {
+	query := `select status,last_seen_at,last_job_poll_at,last_job_claim_at,last_job_claim_job_id,last_job_result_at,last_job_result_job_id
+		from node_agents where node_id=$1`
+	if lock {
+		query += ` for update`
+	}
+	var evidence nodeStaleRotationAgentEvidence
+	if err := q.QueryRow(ctx, query, nodeID).Scan(
+		&evidence.Status,
+		&evidence.LastSeenAt,
+		&evidence.LastPollAt,
+		&evidence.LastClaimAt,
+		&evidence.LastClaimJobID,
+		&evidence.LastResultAt,
+		&evidence.LastResultJobID,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nodeStaleRotationAgentEvidence{Status: "missing"}, nil
+		}
+		return nodeStaleRotationAgentEvidence{}, err
+	}
+	return evidence, nil
+}
+
+func loadNodeStaleRotationCandidates(ctx context.Context, q nodeStaleRotationQuerier, nodeID string, agent nodeStaleRotationAgentEvidence, now time.Time, lock bool) ([]domain.NodeStaleRotationCandidate, error) {
+	query := `select id,status,created_at,started_at,locked_until
+		from jobs
+		where node_id=$1 and type='node.agent.rotate_token' and status in ('queued','running','retrying')
+		order by created_at asc,id asc`
+	if lock {
+		query += ` for update`
+	}
+	rows, err := q.Query(ctx, query, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	now := time.Now().UTC()
-	staleJobs := make([]domain.Job, 0)
+	out := make([]domain.NodeStaleRotationCandidate, 0)
 	for rows.Next() {
-		var job domain.Job
-		var payloadRaw, resultRaw []byte
-		var lastSeenAt *time.Time
-		if err := rows.Scan(&job.ID, &job.Type, &job.ScopeType, &job.ScopeID, &job.NodeID, &job.InstanceID, &job.Status, &job.Priority, &payloadRaw, &resultRaw, &job.LockedBy, &job.LockedUntil, &job.CreatedAt, &job.StartedAt, &job.FinishedAt, &lastSeenAt); err != nil {
+		var job nodeStaleRotationJobEvidence
+		if err := rows.Scan(&job.ID, &job.Status, &job.CreatedAt, &job.StartedAt, &job.LockedUntil); err != nil {
 			return nil, err
 		}
-		if err := decodeJSONField(payloadRaw, &job.Payload, "jobs.payload_json"); err != nil {
-			return nil, err
-		}
-		if err := decodeJSONField(resultRaw, &job.Result, "jobs.result_json"); err != nil {
-			return nil, err
-		}
-		if job.Payload == nil {
-			job.Payload = map[string]any{}
-		}
-		if job.Result == nil {
-			job.Result = map[string]any{}
-		}
-		if !isStalePendingRotationJob(job.CreatedAt, lastSeenAt, now) {
-			continue
-		}
-		staleJobs = append(staleJobs, job)
+		out = append(out, classifyNodeStaleRotationCandidate(job, agent, now))
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	return out, rows.Err()
+}
+
+func classifyNodeStaleRotationCandidate(job nodeStaleRotationJobEvidence, agent nodeStaleRotationAgentEvidence, now time.Time) domain.NodeStaleRotationCandidate {
+	age := now.Sub(job.CreatedAt)
+	if age < 0 {
+		age = 0
 	}
-	if len(staleJobs) == 0 {
-		return nil, errors.New("no stale pending rotation jobs found for this node")
+	candidate := domain.NodeStaleRotationCandidate{
+		JobID:       job.ID,
+		Status:      job.Status,
+		CreatedAt:   job.CreatedAt,
+		StartedAt:   job.StartedAt,
+		LastSeenAt:  agent.LastSeenAt,
+		LastPollAt:  agent.LastPollAt,
+		AgeSeconds:  int64(age / time.Second),
+		StaleReason: "evidence_ambiguous",
+	}
+	if agent.LastClaimJobID != nil && *agent.LastClaimJobID == job.ID {
+		candidate.LastClaimAt = agent.LastClaimAt
+	}
+	if agent.LastResultJobID != nil && *agent.LastResultJobID == job.ID {
+		candidate.LastResultAt = agent.LastResultAt
+	}
+	if !strings.EqualFold(agent.Status, "active") {
+		candidate.StaleReason = "agent_identity_not_active"
+		return candidate
+	}
+	if age < stalePendingRotateAfter {
+		candidate.StaleReason = "fresh_rotation"
+		return candidate
+	}
+	if candidate.LastResultAt != nil {
+		candidate.StaleReason = "result_already_submitted"
+		return candidate
 	}
 
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	for idx := range staleJobs {
-		job := &staleJobs[idx]
-		job.Status = "cancelled"
-		job.FinishedAt = &now
-		job.LockedBy = nil
-		job.LockedUntil = nil
-		resultJSON := mustJSON(map[string]any{
-			"message": "stale pending token rotation was cleared",
-		})
-		if _, err := tx.Exec(ctx, `update jobs
-			set status='cancelled',
-			    finished_at=$2,
-			    locked_by=null,
-			    locked_until=null,
-			    result_json=$3
-			where id=$1 and status in ('queued','running','retrying')`,
-			job.ID, now, resultJSON); err != nil {
-			return nil, err
+	switch strings.ToLower(strings.TrimSpace(job.Status)) {
+	case "queued":
+		if nodeAgentProgressedAfter(agent, job.CreatedAt) {
+			candidate.StaleReason = "agent_progress_after_creation"
+			return candidate
 		}
-		if _, err := tx.Exec(ctx, `delete from resource_locks where job_id=$1`, job.ID); err != nil {
-			return nil, err
+		candidate.StaleReason = "unclaimed_without_agent_progress"
+		candidate.SafeToClear = true
+	case "running", "retrying":
+		if candidate.LastClaimAt == nil {
+			candidate.StaleReason = "claim_evidence_missing"
+			return candidate
+		}
+		if job.LockedUntil != nil && job.LockedUntil.After(now) {
+			candidate.StaleReason = "claim_or_lease_still_active"
+			return candidate
+		}
+		if nodeAgentProgressedAfter(agent, *candidate.LastClaimAt) {
+			candidate.StaleReason = "agent_progress_after_claim"
+			return candidate
+		}
+		candidate.StaleReason = "claimed_without_result_and_agent_inactive"
+		candidate.SafeToClear = true
+	}
+	return candidate
+}
+
+func nodeAgentProgressedAfter(agent nodeStaleRotationAgentEvidence, at time.Time) bool {
+	for _, observedAt := range []*time.Time{agent.LastSeenAt, agent.LastPollAt, agent.LastResultAt} {
+		if observedAt != nil && observedAt.After(at) {
+			return true
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
+	return false
+}
 
-	for _, job := range staleJobs {
-		_ = s.AddJobLog(ctx, job.ID, "warn", "stale token rotation was cleared", map[string]any{"node_id": nodeID})
+func buildNodeStaleRotationPreview(nodeID string, agent nodeStaleRotationAgentEvidence, candidates []domain.NodeStaleRotationCandidate, now time.Time) domain.NodeStaleRotationPreview {
+	detected := false
+	for _, candidate := range candidates {
+		if candidate.SafeToClear {
+			detected = true
+			break
+		}
 	}
-	_, _ = s.CreateAudit(ctx, "system", "node.agent_token.clear_stale", "node", &nodeID, fmt.Sprintf("%d stale token rotation jobs cleared", len(staleJobs)))
-	return staleJobs, nil
+	rotationStatus := strings.ToLower(strings.TrimSpace(agent.Status))
+	if len(candidates) > 0 {
+		rotationStatus = "rotating"
+	} else if rotationStatus == "" {
+		rotationStatus = "unknown"
+	}
+	return domain.NodeStaleRotationPreview{
+		NodeID:                nodeID,
+		StaleRotationDetected: detected,
+		TokenRotationStatus:   rotationStatus,
+		EvaluatedAt:           now,
+		Candidates:            candidates,
+	}
+}
+
+func sameNodeStaleRotationJobIDs(candidates []domain.NodeStaleRotationCandidate, expected []string) bool {
+	if len(candidates) != len(expected) {
+		return false
+	}
+	actualSet := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		actualSet[candidate.JobID] = struct{}{}
+	}
+	if len(actualSet) != len(candidates) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(expected))
+	for _, jobID := range expected {
+		jobID = strings.TrimSpace(jobID)
+		if jobID == "" {
+			return false
+		}
+		if _, duplicate := seen[jobID]; duplicate {
+			return false
+		}
+		seen[jobID] = struct{}{}
+		if _, ok := actualSet[jobID]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) loadNodeStaleClaim(ctx context.Context, nodeID string) (*struct {
@@ -887,16 +1122,6 @@ func (s *Store) loadNodeStaleClaim(ctx context.Context, nodeID string) (*struct 
 		return nil, nil
 	}
 	return &x, nil
-}
-
-func isStalePendingRotationJob(createdAt time.Time, lastSeenAt *time.Time, now time.Time) bool {
-	if now.Sub(createdAt) < stalePendingRotateAfter {
-		return false
-	}
-	if lastSeenAt == nil {
-		return true
-	}
-	return lastSeenAt.Before(createdAt)
 }
 
 func isAgentHandledJobType(jobType string) bool {
