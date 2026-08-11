@@ -16,6 +16,7 @@ import {
   cleanupRoutePolicy,
   clearNodeStaleRotation,
   createAddressPoolSpace,
+  createBackhaulLink,
   createClient,
   createClientRoute,
   applyNodeFirewall,
@@ -45,6 +46,7 @@ import {
   deleteFirewallPolicy,
   deleteFirewallRule,
   deleteAddressPoolSpace,
+  deleteBackhaulLink,
   deleteExternalEgressDeployment,
   deleteExternalEgressProfile,
   deleteClientAccess,
@@ -90,6 +92,7 @@ import {
   getNodeServiceDiscoverySummary,
   getNodeStaleRotationPreview,
   listClientArtifacts,
+  listBackhaulDrivers,
   listClientAccesses,
   listClientDeliveryHistory,
   listClientRoutes,
@@ -198,6 +201,8 @@ import type {
   AddressPools,
   Artifact,
   BackhaulActionResult,
+  BackhaulCreateInput,
+  BackhaulDriverDefinition,
   BackhaulLink,
   BackhaulRouteStateInput,
   Certificate,
@@ -1973,6 +1978,10 @@ export function useBackhaulLinks(options?: QueryOptions<BackhaulLink[]>) {
   return useQuery({ queryKey: ['backhaul-links'], queryFn: endpoints.backhaulLinks, staleTime: stale.normal, ...options });
 }
 
+export function useBackhaulDrivers(options?: QueryOptions<BackhaulDriverDefinition[]>) {
+  return useQuery({ queryKey: ['backhaul-drivers'], queryFn: listBackhaulDrivers, staleTime: stale.slow, ...options });
+}
+
 export function useBackhaulLink(linkId: string | undefined, options?: QueryOptions<BackhaulLink>) {
   return useQuery({
     queryKey: ['backhaul-link', linkId],
@@ -1990,6 +1999,27 @@ function invalidateBackhaulQueries(queryClient: ReturnType<typeof useQueryClient
   void queryClient.invalidateQueries({ queryKey: ['jobs'] });
   void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
   if (linkId) void queryClient.invalidateQueries({ queryKey: ['backhaul-link', linkId] });
+}
+
+export function useCreateBackhaulLink() {
+  const queryClient = useQueryClient();
+  return useMutation<BackhaulLink, Error, BackhaulCreateInput>({
+    mutationFn: createBackhaulLink,
+    onSuccess: (link) => {
+      invalidateBackhaulQueries(queryClient, link.id);
+    },
+  });
+}
+
+export function useDeleteBackhaulLink() {
+  const queryClient = useQueryClient();
+  return useMutation<BackhaulActionResult, Error, string>({
+    mutationFn: deleteBackhaulLink,
+    onSuccess: (result, linkId) => {
+      invalidateBackhaulQueries(queryClient, linkId);
+      invalidateJobsFromResult(queryClient, result);
+    },
+  });
 }
 
 export function useApplyBackhaulLink() {

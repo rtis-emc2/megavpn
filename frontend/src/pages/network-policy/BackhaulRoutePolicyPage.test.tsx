@@ -66,9 +66,40 @@ const backhaulLink = {
 };
 
 const nodes = [
-  { id: 'node-1', name: 'ingress-a', role: 'vpn_ingress', address: '203.0.113.10', status: 'active', updated_at: '2026-07-09T08:00:00Z' },
+  { id: 'node-1', name: 'ingress-a', role: 'ingress', address: '203.0.113.10', status: 'active', updated_at: '2026-07-09T08:00:00Z' },
   { id: 'node-2', name: 'egress-b', role: 'egress', address: '203.0.113.11', status: 'active', updated_at: '2026-07-09T08:01:00Z' },
 ];
+
+const backhaulDrivers = [
+  {
+    code: 'wireguard',
+    label: 'WireGuard L3',
+    layer: 'l3',
+    default_port: 51820,
+    default_protocol: 'udp',
+    activation_mode: 'service',
+    supports_kernel_routes: true,
+    capabilities: ['l3_route'],
+  },
+  {
+    code: 'openvpn_udp',
+    label: 'OpenVPN UDP P2P',
+    layer: 'l3',
+    default_port: 11950,
+    default_protocol: 'udp',
+    activation_mode: 'service',
+    supports_kernel_routes: true,
+    capabilities: ['l3_route'],
+  },
+];
+
+const createdBackhaulLink = {
+  ...backhaulLink,
+  id: 'link-created',
+  name: 'new-edge-backhaul',
+  status: 'planned',
+  transports: [],
+};
 
 const routePreview = {
   status: 'ok',
@@ -126,12 +157,14 @@ describe('Backhaul and RoutePolicy workflows', () => {
   const failures: Record<string, number> = {};
   let consoleSpy: ReturnType<typeof vi.spyOn>;
   let storageSetSpy: ReturnType<typeof vi.spyOn>;
+  let backhaulLinksResponse: typeof backhaulLink[];
 
   beforeEach(async () => {
     calls.length = 0;
     Object.keys(failures).forEach((key) => delete failures[key]);
     window.localStorage.clear();
     await i18n.changeLanguage('en');
+    backhaulLinksResponse = [backhaulLink];
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     storageSetSpy = vi.spyOn(Storage.prototype, 'setItem');
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -144,8 +177,14 @@ describe('Backhaul and RoutePolicy workflows', () => {
       const failureStatus = failures[`${method} ${url.pathname}`];
       if (failureStatus) return json({ error: `backend returned ${failureStatus}` }, failureStatus);
 
-      if (method === 'GET' && url.pathname === '/api/v1/backhaul-links') return json([backhaulLink]);
+      if (method === 'GET' && url.pathname === '/api/v1/backhaul-links') return json(backhaulLinksResponse);
+      if (method === 'GET' && url.pathname === '/api/v1/backhaul/drivers') return json(backhaulDrivers);
       if (method === 'GET' && url.pathname === '/api/v1/backhaul-links/link-1') return json(backhaulLink);
+      if (method === 'GET' && url.pathname === '/api/v1/backhaul-links/link-created') return json(createdBackhaulLink);
+      if (method === 'POST' && url.pathname === '/api/v1/backhaul-links') return json(createdBackhaulLink, 201);
+      if (method === 'DELETE' && url.pathname === '/api/v1/backhaul-links/link-1') {
+        return json({ link: { ...backhaulLink, status: 'disabled' }, jobs: [{ id: 'job-backhaul-delete', type: 'node.backhaul.delete', status: 'queued' }], job_count: 1 }, 202);
+      }
       if (method === 'POST' && url.pathname === '/api/v1/backhaul-links/link-1/apply') {
         return json({ jobs: [{ id: 'job-backhaul-apply', type: 'node.backhaul.apply', status: 'queued' }], job_count: 1 }, 202);
       }
@@ -198,6 +237,44 @@ describe('Backhaul and RoutePolicy workflows', () => {
     expect(screen.getAllByText('transport-1').length).toBeGreaterThan(0);
     expect(screen.queryByText(backhaulSecret)).not.toBeInTheDocument();
     expect(screen.queryByText(backhaulSecretRef)).not.toBeInTheDocument();
+  });
+
+  it('creates the first Backhaul link from the empty state with backend-managed addressing', async () => {
+    backhaulLinksResponse = [];
+    renderWithQuery(<BackhaulPage />);
+    expect(await screen.findByText('No backhaul links yet')).toBeInTheDocument();
+
+    await userEvent.click(firstEnabledButton('Create backhaul'));
+    const dialog = latestDialog();
+    await userEvent.selectOptions(within(dialog).getByLabelText('Ingress node'), 'node-1');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Egress node'), 'node-2');
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'new-edge-backhaul');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create backhaul' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/backhaul-links')).toBe(true));
+    const createCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/backhaul-links');
+    expect(createCall?.body).toMatchObject({
+      name: 'new-edge-backhaul',
+      ingress_node_id: 'node-1',
+      egress_node_id: 'node-2',
+      desired_driver: 'wireguard',
+      route_metric: 50,
+      drivers: ['wireguard'],
+    });
+    expect(createCall?.body).not.toHaveProperty('routing_table');
+    expect(createCall?.body).not.toHaveProperty('tunnel_cidr');
+    expect(await screen.findByText('Backhaul new-edge-backhaul was created. Review it and use Apply to deploy the selected transport.')).toBeInTheDocument();
+  });
+
+  it('removes a Backhaul link only after explicit confirmation', async () => {
+    renderWithQuery(<BackhaulPage />);
+    expect((await screen.findAllByText('edge-backhaul')).length).toBeGreaterThan(0);
+    await userEvent.click(firstEnabledButton('Open'));
+    await userEvent.click(firstEnabledButton('Remove backhaul'));
+    expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/backhaul-links/link-1')).toBe(false);
+    await userEvent.click(within(latestDialog()).getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/backhaul-links/link-1')).toBe(true));
+    expect(await screen.findByText('job-backhaul-delete')).toBeInTheDocument();
   });
 
   it('runs Backhaul apply, probe, promote and route-state actions through backend confirmations', async () => {

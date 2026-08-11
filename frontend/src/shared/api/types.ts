@@ -1391,7 +1391,7 @@ export type BackhaulLink = APIRecord & {
   selected_transport_id?: string | null;
   desired_driver?: string;
   driver?: string;
-  routing_table?: number;
+  routing_table?: string | number;
   route_metric?: number;
   route_enabled?: boolean;
   failover_policy?: APIRecord;
@@ -1399,6 +1399,30 @@ export type BackhaulLink = APIRecord & {
   transports?: BackhaulTransport[];
   created_at?: string;
   updated_at?: string;
+};
+
+export type BackhaulDriverDefinition = APIRecord & {
+  code: string;
+  label: string;
+  layer: string;
+  default_port: number;
+  default_protocol: string;
+  activation_mode: string;
+  supports_kernel_routes: boolean;
+  capabilities: string[];
+  warnings?: string[];
+};
+
+export type BackhaulCreateInput = {
+  name?: string;
+  ingress_node_id: string;
+  egress_node_id: string;
+  desired_driver: string;
+  endpoint_host?: string;
+  tunnel_cidr?: string;
+  routing_table?: string;
+  route_metric?: number;
+  drivers?: string[];
 };
 
 export type BackhaulActionResult = APIRecord & {

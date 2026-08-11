@@ -7,6 +7,8 @@ import type {
   Artifact,
   AuthPayload,
   BackhaulActionResult,
+  BackhaulCreateInput,
+  BackhaulDriverDefinition,
   BackhaulLink,
   BackhaulPromoteInput,
   BackhaulRouteStateInput,
@@ -1304,6 +1306,14 @@ export function listBackhaulLinks(): Promise<BackhaulLink[]> {
   return apiRequest<BackhaulLink[]>('/api/v1/backhaul-links');
 }
 
+export function listBackhaulDrivers(): Promise<BackhaulDriverDefinition[]> {
+  return apiRequest<BackhaulDriverDefinition[]>('/api/v1/backhaul/drivers');
+}
+
+export function createBackhaulLink(input: BackhaulCreateInput): Promise<BackhaulLink> {
+  return sendJSON<BackhaulLink>('/api/v1/backhaul-links', 'POST', input);
+}
+
 export function getBackhaulLink(linkId: string): Promise<BackhaulLink> {
   return apiRequest<BackhaulLink>(`/api/v1/backhaul-links/${encodeURIComponent(linkId)}`);
 }
@@ -1322,6 +1332,10 @@ export function promoteBackhaulLink(linkId: string, input: BackhaulPromoteInput)
 
 export function updateBackhaulRouteState(linkId: string, input: BackhaulRouteStateInput): Promise<BackhaulActionResult> {
   return sendJSON<BackhaulActionResult>(`/api/v1/backhaul-links/${encodeURIComponent(linkId)}/route`, 'PATCH', input);
+}
+
+export function deleteBackhaulLink(linkId: string): Promise<BackhaulActionResult> {
+  return apiRequest<BackhaulActionResult>(`/api/v1/backhaul-links/${encodeURIComponent(linkId)}`, { method: 'DELETE' });
 }
 
 export function listExternalEgressCatalog(): Promise<ExternalEgressProtocol[]> {
@@ -1408,11 +1422,14 @@ export const endpoints = {
   createPkiRoot,
   importPkiRoot,
   backhaulLinks: () => listBackhaulLinks(),
+  backhaulDrivers: () => listBackhaulDrivers(),
   backhaulLink: getBackhaulLink,
+  createBackhaulLink,
   applyBackhaulLink,
   probeBackhaulLink,
   promoteBackhaulLink,
   updateBackhaulRouteState,
+  deleteBackhaulLink,
   externalEgressCatalog: () => listExternalEgressCatalog(),
   externalEgressProfiles: () => listExternalEgressProfiles(),
   externalEgressProfile: getExternalEgressProfile,
@@ -1425,7 +1442,6 @@ export const endpoints = {
   applyExternalEgressDeployment,
   probeExternalEgressDeployment,
   cleanupExternalEgressDeployment,
-  backhaulDrivers: () => apiRequest<Record<string, unknown>[]>('/api/v1/backhaul/drivers'),
   routePolicies: () => listRoutePolicies(),
   routePolicy: getRoutePolicy,
   previewRoutePolicy,

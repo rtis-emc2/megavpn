@@ -1,0 +1,1 @@
+import{C as e,b as t,pi as n,x as r,yi as i}from"./ui-BZMLljds.js";import{t as a}from"./common-CSSfHUq5.js";var o=i();function s(){let{t:i}=n();return(0,o.jsx)(a,{title:i(`nav.backupRestore`),subtitle:i(`common.unsupportedAction`),children:(0,o.jsx)(t,{children:(0,o.jsx)(r,{children:(0,o.jsx)(e,{disabled:!0,children:i(`common.apply`)})})})})}export{s as BackupRestorePage};

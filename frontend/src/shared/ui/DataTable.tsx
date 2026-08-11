@@ -34,12 +34,14 @@ export function DataTable<T>({
   columns,
   title,
   tools,
+  empty,
   responsive = 'default',
 }: {
   rows: T[];
   columns: DataColumn<T>[];
   title?: ReactNode;
   tools?: ReactNode;
+  empty?: ReactNode;
   responsive?: 'default' | 'wide';
 }) {
   return (
@@ -70,7 +72,7 @@ export function DataTable<T>({
           </div>
           <MobileRecordList rows={rows} columns={columns} />
         </>
-      ) : <EmptyState />}
+      ) : empty || <EmptyState />}
     </Card>
   );
 }
