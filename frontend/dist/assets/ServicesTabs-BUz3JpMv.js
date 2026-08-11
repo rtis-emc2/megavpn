@@ -1,1 +1,0 @@
-import{pi as e,t,yi as n}from"./ui-BZMLljds.js";var r=n();function i(){let{t:n}=e();return(0,r.jsx)(t,{tabs:[{label:n(`nav.instances`),to:`/services/instances`},{label:n(`nav.servicePacks`),to:`/services/service-packs`},{label:n(`nav.runtimeArtifacts`),to:`/services/runtime-artifacts`}]})}export{i as t};

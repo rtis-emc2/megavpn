@@ -119,7 +119,7 @@ describe('ClientGroupsPage', () => {
         ]);
       }
       if (method === 'POST' && url.pathname === '/api/v1/client-access-groups') {
-        return json({ ...group, id: 'group-2', group_key: body.group_key, display_name: body.display_name }, 201);
+        return json({ ...group, id: 'group-2', group_key: 'generated-group-2', display_name: body.display_name }, 201);
       }
       if (method === 'PATCH' && url.pathname === '/api/v1/client-access-groups/group-1') {
         return json({
@@ -314,7 +314,7 @@ describe('ClientGroupsPage', () => {
 
     await screen.findAllByText('Core access');
     await user.click(screen.getByRole('button', { name: 'Create group' }));
-    await user.type(screen.getByLabelText('Group key'), 'new-team');
+    expect(screen.queryByLabelText('Group key')).not.toBeInTheDocument();
     await user.type(screen.getByLabelText('Name'), 'New Team');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -322,10 +322,10 @@ describe('ClientGroupsPage', () => {
     const createCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/client-access-groups');
     expect(createCall?.body).toMatchObject({
       service_code: 'vless',
-      group_key: 'new-team',
       display_name: 'New Team',
       scope_mode: 'all_active_instances',
     });
+    expect(createCall?.body).not.toHaveProperty('group_key');
     expect(createCall?.body).toHaveProperty('policy_json.access_mode', 'instance_default');
     expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
   });
@@ -339,7 +339,6 @@ describe('ClientGroupsPage', () => {
     await user.selectOptions(screen.getByLabelText('Group protocol'), 'wireguard');
     expect(screen.queryByLabelText('Route mode')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('External provider gateway')).not.toBeInTheDocument();
-    await user.type(screen.getByLabelText('Group key'), 'wireguard-team');
     await user.type(screen.getByLabelText('Name'), 'WireGuard Team');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -347,10 +346,10 @@ describe('ClientGroupsPage', () => {
     const createCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/client-access-groups');
     expect(createCall?.body).toMatchObject({
       service_code: 'wireguard',
-      group_key: 'wireguard-team',
       display_name: 'WireGuard Team',
       policy_json: {},
     });
+    expect(createCall?.body).not.toHaveProperty('group_key');
   });
 
   it('updates VLESS group policy and status through the client access group API', async () => {
@@ -367,11 +366,11 @@ describe('ClientGroupsPage', () => {
     const updateCall = calls.find((call) => call.method === 'PATCH' && call.path === '/api/v1/client-access-groups/group-1');
     expect(updateCall?.body).toMatchObject({
       service_code: 'vless',
-      group_key: 'core',
       display_name: 'Core access',
       status: 'disabled',
       scope_mode: 'all_active_instances',
     });
+    expect(updateCall?.body).not.toHaveProperty('group_key');
     expect(updateCall?.body).toHaveProperty('policy_json.access_mode', 'block');
     expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
   });

@@ -121,3 +121,24 @@ func TestNormalizeClientAccessGroupInputAllowsVLESS(t *testing.T) {
 		t.Fatalf("service = %q, want vless", out.ServiceCode)
 	}
 }
+
+func TestGeneratedClientAccessGroupKeyIsStableAndCollisionResistant(t *testing.T) {
+	first := generatedClientAccessGroupKey("Operations Team", "11111111-1111-1111-1111-111111111111")
+	second := generatedClientAccessGroupKey("Operations Team", "22222222-2222-2222-2222-222222222222")
+	if first == second {
+		t.Fatalf("generated keys collide: %q", first)
+	}
+	if !strings.HasPrefix(first, "operations_team-") {
+		t.Fatalf("generated key = %q, want normalized display name prefix", first)
+	}
+	if len(first) > 64 {
+		t.Fatalf("generated key length = %d, want at most 64", len(first))
+	}
+}
+
+func TestGeneratedClientAccessGroupKeySupportsNonASCIIName(t *testing.T) {
+	got := generatedClientAccessGroupKey("Операторы", "11111111-1111-1111-1111-111111111111")
+	if !strings.HasPrefix(got, "group-") {
+		t.Fatalf("generated key = %q, want opaque fallback prefix", got)
+	}
+}

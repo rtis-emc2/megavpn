@@ -7,7 +7,6 @@ import { useImportRuntimeArtifact, useRuntimeArtifacts } from '../../shared/quer
 import { Badge, Button, Card, CardBody, DataTable, Drawer, FormField, FormGrid, RefreshButton, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
-import { ServicesTabs } from './ServicesTabs';
 
 function formatAPIError(error: unknown): string {
   if (!(error instanceof APIError)) return error instanceof Error ? error.message : 'Request failed';
@@ -68,7 +67,6 @@ export function RuntimeArtifactsPage() {
 
   return (
     <PageScaffold title={t('instances.runtimeArtifactsTitle')} subtitle={t('runtimeArtifacts.subtitle')} actions={<Button icon={<Upload size={16} />} onClick={() => setImportOpen(true)}>{t('runtimeArtifacts.import')}</Button>}>
-      <ServicesTabs />
       <Toolbar>
         <RefreshButton onRefresh={() => artifacts.refetch()}>{t('common.refresh')}</RefreshButton>
       </Toolbar>
@@ -90,7 +88,6 @@ export function RuntimeArtifactsPage() {
 
       <Drawer title={t('runtimeArtifacts.import')} open={importOpen} onClose={() => setImportOpen(false)}>
         <div className="page-stack">
-          <ServicesTabs />
           <p className="page-note">{t('runtimeArtifacts.urlImportOnly')}</p>
           {notice ? <div role={notice.includes(':') ? 'alert' : 'status'}>{notice}</div> : null}
           <FormGrid>
@@ -134,7 +131,6 @@ export function RuntimeArtifactsPage() {
       <Drawer title={selected?.name || selected?.id || t('instances.runtimeArtifactsTitle')} open={Boolean(selected)} onClose={() => setSelected(null)}>
         {selected ? (
           <div className="page-stack">
-            <ServicesTabs />
             <Toolbar>
               <Badge>{selected.kind || 'artifact'}</Badge>
               <StatusBadge status={selected.status} />

@@ -16,7 +16,6 @@ import {
 import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, RefreshButton, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { text } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
-import { ServicesTabs } from './ServicesTabs';
 
 type PackDrawerMode = 'detail' | 'edit' | 'create' | 'create-instance';
 type PackConfirm =
@@ -165,7 +164,6 @@ export function ServicePacksPage() {
 
   return (
     <PageScaffold title={t('instances.servicePacksTitle')} subtitle={t('servicePacks.subtitle')} actions={<Button icon={<FilePenLine size={16} />} onClick={() => openDrawer('create')}>{t('common.create')}</Button>}>
-      <ServicesTabs />
       <Toolbar>
         <Badge>{t('servicePacks.backendManaged')}</Badge>
         <RefreshButton onRefresh={() => packs.refetch()}>{t('common.refresh')}</RefreshButton>

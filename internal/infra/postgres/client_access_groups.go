@@ -89,11 +89,14 @@ func (s *Store) GetClientAccessGroup(ctx context.Context, groupID string) (domai
 }
 
 func (s *Store) CreateClientAccessGroup(ctx context.Context, input domain.ClientAccessGroupInput, userID *string) (domain.ClientAccessGroup, error) {
+	groupID := id.New()
+	if strings.TrimSpace(input.GroupKey) == "" {
+		input.GroupKey = generatedClientAccessGroupKey(input.DisplayName, groupID)
+	}
 	normalized, err := normalizeClientAccessGroupInput(input, true)
 	if err != nil {
 		return domain.ClientAccessGroup{}, err
 	}
-	groupID := id.New()
 	if err := s.validateClientAccessGroupExternalEgress(ctx, normalized.ExternalEgressProfileID); err != nil {
 		return domain.ClientAccessGroup{}, err
 	}
@@ -2071,6 +2074,18 @@ func normalizeVLESSAccessPolicyKey(raw string) string {
 		}
 	}
 	return strings.Trim(b.String(), "_.:-")
+}
+
+func generatedClientAccessGroupKey(displayName, groupID string) string {
+	base := normalizeVLESSAccessPolicyKey(displayName)
+	if base == "" {
+		base = "group"
+	}
+	if len(base) > 51 {
+		base = strings.Trim(base[:51], "_.:-")
+	}
+	sum := sha256.Sum256([]byte(groupID))
+	return base + "-" + hex.EncodeToString(sum[:6])
 }
 
 func derefUserID(userID *string) string {

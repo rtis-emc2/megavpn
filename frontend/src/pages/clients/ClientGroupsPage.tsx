@@ -53,7 +53,6 @@ import { PageScaffold, QueryBoundary } from '../common';
 
 type GroupForm = {
   serviceCode: string;
-  groupKey: string;
   displayName: string;
   description: string;
   status: string;
@@ -77,7 +76,6 @@ type MembersFilters = {
 
 const defaultForm: GroupForm = {
   serviceCode: 'vless',
-  groupKey: '',
   displayName: '',
   description: '',
   status: 'active',
@@ -101,7 +99,6 @@ function formFromGroup(group?: ClientAccessGroup | null): GroupForm {
   const policy = getPolicy(group);
   return {
     serviceCode: group.service_code || 'vless',
-    groupKey: group.group_key || '',
     displayName: group.display_name || '',
     description: group.description || '',
     status: group.status || 'active',
@@ -120,7 +117,6 @@ function formToInput(form: GroupForm): ClientAccessGroupInput {
   if (form.serviceCode !== 'vless') {
     return {
       service_code: form.serviceCode,
-      group_key: form.groupKey.trim(),
       display_name: form.displayName.trim(),
       description: form.description.trim(),
       status: form.status,
@@ -143,7 +139,6 @@ function formToInput(form: GroupForm): ClientAccessGroupInput {
   };
   return {
     service_code: form.serviceCode,
-    group_key: form.groupKey.trim(),
     display_name: form.displayName.trim(),
     description: form.description.trim(),
     status: form.status,
@@ -329,9 +324,7 @@ export function ClientGroupsPage() {
           rows={groups.data || []}
           responsive="wide"
           columns={[
-            { key: 'name', header: t('common.name'), render: (row) => (
-              <div><strong>{text(row.display_name || row.group_key || row.id)}</strong><br /><code>{text(row.group_key)}</code></div>
-            ) },
+            { key: 'name', header: t('common.name'), render: (row) => <strong>{text(row.display_name || row.id)}</strong> },
             { key: 'service', header: t('instances.service'), render: (row) => groupServiceDisplayName(row, services.data || [], t) },
             { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
             { key: 'members', header: t('clients.members'), render: (row) => `${row.active_member_count ?? 0}/${row.member_count ?? 0}` },
@@ -434,9 +427,6 @@ function GroupFormDrawerContent({ group, services, onClose, onSuccess }: {
             {services.filter(isServiceReady).map((service) => <option key={service.service_code} value={service.service_code}>{serviceDisplayName(service, t)}</option>)}
           </Select>
         </FormField>
-        <FormField label={t('clients.groups.groupKey')}>
-          <TextField value={form.groupKey} onChange={(event) => set('groupKey', event.currentTarget.value)} disabled={isEdit} required />
-        </FormField>
         <FormField label={t('common.name')}>
           <TextField value={form.displayName} onChange={(event) => set('displayName', event.currentTarget.value)} required />
         </FormField>
@@ -514,7 +504,7 @@ function GroupFormDrawerContent({ group, services, onClose, onSuccess }: {
       {mutation.isError ? <ErrorState body={mutation.error.message} /> : null}
       <div className="toolbar">
         <Button onClick={onClose}>{t('common.close')}</Button>
-        <Button variant="primary" disabled={mutation.isPending || !form.groupKey.trim() || !form.displayName.trim()} onClick={() => void submit()}>
+        <Button variant="primary" disabled={mutation.isPending || !form.displayName.trim()} onClick={() => void submit()}>
           {mutation.isPending ? t('common.loading') : t('common.save')}
         </Button>
       </div>

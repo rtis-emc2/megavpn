@@ -26,7 +26,6 @@ import {
 import { Badge, Button, Card, CardBody, Checkbox, ConfirmDialog, DataTable, Drawer, FormField, FormGrid, JobStatusPanel, RefreshButton, Select, StatusBadge, Textarea, TextField, Toolbar } from '../../shared/ui';
 import { shortID, text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
-import { ServicesTabs } from './ServicesTabs';
 
 type InstanceTab = 'overview' | 'runtime' | 'spec' | 'revisions' | 'diagnostics' | 'jobs';
 
@@ -116,7 +115,6 @@ export function InstancesPage() {
         </>
       )}
     >
-      <ServicesTabs />
       <Card>
         <CardBody>
           <Toolbar>
@@ -617,7 +615,6 @@ function ManualInstanceDrawer({ open, onClose, nodes, serviceTypes }: { open: bo
   return (
     <Drawer title={t('instances.manualInstance')} open={open} onClose={onClose}>
       <div className="page-stack">
-        <ServicesTabs />
         <Badge>{t('instances.manualCreateBackendValidated')}</Badge>
         <FormGrid>
           <FormField label={t('instances.node')}>

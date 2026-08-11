@@ -146,12 +146,11 @@ describe('Services workspace', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders Services workspace tabs and opens service pack detail', async () => {
+  it('uses sidebar navigation only and opens service pack detail', async () => {
     renderWithQuery(<ServicePacksPage />);
-    expect(await screen.findByRole('link', { name: 'Instances' })).toHaveAttribute('href', '/services/instances');
-    expect(screen.getByRole('link', { name: 'Service Packs' })).toHaveAttribute('href', '/services/service-packs');
-    expect(screen.getByRole('link', { name: 'Runtime Artifacts' })).toHaveAttribute('href', '/services/runtime-artifacts');
     expect((await screen.findAllByText('Xray VLESS / Reality')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('link', { name: 'Instances' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Runtime Artifacts' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
     await screen.findByText(/Check DNS before apply/);
@@ -232,8 +231,8 @@ describe('Services workspace', () => {
 
   it('lists, imports and safely renders runtime artifact metadata without delete support', async () => {
     renderWithQuery(<RuntimeArtifactsPage />);
-    expect(await screen.findByRole('link', { name: 'Instances' })).toHaveAttribute('href', '/services/instances');
     expect((await screen.findAllByText('xray-linux-amd64')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('link', { name: 'Instances' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
     await screen.findByText(/<img src=x onerror=alert\(1\)>/);
@@ -241,6 +240,8 @@ describe('Services workspace', () => {
     expect(screen.queryByRole('button', { name: /^Delete/ })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Import artifact' }));
+    const importDialog = screen.getByRole('dialog', { name: 'Import artifact' });
+    expect(within(importDialog).queryByRole('link', { name: 'Instances' })).not.toBeInTheDocument();
     await userEvent.type(await screen.findByLabelText('Source URL'), 'https://downloads.example.test/xray');
     await userEvent.type(screen.getByLabelText('Expected SHA-256'), 'abcdef1234567890');
     await userEvent.type(screen.getByLabelText('Name'), 'xray-imported');

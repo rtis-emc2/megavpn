@@ -15,7 +15,6 @@ const AddressPoolsPage = lazy(() => import('../pages/infrastructure/AddressPools
 const InstancesPage = lazy(() => import('../pages/services/InstancesPage').then((module) => ({ default: module.InstancesPage })));
 const ServicePacksPage = lazy(() => import('../pages/services/ServicePacksPage').then((module) => ({ default: module.ServicePacksPage })));
 const RuntimeArtifactsPage = lazy(() => import('../pages/services/RuntimeArtifactsPage').then((module) => ({ default: module.RuntimeArtifactsPage })));
-const RevisionsPage = lazy(() => import('../pages/services/RevisionsPage').then((module) => ({ default: module.RevisionsPage })));
 const ClientsPage = lazy(() => import('../pages/clients/ClientsPage').then((module) => ({ default: module.ClientsPage })));
 const ClientGroupsPage = lazy(() => import('../pages/clients/ClientGroupsPage').then((module) => ({ default: module.ClientGroupsPage })));
 const DeliveryPage = lazy(() => import('../pages/clients/DeliveryPage').then((module) => ({ default: module.DeliveryPage })));
@@ -59,7 +58,7 @@ export function AppRoutes() {
           <Route path="/services/instances" element={<InstancesPage />} />
           <Route path="/services/service-packs" element={<ServicePacksPage />} />
           <Route path="/services/runtime-artifacts" element={<RuntimeArtifactsPage />} />
-          <Route path="/services/revisions" element={<RevisionsPage />} />
+          <Route path="/services/revisions" element={<Navigate to="/services/instances" replace />} />
           <Route path="/clients" element={<ClientsPage />} />
           <Route path="/clients/groups" element={<ClientGroupsPage />} />
           <Route path="/clients/delivery" element={<DeliveryPage />} />

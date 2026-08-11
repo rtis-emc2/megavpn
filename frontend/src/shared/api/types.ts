@@ -997,7 +997,7 @@ export type ClientAccessGroup = APIRecord & {
 
 export type ClientAccessGroupInput = {
   service_code: string;
-  group_key: string;
+  group_key?: string;
   display_name: string;
   description?: string;
   status?: string;

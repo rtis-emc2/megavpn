@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import type { APIRecord, JobRef, RoutePolicy, RoutePolicyApplyResult, RoutePolicyCleanupResult, RoutePolicyPreviewResult } from '../../shared/api/types';
 import { useApplyRoutePolicy, useCleanupRoutePolicy, usePreviewRoutePolicy, useRoutePolicies, useRoutePolicy } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, ConfirmDialog, DataTable, JobStatusPanel, StatusBadge, Toolbar } from '../../shared/ui';
+import { Badge, Button, Card, CardBody, ConfirmDialog, DataTable, Drawer, JobStatusPanel, StatusBadge, Toolbar } from '../../shared/ui';
 import { text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
@@ -127,36 +127,45 @@ export function RoutePolicyPage() {
             ]}
           />
 
-          {selected ? (
-            <RoutePolicyDetail
-              policy={selected}
-              previewResult={previewResult}
-              previewFresh={previewFresh}
-              previewStale={previewStale}
-              previewSuccessful={previewSuccessful}
-              busy={busy}
-              onPreview={() => void runPreview(selected)}
-              onApply={() => setConfirm({ type: 'apply', policy: selected })}
-              onCleanup={() => setConfirm({ type: 'cleanup', policy: selected })}
-            />
-          ) : (
-            <Card>
-              <CardBody>{t('routePolicy.selectNode')}</CardBody>
-            </Card>
-          )}
-
-          {applyJob ? (
-            <div className="page-stack">
-              <Link to="/operations/jobs">{t('jobs.openJobs')}</Link>
-              <JobStatusPanel jobID={applyJob.id} />
-            </div>
-          ) : null}
-          {cleanupJob ? (
-            <div className="page-stack">
-              <Link to="/operations/jobs">{t('jobs.openJobs')}</Link>
-              <JobStatusPanel jobID={cleanupJob.id} />
-            </div>
-          ) : null}
+          <Drawer
+            size="wide"
+            title={selected ? `${t('nav.routePolicy')}: ${policyLabel(selected)}` : t('nav.routePolicy')}
+            open={Boolean(selectedNodeId)}
+            onClose={() => {
+              setSelectedNodeId('');
+              setConfirm(null);
+            }}
+          >
+            <QueryBoundary isLoading={detail.isLoading} isError={detail.isError} error={detail.error} refetch={() => void detail.refetch()}>
+              {selected ? (
+                <div className="page-stack">
+                  <RoutePolicyDetail
+                    policy={selected}
+                    previewResult={previewResult}
+                    previewFresh={previewFresh}
+                    previewStale={previewStale}
+                    previewSuccessful={previewSuccessful}
+                    busy={busy}
+                    onPreview={() => void runPreview(selected)}
+                    onApply={() => setConfirm({ type: 'apply', policy: selected })}
+                    onCleanup={() => setConfirm({ type: 'cleanup', policy: selected })}
+                  />
+                  {applyJob ? (
+                    <div className="page-stack">
+                      <Link to="/operations/jobs">{t('jobs.openJobs')}</Link>
+                      <JobStatusPanel jobID={applyJob.id} />
+                    </div>
+                  ) : null}
+                  {cleanupJob ? (
+                    <div className="page-stack">
+                      <Link to="/operations/jobs">{t('jobs.openJobs')}</Link>
+                      <JobStatusPanel jobID={cleanupJob.id} />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </QueryBoundary>
+          </Drawer>
         </div>
         <RoutePolicyConfirmDialog action={confirm} preview={previewResult} previewFresh={previewFresh} busy={busy} onClose={() => setConfirm(null)} onConfirm={() => void runConfirmed()} />
       </QueryBoundary>

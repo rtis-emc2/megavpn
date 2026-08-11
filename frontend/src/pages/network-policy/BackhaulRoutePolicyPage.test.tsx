@@ -329,6 +329,9 @@ describe('Backhaul and RoutePolicy workflows', () => {
     await userEvent.click(firstEnabledButton('Preview'));
     expect(await screen.findByText('Preview is fresh')).toBeInTheDocument();
 
+    const firstPolicyDrawer = screen.getByRole('dialog', { name: 'Route Policy: ingress-a' });
+    await userEvent.click(within(firstPolicyDrawer).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'Route Policy: ingress-a' })).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[1]);
     expect(await screen.findByText('Preview is stale')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Apply route policy' }).every((button) => (button as HTMLButtonElement).disabled)).toBe(true);

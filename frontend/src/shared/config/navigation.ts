@@ -6,7 +6,6 @@ import {
   Building2,
   ChartNoAxesCombined,
   CircleGauge,
-  FileClock,
   Fingerprint,
   FlameKindling,
   GitBranch,
@@ -77,7 +76,6 @@ export const navSections: NavSection[] = [
       { id: 'instances', labelKey: 'nav.instances', path: '/services/instances', icon: Layers3, permission: 'instance.read' },
       { id: 'service-packs', labelKey: 'nav.servicePacks', path: '/services/service-packs', icon: BriefcaseBusiness, permission: 'service.read' },
       { id: 'runtime-artifacts', labelKey: 'nav.runtimeArtifacts', path: '/services/runtime-artifacts', icon: HardDriveDownload, permission: 'binary_repository.read' },
-      { id: 'revisions', labelKey: 'nav.revisions', path: '/services/revisions', icon: FileClock, permission: 'instance.read' },
     ],
   },
   {
