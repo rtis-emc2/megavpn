@@ -17,6 +17,7 @@ import {
   clearNodeStaleRotation,
   createAddressPoolSpace,
   createBackhaulLink,
+  createBackup,
   createClient,
   createClientRoute,
   applyNodeFirewall,
@@ -47,6 +48,7 @@ import {
   deleteFirewallRule,
   deleteAddressPoolSpace,
   deleteBackhaulLink,
+  deleteBackup,
   deleteExternalEgressDeployment,
   deleteExternalEgressProfile,
   deleteClientAccess,
@@ -58,6 +60,7 @@ import {
   deleteRuntimeArtifact,
   deleteServicePack,
   downloadNodeBootstrapBundle,
+  downloadBackup,
   discoverNodeServices,
   disableNodeFirewall,
   endpoints,
@@ -93,6 +96,7 @@ import {
   getNodeStaleRotationPreview,
   listClientArtifacts,
   listBackhaulDrivers,
+  listBackups,
   listClientAccesses,
   listClientDeliveryHistory,
   listClientRoutes,
@@ -104,6 +108,7 @@ import {
   listExternalEgressProfilePage,
   listUsers,
   listInvites,
+  listMailDeliveryEvents,
   listNodeAccessMethods,
   listNodeBootstrapRuns,
   listNodeCapabilities,
@@ -144,6 +149,7 @@ import {
   revokeClientAccess,
   revokeClient,
   revokeInvite,
+  revokeAllPlatformSessions,
   revokeSession,
   rollbackInstance,
   rotateEnrollmentToken,
@@ -190,6 +196,12 @@ import {
   updatePlatformSettings,
   updateClientRoute,
   testMailSettings,
+  deletePlatformUser,
+  resetPlatformUserPassword,
+  sendPlatformUserPasswordReset,
+  updatePlatformUser,
+  updatePlatformUserStatus,
+  verifyBackup,
   type FirewallAddressGroupEntryInput,
   type FirewallAddressGroupInput,
   type FirewallPolicyInput,
@@ -200,6 +212,9 @@ import type {
   AddressPoolSpaceInput,
   AddressPools,
   Artifact,
+  BackupDeleteResult,
+  BackupDownloadResult,
+  BackupRecord,
   BackhaulActionResult,
   BackhaulCreateInput,
   BackhaulDriverDefinition,
@@ -302,6 +317,8 @@ import type {
   InviteRevokeResult,
   MailSettings,
   MailSettingsInput,
+  MailDeliveryEvent,
+  MailDeliveryQuery,
   MailTestInput,
   MailTestResult,
   HostKeyDecisionResult,
@@ -344,6 +361,10 @@ import type {
   PkiRootCreateInput,
   PlatformSettings,
   PlatformSettingsInput,
+  PlatformUserActionResult,
+  PlatformUserPasswordResetInput,
+  PlatformUserStatusInput,
+  PlatformUserUpdateInput,
   ReadyStatus,
   RuntimePreflight,
   RoutePolicy,
@@ -368,6 +389,7 @@ import type {
   RuntimeTargetNode,
   ShareLink,
   Session,
+  SessionRevokeAllResult,
   SessionRevokeResult,
   SshSessionLaunchResult,
   SettingsUpdateResult,
@@ -1803,6 +1825,15 @@ export function useMailSettings(options?: QueryOptions<MailSettings>) {
   return useQuery({ queryKey: ['mail-settings'], queryFn: getMailSettings, staleTime: stale.normal, ...options });
 }
 
+export function useMailDeliveryEvents(query: MailDeliveryQuery = {}, options?: QueryOptions<MailDeliveryEvent[]>) {
+  return useQuery({
+    queryKey: ['mail-delivery-events', query],
+    queryFn: () => listMailDeliveryEvents(query),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
 export function useUpdateMailSettings() {
   const queryClient = useQueryClient();
   return useMutation<MailSettings, Error, MailSettingsInput>({
@@ -1811,6 +1842,7 @@ export function useUpdateMailSettings() {
       queryClient.setQueryData(['mail-settings'], settings);
       void queryClient.invalidateQueries({ queryKey: ['mail-settings'] });
       void queryClient.invalidateQueries({ queryKey: ['platform-invites'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-delivery-events'] });
     },
   });
 }
@@ -1821,6 +1853,7 @@ export function useTestMailSettings() {
     mutationFn: testMailSettings,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['mail-settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-delivery-events'] });
     },
   });
 }
@@ -1836,6 +1869,59 @@ export function usePlatformUserDetail(userId: string | undefined, options?: Quer
     enabled: Boolean(userId),
     staleTime: stale.normal,
     ...options,
+  });
+}
+
+export function useUpdatePlatformUser() {
+  const queryClient = useQueryClient();
+  return useMutation<UserAccount, Error, { userId: string; input: PlatformUserUpdateInput }>({
+    mutationFn: ({ userId, input }) => updatePlatformUser(userId, input),
+    onSuccess: (user) => {
+      queryClient.setQueryData(['platform-user', user.id], user);
+      void queryClient.invalidateQueries({ queryKey: ['platform-users'] });
+    },
+  });
+}
+
+export function useUpdatePlatformUserStatus() {
+  const queryClient = useQueryClient();
+  return useMutation<UserAccount, Error, { userId: string; input: PlatformUserStatusInput }>({
+    mutationFn: ({ userId, input }) => updatePlatformUserStatus(userId, input),
+    onSuccess: (user) => {
+      queryClient.setQueryData(['platform-user', user.id], user);
+      void queryClient.invalidateQueries({ queryKey: ['platform-users'] });
+      void queryClient.invalidateQueries({ queryKey: ['platform-sessions'] });
+    },
+  });
+}
+
+export function useResetPlatformUserPassword() {
+  const queryClient = useQueryClient();
+  return useMutation<PlatformUserActionResult, Error, { userId: string; input: PlatformUserPasswordResetInput }>({
+    mutationFn: ({ userId, input }) => resetPlatformUserPassword(userId, input),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['platform-sessions'] }),
+  });
+}
+
+export function useSendPlatformUserPasswordReset() {
+  const queryClient = useQueryClient();
+  return useMutation<PlatformUserActionResult, Error, string>({
+    mutationFn: sendPlatformUserPasswordReset,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['platform-invites'] });
+      void queryClient.invalidateQueries({ queryKey: ['mail-delivery-events'] });
+    },
+  });
+}
+
+export function useDeletePlatformUser() {
+  const queryClient = useQueryClient();
+  return useMutation<PlatformUserActionResult, Error, string>({
+    mutationFn: deletePlatformUser,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['platform-users'] });
+      void queryClient.invalidateQueries({ queryKey: ['platform-sessions'] });
+    },
   });
 }
 
@@ -1876,6 +1962,49 @@ export function useRevokeSession() {
       void queryClient.invalidateQueries({ queryKey: ['platform-sessions'] });
       void queryClient.invalidateQueries({ queryKey: ['auth', 'session'] });
     },
+  });
+}
+
+export function useRevokeAllPlatformSessions() {
+  const queryClient = useQueryClient();
+  return useMutation<SessionRevokeAllResult, Error, void>({
+    mutationFn: revokeAllPlatformSessions,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['platform-sessions'] });
+      void queryClient.invalidateQueries({ queryKey: ['auth', 'session'] });
+    },
+  });
+}
+
+export function useBackups(options?: QueryOptions<BackupRecord[]>) {
+  return useQuery({ queryKey: ['backups'], queryFn: listBackups, staleTime: stale.normal, ...options });
+}
+
+export function useCreateBackup() {
+  const queryClient = useQueryClient();
+  return useMutation<BackupRecord, Error, void>({
+    mutationFn: createBackup,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['backups'] }),
+  });
+}
+
+export function useVerifyBackup() {
+  const queryClient = useQueryClient();
+  return useMutation<BackupRecord, Error, string>({
+    mutationFn: verifyBackup,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['backups'] }),
+  });
+}
+
+export function useDownloadBackup() {
+  return useMutation<BackupDownloadResult, Error, string>({ mutationFn: downloadBackup });
+}
+
+export function useDeleteBackup() {
+  const queryClient = useQueryClient();
+  return useMutation<BackupDeleteResult, Error, string>({
+    mutationFn: deleteBackup,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['backups'] }),
   });
 }
 

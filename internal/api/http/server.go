@@ -22,6 +22,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	appjobs "github.com/rtis-emc2/megavpn/internal/app/jobs"
+	backupsvc "github.com/rtis-emc2/megavpn/internal/backup"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/jobschema"
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
@@ -36,9 +37,12 @@ type Store interface {
 	ListPlatformUsers(context.Context, int) ([]domain.PlatformUserRecord, error)
 	CreatePlatformUser(context.Context, string, string, string, string, []string, *string) (domain.PlatformUserRecord, error)
 	GetPlatformUserRecord(context.Context, string) (domain.PlatformUserRecord, error)
+	UpdatePlatformUser(context.Context, string, string, string, []string, *string) (domain.PlatformUserRecord, error)
 	GetPlatformMailSettings(context.Context) (domain.PlatformMailSettings, error)
 	UpsertPlatformMailSettings(context.Context, domain.PlatformMailSettings, *string) (domain.PlatformMailSettings, error)
 	MarkPlatformMailTest(context.Context, string) error
+	CreateMailDeliveryEvent(context.Context, domain.MailDeliveryEvent) (domain.MailDeliveryEvent, error)
+	ListMailDeliveryEvents(context.Context, string, string, string, int) ([]domain.MailDeliveryEvent, error)
 	GetControlPlaneTLSSettings(context.Context) (domain.ControlPlaneTLSSettings, error)
 	UpsertControlPlaneTLSSettings(context.Context, domain.ControlPlaneTLSSettings, *string) (domain.ControlPlaneTLSSettings, error)
 	CreateControlPlaneTLSApplyJob(context.Context) (domain.Job, error)
@@ -56,7 +60,7 @@ type Store interface {
 	CreateUserSession(context.Context, string, string, string, string, time.Time) (domain.UserSession, error)
 	ResolveAuthContext(context.Context, string) (domain.AuthContext, error)
 	RevokeUserSession(context.Context, string) error
-	RevokeUserSessionsByUser(context.Context, string) error
+	RevokeAllUserSessions(context.Context, string) (int64, error)
 	CreateAuditForUser(context.Context, *string, string, string, *string, string) (domain.AuditEvent, error)
 	Dashboard(context.Context, string) (domain.Dashboard, error)
 	ListNodes(context.Context) ([]domain.Node, error)
@@ -280,6 +284,7 @@ type Server struct {
 	maxRequestBytes        int64
 	secretStorageReady     bool
 	artifactRoot           string
+	backupManager          *backupsvc.Manager
 	geoIPResolver          *nodeGeoIPResolver
 	geoIPAutoEnrichLimit   int
 }
@@ -302,12 +307,18 @@ type Options struct {
 	MaxRequestBytes        int64
 	SecretStorageReady     bool
 	ArtifactRoot           string
+	BackupRoot             string
+	DatabaseDSN            string
 	GeoIPLookupURLTemplate string
 	GeoIPTimeout           time.Duration
 	GeoIPAutoEnrichLimit   int
 }
 
 func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
+	backupManager, backupErr := backupsvc.New(opts.BackupRoot, opts.DatabaseDSN)
+	if backupErr != nil && log != nil {
+		log.Error("backup manager initialization failed", "error", backupErr)
+	}
 	s := &Server{
 		log:                    log,
 		store:                  store,
@@ -332,6 +343,7 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 		maxRequestBytes:        opts.MaxRequestBytes,
 		secretStorageReady:     opts.SecretStorageReady,
 		artifactRoot:           strings.TrimSpace(opts.ArtifactRoot),
+		backupManager:          backupManager,
 		geoIPResolver:          newNodeGeoIPResolver(opts.GeoIPLookupURLTemplate, opts.GeoIPTimeout),
 		geoIPAutoEnrichLimit:   opts.GeoIPAutoEnrichLimit,
 	}
@@ -365,18 +377,27 @@ func New(log *slog.Logger, store Store, opts Options) nethttp.Handler {
 	protected("POST /api/v1/admin/users/invite", "auth.manage", s.invitePlatformUser)
 	protected("GET /api/v1/admin/user-invites", "auth.manage", s.listPlatformUserInvites)
 	protected("POST /api/v1/admin/users/{id}/status", "auth.manage", s.updatePlatformUserStatus)
+	protected("PATCH /api/v1/admin/users/{id}", "auth.manage", s.updatePlatformUser)
 	protected("POST /api/v1/admin/users/{id}/reset-password", "auth.manage", s.resetPlatformUserPassword)
+	protected("POST /api/v1/admin/users/{id}/send-password-reset", "auth.manage", s.sendPlatformUserPasswordReset)
 	protected("POST /api/v1/admin/users/{id}/resend-invite", "auth.manage", s.resendPlatformUserInvite)
 	protected("DELETE /api/v1/admin/users/{id}", "auth.manage", s.deletePlatformUser)
 	protected("GET /api/v1/admin/sessions", "auth.manage", s.listUserSessions)
 	protected("POST /api/v1/admin/sessions/{id}/revoke", "auth.manage", s.revokePlatformSession)
+	protected("POST /api/v1/admin/sessions/revoke-all", "auth.manage", s.revokeAllPlatformSessions)
 	protected("GET /api/v1/settings/mail", "auth.manage", s.getPlatformMailSettings)
 	protected("PUT /api/v1/settings/mail", "auth.manage", s.updatePlatformMailSettings)
 	protected("POST /api/v1/settings/mail/test", "auth.manage", s.sendPlatformMailTest)
+	protected("GET /api/v1/settings/mail/deliveries", "auth.manage", s.listMailDeliveryEvents)
 	protected("GET /api/v1/settings/control-plane-tls", "settings.manage", s.getControlPlaneTLSSettings)
 	protected("PUT /api/v1/settings/control-plane-tls", "settings.manage", s.updateControlPlaneTLSSettings)
 	protected("POST /api/v1/settings/control-plane-tls/apply", "settings.manage", s.applyControlPlaneTLSSettings)
 	protected("GET /api/v1/runtime/preflight", "settings.manage", s.runtimePreflight)
+	protected("GET /api/v1/backups", "settings.manage", s.listBackups)
+	protected("POST /api/v1/backups", "settings.manage", s.createBackup)
+	protected("POST /api/v1/backups/{id}/verify", "settings.manage", s.verifyBackup)
+	protected("GET /api/v1/backups/{id}/download", "settings.manage", s.downloadBackup)
+	protected("DELETE /api/v1/backups/{id}", "settings.manage", s.deleteBackup)
 	protected("GET /api/v1/platform/certificates", "instance.read", s.listPlatformCertificates)
 	protected("POST /api/v1/platform/certificates/preview", "instance.write", s.previewPlatformCertificate)
 	protected("POST /api/v1/platform/certificates/import", "instance.write", s.importPlatformCertificate)

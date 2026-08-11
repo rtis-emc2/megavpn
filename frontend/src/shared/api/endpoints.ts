@@ -13,6 +13,9 @@ import type {
   BackhaulLink,
   BackhaulPromoteInput,
   BackhaulRouteStateInput,
+  BackupDeleteResult,
+  BackupDownloadResult,
+  BackupRecord,
   Certificate,
   CertificateActionResult,
   CertificateAuthorityCreateInput,
@@ -118,6 +121,8 @@ import type {
   InviteRevokeResult,
   MailSettings,
   MailSettingsInput,
+  MailDeliveryEvent,
+  MailDeliveryQuery,
   MailTestInput,
   MailTestResult,
   OneTimeSecretDisplay,
@@ -125,6 +130,10 @@ import type {
   PkiRootCreateInput,
   PlatformSettings,
   PlatformSettingsInput,
+  PlatformUserActionResult,
+  PlatformUserPasswordResetInput,
+  PlatformUserStatusInput,
+  PlatformUserUpdateInput,
   HostKeyDecisionResult,
   HostKeyScanResult,
   NodeAgentIdentityRevokeInput,
@@ -188,6 +197,7 @@ import type {
   RuntimeTargetNode,
   ShareLink,
   Session,
+  SessionRevokeAllResult,
   SessionRevokeResult,
   SshSessionLaunchResult,
   SettingsUpdateResult,
@@ -1272,6 +1282,10 @@ export function testMailSettings(input: MailTestInput): Promise<MailTestResult> 
   return sendJSON<MailTestResult>('/api/v1/settings/mail/test', 'POST', input);
 }
 
+export function listMailDeliveryEvents(query: MailDeliveryQuery = {}): Promise<MailDeliveryEvent[]> {
+  return apiRequest<MailDeliveryEvent[]>(`/api/v1/settings/mail/deliveries${queryString(query)}`);
+}
+
 export function listUsers(): Promise<UserAccount[]> {
   return apiRequest<UserAccount[]>('/api/v1/admin/users?limit=200');
 }
@@ -1281,6 +1295,26 @@ export async function getUser(userId: string): Promise<UserAccount> {
   const user = users.find((item) => item.id === userId);
   if (!user) throw new Error(`platform user ${userId} was not found in admin user list`);
   return user;
+}
+
+export function updatePlatformUser(userId: string, input: PlatformUserUpdateInput): Promise<UserAccount> {
+  return sendJSON<UserAccount>(`/api/v1/admin/users/${encodeURIComponent(userId)}`, 'PATCH', input);
+}
+
+export function updatePlatformUserStatus(userId: string, input: PlatformUserStatusInput): Promise<UserAccount> {
+  return sendJSON<UserAccount>(`/api/v1/admin/users/${encodeURIComponent(userId)}/status`, 'POST', input);
+}
+
+export function resetPlatformUserPassword(userId: string, input: PlatformUserPasswordResetInput): Promise<PlatformUserActionResult> {
+  return sendJSON<PlatformUserActionResult>(`/api/v1/admin/users/${encodeURIComponent(userId)}/reset-password`, 'POST', input);
+}
+
+export function sendPlatformUserPasswordReset(userId: string): Promise<PlatformUserActionResult> {
+  return sendJSON<PlatformUserActionResult>(`/api/v1/admin/users/${encodeURIComponent(userId)}/send-password-reset`, 'POST', {});
+}
+
+export function deletePlatformUser(userId: string): Promise<PlatformUserActionResult> {
+  return apiRequest<PlatformUserActionResult>(`/api/v1/admin/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
 }
 
 export function listInvites(): Promise<Invite[]> {
@@ -1301,6 +1335,35 @@ export function listSessions(): Promise<Session[]> {
 
 export function revokeSession(sessionId: string): Promise<SessionRevokeResult> {
   return sendJSON<SessionRevokeResult>(`/api/v1/admin/sessions/${encodeURIComponent(sessionId)}/revoke`, 'POST', {});
+}
+
+export function revokeAllPlatformSessions(): Promise<SessionRevokeAllResult> {
+  return sendJSON<SessionRevokeAllResult>('/api/v1/admin/sessions/revoke-all', 'POST', {});
+}
+
+export function listBackups(): Promise<BackupRecord[]> {
+  return apiRequest<BackupRecord[]>('/api/v1/backups');
+}
+
+export function createBackup(): Promise<BackupRecord> {
+  return sendJSON<BackupRecord>('/api/v1/backups', 'POST', {});
+}
+
+export function verifyBackup(backupId: string): Promise<BackupRecord> {
+  return sendJSON<BackupRecord>(`/api/v1/backups/${encodeURIComponent(backupId)}/verify`, 'POST', {});
+}
+
+export async function downloadBackup(backupId: string): Promise<BackupDownloadResult> {
+  const result = await apiBlobRequest(`/api/v1/backups/${encodeURIComponent(backupId)}/download`);
+  return {
+    blob: result.blob,
+    contentType: result.contentType,
+    filename: sanitizeDownloadFilename(parseContentDispositionFilename(result.contentDisposition), `${backupId}.dump`),
+  };
+}
+
+export function deleteBackup(backupId: string): Promise<BackupDeleteResult> {
+  return apiRequest<BackupDeleteResult>(`/api/v1/backups/${encodeURIComponent(backupId)}`, { method: 'DELETE' });
 }
 
 export function listBackhaulLinks(): Promise<BackhaulLink[]> {

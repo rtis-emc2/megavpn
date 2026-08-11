@@ -1681,6 +1681,28 @@ export type MailTestResult = APIRecord & {
   test?: APIRecord;
 };
 
+export type MailDeliveryEvent = APIRecord & {
+  id: string;
+  message_type: 'test' | 'user_invite' | 'password_reset' | 'client_artifact' | string;
+  recipient_email: string;
+  subject: string;
+  status: 'sent' | 'failed' | string;
+  actor_user_id?: string | null;
+  actor_username?: string;
+  resource_type?: string;
+  resource_id?: string | null;
+  error_text?: string;
+  sent_at?: string;
+  created_at?: string;
+};
+
+export type MailDeliveryQuery = {
+  search?: string;
+  status?: string;
+  message_type?: string;
+  limit?: number;
+};
+
 export type UserAccount = APIRecord & {
   id: string;
   username?: string;
@@ -1692,6 +1714,26 @@ export type UserAccount = APIRecord & {
   last_login_at?: string | null;
   created_at?: string;
   updated_at?: string;
+};
+
+export type PlatformUserUpdateInput = {
+  email: string;
+  display_name: string;
+  role_codes: string[];
+};
+
+export type PlatformUserStatusInput = {
+  status: 'active' | 'disabled' | 'locked';
+};
+
+export type PlatformUserPasswordResetInput = {
+  password: string;
+};
+
+export type PlatformUserActionResult = APIRecord & {
+  status?: string;
+  sessions_revoked?: boolean;
+  deleted_user_id?: string;
 };
 
 export type Invite = APIRecord & {
@@ -1744,6 +1786,31 @@ export type Session = APIRecord & {
 
 export type SessionRevokeResult = APIRecord & {
   status?: string;
+};
+
+export type SessionRevokeAllResult = SessionRevokeResult & {
+  revoked?: number;
+  current_session_preserved?: boolean;
+};
+
+export type BackupRecord = {
+  id: string;
+  filename: string;
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+  verified: boolean;
+};
+
+export type BackupDeleteResult = APIRecord & {
+  status?: string;
+  deleted_backup_id?: string;
+};
+
+export type BackupDownloadResult = {
+  blob: Blob;
+  filename: string;
+  contentType: string;
 };
 
 export type Artifact = APIRecord & {

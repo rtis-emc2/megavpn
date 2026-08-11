@@ -99,18 +99,47 @@ func (s *Store) CreatePlatformUserInvite(ctx context.Context, username, email, d
 	if err != nil {
 		return domain.PlatformUserRecord{}, domain.PlatformUserInvite{}, err
 	}
-	user, err := s.CreatePlatformUser(ctx, username, email, displayName, passwordHash, roleCodes, createdBy)
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return domain.PlatformUserRecord{}, domain.PlatformUserInvite{}, err
 	}
-	invite, err := s.CreatePlatformUserInviteForUser(ctx, user.ID, user.Username, user.Email, user.DisplayName, createdBy, ttl)
+	defer tx.Rollback(ctx)
+
+	user, err := createPlatformUserInTx(ctx, tx, username, email, displayName, passwordHash, roleCodes, createdBy)
 	if err != nil {
 		return domain.PlatformUserRecord{}, domain.PlatformUserInvite{}, err
 	}
+	invite, err := createPlatformUserInviteInTx(ctx, tx, user.ID, user.Username, user.Email, user.DisplayName, createdBy, ttl)
+	if err != nil {
+		return domain.PlatformUserRecord{}, domain.PlatformUserInvite{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.PlatformUserRecord{}, domain.PlatformUserInvite{}, err
+	}
+	_, _ = s.CreateAuditForUser(ctx, createdBy, "auth.user.create", "platform_user", &user.ID, "platform user created")
+	_, _ = s.CreateAuditForUser(ctx, createdBy, "auth.user.invite.create", "platform_user", &invite.UserID, "platform user invite created")
 	return user, invite, nil
 }
 
 func (s *Store) CreatePlatformUserInviteForUser(ctx context.Context, userID, username, email, displayName string, createdBy *string, ttl time.Duration) (domain.PlatformUserInvite, error) {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.PlatformUserInvite{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	invite, err := createPlatformUserInviteInTx(ctx, tx, userID, username, email, displayName, createdBy, ttl)
+	if err != nil {
+		return domain.PlatformUserInvite{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.PlatformUserInvite{}, err
+	}
+	_, _ = s.CreateAuditForUser(ctx, createdBy, "auth.user.invite.create", "platform_user", &invite.UserID, "platform user invite created")
+	return invite, nil
+}
+
+func createPlatformUserInviteInTx(ctx context.Context, tx pgx.Tx, userID, username, email, displayName string, createdBy *string, ttl time.Duration) (domain.PlatformUserInvite, error) {
 	if ttl <= 0 {
 		ttl = 48 * time.Hour
 	}
@@ -133,12 +162,15 @@ func (s *Store) CreatePlatformUserInviteForUser(ctx context.Context, userID, use
 	if invite.Email == "" {
 		return domain.PlatformUserInvite{}, errors.New("invite email is required")
 	}
-	_, err := s.db.Exec(ctx, `insert into platform_user_invites(id,user_id,email,token_hash,token_hint,status,expires_at,created_by,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		invite.ID, invite.UserID, invite.Email, hash, invite.TokenHint, invite.Status, invite.ExpiresAt, invite.CreatedBy, invite.CreatedAt)
-	if err != nil {
+	if _, err := tx.Exec(ctx, `update platform_user_invites
+		set status='revoked'
+		where user_id=$1 and status in ('pending','sent','delivery_failed')`, invite.UserID); err != nil {
 		return domain.PlatformUserInvite{}, err
 	}
-	_, _ = s.CreateAuditForUser(ctx, createdBy, "auth.user.invite.create", "platform_user", &invite.UserID, "platform user invite created")
+	if _, err := tx.Exec(ctx, `insert into platform_user_invites(id,user_id,email,token_hash,token_hint,status,expires_at,created_by,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		invite.ID, invite.UserID, invite.Email, hash, invite.TokenHint, invite.Status, invite.ExpiresAt, invite.CreatedBy, invite.CreatedAt); err != nil {
+		return domain.PlatformUserInvite{}, err
+	}
 	return invite, nil
 }
 
@@ -220,17 +252,30 @@ func (s *Store) AcceptPlatformUserInvite(ctx context.Context, token, passwordHas
 		for update`, hash).
 		Scan(&invite.ID, &invite.UserID, &invite.Username, &invite.DisplayName, &invite.Email, &invite.TokenHint, &invite.Status, &invite.ExpiresAt, &invite.SentAt, &invite.AcceptedAt, &invite.DeliveryError, &invite.CreatedBy, &invite.CreatedAt)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.PlatformUserInvite{}, domain.PlatformUserRecord{}, domain.ErrPlatformInviteInvalid
+		}
 		return domain.PlatformUserInvite{}, domain.PlatformUserRecord{}, err
 	}
 	now := time.Now().UTC()
 	if invite.Status != "pending" && invite.Status != "sent" && invite.Status != "delivery_failed" {
-		return domain.PlatformUserInvite{}, domain.PlatformUserRecord{}, errors.New("invite is no longer active")
+		return domain.PlatformUserInvite{}, domain.PlatformUserRecord{}, domain.ErrPlatformInviteInvalid
 	}
 	if invite.ExpiresAt.Before(now) {
-		_, _ = tx.Exec(ctx, `update platform_user_invites set status='expired' where id=$1`, invite.ID)
-		return domain.PlatformUserInvite{}, domain.PlatformUserRecord{}, errors.New("invite has expired")
+		if _, err := tx.Exec(ctx, `update platform_user_invites set status='expired' where id=$1`, invite.ID); err != nil {
+			return domain.PlatformUserInvite{}, domain.PlatformUserRecord{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return domain.PlatformUserInvite{}, domain.PlatformUserRecord{}, err
+		}
+		return domain.PlatformUserInvite{}, domain.PlatformUserRecord{}, domain.ErrPlatformInviteInvalid
 	}
 	if _, err := tx.Exec(ctx, `update platform_users set password_hash=$2,status='active',updated_at=now() where id=$1`, invite.UserID, passwordHash); err != nil {
+		return domain.PlatformUserInvite{}, domain.PlatformUserRecord{}, err
+	}
+	// Invite acceptance also serves password-reset links. Revoke every previous
+	// session before issuing the new session in the HTTP layer.
+	if _, err := tx.Exec(ctx, `update user_sessions set revoked_at=now() where user_id=$1 and revoked_at is null`, invite.UserID); err != nil {
 		return domain.PlatformUserInvite{}, domain.PlatformUserRecord{}, err
 	}
 	if _, err := tx.Exec(ctx, `update platform_user_invites set status='accepted',accepted_at=$2 where id=$1`, invite.ID, now); err != nil {
@@ -332,4 +377,78 @@ func (s *Store) UpdateClientEmailDeliveryStatus(ctx context.Context, deliveryID,
 	}
 	_, err := s.db.Exec(ctx, `update client_email_deliveries set status=$2,error_text=$3,payload_json=$4,sent_at=$5 where id=$1`, deliveryID, status, strings.TrimSpace(errorText), mustJSON(payload), sentAt)
 	return err
+}
+
+func (s *Store) CreateMailDeliveryEvent(ctx context.Context, event domain.MailDeliveryEvent) (domain.MailDeliveryEvent, error) {
+	event.MessageType = strings.TrimSpace(event.MessageType)
+	event.RecipientEmail = normalizeEmail(event.RecipientEmail)
+	event.Subject = strings.TrimSpace(event.Subject)
+	event.Status = strings.TrimSpace(event.Status)
+	event.ResourceType = strings.TrimSpace(event.ResourceType)
+	event.ErrorText = truncateText(strings.TrimSpace(event.ErrorText), 1000)
+	if event.ID == "" {
+		event.ID = id.New()
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	if event.MessageType != "test" && event.MessageType != "user_invite" && event.MessageType != "password_reset" && event.MessageType != "client_artifact" {
+		return domain.MailDeliveryEvent{}, errors.New("invalid mail delivery message type")
+	}
+	if event.RecipientEmail == "" {
+		return domain.MailDeliveryEvent{}, errors.New("mail delivery recipient is required")
+	}
+	if event.Status != "sent" && event.Status != "failed" {
+		return domain.MailDeliveryEvent{}, errors.New("invalid mail delivery status")
+	}
+	if event.Status == "sent" && event.SentAt == nil {
+		now := time.Now().UTC()
+		event.SentAt = &now
+	}
+	err := s.db.QueryRow(ctx, `insert into mail_delivery_events(
+		id,message_type,recipient_email,subject,status,actor_user_id,actor_username,resource_type,resource_id,error_text,sent_at,created_at
+	) values($1,$2,$3,$4,$5,$6,coalesce((select username from platform_users where id=$6::uuid),''),$7,$8,$9,$10,$11)
+	returning actor_username`, event.ID, event.MessageType, event.RecipientEmail, event.Subject, event.Status,
+		event.ActorUserID, event.ResourceType, event.ResourceID, event.ErrorText, event.SentAt, event.CreatedAt).Scan(&event.ActorUsername)
+	return event, err
+}
+
+func (s *Store) ListMailDeliveryEvents(ctx context.Context, status, messageType, search string, limit int) ([]domain.MailDeliveryEvent, error) {
+	status = strings.TrimSpace(status)
+	messageType = strings.TrimSpace(messageType)
+	search = strings.ToLower(strings.TrimSpace(search))
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.Query(ctx, `select
+		e.id,e.message_type,e.recipient_email,e.subject,e.status,e.actor_user_id,
+		coalesce(nullif(e.actor_username,''),u.username,''),e.resource_type,e.resource_id,e.error_text,e.sent_at,e.created_at
+	from mail_delivery_events e
+	left join platform_users u on u.id=e.actor_user_id
+	where ($1='' or e.status=$1)
+	  and ($2='' or e.message_type=$2)
+	  and ($3='' or lower(e.recipient_email) like '%' || $3 || '%' or lower(e.subject) like '%' || $3 || '%' or lower(coalesce(nullif(e.actor_username,''),u.username,'')) like '%' || $3 || '%')
+	order by e.created_at desc
+	limit $4`, status, messageType, search, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.MailDeliveryEvent{}
+	for rows.Next() {
+		var event domain.MailDeliveryEvent
+		if err := rows.Scan(&event.ID, &event.MessageType, &event.RecipientEmail, &event.Subject, &event.Status,
+			&event.ActorUserID, &event.ActorUsername, &event.ResourceType, &event.ResourceID, &event.ErrorText, &event.SentAt, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
+func truncateText(value string, max int) string {
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	return value[:max]
 }

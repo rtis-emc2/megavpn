@@ -151,6 +151,19 @@ Recovery plan:
 
 ## Backup
 
+The control-plane **Backup / Restore** page creates a database-only custom
+`pg_dump` archive under `MEGAVPN_BACKUP_ROOT` (default:
+`/var/lib/megavpn/backups`). The API stores it with mode `0600`, writes a
+SHA-256 sidecar, and validates both the checksum and `pg_restore --list`
+before download. This operator archive does **not** include the master key,
+runtime artifacts, service files, or node state.
+
+Use the UI archive for database evidence and controlled database recovery.
+Use `scripts/ops/backup.sh` below for a complete disaster-recovery set, and
+protect the master key separately. Browser-triggered restore is intentionally
+not implemented: restoring a live database from the serving API process would
+allow partial writes, stale workers, and an unverified application cutover.
+
 Standard backup:
 
 ```bash
@@ -179,6 +192,27 @@ MEGAVPN_DATABASE_DSN='postgres://restore-target...' \
 MEGAVPN_ARTIFACT_ROOT=/tmp/megavpn-artifacts-restore \
 scripts/ops/restore.sh /var/backups/megavpn/megavpn-backup-YYYYmmdd-HHMMSS.tar.gz
 ```
+
+For a database-only archive downloaded from the UI, stop API and worker writes,
+restore into a newly created empty database with a role that owns that target,
+and fail on the first SQL error:
+
+```bash
+sha256sum -c megavpn-db-backup.dump.sha256
+pg_restore --list megavpn-db-backup.dump >/dev/null
+pg_restore \
+  --exit-on-error \
+  --no-owner \
+  --no-privileges \
+  --dbname='postgres://restore-target...' \
+  megavpn-db-backup.dump
+```
+
+Start one API instance against the restored database, run runtime preflight,
+verify authentication, audit history, jobs and encrypted-secret reads, then
+start workers. Encrypted data is usable only when the matching separately
+protected master key is installed. Restore runtime artifacts separately before
+allowing provisioning or node apply jobs.
 
 Restore targets must be explicit safe absolute paths below an operator-selected
 directory. Filesystem root and protected system roots such as `/etc`, `/usr`,

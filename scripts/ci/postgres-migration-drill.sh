@@ -79,6 +79,7 @@ critical_tables=(
   platform_user_roles
   user_sessions
   platform_mail_settings
+  mail_delivery_events
   platform_user_invites
   client_email_deliveries
   client_email_delivery_artifacts
@@ -147,6 +148,10 @@ critical_indexes=(
   idx_share_links_id_client
   idx_client_email_delivery_artifacts_artifact
   idx_client_email_delivery_share_links_link
+  idx_mail_delivery_events_created_at
+  idx_mail_delivery_events_status_created_at
+  idx_mail_delivery_events_type_created_at
+  idx_mail_delivery_events_recipient
   idx_backhaul_transport_secrets_ref
   firewall_address_entries_active_value_idx
   firewall_policies_node_idx
@@ -233,6 +238,11 @@ fi
 firewall_apply_columns="$(psql_value "select count(*) from information_schema.columns where table_schema=current_schema() and table_name='firewall_node_state' and column_name in ('last_preview_json','last_error','last_job_id');")"
 if [[ "$firewall_apply_columns" != "3" ]]; then
   die "firewall_node_state apply hardening columns are required; found $firewall_apply_columns"
+fi
+
+mail_delivery_actor_columns="$(psql_value "select count(*) from information_schema.columns where table_schema=current_schema() and table_name='mail_delivery_events' and column_name in ('actor_user_id','actor_username');")"
+if [[ "$mail_delivery_actor_columns" != "2" ]]; then
+  die "mail delivery events must preserve both actor ID and actor username; found $mail_delivery_actor_columns columns"
 fi
 
 firewall_node_state_status_constraint="$(psql_value "select count(*) from pg_constraint c join pg_class t on t.oid = c.conrelid join pg_namespace n on n.oid = t.relnamespace where n.nspname = current_schema() and t.relname = 'firewall_node_state' and c.conname = 'firewall_node_state_status_check' and pg_get_constraintdef(c.oid) like '%pending_disable%' and pg_get_constraintdef(c.oid) like '%disabled%' and pg_get_constraintdef(c.oid) like '%stale%';")"

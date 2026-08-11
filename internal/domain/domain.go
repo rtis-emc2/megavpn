@@ -10,6 +10,15 @@ var ErrServicePackNotFound = errors.New("service pack not found")
 var ErrClientAccessGroupNotFound = errors.New("client access group not found")
 var ErrExternalEgressProfileNotFound = errors.New("external egress profile not found")
 var ErrExternalEgressDeploymentNotFound = errors.New("external egress deployment not found")
+var ErrPlatformUserNotFound = errors.New("platform user not found")
+var ErrPlatformUserConflict = errors.New("platform user conflicts with an existing username or email")
+var ErrUnknownPlatformRole = errors.New("unknown platform role")
+var ErrLastActiveSuperadmin = errors.New("cannot disable or lock the last active superadmin")
+var ErrLastSuperadminRole = errors.New("cannot remove the last superadmin role")
+var ErrLastSuperadmin = errors.New("cannot delete the last superadmin")
+var ErrCurrentOperatorDelete = errors.New("cannot delete the current operator")
+var ErrUserSessionNotFound = errors.New("user session not found")
+var ErrPlatformInviteInvalid = errors.New("invite is invalid or expired")
 
 type Node struct {
 	ID                   string     `json:"id"`

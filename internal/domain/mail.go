@@ -53,3 +53,20 @@ type ClientEmailDelivery struct {
 	SentAt          *time.Time     `json:"sent_at,omitempty"`
 	CreatedAt       time.Time      `json:"created_at"`
 }
+
+// MailDeliveryEvent is the durable, operator-facing delivery metadata. Message
+// bodies, attachments and credentials are intentionally never persisted here.
+type MailDeliveryEvent struct {
+	ID             string     `json:"id"`
+	MessageType    string     `json:"message_type"`
+	RecipientEmail string     `json:"recipient_email"`
+	Subject        string     `json:"subject"`
+	Status         string     `json:"status"`
+	ActorUserID    *string    `json:"actor_user_id,omitempty"`
+	ActorUsername  string     `json:"actor_username,omitempty"`
+	ResourceType   string     `json:"resource_type"`
+	ResourceID     *string    `json:"resource_id,omitempty"`
+	ErrorText      string     `json:"error_text"`
+	SentAt         *time.Time `json:"sent_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+}

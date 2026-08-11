@@ -11,6 +11,7 @@ type Config struct {
 	API       APIConfig
 	Agent     AgentConfig
 	Artifacts ArtifactConfig
+	Backups   BackupConfig
 	Auth      AuthConfig
 	GeoIP     GeoIPConfig
 	Secrets   SecretsConfig
@@ -54,6 +55,10 @@ type AgentConfig struct {
 }
 
 type ArtifactConfig struct {
+	Root string
+}
+
+type BackupConfig struct {
 	Root string
 }
 
@@ -124,6 +129,9 @@ func Load() Config {
 		},
 		Artifacts: ArtifactConfig{
 			Root: strings.TrimSpace(getEnv("MEGAVPN_ARTIFACT_ROOT", "/var/lib/megavpn/artifacts")),
+		},
+		Backups: BackupConfig{
+			Root: strings.TrimSpace(getEnv("MEGAVPN_BACKUP_ROOT", "/var/lib/megavpn/backups")),
 		},
 		GeoIP: GeoIPConfig{
 			LookupURLTemplate: strings.TrimSpace(getEnv("MEGAVPN_GEOIP_LOOKUP_URL_TEMPLATE", "https://ipapi.co/{ip}/json/")),

@@ -264,10 +264,6 @@ func (s *Server) changePassword(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeErr(w, 500, "password update failed")
 		return
 	}
-	if err := s.store.RevokeUserSessionsByUser(r.Context(), authCtx.User.ID); err != nil {
-		writeErr(w, 500, "session revoke failed")
-		return
-	}
 	s.auditBestEffort(r.Context(), &authCtx.User.ID, "auth.password.change", "platform_user", &authCtx.User.ID, "operator changed own password")
 	nethttp.SetCookie(w, &nethttp.Cookie{
 		Name:     s.sessionCookieName,

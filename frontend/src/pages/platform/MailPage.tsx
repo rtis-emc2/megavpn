@@ -2,11 +2,11 @@ import { MailCheck, Save } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { APIError } from '../../shared/api/client';
-import type { MailSettingsInput } from '../../shared/api/types';
+import type { MailDeliveryQuery, MailSettingsInput } from '../../shared/api/types';
 import { useAuth } from '../../shared/auth/AuthProvider';
 import { hasPermission } from '../../shared/permissions/permissions';
-import { useMailSettings, useTestMailSettings, useUpdateMailSettings } from '../../shared/query/hooks';
-import { Badge, Button, Card, CardBody, FormField, FormGrid, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
+import { useMailDeliveryEvents, useMailSettings, useTestMailSettings, useUpdateMailSettings } from '../../shared/query/hooks';
+import { Badge, Button, Card, CardBody, DataTable, FormField, FormGrid, RefreshButton, Select, StatusBadge, TextField, Toolbar } from '../../shared/ui';
 import { text, useLocaleFormat } from '../../shared/utils/format';
 import { PageScaffold, QueryBoundary } from '../common';
 
@@ -102,7 +102,10 @@ export function MailPage() {
   const serverForm = useMemo(() => formFromMail(mail.data), [mail.data]);
   const [draft, setDraft] = useState<MailForm | null>(null);
   const [testEmail, setTestEmail] = useState('');
+  const [historyDraft, setHistoryDraft] = useState<MailDeliveryQuery>({ search: '', status: '', message_type: '', limit: 200 });
+  const [historyQuery, setHistoryQuery] = useState<MailDeliveryQuery>({ limit: 200 });
   const [notice, setNotice] = useState('');
+  const history = useMailDeliveryEvents(historyQuery, { retry: false });
   const errors = fieldErrors(update.error);
   const form = draft || serverForm;
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(serverForm);
@@ -216,6 +219,56 @@ export function MailPage() {
             </div>
           </CardBody>
         </Card>
+        <Card>
+          <CardBody>
+            <div className="page-stack">
+              <h2 className="card-title">{t('settings.mailHistory')}</h2>
+              <FormGrid>
+                <FormField label={t('common.search')}>
+                  <TextField value={historyDraft.search || ''} placeholder={t('settings.mailHistorySearch')} onChange={(event) => setHistoryDraft((current) => ({ ...current, search: event.target.value }))} />
+                </FormField>
+                <FormField label={t('common.status')}>
+                  <Select value={historyDraft.status || ''} onChange={(event) => setHistoryDraft((current) => ({ ...current, status: event.target.value }))}>
+                    <option value="">{t('common.all')}</option>
+                    <option value="sent">{t('statusValues.sent')}</option>
+                    <option value="failed">{t('statusValues.failed')}</option>
+                  </Select>
+                </FormField>
+                <FormField label={t('settings.messageType')}>
+                  <Select value={historyDraft.message_type || ''} onChange={(event) => setHistoryDraft((current) => ({ ...current, message_type: event.target.value }))}>
+                    <option value="">{t('common.all')}</option>
+                    <option value="test">{t('settings.messageTypes.test')}</option>
+                    <option value="user_invite">{t('settings.messageTypes.user_invite')}</option>
+                    <option value="password_reset">{t('settings.messageTypes.password_reset')}</option>
+                    <option value="client_artifact">{t('settings.messageTypes.client_artifact')}</option>
+                  </Select>
+                </FormField>
+              </FormGrid>
+              <Toolbar>
+                <Button variant="primary" onClick={() => setHistoryQuery({ ...historyDraft, limit: 200 })}>{t('common.applyFilters')}</Button>
+                <Button onClick={() => { setHistoryDraft({ search: '', status: '', message_type: '', limit: 200 }); setHistoryQuery({ limit: 200 }); }}>{t('common.reset')}</Button>
+                <RefreshButton onRefresh={() => history.refetch()}>{t('common.refresh')}</RefreshButton>
+              </Toolbar>
+            </div>
+          </CardBody>
+        </Card>
+        <QueryBoundary isLoading={history.isLoading} isError={history.isError} error={history.error} refetch={() => void history.refetch()}>
+          <DataTable
+            title={t('settings.deliveryEvents')}
+            rows={history.data || []}
+            responsive="wide"
+            columns={[
+              { key: 'created', header: t('common.created'), render: (row) => fmt.date(row.sent_at || row.created_at) },
+              { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
+              { key: 'recipient', header: t('settings.recipient'), render: (row) => <strong>{text(row.recipient_email)}</strong> },
+              { key: 'type', header: t('settings.messageType'), render: (row) => t(`settings.messageTypes.${row.message_type}`, { defaultValue: row.message_type }) },
+              { key: 'subject', header: t('settings.subject'), render: (row) => text(row.subject) },
+              { key: 'actor', header: t('settings.initiator'), render: (row) => text(row.actor_username || row.actor_user_id, t('settings.systemActor')) },
+              { key: 'resource', header: t('settings.relatedObject'), render: (row) => row.resource_type ? <code>{row.resource_type}:{text(row.resource_id)}</code> : 'n/a' },
+              { key: 'error', header: t('settings.deliveryError'), render: (row) => text(row.error_text) },
+            ]}
+          />
+        </QueryBoundary>
       </QueryBoundary>
     </PageScaffold>
   );

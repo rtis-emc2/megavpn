@@ -5,6 +5,23 @@
   gap: var(--space-16);
 }
 
+.certificate-name,
+.certificate-default-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.certificate-default-star,
+.certificate-default-badge {
+  color: #a56500;
+}
+
+.certificate-default-badge {
+  background: #fff6d8;
+  border-color: #e8c66d;
+}
+
 .page-header h1 {
   margin: 0;
   font-size: var(--text-page-title);

@@ -19,6 +19,31 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/service/driver"
 )
 
+func TestPostgresIntegrationPlatformUserInviteIsAtomic(t *testing.T) {
+	store, ctx := setupPostgresIntegrationStore(t)
+
+	if _, err := store.db.Exec(ctx, `
+		create function reject_platform_user_invite() returns trigger language plpgsql as $$
+		begin
+			raise exception 'forced invite insert failure';
+		end
+		$$;
+		create trigger reject_platform_user_invite
+		before insert on platform_user_invites
+		for each row execute function reject_platform_user_invite()
+	`); err != nil {
+		t.Fatalf("install invite failure trigger: %v", err)
+	}
+
+	suffix := strings.ReplaceAll(id.New(), "-", "")[:10]
+	username := "atomic-invite-" + suffix
+	if _, _, err := store.CreatePlatformUserInvite(ctx, username, username+"@example.test", "Atomic Invite", []string{"readonly"}, nil, time.Hour); err == nil {
+		t.Fatal("CreatePlatformUserInvite() error = nil, want forced insert failure")
+	}
+
+	assertPostgresCount(t, ctx, store, `select count(*) from platform_users where username=$1`, 0, username)
+}
+
 func TestPostgresIntegrationExternalEgressJobIdempotency(t *testing.T) {
 	store, ctx := setupPostgresIntegrationStore(t)
 	keyPath := filepath.Join(t.TempDir(), "master.key")

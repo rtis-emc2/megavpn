@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -126,10 +127,32 @@ func (s *Store) ListPlatformUsers(ctx context.Context, limit int) ([]domain.Plat
 }
 
 func (s *Store) GetPlatformUserRecord(ctx context.Context, userID string) (domain.PlatformUserRecord, error) {
-	return s.getPlatformUserRecord(ctx, userID)
+	x, err := s.getPlatformUserRecord(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.PlatformUserRecord{}, domain.ErrPlatformUserNotFound
+	}
+	return x, err
 }
 
 func (s *Store) CreatePlatformUser(ctx context.Context, username, email, displayName, passwordHash string, roleCodes []string, createdBy *string) (domain.PlatformUserRecord, error) {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	user, err := createPlatformUserInTx(ctx, tx, username, email, displayName, passwordHash, roleCodes, createdBy)
+	if err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+	_, _ = s.CreateAuditForUser(ctx, createdBy, "auth.user.create", "platform_user", &user.ID, "platform user created")
+	return user, nil
+}
+
+func createPlatformUserInTx(ctx context.Context, tx pgx.Tx, username, email, displayName, passwordHash string, roleCodes []string, createdBy *string) (domain.PlatformUserRecord, error) {
 	username = normalizeUsername(username)
 	email = normalizeEmail(email)
 	displayName = strings.TrimSpace(displayName)
@@ -146,12 +169,6 @@ func (s *Store) CreatePlatformUser(ctx context.Context, username, email, display
 		roleCodes = []string{"readonly"}
 	}
 
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return domain.PlatformUserRecord{}, err
-	}
-	defer tx.Rollback(ctx)
-
 	user := domain.PlatformUserRecord{
 		PlatformUser: domain.PlatformUser{
 			ID:          id.New(),
@@ -167,6 +184,9 @@ func (s *Store) CreatePlatformUser(ctx context.Context, username, email, display
 	}
 	if _, err := tx.Exec(ctx, `insert into platform_users(id,username,email,display_name,status,password_hash,auth_source,created_at,updated_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		user.ID, user.Username, user.Email, user.DisplayName, user.Status, passwordHash, user.AuthSource, user.CreatedAt, user.UpdatedAt); err != nil {
+		if isUniqueViolation(err) {
+			return domain.PlatformUserRecord{}, domain.ErrPlatformUserConflict
+		}
 		return domain.PlatformUserRecord{}, err
 	}
 
@@ -178,7 +198,7 @@ func (s *Store) CreatePlatformUser(ctx context.Context, username, email, display
 		var roleID string
 		if err := tx.QueryRow(ctx, `select id from roles where code=$1`, roleCode).Scan(&roleID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return domain.PlatformUserRecord{}, errors.New("unknown role: " + roleCode)
+				return domain.PlatformUserRecord{}, fmt.Errorf("%w: %s", domain.ErrUnknownPlatformRole, roleCode)
 			}
 			return domain.PlatformUserRecord{}, err
 		}
@@ -189,10 +209,6 @@ func (s *Store) CreatePlatformUser(ctx context.Context, username, email, display
 		user.RoleCodes = append(user.RoleCodes, roleCode)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return domain.PlatformUserRecord{}, err
-	}
-	_, _ = s.CreateAuditForUser(ctx, createdBy, "auth.user.create", "platform_user", &user.ID, "platform user created")
 	return user, nil
 }
 
@@ -205,12 +221,52 @@ func (s *Store) UpdatePlatformUserStatus(ctx context.Context, userID, status str
 	if status != "active" && status != "disabled" && status != "locked" {
 		return domain.PlatformUserRecord{}, errors.New("invalid platform user status")
 	}
-	tag, err := s.db.Exec(ctx, `update platform_users set status=$2,updated_at=now() where id=$1`, userID, status)
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtext('megavpn:platform-superadmin-quorum'))`); err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+	if status != "active" {
+		var activeSuperadmin bool
+		if err := tx.QueryRow(ctx, `select exists(
+			select 1 from platform_user_roles pur
+			join roles r on r.id=pur.role_id
+			join platform_users u on u.id=pur.user_id
+			where pur.user_id=$1 and r.code='superadmin' and u.status='active'
+		)`, userID).Scan(&activeSuperadmin); err != nil {
+			return domain.PlatformUserRecord{}, err
+		}
+		if activeSuperadmin {
+			var remaining int
+			if err := tx.QueryRow(ctx, `select count(distinct pur.user_id)
+				from platform_user_roles pur
+				join roles r on r.id=pur.role_id
+				join platform_users u on u.id=pur.user_id
+				where r.code='superadmin' and u.status='active' and pur.user_id <> $1`, userID).Scan(&remaining); err != nil {
+				return domain.PlatformUserRecord{}, err
+			}
+			if remaining == 0 {
+				return domain.PlatformUserRecord{}, domain.ErrLastActiveSuperadmin
+			}
+		}
+	}
+	tag, err := tx.Exec(ctx, `update platform_users set status=$2,updated_at=now() where id=$1`, userID, status)
 	if err != nil {
 		return domain.PlatformUserRecord{}, err
 	}
 	if tag.RowsAffected() == 0 {
-		return domain.PlatformUserRecord{}, errors.New("platform user not found")
+		return domain.PlatformUserRecord{}, domain.ErrPlatformUserNotFound
+	}
+	if status != "active" {
+		if _, err := tx.Exec(ctx, `update user_sessions set revoked_at=now() where user_id=$1 and revoked_at is null`, userID); err != nil {
+			return domain.PlatformUserRecord{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.PlatformUserRecord{}, err
 	}
 	x, err := s.getPlatformUserRecord(ctx, userID)
 	if err != nil {
@@ -220,17 +276,114 @@ func (s *Store) UpdatePlatformUserStatus(ctx context.Context, userID, status str
 	return x, nil
 }
 
+func (s *Store) UpdatePlatformUser(ctx context.Context, userID, email, displayName string, roleCodes []string, updatedBy *string) (domain.PlatformUserRecord, error) {
+	userID = strings.TrimSpace(userID)
+	email = normalizeEmail(email)
+	displayName = strings.TrimSpace(displayName)
+	if userID == "" || email == "" || displayName == "" {
+		return domain.PlatformUserRecord{}, errors.New("user id, email and display name are required")
+	}
+	roleCodes = normalizeRoleCodes(roleCodes)
+	if len(roleCodes) == 0 {
+		return domain.PlatformUserRecord{}, errors.New("at least one role is required")
+	}
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtext('megavpn:platform-superadmin-quorum'))`); err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+
+	var currentSuperadmin bool
+	if err := tx.QueryRow(ctx, `select exists(
+		select 1 from platform_user_roles pur
+		join roles r on r.id=pur.role_id
+		join platform_users u on u.id=pur.user_id
+		where pur.user_id=$1 and r.code='superadmin' and u.status='active'
+	)`, userID).Scan(&currentSuperadmin); err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+	if currentSuperadmin && !hasRoleCode(roleCodes, "superadmin") {
+		var remaining int
+		if err := tx.QueryRow(ctx, `select count(distinct pur.user_id)
+			from platform_user_roles pur
+			join roles r on r.id=pur.role_id
+			join platform_users u on u.id=pur.user_id
+			where r.code='superadmin' and u.status='active' and pur.user_id <> $1`, userID).Scan(&remaining); err != nil {
+			return domain.PlatformUserRecord{}, err
+		}
+		if remaining == 0 {
+			return domain.PlatformUserRecord{}, domain.ErrLastSuperadminRole
+		}
+	}
+
+	roleIDs := make(map[string]string, len(roleCodes))
+	for _, roleCode := range roleCodes {
+		var roleID string
+		if err := tx.QueryRow(ctx, `select id from roles where code=$1`, roleCode).Scan(&roleID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domain.PlatformUserRecord{}, fmt.Errorf("%w: %s", domain.ErrUnknownPlatformRole, roleCode)
+			}
+			return domain.PlatformUserRecord{}, err
+		}
+		roleIDs[roleCode] = roleID
+	}
+
+	tag, err := tx.Exec(ctx, `update platform_users set email=$2,display_name=$3,updated_at=now() where id=$1`, userID, email, displayName)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return domain.PlatformUserRecord{}, domain.ErrPlatformUserConflict
+		}
+		return domain.PlatformUserRecord{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.PlatformUserRecord{}, domain.ErrPlatformUserNotFound
+	}
+	if _, err := tx.Exec(ctx, `delete from platform_user_roles where user_id=$1`, userID); err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+	for _, roleCode := range roleCodes {
+		if _, err := tx.Exec(ctx, `insert into platform_user_roles(user_id,role_id,assigned_by,created_at) values($1,$2,$3,now())`, userID, roleIDs[roleCode], updatedBy); err != nil {
+			return domain.PlatformUserRecord{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+	x, err := s.getPlatformUserRecord(ctx, userID)
+	if err != nil {
+		return domain.PlatformUserRecord{}, err
+	}
+	_, _ = s.CreateAuditForUser(ctx, updatedBy, "auth.user.update", "platform_user", &userID, "platform user profile and roles updated")
+	return x, nil
+}
+
 func (s *Store) UpdatePlatformUserPassword(ctx context.Context, userID, passwordHash string, updatedBy *string) error {
 	userID = strings.TrimSpace(userID)
 	if userID == "" || strings.TrimSpace(passwordHash) == "" {
 		return errors.New("user id and password hash are required")
 	}
-	tag, err := s.db.Exec(ctx, `update platform_users set password_hash=$2,updated_at=now() where id=$1`, userID, passwordHash)
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `update platform_users set password_hash=$2,updated_at=now() where id=$1`, userID, passwordHash)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return errors.New("platform user not found")
+		return domain.ErrPlatformUserNotFound
+	}
+	if _, err := tx.Exec(ctx, `update user_sessions set revoked_at=now() where user_id=$1 and revoked_at is null`, userID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
 	}
 	_, _ = s.CreateAuditForUser(ctx, updatedBy, "auth.user.password", "platform_user", &userID, "platform user password updated")
 	return nil
@@ -242,15 +395,7 @@ func (s *Store) DeletePlatformUser(ctx context.Context, userID string, deletedBy
 		return errors.New("user id is required")
 	}
 	if deletedBy != nil && strings.TrimSpace(*deletedBy) == userID {
-		return errors.New("cannot delete the current operator")
-	}
-
-	record, err := s.getPlatformUserRecord(ctx, userID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errors.New("platform user not found")
-		}
-		return err
+		return domain.ErrCurrentOperatorDelete
 	}
 
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
@@ -259,21 +404,38 @@ func (s *Store) DeletePlatformUser(ctx context.Context, userID string, deletedBy
 	}
 	defer tx.Rollback(ctx)
 
-	if hasRoleCode(record.RoleCodes, "superadmin") {
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtext('megavpn:platform-superadmin-quorum'))`); err != nil {
+		return err
+	}
+	var currentSuperadmin bool
+	if err := tx.QueryRow(ctx, `select exists(
+		select 1 from platform_user_roles pur
+		join roles r on r.id=pur.role_id
+		join platform_users u on u.id=pur.user_id
+		where pur.user_id=$1 and r.code='superadmin' and u.status='active'
+	)`, userID).Scan(&currentSuperadmin); err != nil {
+		return err
+	}
+	if currentSuperadmin {
 		var remaining int
 		if err := tx.QueryRow(ctx, `select count(distinct pur.user_id)
 			from platform_user_roles pur
 			join roles r on r.id=pur.role_id
-			where r.code='superadmin' and pur.user_id <> $1`, userID).Scan(&remaining); err != nil {
+			join platform_users u on u.id=pur.user_id
+			where r.code='superadmin' and u.status='active' and pur.user_id <> $1`, userID).Scan(&remaining); err != nil {
 			return err
 		}
 		if remaining == 0 {
-			return errors.New("cannot delete the last superadmin")
+			return domain.ErrLastSuperadmin
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `delete from platform_users where id=$1`, userID); err != nil {
+	tag, err := tx.Exec(ctx, `delete from platform_users where id=$1`, userID)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrPlatformUserNotFound
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -425,13 +587,33 @@ func (s *Store) ResolveAuthContext(ctx context.Context, tokenHash string) (domai
 }
 
 func (s *Store) RevokeUserSession(ctx context.Context, sessionID string) error {
-	_, err := s.db.Exec(ctx, `update user_sessions set revoked_at=now() where id=$1 and revoked_at is null`, sessionID)
-	return err
+	tag, err := s.db.Exec(ctx, `update user_sessions set revoked_at=now() where id=$1 and revoked_at is null`, strings.TrimSpace(sessionID))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrUserSessionNotFound
+	}
+	return nil
 }
 
 func (s *Store) RevokeUserSessionsByUser(ctx context.Context, userID string) error {
 	_, err := s.db.Exec(ctx, `update user_sessions set revoked_at=now() where user_id=$1 and revoked_at is null`, strings.TrimSpace(userID))
 	return err
+}
+
+func (s *Store) RevokeAllUserSessions(ctx context.Context, exceptSessionID string) (int64, error) {
+	exceptSessionID = strings.TrimSpace(exceptSessionID)
+	if exceptSessionID == "" {
+		return 0, errors.New("current session id is required")
+	}
+	tag, err := s.db.Exec(ctx, `update user_sessions
+		set revoked_at=now()
+		where revoked_at is null and id <> $1`, exceptSessionID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (s *Store) CreateAuditForUser(ctx context.Context, userID *string, action, resource string, resourceID *string, summary string) (domain.AuditEvent, error) {
@@ -498,4 +680,21 @@ func hasRoleCode(roleCodes []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func normalizeRoleCodes(roleCodes []string) []string {
+	out := make([]string, 0, len(roleCodes))
+	seen := make(map[string]struct{}, len(roleCodes))
+	for _, roleCode := range roleCodes {
+		roleCode = strings.TrimSpace(roleCode)
+		if roleCode == "" {
+			continue
+		}
+		if _, ok := seen[roleCode]; ok {
+			continue
+		}
+		seen[roleCode] = struct{}{}
+		out = append(out, roleCode)
+	}
+	return out
 }

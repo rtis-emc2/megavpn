@@ -198,6 +198,8 @@ describe('CertificatesPage', () => {
     renderPage();
     expect((await screen.findAllByText('edge.example.test')).length).toBeGreaterThan(0);
     expect((await screen.findAllByText('MegaVPN OpenVPN Platform CA')).length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText('Default').every((item) => item.classList.contains('certificate-default-star'))).toBe(true);
+    expect(screen.getAllByText('Default').length).toBeGreaterThan(0);
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
     expect(await screen.findByText('Private key stored')).toBeInTheDocument();
@@ -259,6 +261,7 @@ describe('CertificatesPage', () => {
   });
 
   it('requires confirmation for default, revoke and delete actions', async () => {
+    certificates = [{ ...leafCertificate, is_default: false }, caCertificate];
     renderPage();
     expect((await screen.findAllByText('edge.example.test')).length).toBeGreaterThan(0);
 

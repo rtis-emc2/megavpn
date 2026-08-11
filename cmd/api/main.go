@@ -119,6 +119,8 @@ func main() {
 			MaxRequestBytes:        cfg.API.MaxRequestBytes,
 			SecretStorageReady:     secretStorageReady,
 			ArtifactRoot:           cfg.Artifacts.Root,
+			BackupRoot:             cfg.Backups.Root,
+			DatabaseDSN:            cfg.Database.DSN,
 			GeoIPLookupURLTemplate: cfg.GeoIP.LookupURLTemplate,
 			GeoIPTimeout:           cfg.GeoIP.Timeout,
 			GeoIPAutoEnrichLimit:   cfg.GeoIP.AutoEnrichLimit,

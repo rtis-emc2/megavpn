@@ -163,15 +163,17 @@ func (s *Server) sendPlatformMailTest(w http.ResponseWriter, r *http.Request) {
 			"smtp_password_configured": settings.SMTPPasswordConfigured,
 		},
 	}
+	subject := "RTIS MegaVPN test email"
 	err = s.sendPlatformMail(r.Context(), settings, mail.Message{
 		FromEmail: settings.FromEmail,
 		FromName:  settings.FromName,
 		ReplyTo:   settings.ReplyToEmail,
 		To:        []string{strings.TrimSpace(req.Email)},
-		Subject:   "RTIS MegaVPN test email",
+		Subject:   subject,
 		TextBody:  buildPlatformMailTestText(authCtx.User, settings, strings.TrimSpace(req.Email), testedAt),
 		HTMLBody:  buildPlatformMailTestHTML(authCtx.User, settings, strings.TrimSpace(req.Email), testedAt),
 	})
+	s.recordMailDelivery(r.Context(), "test", strings.TrimSpace(req.Email), subject, &authCtx.User.ID, "platform_mail_settings", nil, err)
 	if persistErr := s.store.MarkPlatformMailTest(r.Context(), errorString(err)); persistErr != nil {
 		s.logPersistenceFailure("platform.mail_settings.test.mark", persistErr)
 	}
@@ -217,15 +219,17 @@ func (s *Server) invitePlatformUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := invitePublicURL(linkBase, invite.Token)
+	subject := "RTIS MegaVPN operator invitation"
 	err = s.sendPlatformMail(r.Context(), settings, mail.Message{
 		FromEmail: settings.FromEmail,
 		FromName:  settings.FromName,
 		ReplyTo:   settings.ReplyToEmail,
 		To:        []string{invite.Email},
-		Subject:   "RTIS MegaVPN operator invitation",
+		Subject:   subject,
 		TextBody:  buildOperatorInviteText(user, authCtx.User, link, invite.ExpiresAt),
 		HTMLBody:  buildOperatorInviteHTML(user, authCtx.User, link, invite.ExpiresAt),
 	})
+	s.recordMailDelivery(r.Context(), "user_invite", invite.Email, subject, &authCtx.User.ID, "platform_user", &user.ID, err)
 	if persistErr := s.store.MarkPlatformUserInviteDelivered(r.Context(), invite.ID, errorString(err)); persistErr != nil {
 		s.logPersistenceFailure("platform.user_invite.delivery.mark", persistErr, "invite_id", invite.ID, "user_id", user.ID)
 	}
@@ -275,15 +279,17 @@ func (s *Server) resendPlatformUserInvite(w http.ResponseWriter, r *http.Request
 		return
 	}
 	link := invitePublicURL(linkBase, invite.Token)
+	subject := "RTIS MegaVPN operator invitation"
 	err = s.sendPlatformMail(r.Context(), settings, mail.Message{
 		FromEmail: settings.FromEmail,
 		FromName:  settings.FromName,
 		ReplyTo:   settings.ReplyToEmail,
 		To:        []string{invite.Email},
-		Subject:   "RTIS MegaVPN operator invitation",
+		Subject:   subject,
 		TextBody:  buildOperatorInviteText(user, authCtx.User, link, invite.ExpiresAt),
 		HTMLBody:  buildOperatorInviteHTML(user, authCtx.User, link, invite.ExpiresAt),
 	})
+	s.recordMailDelivery(r.Context(), "user_invite", invite.Email, subject, &authCtx.User.ID, "platform_user", &user.ID, err)
 	if persistErr := s.store.MarkPlatformUserInviteDelivered(r.Context(), invite.ID, errorString(err)); persistErr != nil {
 		s.logPersistenceFailure("platform.user_invite.delivery.mark", persistErr, "invite_id", invite.ID, "user_id", user.ID)
 	}
@@ -293,6 +299,82 @@ func (s *Server) resendPlatformUserInvite(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, 200, response{"status": "ok", "user": user, "invite": invite, "invite_url": link})
+}
+
+func (s *Server) sendPlatformUserPasswordReset(w http.ResponseWriter, r *http.Request) {
+	authCtx, ok := requireSuperadmin(w, r)
+	if !ok {
+		return
+	}
+	var req resendInviteRequest
+	if !decodeOptional(r, &req) {
+		writeErr(w, 400, "invalid json")
+		return
+	}
+	settings, err := s.store.GetPlatformMailSettings(r.Context())
+	if err != nil {
+		writeErr(w, 500, "mail settings lookup failed")
+		return
+	}
+	if !settings.Enabled {
+		writeErr(w, 409, "mail settings are disabled")
+		return
+	}
+	linkBase := validatedMailBaseURL(firstNonEmpty(settings.InviteURLBase, s.publicBaseURL))
+	if linkBase == "" {
+		writeErr(w, 409, "an absolute HTTPS invite URL base is required before sending password resets")
+		return
+	}
+	userID := strings.TrimSpace(idParam(r))
+	user, err := s.store.GetPlatformUserRecord(r.Context(), userID)
+	if err != nil {
+		s.writePlatformUserMutationError(w, "platform.user.password_reset.lookup", err, "platform user lookup failed")
+		return
+	}
+	invite, err := s.store.CreatePlatformUserInviteForUser(r.Context(), user.ID, user.Username, user.Email, user.DisplayName, &authCtx.User.ID, time.Duration(req.TTLHours)*time.Hour)
+	if err != nil {
+		s.logPersistenceFailure("platform.user.password_reset.invite", err, "user_id", user.ID)
+		writeErr(w, 500, "password reset link creation failed")
+		return
+	}
+	link := invitePublicURL(linkBase, invite.Token)
+	subject := "RTIS MegaVPN password reset"
+	err = s.sendPlatformMail(r.Context(), settings, mail.Message{
+		FromEmail: settings.FromEmail,
+		FromName:  settings.FromName,
+		ReplyTo:   settings.ReplyToEmail,
+		To:        []string{invite.Email},
+		Subject:   subject,
+		TextBody:  buildPasswordResetText(user, authCtx.User, link, invite.ExpiresAt),
+		HTMLBody:  buildPasswordResetHTML(user, authCtx.User, link, invite.ExpiresAt),
+	})
+	s.recordMailDelivery(r.Context(), "password_reset", invite.Email, subject, &authCtx.User.ID, "platform_user", &user.ID, err)
+	if persistErr := s.store.MarkPlatformUserInviteDelivered(r.Context(), invite.ID, errorString(err)); persistErr != nil {
+		s.logPersistenceFailure("platform.user_password_reset.delivery.mark", persistErr, "invite_id", invite.ID, "user_id", user.ID)
+	}
+	if err != nil {
+		s.logMailDeliveryFailure("platform user password reset delivery failed", err, "user_id", user.ID)
+		writeJSON(w, 502, response{"status": "delivery_failed", "error": publicMailDeliveryFailure})
+		return
+	}
+	s.auditBestEffort(r.Context(), &authCtx.User.ID, "auth.user.password_reset_email", "platform_user", &user.ID, "platform user password reset email sent")
+	writeJSON(w, 200, response{"status": "ok", "expires_at": invite.ExpiresAt})
+}
+
+func (s *Server) listMailDeliveryEvents(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireSuperadmin(w, r); !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	x, err := s.store.ListMailDeliveryEvents(r.Context(), r.URL.Query().Get("status"), r.URL.Query().Get("message_type"), r.URL.Query().Get("search"), limit)
+	if err != nil {
+		writeErr(w, 500, "list mail delivery events failed")
+		return
+	}
+	if x == nil {
+		x = []domain.MailDeliveryEvent{}
+	}
+	writeJSON(w, 200, x)
 }
 
 func (s *Server) listPlatformUserInvites(w http.ResponseWriter, r *http.Request) {
@@ -343,7 +425,10 @@ func (s *Server) acceptPlatformInvite(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.PathValue("token"))
 	invite, user, err := s.store.AcceptPlatformUserInvite(r.Context(), token, passwordHash)
 	if err != nil {
-		writeErr(w, 409, err.Error())
+		if !errors.Is(err, domain.ErrPlatformInviteInvalid) {
+			s.logPersistenceFailure("platform.user.invite.accept", err)
+		}
+		writeErr(w, 409, domain.ErrPlatformInviteInvalid.Error())
 		return
 	}
 	sessionToken, sessionTokenHash, err := authn.NewSessionToken()
@@ -467,6 +552,7 @@ func (s *Server) deliverClientEmail(w http.ResponseWriter, r *http.Request) {
 		HTMLBody:    htmlBody,
 		Attachments: attachments,
 	})
+	s.recordMailDelivery(r.Context(), "client_artifact", clientRecord.Email, delivery.Subject, &authCtx.User.ID, "client_account", &clientID, err)
 	status := "sent"
 	errText := ""
 	if err != nil {
@@ -524,6 +610,38 @@ func (s *Server) sendPlatformMail(ctx context.Context, settings domain.PlatformM
 		AuthMode: settings.SMTPAuthMode,
 		TLSMode:  settings.SMTPTLSMode,
 	}, msg)
+}
+
+func (s *Server) recordMailDelivery(ctx context.Context, messageType, recipient, subject string, actorUserID *string, resourceType string, resourceID *string, deliveryErr error) {
+	status := "sent"
+	if deliveryErr != nil {
+		status = "failed"
+	}
+	if _, err := s.store.CreateMailDeliveryEvent(ctx, domain.MailDeliveryEvent{
+		MessageType:    messageType,
+		RecipientEmail: recipient,
+		Subject:        subject,
+		Status:         status,
+		ActorUserID:    actorUserID,
+		ResourceType:   resourceType,
+		ResourceID:     resourceID,
+		ErrorText:      errorString(deliveryErr),
+	}); err != nil {
+		s.logPersistenceFailure("mail.delivery_event.create", err, "message_type", messageType, "resource_type", resourceType)
+	}
+}
+
+func buildPasswordResetText(user domain.PlatformUserRecord, requestedBy domain.PlatformUser, link string, expiresAt time.Time) string {
+	operator := firstNonEmpty(requestedBy.DisplayName, requestedBy.Username, requestedBy.Email, "RTIS MegaVPN administrator")
+	return "Hello " + firstNonEmpty(user.DisplayName, user.Username) + ",\n\n" +
+		operator + " requested a password reset for your RTIS MegaVPN Control Plane account.\n" +
+		"Open this one-time link to set a new password:\n" + link + "\n\n" +
+		"The link expires at " + expiresAt.UTC().Format(time.RFC3339) + ". If you did not expect this message, contact your administrator.\n"
+}
+
+func buildPasswordResetHTML(user domain.PlatformUserRecord, requestedBy domain.PlatformUser, link string, expiresAt time.Time) string {
+	operator := firstNonEmpty(requestedBy.DisplayName, requestedBy.Username, requestedBy.Email, "RTIS MegaVPN administrator")
+	return "<!doctype html><html><body style=\"font-family:Arial,sans-serif;color:#172033\"><h2>Reset your RTIS MegaVPN password</h2><p>Hello " + html.EscapeString(firstNonEmpty(user.DisplayName, user.Username)) + ",</p><p>" + html.EscapeString(operator) + " requested a password reset for your Control Plane account.</p><p><a href=\"" + html.EscapeString(link) + "\">Set a new password</a></p><p>This one-time link expires at " + html.EscapeString(expiresAt.UTC().Format(time.RFC3339)) + ".</p></body></html>"
 }
 
 func buildOperatorInviteText(user domain.PlatformUserRecord, invitedBy domain.PlatformUser, link string, expiresAt time.Time) string {

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
@@ -96,6 +96,7 @@ describe('Platform settings, mail and access pages', () => {
   let users: Record<string, unknown>[];
   let invites: Record<string, unknown>[];
   let sessions: Record<string, unknown>[];
+  let mailDeliveries: Record<string, unknown>[];
   let tlsUpdateStatus = 200;
   let inviteCreateStatus = 201;
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
@@ -178,6 +179,20 @@ describe('Platform settings, mail and access pages', () => {
       revoked_at: null,
       created_at: '2026-07-08T06:00:00Z',
     }];
+    mailDeliveries = [{
+      id: 'mail-event-1',
+      message_type: 'password_reset',
+      recipient_email: 'operator@example.test',
+      subject: 'Reset your MegaVPN password',
+      status: 'sent',
+      actor_user_id: 'operator-1',
+      actor_username: 'admin',
+      resource_type: 'platform_user',
+      resource_id: 'user-1',
+      error_text: '',
+      sent_at: '2026-07-08T06:30:00Z',
+      created_at: '2026-07-08T06:30:00Z',
+    }];
     await i18n.changeLanguage('en');
     window.localStorage.clear();
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -210,6 +225,7 @@ describe('Platform settings, mail and access pages', () => {
       if (method === 'GET' && url.pathname === '/api/v1/jobs/job-tls-1/logs') return json([]);
 
       if (method === 'GET' && url.pathname === '/api/v1/settings/mail') return json(mailSettings);
+      if (method === 'GET' && url.pathname === '/api/v1/settings/mail/deliveries') return json(mailDeliveries);
       if (method === 'PUT' && url.pathname === '/api/v1/settings/mail') {
         if (body?.smtp_password === smtpSecret) {
           mailSettings = {
@@ -229,6 +245,27 @@ describe('Platform settings, mail and access pages', () => {
       }
 
       if (method === 'GET' && url.pathname === '/api/v1/admin/users') return json(users);
+      if (method === 'PATCH' && url.pathname === '/api/v1/admin/users/user-1') {
+        users = users.map((user) => user.id === 'user-1' ? { ...user, ...body, updated_at: '2026-07-08T10:00:00Z' } : user);
+        return json(users.find((user) => user.id === 'user-1'));
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/admin/users/user-1/status') {
+        users = users.map((user) => user.id === 'user-1' ? { ...user, status: body?.status, updated_at: '2026-07-08T10:00:00Z' } : user);
+        return json(users.find((user) => user.id === 'user-1'));
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/admin/users/user-1/reset-password') {
+        sessions = [];
+        return json({ status: 'ok', sessions_revoked: true });
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/admin/users/user-1/send-password-reset') {
+        mailDeliveries = [{ ...mailDeliveries[0], id: 'mail-event-2', created_at: '2026-07-08T10:01:00Z' }, ...mailDeliveries];
+        return json({ status: 'ok', message: 'password reset email sent' });
+      }
+      if (method === 'DELETE' && url.pathname === '/api/v1/admin/users/user-1') {
+        users = users.filter((user) => user.id !== 'user-1');
+        sessions = sessions.filter((session) => session.user_id !== 'user-1');
+        return json({ status: 'ok' });
+      }
       if (method === 'GET' && url.pathname === '/api/v1/admin/user-invites') return json(invites);
       if (method === 'POST' && url.pathname === '/api/v1/admin/users/invite') {
         if (inviteCreateStatus === 403) return json({ error: 'auth.manage permission required' }, 403);
@@ -266,6 +303,11 @@ describe('Platform settings, mail and access pages', () => {
       if (method === 'POST' && url.pathname === '/api/v1/admin/sessions/sess-2/revoke') {
         sessions = sessions.map((session) => session.id === 'sess-2' ? { ...session, revoked_at: '2026-07-08T10:00:00Z' } : session);
         return json({ status: 'ok' });
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/admin/sessions/revoke-all') {
+        const revoked = sessions.filter((session) => session.id !== authPayload.session.id).length;
+        sessions = sessions.filter((session) => session.id === authPayload.session.id);
+        return json({ status: 'ok', revoked, current_session_preserved: true });
       }
       return json({ error: `unhandled ${method} ${url.pathname}` }, 404);
     }));
@@ -346,6 +388,17 @@ describe('Platform settings, mail and access pages', () => {
     expect(serializedCalls(storageSetSpy)).not.toContain(smtpSecret);
   });
 
+  it('shows durable mail delivery history without exposing secret material', async () => {
+    renderPage(<MailPage />);
+
+    expect((await screen.findAllByText('operator@example.test')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Reset your MegaVPN password').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('admin').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Password reset').length).toBeGreaterThan(0);
+    expect(screen.queryByText(smtpSecret)).not.toBeInTheDocument();
+    expect(screen.queryByText(smtpSecretRef)).not.toBeInTheDocument();
+  });
+
   it('loads platform users, creates invites without rendering invite secrets and keeps invite revoke disabled', async () => {
     renderPage(<AccessPage />);
 
@@ -382,6 +435,63 @@ describe('Platform settings, mail and access pages', () => {
 
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/admin/sessions/sess-2/revoke')).toBe(true));
     expect(await screen.findByText('Session revoked.')).toBeInTheDocument();
+  });
+
+  it('lets a superadmin edit a user, set a temporary password and send a reset link', async () => {
+    renderPage(<AccessPage />);
+
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Open' }))[0]);
+    const accountDrawer = await screen.findByRole('dialog', { name: 'Operator One' });
+    await userEvent.clear(within(accountDrawer).getByLabelText('Name'));
+    await userEvent.type(within(accountDrawer).getByLabelText('Name'), 'Operator Updated');
+    const rolesInput = within(accountDrawer).getByText('Roles').closest('label')?.querySelector('input');
+    expect(rolesInput).toBeInstanceOf(HTMLInputElement);
+    await userEvent.clear(rolesInput!);
+    await userEvent.type(rolesInput!, 'operator, auditor');
+    await userEvent.click(enabledButton('Save'));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'PATCH' && call.path === '/api/v1/admin/users/user-1')).toBe(true));
+    const updateCall = calls.find((call) => call.method === 'PATCH' && call.path === '/api/v1/admin/users/user-1');
+    expect(updateCall?.body).toMatchObject({ display_name: 'Operator Updated', role_codes: ['operator', 'auditor'] });
+
+    const temporaryPassword = 'temporary-password-2026';
+    const passwordInput = within(accountDrawer).getByText('New password').closest('label')?.querySelector('input');
+    const passwordConfirmationInput = within(accountDrawer).getByText('Confirm password').closest('label')?.querySelector('input');
+    expect(passwordInput).toBeInstanceOf(HTMLInputElement);
+    expect(passwordConfirmationInput).toBeInstanceOf(HTMLInputElement);
+    await userEvent.type(passwordInput!, temporaryPassword);
+    await userEvent.type(passwordConfirmationInput!, temporaryPassword);
+    await userEvent.click(enabledButton('Set password'));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/admin/users/user-1/reset-password')).toBe(true));
+    expect(calls.find((call) => call.path === '/api/v1/admin/users/user-1/reset-password')?.body?.password).toBe(temporaryPassword);
+    expect(screen.queryByText(temporaryPassword)).not.toBeInTheDocument();
+
+    await userEvent.click(enabledButton('Send password reset'));
+    await userEvent.click(screen.getAllByRole('button', { name: 'Apply' }).at(-1)!);
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/admin/users/user-1/send-password-reset')).toBe(true));
+  });
+
+  it('requires confirmation before deleting a user', async () => {
+    renderPage(<AccessPage />);
+
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Open' }))[0]);
+    await userEvent.click(enabledButton('Delete'));
+    expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/admin/users/user-1')).toBe(false);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Apply' }).at(-1)!);
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/v1/admin/users/user-1')).toBe(true));
+    expect(await screen.findByText('Operator account deleted.')).toBeInTheDocument();
+  });
+
+  it('revokes all other user sessions while preserving the current session', async () => {
+    renderPage(<AccessPage />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Revoke all user sessions' }));
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/admin/sessions/revoke-all')).toBe(false);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Revoke all user sessions' }).at(-1)!);
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/admin/sessions/revoke-all')).toBe(true));
+    expect(await screen.findByText('All other operator sessions were revoked.')).toBeInTheDocument();
   });
 
   it('surfaces 403, 409 and 422 errors for access mutations', async () => {

@@ -1,0 +1,1 @@
+function e(e,t){let n=t.trim().toLowerCase();return e.some(e=>e.trim().toLowerCase()===n)}function t(t,n,r){return!r||e(n,`superadmin`)?!0:t.includes(r)}function n(t,n,r){return!r?.length||e(n,`superadmin`)?!0:r.every(e=>t.includes(e))}export{n,t};

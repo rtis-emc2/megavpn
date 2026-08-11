@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
-export function Badge({ children }: { children: ReactNode }) {
-  return <span className="badge">{children}</span>;
+export function Badge({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <span className={`badge ${className}`.trim()}>{children}</span>;
 }
 
 function normalizeStatus(value: string): string {

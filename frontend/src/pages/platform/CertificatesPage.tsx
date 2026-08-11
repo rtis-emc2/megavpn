@@ -209,7 +209,16 @@ export function CertificatesPage() {
         <DataTable
           rows={certificates.data || []}
           columns={[
-            { key: 'cn', header: t('certificates.commonName'), render: (row) => <strong>{certificateLabel(row)}</strong> },
+            {
+              key: 'cn',
+              header: t('certificates.commonName'),
+              render: (row) => (
+                <span className="certificate-name">
+                  {row.is_default ? <Star className="certificate-default-star" size={18} fill="currentColor" aria-label={t('certificates.default')} /> : null}
+                  <strong>{certificateLabel(row)}</strong>
+                </span>
+              ),
+            },
             { key: 'issuer', header: t('certificates.issuer'), render: (row) => text(row.issuer_name) },
             { key: 'kind', header: t('common.type'), render: (row) => <Badge>{text(row.kind || row.source)}</Badge> },
             { key: 'usage', header: t('certificates.usage'), render: (row) => certificateUsage(row) },
@@ -221,7 +230,11 @@ export function CertificatesPage() {
               render: (row) => (
                 <Toolbar>
                   <Button onClick={() => setSelectedId(row.id)}>{t('common.open')}</Button>
-                  <Button icon={<Star size={16} />} disabled={!canSetDefault(row)} onClick={() => setConfirm({ type: 'default', certificate: row })}>{t('certificates.setDefault')}</Button>
+                  {row.is_default ? (
+                    <Badge className="certificate-default-badge"><Star size={15} fill="currentColor" /> {t('certificates.default')}</Badge>
+                  ) : (
+                    <Button icon={<Star size={16} />} disabled={!canSetDefault(row)} onClick={() => setConfirm({ type: 'default', certificate: row })}>{t('certificates.setDefault')}</Button>
+                  )}
                   <Button icon={<Ban size={16} />} disabled={!canRevoke(row)} onClick={() => setConfirm({ type: 'revoke', certificate: row })}>{t('certificates.revoke')}</Button>
                   <Button variant="danger" icon={<Trash2 size={16} />} disabled={!canDelete(row)} onClick={() => setConfirm({ type: 'delete', certificate: row })}>{t('common.delete')}</Button>
                 </Toolbar>
@@ -271,7 +284,7 @@ function CertificateDetailDrawer({ certificate, pkiRoots, loading, open, onClose
           <Toolbar>
             <StatusBadge status={certificate.status} />
             <Badge>{text(certificate.kind)}</Badge>
-            {certificate.is_default ? <Badge>{t('certificates.default')}</Badge> : null}
+            {certificate.is_default ? <Badge className="certificate-default-badge"><Star size={15} fill="currentColor" /> {t('certificates.default')}</Badge> : null}
             {hasPrivateKey(certificate) ? <Badge>{t('certificates.privateKeyStored')}</Badge> : <Badge>{t('certificates.noPrivateKey')}</Badge>}
           </Toolbar>
           <Card>

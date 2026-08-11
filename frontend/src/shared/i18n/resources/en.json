@@ -65,6 +65,8 @@
     "newConsole": "Operator Console",
     "search": "Search",
     "select": "Select",
+    "reset": "Reset",
+    "applyFilters": "Apply filters",
     "advanced": "Advanced",
     "yes": "Yes",
     "no": "No",
@@ -111,7 +113,10 @@
     "stub": "Unavailable",
     "inactive": "Inactive",
     "available": "Available",
-    "planned": "Planned"
+    "planned": "Planned",
+    "sent": "Sent",
+    "verified": "Verified",
+    "unverified": "Not verified"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -1731,6 +1736,52 @@
       "access_group": "Client access group"
     }
   },
+  "diagnosticsPage": {
+    "title": "Diagnostics",
+    "subtitle": "Control-plane checks, node communication and work that requires operator attention.",
+    "controlPlane": "Control plane",
+    "releaseValue": "Release {{version}}",
+    "runtimePreflight": "Runtime checks",
+    "checksPassing": "checks passing",
+    "nodes": "Managed nodes",
+    "nodesAttention": "{{count}} require attention",
+    "nodesHealthy": "all nodes healthy",
+    "jobs": "Active work",
+    "jobsFailed": "{{count}} failed",
+    "preflightChecks": "Control-plane preflight",
+    "check": "Check",
+    "summary": "Result",
+    "detail": "Technical detail",
+    "nodeHealth": "Nodes requiring attention",
+    "noNodeAttention": "No node communication problems detected.",
+    "node": "Node",
+    "role": "Role",
+    "nodeStatus": "Node status",
+    "agent": "Agent channel",
+    "lastSeen": "Last seen",
+    "workAttention": "Active and failed jobs",
+    "noWorkAttention": "No active or failed work requires attention.",
+    "type": "Operation",
+    "result": "Latest result"
+  },
+  "backupRestore": {
+    "title": "Backup / Restore",
+    "subtitle": "Create, verify and download access-controlled control-plane database archives.",
+    "create": "Create backup",
+    "superadminOnly": "Superadmin access is required.",
+    "safetyTitle": "Protected backup workflow",
+    "safetyBody": "This is a database-only pg_dump archive stored in the protected server directory. It does not include the master key or runtime artifacts. Every archive has a SHA-256 checksum and is verified before download.",
+    "restoreBody": "Restore is intentionally not available from the browser. Use the documented offline recovery procedure with a maintenance window, an empty target database, an independently verified archive and separately protected master-key and artifact backups.",
+    "archives": "Database archives",
+    "archive": "Archive",
+    "integrity": "Integrity",
+    "verify": "Verify",
+    "createSuccess": "Backup archive created.",
+    "verifySuccess": "Archive {{name}} passed checksum and PostgreSQL format verification.",
+    "deleteSuccess": "Backup archive deleted.",
+    "deleteTitle": "Delete backup archive",
+    "deleteBody": "Permanently delete {{name}} and its checksum file?"
+  },
   "settings": {
     "title": "Platform settings",
     "subtitle": "Control-plane endpoint and TLS configuration.",
@@ -1817,7 +1868,64 @@
     "authSource": "Auth source",
     "lastLogin": "Last login",
     "ttlHours": "TTL hours",
-    "inviteCreated": "Invite created and delivery requested."
+    "inviteCreated": "Invite created and delivery requested.",
+    "accountSettings": "Account settings",
+    "rolesHint": "Comma-separated role codes. At least one active superadmin is always preserved.",
+    "locked": "Locked",
+    "disableUser": "Disable account",
+    "activateUser": "Activate account",
+    "sendPasswordReset": "Send password reset",
+    "manualPasswordReset": "Set a temporary password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm password",
+    "passwordRequirements": "At least 14 characters. Existing sessions are revoked after the password is changed.",
+    "setPassword": "Set password",
+    "passwordTooShort": "Password must contain at least 14 characters.",
+    "passwordMismatch": "Passwords do not match.",
+    "passwordResetDone": "Password changed and the user's sessions revoked.",
+    "userUpdated": "Account settings saved.",
+    "revokeAllSessions": "Revoke all user sessions",
+    "allSessionsRevoked": "All other operator sessions were revoked.",
+    "revokeAllSessionsConfirmTitle": "Revoke all operator sessions",
+    "revokeAllSessionsConfirmBody": "Sign out every other operator from the control plane? Your current session remains active so the platform can still be administered.",
+    "userActions": {
+      "disable": {
+        "title": "Disable operator account",
+        "body": "Disable {{user}} and revoke all active sessions for this account?",
+        "done": "Operator account disabled."
+      },
+      "activate": {
+        "title": "Activate operator account",
+        "body": "Allow {{user}} to sign in again?",
+        "done": "Operator account activated."
+      },
+      "email-reset": {
+        "title": "Send password reset",
+        "body": "Send a one-time password reset link to {{user}}? Existing sessions remain active until the password is changed.",
+        "done": "Password reset email requested."
+      },
+      "delete": {
+        "title": "Delete operator account",
+        "body": "Permanently delete {{user}} and revoke all sessions? Audit events retain the account ID where applicable.",
+        "done": "Operator account deleted."
+      }
+    },
+    "mailHistory": "Delivery history",
+    "mailHistorySearch": "Recipient, subject, actor or related object",
+    "messageType": "Message type",
+    "deliveryEvents": "Sent and failed messages",
+    "recipient": "Recipient",
+    "subject": "Subject",
+    "initiator": "Initiator",
+    "systemActor": "System",
+    "relatedObject": "Related object",
+    "deliveryError": "Delivery error",
+    "messageTypes": {
+      "test": "SMTP test",
+      "user_invite": "Operator invitation",
+      "password_reset": "Password reset",
+      "client_artifact": "Client configuration"
+    }
   },
   "certificates": {
     "title": "Certificates",
