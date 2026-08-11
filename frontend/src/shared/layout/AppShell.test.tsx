@@ -19,7 +19,7 @@ vi.mock('../auth/AuthProvider', () => ({
 
 vi.mock('../query/hooks', () => ({
   useReady: () => ({ data: { status: 'ready' }, isError: false, refetch: vi.fn() }),
-  useVersion: () => ({ data: { version: '8.0.0-pre.1' } }),
+  useVersion: () => ({ data: { version: '8.0.0-pre.2' } }),
 }));
 
 function renderShell(initialPath = '/clients') {

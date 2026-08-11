@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Release:** `8.0.0-pre.1`
+**Release:** `8.0.0-pre.2`
 
 - **Russian README:** [README_RU.md](README_RU.md)
 - **License:** Apache License 2.0. See [LICENSE](LICENSE).
@@ -58,10 +58,10 @@ infrastructure:
 
 ## Current Release Status
 
-Current release: `8.0.0-pre.1`.
+Current release: `8.0.0-pre.2`.
 
 The release notes and stabilization baseline are maintained in
-[docs/releases/8.0.0-pre.1.md](docs/releases/8.0.0-pre.1.md). Release readiness gates
+[docs/releases/8.0.0-pre.2.md](docs/releases/8.0.0-pre.2.md). Release readiness gates
 are documented in [docs/RELEASE_GATES.md](docs/RELEASE_GATES.md).
 
 ## Component Model

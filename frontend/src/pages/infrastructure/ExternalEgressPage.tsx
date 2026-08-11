@@ -18,7 +18,8 @@ import {
   useDeleteExternalEgressDeployment,
   useDeleteExternalEgressProfile,
   useExternalEgressCatalog,
-  useExternalEgressProfiles,
+  useExternalEgressProfile,
+  useExternalEgressProfilePage,
   useInstances,
   useNodes,
   usePreviewExternalEgressImport,
@@ -32,10 +33,12 @@ import {
   CardBody,
   ConfirmDialog,
   DataTable,
+  Drawer,
   ErrorState,
   FormField,
   FormGrid,
   Modal,
+  Pagination,
   Select,
   StatusBadge,
   Textarea,
@@ -69,6 +72,15 @@ type DeploymentAction =
   | { kind: 'apply' | 'probe' | 'cleanup'; profile: ExternalEgressProfile; deployment: ExternalEgressDeployment }
   | { kind: 'remove'; profile: ExternalEgressProfile; deployment: ExternalEgressDeployment }
   | { kind: 'delete-profile'; profile: ExternalEgressProfile };
+
+type ProfileFilters = {
+  search: string;
+  protocol: string;
+  status: string;
+  health: string;
+};
+
+const emptyProfileFilters: ProfileFilters = { search: '', protocol: '', status: '', health: '' };
 
 const defaultDraft: ProfileDraft = {
   displayName: '',
@@ -148,15 +160,28 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function profileDeploymentState(profile: ExternalEgressProfile): 'failed' | 'pending' | 'healthy' | 'inactive' | 'unknown' {
+  if ((profile.attention_deployment_count || 0) > 0) return 'failed';
+  if ((profile.pending_deployment_count || 0) > 0) return 'pending';
+  if ((profile.deployment_count || 0) === 0) return 'unknown';
+  if (profile.active_deployment_count === profile.deployment_count) return 'healthy';
+  return 'inactive';
+}
+
 export function ExternalEgressPage() {
   const { t } = useTranslation();
   const auth = useAuth();
   const fmt = useLocaleFormat();
   const catalog = useExternalEgressCatalog();
-  const profiles = useExternalEgressProfiles();
+  const [draftFilters, setDraftFilters] = useState<ProfileFilters>(emptyProfileFilters);
+  const [filters, setFilters] = useState<ProfileFilters>(emptyProfileFilters);
+  const [pageSize, setPageSize] = useState(25);
+  const [offset, setOffset] = useState(0);
+  const profiles = useExternalEgressProfilePage({ ...filters, limit: pageSize, offset });
   const nodes = useNodes();
   const instances = useInstances();
   const [selectedID, setSelectedID] = useState('');
+  const selectedProfile = useExternalEgressProfile(selectedID || undefined);
   const [editorProfile, setEditorProfile] = useState<ExternalEgressProfile | null | undefined>(undefined);
   const [deployProfile, setDeployProfile] = useState<ExternalEgressProfile | null>(null);
   const [confirm, setConfirm] = useState<DeploymentAction | null>(null);
@@ -164,8 +189,10 @@ export function ExternalEgressPage() {
 
   const canWrite = hasPermissions(auth.permissions, auth.roles, ['node.write', 'access_group.policy.write']);
   const availableProtocols = (catalog.data || []).filter((protocol) => protocol.runtime_support === 'ready');
-  const profileRows = profiles.data || [];
-  const selected = profileRows.find((profile) => profile.id === selectedID) || null;
+  const profileRows = profiles.data?.items || [];
+  const totalProfiles = profiles.data?.total || 0;
+  const pageCount = Math.max(1, Math.ceil(totalProfiles / pageSize));
+  const currentPage = Math.floor(offset / pageSize) + 1;
   const activeNodes = (nodes.data || []).filter((node) => node.status !== 'retired');
   const reservedL2TPNodeIDs = new Set(
     (instances.data || [])
@@ -217,6 +244,74 @@ export function ExternalEgressPage() {
           void instances.refetch();
         }}
       >
+        <Card>
+          <CardBody>
+            <form
+              className="page-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                setFilters(draftFilters);
+                setOffset(0);
+              }}
+            >
+              <FormGrid>
+                <FormField label={t('common.search')}>
+                  <TextField
+                    value={draftFilters.search}
+                    placeholder={t('externalEgress.searchPlaceholder')}
+                    onChange={(event) => setDraftFilters((current) => ({ ...current, search: event.currentTarget.value }))}
+                  />
+                </FormField>
+                <FormField label={t('externalEgress.protocol')}>
+                  <Select value={draftFilters.protocol} onChange={(event) => setDraftFilters((current) => ({ ...current, protocol: event.currentTarget.value }))}>
+                    <option value="">{t('externalEgress.allProtocols')}</option>
+                    {availableProtocols.map((protocol) => <option key={protocol.code} value={protocol.code}>{protocol.label}</option>)}
+                  </Select>
+                </FormField>
+                <FormField label={t('common.status')}>
+                  <Select value={draftFilters.status} onChange={(event) => setDraftFilters((current) => ({ ...current, status: event.currentTarget.value }))}>
+                    <option value="">{t('externalEgress.allStatuses')}</option>
+                    <option value="active">{t('common.enabled')}</option>
+                    <option value="draft">{t('externalEgress.draft')}</option>
+                    <option value="disabled">{t('common.disabled')}</option>
+                  </Select>
+                </FormField>
+                <FormField label={t('externalEgress.deploymentHealth')}>
+                  <Select value={draftFilters.health} onChange={(event) => setDraftFilters((current) => ({ ...current, health: event.currentTarget.value }))}>
+                    <option value="">{t('externalEgress.allDeploymentStates')}</option>
+                    <option value="healthy">{t('externalEgress.healthyDeployments')}</option>
+                    <option value="attention">{t('externalEgress.attentionDeployments')}</option>
+                    <option value="pending">{t('externalEgress.pendingDeployments')}</option>
+                    <option value="undeployed">{t('externalEgress.undeployedProfiles')}</option>
+                  </Select>
+                </FormField>
+                <FormField label={t('externalEgress.pageSize')}>
+                  <Select
+                    value={pageSize}
+                    onChange={(event) => {
+                      setPageSize(Number(event.currentTarget.value));
+                      setOffset(0);
+                    }}
+                  >
+                    {[25, 50, 100].map((value) => <option key={value} value={value}>{value}</option>)}
+                  </Select>
+                </FormField>
+              </FormGrid>
+              <Toolbar>
+                <Button type="submit" variant="primary">{t('externalEgress.applyFilters')}</Button>
+                <Button
+                  onClick={() => {
+                    setDraftFilters(emptyProfileFilters);
+                    setFilters(emptyProfileFilters);
+                    setOffset(0);
+                  }}
+                >
+                  {t('externalEgress.resetFilters')}
+                </Button>
+              </Toolbar>
+            </form>
+          </CardBody>
+        </Card>
         <DataTable
           title={t('externalEgress.profiles')}
           responsive="wide"
@@ -235,7 +330,28 @@ export function ExternalEgressPage() {
             { key: 'protocol', header: t('externalEgress.protocol'), render: (profile) => protocolLabel(catalog.data || [], profile.protocol) },
             { key: 'status', header: t('common.status'), render: (profile) => <StatusBadge status={profile.status} /> },
             { key: 'endpoint', header: t('externalEgress.endpoint'), render: (profile) => <code>{endpointLabel(profile)}</code> },
-            { key: 'deployments', header: t('externalEgress.deployments'), render: (profile) => profile.deployments?.filter((item) => item.status !== 'deleted').length || 0 },
+            {
+              key: 'deployments',
+              header: t('externalEgress.deploymentHealth'),
+              render: (profile) => {
+                const state = profileDeploymentState(profile);
+                const label = state === 'failed'
+                  ? t('externalEgress.requiresAttention')
+                  : state === 'pending'
+                    ? t('externalEgress.pendingDeployments')
+                    : state === 'healthy'
+                      ? t('externalEgress.healthyDeployments')
+                      : state === 'inactive'
+                        ? t('externalEgress.inactiveDeployments')
+                        : t('externalEgress.notDeployed');
+                return (
+                  <div>
+                    <StatusBadge status={state} label={label} />
+                    <div className="muted">{t('externalEgress.deploymentCount', { count: profile.deployment_count || 0 })}</div>
+                  </div>
+                );
+              },
+            },
             { key: 'updated', header: t('common.updated'), render: (profile) => fmt.date(profile.updated_at) },
             {
               key: 'actions',
@@ -243,25 +359,46 @@ export function ExternalEgressPage() {
               render: (profile) => (
                 <Toolbar>
                   <Button icon={<Cable size={16} />} onClick={() => setSelectedID(profile.id)}>{t('common.open')}</Button>
-                  <Button icon={<Pencil size={16} />} disabled={!canWrite} onClick={() => setEditorProfile(profile)}>{t('common.edit')}</Button>
-                  <Button icon={<Plus size={16} />} disabled={!canWrite || profile.status !== 'active'} onClick={() => setDeployProfile(profile)}>
-                    {t('externalEgress.deploy')}
-                  </Button>
                 </Toolbar>
               ),
             },
           ]}
         />
-
-        {selected ? (
-          <ProfileDetail
-            profile={selected}
-            canWrite={canWrite}
-            onDeploy={() => setDeployProfile(selected)}
-            onAction={setConfirm}
+        {totalProfiles ? (
+          <Pagination
+            page={currentPage}
+            pageCount={pageCount}
+            disabled={profiles.isFetching}
+            previousLabel={t('externalEgress.previousPage')}
+            nextLabel={t('externalEgress.nextPage')}
+            pageLabel={(page, pages) => t('externalEgress.pageSummary', { page, pages, total: totalProfiles })}
+            onPageChange={(page) => setOffset((page - 1) * pageSize)}
           />
         ) : null}
       </QueryBoundary>
+
+      <Drawer
+        title={selectedProfile.data?.display_name || t('externalEgress.profileDetails')}
+        open={Boolean(selectedID)}
+        onClose={() => setSelectedID('')}
+      >
+        <QueryBoundary
+          isLoading={selectedProfile.isLoading}
+          isError={selectedProfile.isError}
+          error={selectedProfile.error}
+          refetch={() => void selectedProfile.refetch()}
+        >
+          {selectedProfile.data ? (
+            <ProfileDetail
+              profile={selectedProfile.data}
+              canWrite={canWrite}
+              onEdit={() => setEditorProfile(selectedProfile.data)}
+              onDeploy={() => setDeployProfile(selectedProfile.data)}
+              onAction={setConfirm}
+            />
+          ) : null}
+        </QueryBoundary>
+      </Drawer>
 
       <ProfileEditor
         key={editorProfile === undefined ? 'closed' : editorProfile?.id || 'new'}
@@ -276,7 +413,6 @@ export function ExternalEgressPage() {
       />
       <DeployDialog
         profile={deployProfile}
-        profiles={profileRows}
         nodes={activeNodes}
         reservedL2TPNodeIDs={reservedL2TPNodeIDs}
         onClose={() => setDeployProfile(null)}
@@ -290,6 +426,10 @@ export function ExternalEgressPage() {
         action={confirm}
         onClose={() => setConfirm(null)}
         onDone={(message) => {
+          if (confirm?.kind === 'delete-profile') {
+            setSelectedID('');
+            if (profileRows.length <= 1 && offset > 0) setOffset(Math.max(0, offset - pageSize));
+          }
           setNotice(message);
           setConfirm(null);
         }}
@@ -298,9 +438,10 @@ export function ExternalEgressPage() {
   );
 }
 
-function ProfileDetail({ profile, canWrite, onDeploy, onAction }: {
+function ProfileDetail({ profile, canWrite, onEdit, onDeploy, onAction }: {
   profile: ExternalEgressProfile;
   canWrite: boolean;
+  onEdit: () => void;
   onDeploy: () => void;
   onAction: (action: DeploymentAction) => void;
 }) {
@@ -317,6 +458,7 @@ function ProfileDetail({ profile, canWrite, onDeploy, onAction }: {
             </div>
             <Toolbar>
               {(profile.secret_purposes || []).map((purpose) => <Badge key={purpose}>{purpose}</Badge>)}
+              <Button icon={<Pencil size={16} />} disabled={!canWrite} onClick={onEdit}>{t('common.edit')}</Button>
               <Button variant="primary" icon={<Plus size={16} />} disabled={!canWrite || profile.status !== 'active'} onClick={onDeploy}>
                 {t('externalEgress.deploy')}
               </Button>
@@ -592,9 +734,8 @@ function L2TPFields({ draft, set, editing }: {
   );
 }
 
-function DeployDialog({ profile, profiles, nodes, reservedL2TPNodeIDs, onClose, onQueued }: {
+function DeployDialog({ profile, nodes, reservedL2TPNodeIDs, onClose, onQueued }: {
   profile: ExternalEgressProfile | null;
-  profiles: ExternalEgressProfile[];
   nodes: { id: string; name?: string; role?: string }[];
   reservedL2TPNodeIDs: Set<string>;
   onClose: () => void;
@@ -608,9 +749,9 @@ function DeployDialog({ profile, profiles, nodes, reservedL2TPNodeIDs, onClose, 
   if (!profile) return null;
 
   const occupied = new Set(
-    profiles.flatMap((item) => (item.deployments || [])
-      .filter((deployment) => deployment.status !== 'deleted' && (item.id === profile.id || profile.protocol === 'l2tp_ipsec' && item.protocol === 'l2tp_ipsec'))
-      .map((deployment) => deployment.node_id)),
+    (profile.deployments || [])
+      .filter((deployment) => deployment.status !== 'deleted')
+      .map((deployment) => deployment.node_id),
   );
   if (profile.protocol === 'l2tp_ipsec') {
     reservedL2TPNodeIDs.forEach((nodeID) => occupied.add(nodeID));

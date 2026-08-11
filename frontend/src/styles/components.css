@@ -34,8 +34,29 @@
   flex: 2 1 280px;
 }
 
+.toolbar-split {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.client-groups-actions {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
 .client-groups-filter > .form-field {
   max-width: 420px;
+}
+
+@media (max-width: 767px) {
+  .client-groups-actions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .client-groups-actions .button {
+    flex: 1 1 140px;
+  }
 }
 
 .muted {
@@ -159,6 +180,34 @@ body.overlay-open {
 .metric-caption {
   color: var(--color-text-muted);
   font-size: var(--text-small);
+}
+
+.table-primary-cell {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.table-primary-cell > strong,
+.table-primary-cell > code,
+.table-primary-cell > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.table-action-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.notice-panel {
+  padding: var(--space-12) var(--space-16);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 34%, var(--color-border));
+  border-radius: var(--radius-md);
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
 }
 
 .settings-health-card .card-body {
@@ -562,6 +611,16 @@ body.overlay-open {
   font-weight: 700;
 }
 
+.form-required {
+  color: var(--color-danger);
+}
+
+.form-hint {
+  color: var(--color-text-subtle);
+  font-size: var(--text-small);
+  line-height: 1.45;
+}
+
 .input,
 .select,
 .textarea {
@@ -650,12 +709,12 @@ body.overlay-open {
 }
 
 .drawer-wide {
-  width: calc(100vw - 268px);
+  width: calc(100vw - var(--app-sidebar-width, 0px) - var(--drawer-context-width, 96px));
   max-width: none;
 }
 
 .sidebar-collapsed .drawer-wide {
-  width: calc(100vw - 76px);
+  width: calc(100vw - var(--app-sidebar-width, 0px) - var(--drawer-context-width, 48px));
 }
 
 .modal {
@@ -1227,6 +1286,10 @@ body.overlay-open {
 .toast-danger { border-left-color: var(--color-danger); }
 
 @media (max-width: 1279px) {
+  .drawer-wide {
+    width: calc(100vw - var(--app-sidebar-width, 0px));
+  }
+
   .drawer-wide .definition-grid {
     grid-template-columns: 160px minmax(0, 1fr);
   }

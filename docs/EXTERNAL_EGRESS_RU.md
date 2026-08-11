@@ -1,6 +1,6 @@
 # Выход через внешний VPN/Proxy-провайдер
 
-**Релиз:** `8.0.0-pre.1`
+**Релиз:** `8.0.0-pre.2`
 
 External egress profile подключает выбранные группы клиентов к коммерческому
 или стороннему VPN/proxy-провайдеру. Он не заменяет managed Backhaul и не
@@ -251,7 +251,7 @@ IKE-пакеты, но не получила ответа. Проверьте UD
 upstream NAT, source-IP allowlist провайдера и endpoint. Не меняйте PSK только
 из-за timeout: ошибка PSK или proposal появляется лишь после ответа peer.
 
-Релиз `8.0.0-pre.1` также исправляет старую xl2tpd-настройку, которая приводила к
+Релиз `8.0.0-pre.2` также исправляет старую xl2tpd-настройку, которая приводила к
 `rmax value must be at least 1`. После обновления node agent повторите Apply,
 чтобы пересоздать managed config и systemd unit с ограничением restart loop.
 

@@ -1,6 +1,6 @@
 # Frontend Control Plane
 
-**Релиз:** `8.0.0-pre.1`
+**Релиз:** `8.0.0-pre.2`
 
 Поддерживаемый интерфейс Control Plane - React/TypeScript-приложение в
 `frontend/`. Второй параллельной реализации UI в проекте больше нет.

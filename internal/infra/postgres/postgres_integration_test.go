@@ -842,8 +842,8 @@ func TestPostgresIntegrationClientAccessGroupsVLESSBulkMaterialization(t *testin
 	if result.CreatedMemberships != 1000 || result.MovedMemberships != 0 || result.SkippedExisting != 0 || len(result.Failed) != 0 {
 		t.Fatalf("bulk access group result = %#v, want 1000 created", result)
 	}
-	if result.AffectedInstances != 2 || result.ApplyJobCount != 2 {
-		t.Fatalf("bulk access group apply = affected:%d jobs:%d, want 2/2", result.AffectedInstances, result.ApplyJobCount)
+	if result.AffectedInstances != 2 || result.ApplyJobCount != 1 {
+		t.Fatalf("bulk access group apply = affected:%d jobs:%d, want two instances and one bounded group job", result.AffectedInstances, result.ApplyJobCount)
 	}
 	var jobsAfter int
 	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsAfter); err != nil {
@@ -1015,8 +1015,8 @@ func TestPostgresIntegrationClientAccessGroupsVLESSBulkMaterialization(t *testin
 	if err := store.db.QueryRow(ctx, `select count(*)::int from jobs`).Scan(&jobsAfterEnable); err != nil {
 		t.Fatalf("count jobs after enable: %v", err)
 	}
-	if got := jobsAfterEnable - jobsBeforeEnable; got != 2 {
-		t.Fatalf("enable group queued %d jobs, want two apply jobs for materialized instances", got)
+	if got := jobsAfterEnable - jobsBeforeEnable; got != 1 {
+		t.Fatalf("enable group queued %d jobs, want one bounded group provision job", got)
 	}
 	assertPostgresCount(t, ctx, store, `select count(*) from service_accesses where coalesce(metadata_json->>'access_group_id','')=$1 and status in ('pending','active')`, disabledProjections, defaultGroup.ID)
 

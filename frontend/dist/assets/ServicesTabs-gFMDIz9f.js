@@ -1,0 +1,1 @@
+import{gi as e,t,ui as n}from"./ui-b-C8O2sC.js";var r=e();function i(){let{t:e}=n();return(0,r.jsx)(t,{tabs:[{label:e(`nav.instances`),to:`/services/instances`},{label:e(`nav.servicePacks`),to:`/services/service-packs`},{label:e(`nav.runtimeArtifacts`),to:`/services/runtime-artifacts`}]})}export{i as t};

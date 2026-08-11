@@ -68,6 +68,8 @@
 }
 
 .app-shell {
+  --app-sidebar-width: 268px;
+  --drawer-context-width: 134px;
   min-height: 100dvh;
   display: grid;
   grid-template-columns: 268px minmax(0, 1fr);
@@ -75,6 +77,8 @@
 }
 
 .app-shell.sidebar-collapsed {
+  --app-sidebar-width: 76px;
+  --drawer-context-width: 38px;
   grid-template-columns: 76px minmax(0, 1fr);
 }
 
@@ -342,6 +346,8 @@
 
 @media (max-width: 1023px) {
   .app-shell {
+    --app-sidebar-width: 0px;
+    --drawer-context-width: 0px;
     grid-template-columns: 1fr;
   }
 

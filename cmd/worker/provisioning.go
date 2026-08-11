@@ -27,6 +27,10 @@ type generatedArtifactFile struct {
 }
 
 func handleClientProvisionJob(ctx context.Context, store *postgres.Store, job domain.Job) (string, map[string]any) {
+	return handleClientProvisionJobWithApply(ctx, store, job, true)
+}
+
+func handleClientProvisionJobWithApply(ctx context.Context, store *postgres.Store, job domain.Job, queueApply bool) (string, map[string]any) {
 	clientID := strings.TrimSpace(stringify(job.Payload["client_id"]))
 	if clientID == "" && job.ScopeID != nil {
 		clientID = strings.TrimSpace(*job.ScopeID)
@@ -217,42 +221,44 @@ func handleClientProvisionJob(ctx context.Context, store *postgres.Store, job do
 	}
 
 	queuedApplies := make([]map[string]any, 0, len(applyTargets))
-	for instanceID, serviceCode := range applyTargets {
-		switch serviceCode {
-		case "mtproto":
-			if err := ensureMTProtoInstanceDriverState(ctx, store, instanceID); err != nil {
-				return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
+	if queueApply {
+		for instanceID, serviceCode := range applyTargets {
+			switch serviceCode {
+			case "mtproto":
+				if err := ensureMTProtoInstanceDriverState(ctx, store, instanceID); err != nil {
+					return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
+				}
+			case "http_proxy":
+				if err := ensureHTTPProxyInstanceDriverState(ctx, store, instanceID); err != nil {
+					return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
+				}
+			case "wireguard":
+				if err := ensureWireGuardInstanceDriverState(ctx, store, instanceID); err != nil {
+					return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
+				}
+			case "xray-core":
+				if err := ensureXrayInstanceDriverState(ctx, store, instanceID); err != nil {
+					return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
+				}
+			case "openvpn":
+				// PKI/state already ensured during per-access provisioning.
+			case "ipsec", "xl2tpd":
+				// Family state already ensured during per-access provisioning.
+			case "shadowsocks":
+				if err := ensureShadowsocksInstanceDriverState(ctx, store, instanceID); err != nil {
+					return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
+				}
 			}
-		case "http_proxy":
-			if err := ensureHTTPProxyInstanceDriverState(ctx, store, instanceID); err != nil {
-				return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
+			jobRecord, err := store.UpdateInstanceStatus(ctx, instanceID, "apply")
+			if err != nil {
+				return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode, "phase": "queue_instance_apply"}
 			}
-		case "wireguard":
-			if err := ensureWireGuardInstanceDriverState(ctx, store, instanceID); err != nil {
-				return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
-			}
-		case "xray-core":
-			if err := ensureXrayInstanceDriverState(ctx, store, instanceID); err != nil {
-				return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
-			}
-		case "openvpn":
-			// PKI/state already ensured during per-access provisioning.
-		case "ipsec", "xl2tpd":
-			// Family state already ensured during per-access provisioning.
-		case "shadowsocks":
-			if err := ensureShadowsocksInstanceDriverState(ctx, store, instanceID); err != nil {
-				return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode}
-			}
+			queuedApplies = append(queuedApplies, map[string]any{
+				"instance_id":  instanceID,
+				"service_code": serviceCode,
+				"job_id":       jobRecord.ID,
+			})
 		}
-		jobRecord, err := store.UpdateInstanceStatus(ctx, instanceID, "apply")
-		if err != nil {
-			return "failed", map[string]any{"error": err.Error(), "instance_id": instanceID, "service_code": serviceCode, "phase": "queue_instance_apply"}
-		}
-		queuedApplies = append(queuedApplies, map[string]any{
-			"instance_id":  instanceID,
-			"service_code": serviceCode,
-			"job_id":       jobRecord.ID,
-		})
 	}
 
 	if len(generatedFiles) == 0 {
@@ -297,6 +303,11 @@ func handleClientProvisionJob(ctx context.Context, store *postgres.Store, job do
 		saved = append(saved, bundle)
 	}
 
+	applyTargetIDs := make([]string, 0, len(applyTargets))
+	for instanceID := range applyTargets {
+		applyTargetIDs = append(applyTargetIDs, instanceID)
+	}
+	sort.Strings(applyTargetIDs)
 	return "succeeded", map[string]any{
 		"message":             "client artifacts generated",
 		"client_id":           clientID,
@@ -305,6 +316,98 @@ func handleClientProvisionJob(ctx context.Context, store *postgres.Store, job do
 		"results":             results,
 		"artifacts":           artifactSummaries(saved),
 		"instance_apply_jobs": queuedApplies,
+		"apply_targets":       applyTargetIDs,
+	}
+}
+
+func handleClientAccessGroupProvisionJob(ctx context.Context, store *postgres.Store, job domain.Job) (string, map[string]any) {
+	groupID := strings.TrimSpace(stringify(job.Payload["group_id"]))
+	if groupID == "" && job.ScopeID != nil {
+		groupID = strings.TrimSpace(*job.ScopeID)
+	}
+	if groupID == "" {
+		return "failed", map[string]any{"error": "group_id is required"}
+	}
+	targets, err := store.ListClientAccessGroupProvisioningTargets(ctx, groupID)
+	if err != nil {
+		return "failed", map[string]any{"error": err.Error(), "group_id": groupID}
+	}
+	requestedInstances := selectedInstanceSet(job.Payload["instance_ids"])
+	applyTargets := map[string]struct{}{}
+	completed := 0
+	failures := make([]map[string]any, 0)
+	for _, target := range targets {
+		instanceIDs := append([]string(nil), target.InstanceIDs...)
+		if len(requestedInstances) > 0 {
+			filteredInstanceIDs := make([]string, 0, len(target.InstanceIDs))
+			for _, instanceID := range target.InstanceIDs {
+				if requestedInstances[instanceID] {
+					filteredInstanceIDs = append(filteredInstanceIDs, instanceID)
+				}
+			}
+			instanceIDs = filteredInstanceIDs
+		}
+		if len(instanceIDs) == 0 {
+			continue
+		}
+		child := domain.Job{ScopeID: &target.ClientID, Payload: map[string]any{
+			"client_id":    target.ClientID,
+			"instance_ids": instanceIDs,
+		}}
+		status, result := handleClientProvisionJobWithApply(ctx, store, child, false)
+		if status != "succeeded" {
+			failures = append(failures, map[string]any{"client_id": target.ClientID, "error": stringify(result["error"])})
+			continue
+		}
+		completed++
+		for _, instanceID := range stringSlice(result["apply_targets"]) {
+			applyTargets[instanceID] = struct{}{}
+		}
+	}
+	applyIDs := make([]string, 0, len(applyTargets))
+	for instanceID := range applyTargets {
+		applyIDs = append(applyIDs, instanceID)
+	}
+	sort.Strings(applyIDs)
+	applyJobs := make([]string, 0, len(applyIDs))
+	for _, instanceID := range applyIDs {
+		applyJob, err := store.UpdateInstanceStatus(ctx, instanceID, "apply")
+		if err != nil {
+			failures = append(failures, map[string]any{"instance_id": instanceID, "error": err.Error()})
+			continue
+		}
+		applyJobs = append(applyJobs, applyJob.ID)
+	}
+	result := map[string]any{
+		"message":           "client access group provisioned",
+		"group_id":          groupID,
+		"client_count":      len(targets),
+		"completed_clients": completed,
+		"apply_job_count":   len(applyJobs),
+		"apply_job_ids":     applyJobs,
+		"failures":          failures,
+	}
+	if len(failures) > 0 {
+		result["error"] = "one or more client access group targets failed"
+		return "failed", result
+	}
+	return "succeeded", result
+}
+
+func stringSlice(value any) []string {
+	switch values := value.(type) {
+	case []string:
+		return values
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, value := range values {
+			if item := strings.TrimSpace(stringify(value)); item != "" {
+				out = append(out, item)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }
 

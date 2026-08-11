@@ -74,6 +74,7 @@ import {
   useSetNodeMaintenance,
   useSyncNodeInventory,
   useUpdateNode,
+  useVersion,
   useDownloadNodeBootstrapBundle,
   useVerifyNodeCapability,
 } from '../../shared/query/hooks';
@@ -1448,7 +1449,7 @@ function NodeDrawer({ node, nodeId, open, onClose }: { node?: NodeDetail; nodeId
               />
             ) : null}
             {activeTab === 'overview' ? <OverviewTab node={current} busy={busy} onConfirm={openConfirm} canWrite={canWriteNodes} onEdit={() => setEditOpen(true)} onRefresh={() => detail.refetch()} /> : null}
-            {activeTab === 'runtime' ? <RuntimeTab node={current} diagnostics={diagnostics} /> : null}
+            {activeTab === 'runtime' ? <RuntimeTab node={current} diagnostics={diagnostics} onOpenAgentUpdate={() => setActiveTab('bootstrap')} /> : null}
             {activeTab === 'onboarding' ? (
               <NodeOnboardingTab
                 node={current}
@@ -1733,16 +1734,29 @@ function OverviewTab({ node, busy, onConfirm, canWrite, onEdit, onRefresh }: { n
   );
 }
 
-function RuntimeTab({ node, diagnostics }: { node: NodeDetail; diagnostics: ReturnType<typeof useNodeDiagnostics> }) {
+function RuntimeTab({ node, diagnostics, onOpenAgentUpdate }: {
+  node: NodeDetail;
+  diagnostics: ReturnType<typeof useNodeDiagnostics>;
+  onOpenAgentUpdate: () => void;
+}) {
   const { t } = useTranslation();
   const fmt = useLocaleFormat();
+  const version = useVersion();
   const data = diagnostics.data;
   const agent = data?.agent;
+  const installedVersion = agent?.agent_version || node.agent_version || '';
+  const targetVersion = version.data?.agent_target_version || version.data?.version || '';
+  const updateRequired = Boolean(installedVersion && targetVersion && installedVersion !== targetVersion);
   return (
     <div className="page-stack">
       <Card className="node-workspace-actions">
         <CardBody>
           <Toolbar>
+            {updateRequired ? (
+              <Button variant="primary" icon={<RotateCcw size={16} />} onClick={onOpenAgentUpdate}>
+                {t('nodes.openAgentUpdate')}
+              </Button>
+            ) : null}
             <RefreshButton onRefresh={() => diagnostics.refetch()}>{t('common.refresh')}</RefreshButton>
           </Toolbar>
         </CardBody>
@@ -1755,7 +1769,12 @@ function RuntimeTab({ node, diagnostics }: { node: NodeDetail; diagnostics: Retu
             <span>{t('nodes.communicationState')}</span><strong><StatusBadge status={data?.communication_state || 'unknown'} /></strong>
             <span>{t('nodes.communicationHint')}</span><strong>{data?.communication_hint || 'n/a'}</strong>
             <span>{t('nodes.agentStatus')}</span><strong><StatusBadge status={agent?.status || node.agent_status || 'unknown'} /></strong>
-            <span>{t('nodes.agentVersion')}</span><strong>{agent?.agent_version || node.agent_version || 'n/a'}</strong>
+            <span>{t('nodes.agentVersion')}</span><strong>{installedVersion || 'n/a'}</strong>
+            <span>{t('nodes.agentTargetVersion')}</span><strong>{targetVersion || 'n/a'}</strong>
+            <span>{t('nodes.agentVersionState')}</span><strong><StatusBadge
+              status={updateRequired ? 'pending' : installedVersion && targetVersion ? 'healthy' : 'unknown'}
+              label={updateRequired ? t('nodes.agentUpdateRequired') : installedVersion && targetVersion ? t('nodes.agentUpToDate') : t('common.unknown')}
+            /></strong>
             <span>{t('nodes.protocolVersion')}</span><strong>{agent?.protocol_version || node.agent_protocol_version || 'n/a'}</strong>
             <span>{t('nodes.lastSeen')}</span><strong>{fmt.date(agent?.last_seen_at || node.agent_last_seen_at)}</strong>
             <span>{t('nodes.lastJobPoll')}</span><strong>{fmt.date(agent?.last_job_poll_at)}</strong>

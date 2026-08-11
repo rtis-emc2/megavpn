@@ -1,6 +1,6 @@
 # Database Model
 
-**Release:** `8.0.0-pre.1`
+**Release:** `8.0.0-pre.2`
 
 This document records the supported PostgreSQL ownership and integrity model.
 It is the source of truth for schema changes and database reviews.

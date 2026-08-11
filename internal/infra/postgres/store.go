@@ -1309,15 +1309,13 @@ func (s *Store) createInstanceWithOptions(ctx context.Context, x domain.Instance
 		}
 		return x, applyReadyErr
 	}
-	if x.ServiceCode == "xray-core" {
-		if materialized, err := s.materializeVLESSAccessGroupsForInstance(ctx, x.ID); err != nil {
-			if cleanupErr := s.discardUnqueuedInstanceDraft(ctx, x.ID); cleanupErr != nil {
-				return x, errors.Join(err, fmt.Errorf("discard unqueueable instance draft: %w", cleanupErr))
-			}
-			return x, fmt.Errorf("materialize global vless group memberships: %w", err)
-		} else if materialized > 0 {
-			_, _ = s.CreateAudit(ctx, "system", "vless_group_members.materialize", "instance", &x.ID, fmt.Sprintf("global vless group memberships materialized before initial apply: %d", materialized))
+	if materialized, err := s.materializeClientAccessGroupsForInstance(ctx, x); err != nil {
+		if cleanupErr := s.discardUnqueuedInstanceDraft(ctx, x.ID); cleanupErr != nil {
+			return x, errors.Join(err, fmt.Errorf("discard unqueueable instance draft: %w", cleanupErr))
 		}
+		return x, fmt.Errorf("materialize global client access group memberships: %w", err)
+	} else if materialized > 0 {
+		_, _ = s.CreateAudit(ctx, "system", "client_access_group.members.materialize", "instance", &x.ID, fmt.Sprintf("global client access group memberships materialized before initial apply: %d", materialized))
 	}
 	if opts.queueInitialApply {
 		payload, payloadErr := s.buildInstanceJobPayload(ctx, x, "apply")
@@ -3391,6 +3389,8 @@ func jobLockTarget(j domain.Job) (resourceType string, resourceID string, lockKi
 		switch {
 		case strings.HasPrefix(j.Type, "client."):
 			return "client", *j.ScopeID, "provision", true
+		case strings.HasPrefix(j.Type, "client_access_group."):
+			return "access_group", *j.ScopeID, "provision", true
 		case strings.HasPrefix(j.Type, "node."):
 			return "node", *j.ScopeID, "bootstrap", true
 		}
@@ -3400,7 +3400,7 @@ func jobLockTarget(j domain.Job) (resourceType string, resourceID string, lockKi
 
 func jobLeaseDurationForType(jobType string) time.Duration {
 	switch jobType {
-	case "node.capability.install", "node.emergency_cleanup", "node.reboot", "node.backhaul.apply", "node.external_egress.apply", "node.external_egress.cleanup", "instance.apply", "instance.delete":
+	case "client_access_group.provision", "node.capability.install", "node.emergency_cleanup", "node.reboot", "node.backhaul.apply", "node.external_egress.apply", "node.external_egress.cleanup", "instance.apply", "instance.delete":
 		return longNodeJobLeaseDuration
 	default:
 		return jobLeaseDuration

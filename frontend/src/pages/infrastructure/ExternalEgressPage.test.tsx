@@ -82,10 +82,12 @@ function renderPage() {
 describe('ExternalEgressPage', () => {
   const calls: FetchCall[] = [];
   let permissions: string[];
+  let profileTotal: number;
 
   beforeEach(async () => {
     calls.length = 0;
     permissions = ['node.read', 'node.write', 'access_group.read', 'access_group.policy.write'];
+    profileTotal = 1;
     window.localStorage.clear();
     await i18n.changeLanguage('en');
 
@@ -105,6 +107,25 @@ describe('ExternalEgressPage', () => {
       }
       if (method === 'GET' && url.pathname === '/api/v1/external-egress/catalog') return json(catalog);
       if (method === 'GET' && url.pathname === '/api/v1/external-egress/profiles') return json([profile]);
+      if (method === 'GET' && url.pathname === '/api/v1/external-egress/profiles:page') {
+        return json({
+          items: [{
+            ...profile,
+            deployments: undefined,
+            deployment_count: 1,
+            active_deployment_count: 0,
+            pending_deployment_count: 0,
+            attention_deployment_count: 1,
+          }],
+          total: profileTotal,
+          limit: Number(url.searchParams.get('limit') || 25),
+          offset: Number(url.searchParams.get('offset') || 0),
+        });
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/external-egress/profiles/profile-1') return json(profile);
+      if (method === 'GET' && url.pathname === '/api/v1/external-egress/profiles/profile-created') {
+        return json({ ...profile, id: 'profile-created', display_name: 'Primary L2TP' });
+      }
       if (method === 'GET' && url.pathname === '/api/v1/nodes') {
         return json([
           { id: 'node-1', name: 'Ingress One', role: 'ingress', status: 'online' },
@@ -197,8 +218,9 @@ describe('ExternalEgressPage', () => {
     const user = userEvent.setup();
     renderPage();
 
-    const deployButtons = await screen.findAllByRole('button', { name: 'Deploy' });
-    await user.click(deployButtons[0]!);
+    await user.click((await screen.findAllByRole('button', { name: 'Open' }))[0]!);
+    const details = await screen.findByRole('dialog', { name: 'Provider Dallas' });
+    await user.click(within(details).getByRole('button', { name: 'Deploy' }));
     const dialog = screen.getByRole('dialog', { name: 'Deploy: Provider Dallas' });
     await user.selectOptions(within(dialog).getByLabelText('Node'), 'node-1');
     await user.click(within(dialog).getByRole('button', { name: 'Deploy and apply' }));
@@ -226,5 +248,52 @@ describe('ExternalEgressPage', () => {
 
     expect(await screen.findByText(/write operations require node\.write and access_group\.policy\.write/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New profile' })).toBeDisabled();
+  });
+
+  it('opens full profile diagnostics in a closeable drawer', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click((await screen.findAllByRole('button', { name: 'Open' }))[0]!);
+    const details = await screen.findByRole('dialog', { name: 'Provider Dallas' });
+    expect(within(details).getByText('Node deployments')).toBeInTheDocument();
+    expect(calls.some((call) => call.path === '/api/v1/external-egress/profiles/profile-1')).toBe(true);
+
+    await user.click(within(details).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'Provider Dallas' })).not.toBeInTheDocument();
+  });
+
+  it('surfaces deployment attention in the compact catalog without loading full diagnostics', async () => {
+    renderPage();
+
+    expect(await screen.findAllByText('Requires attention')).not.toHaveLength(0);
+    expect(screen.getAllByText('1 node')).not.toHaveLength(0);
+    expect(calls.some((call) => call.path === '/api/v1/external-egress/profiles/profile-1')).toBe(false);
+  });
+
+  it('paginates the profile catalog on the server', async () => {
+    const user = userEvent.setup();
+    profileTotal = 26;
+    renderPage();
+
+    expect(await screen.findByText('Page 1 of 2 · 26 profiles')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'GET' && call.path.includes('/api/v1/external-egress/profiles:page') && call.path.includes('offset=25'))).toBe(true);
+    });
+  });
+
+  it('filters deployment health on the server', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findAllByText('Requires attention');
+    await user.selectOptions(screen.getByLabelText('Deployment state'), 'attention');
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'GET' && call.path.includes('/api/v1/external-egress/profiles:page') && call.path.includes('health=attention'))).toBe(true);
+    });
   });
 });

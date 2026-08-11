@@ -24,30 +24,30 @@ func TestClientAccessServiceCatalog(t *testing.T) {
 			t.Fatalf("service %q is missing operator metadata: %#v", service.ServiceCode, service)
 		}
 	}
-	vless := findClientAccessServiceForTest(services, "vless")
-	if vless == nil {
-		t.Fatal("vless client access service is required")
-	}
-	if !vless.SupportsGroups || !vless.SupportsMembership || !vless.SupportsMaterialization || vless.Status != "active" {
-		t.Fatalf("vless catalog flags = %#v, want active group materialization", vless)
-	}
-	expectedCatalogOnly := []string{
+	expectedReady := []string{
+		"vless",
 		"openvpn",
 		"wireguard",
 		"l2tp",
 		"http_proxy",
 		"shadowsocks",
 		"mtproto",
-		"socks_proxy",
 	}
-	for _, code := range expectedCatalogOnly {
+	for _, code := range expectedReady {
 		service := findClientAccessServiceForTest(services, code)
 		if service == nil {
 			t.Fatalf("%s must be visible in client access service catalog", code)
 		}
-		if service.SupportsMaterialization || service.Status == "active" {
-			t.Fatalf("%s catalog flags = %#v, want visible but not materialized yet", code, service)
+		if !service.Implemented || !service.SupportsGroups || !service.SupportsMembership || !service.SupportsMaterialization || service.Status != "active" {
+			t.Fatalf("%s catalog flags = %#v, want active group materialization", code, service)
 		}
+	}
+	socks := findClientAccessServiceForTest(services, "socks_proxy")
+	if socks == nil {
+		t.Fatal("socks_proxy must be visible in client access service catalog")
+	}
+	if socks.Implemented || socks.SupportsGroups || socks.SupportsMembership || socks.SupportsMaterialization || socks.Status == "active" {
+		t.Fatalf("socks_proxy catalog flags = %#v, want planned catalog entry", socks)
 	}
 	if nginx := findClientAccessServiceForTest(services, "nginx"); nginx != nil {
 		t.Fatalf("nginx is an edge runtime, not a client access service: %#v", nginx)

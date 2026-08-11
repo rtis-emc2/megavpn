@@ -96,6 +96,8 @@ func runOnce(ctx context.Context, log interface {
 		status, result = handleNodeBootstrapJob(ctx, log, store, cfg, job)
 	case "client.provision":
 		status, result = handleClientProvisionJob(ctx, store, job)
+	case "client_access_group.provision":
+		status, result = handleClientAccessGroupProvisionJob(ctx, store, job)
 	case "artifact.build":
 		status, result = handleClientProvisionJob(ctx, store, job)
 	case "node.backhaul.apply", "node.backhaul.probe", "node.backhaul.cleanup":

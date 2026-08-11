@@ -1,1 +1,0 @@
-import{li as e,ri as t,t as n}from"./ui-CWPzM3Nl.js";var r=e();function i(){let{t:e}=t();return(0,r.jsx)(n,{tabs:[{label:e(`nav.instances`),to:`/services/instances`},{label:e(`nav.servicePacks`),to:`/services/service-packs`},{label:e(`nav.runtimeArtifacts`),to:`/services/runtime-artifacts`}]})}export{i as t};

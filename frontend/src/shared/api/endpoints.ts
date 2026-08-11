@@ -1,6 +1,8 @@
 import { apiBlobRequest, apiRequest, apiURL, isUnauthorized, sendJSON } from './client';
 import type {
   AddressPools,
+  AddressPoolSpace,
+  AddressPoolSpaceInput,
   APIRecord,
   Artifact,
   AuthPayload,
@@ -78,6 +80,8 @@ import type {
   ExternalEgressImportPreviewRequest,
   ExternalEgressProfile,
   ExternalEgressProfileInput,
+  ExternalEgressProfilePage,
+  ExternalEgressProfileQuery,
   ExternalEgressProtocol,
   FirewallAddressGroup,
   FirewallAddressGroupEntry,
@@ -962,6 +966,24 @@ export function getClientAccessGroupSyncState(groupId: string): Promise<ClientAc
   return apiRequest<ClientAccessGroupSyncState[]>(`/api/v1/client-access-groups/${encodeURIComponent(groupId)}/sync-state`);
 }
 
+export function createAddressPoolSpace(input: AddressPoolSpaceInput): Promise<AddressPoolSpace> {
+  return sendJSON<AddressPoolSpace>('/api/v1/address-pools/spaces', 'POST', input);
+}
+
+export function updateAddressPoolSpace(poolId: string, input: AddressPoolSpaceInput): Promise<AddressPoolSpace> {
+  return sendJSON<AddressPoolSpace>(`/api/v1/address-pools/spaces/${encodeURIComponent(poolId)}`, 'PUT', input);
+}
+
+export function deleteAddressPoolSpace(poolId: string): Promise<AddressPoolSpace> {
+  return apiRequest<AddressPoolSpace>(`/api/v1/address-pools/spaces/${encodeURIComponent(poolId)}`, { method: 'DELETE' });
+}
+
+export function setAddressPoolRouting(poolId: string, routingEnabled: boolean): Promise<AddressPoolSpace> {
+  return sendJSON<AddressPoolSpace>(`/api/v1/address-pools/spaces/${encodeURIComponent(poolId)}/routing`, 'POST', {
+    routing_enabled: routingEnabled,
+  });
+}
+
 export type FirewallAddressGroupInput = Partial<Pick<FirewallAddressGroup, 'key' | 'label' | 'description' | 'scope' | 'status'>>;
 export type FirewallAddressGroupEntryInput = Partial<Pick<FirewallAddressGroupEntry, 'value' | 'value_type' | 'label' | 'status'>>;
 export type FirewallPolicyInput = Partial<Pick<FirewallPolicy, 'key' | 'label' | 'description' | 'scope' | 'node_id' | 'default_input_policy' | 'default_forward_policy' | 'default_output_policy' | 'status'>>;
@@ -1312,6 +1334,10 @@ export function previewExternalEgressImport(input: ExternalEgressImportPreviewRe
 
 export function listExternalEgressProfiles(): Promise<ExternalEgressProfile[]> {
   return apiRequest<ExternalEgressProfile[]>('/api/v1/external-egress/profiles');
+}
+
+export function listExternalEgressProfilePage(query: ExternalEgressProfileQuery = {}): Promise<ExternalEgressProfilePage> {
+  return apiRequest<ExternalEgressProfilePage>(`/api/v1/external-egress/profiles:page${queryString(query)}`);
 }
 
 export function getExternalEgressProfile(profileId: string): Promise<ExternalEgressProfile> {

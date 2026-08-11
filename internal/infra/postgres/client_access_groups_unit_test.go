@@ -8,18 +8,48 @@ import (
 	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
-func TestNormalizeClientAccessGroupInputRejectsUnsupportedServices(t *testing.T) {
+func TestNormalizeClientAccessGroupInputAllowsReadyServices(t *testing.T) {
+	for _, serviceCode := range []string{"openvpn", "wireguard", "l2tp", "http_proxy", "shadowsocks", "mtproto"} {
+		t.Run(serviceCode, func(t *testing.T) {
+			out, err := normalizeClientAccessGroupInput(domain.ClientAccessGroupInput{
+				ServiceCode: serviceCode,
+				GroupKey:    serviceCode + "_clients",
+				DisplayName: serviceCode + " clients",
+				Status:      "active",
+				PolicyJSON:  json.RawMessage(`{"ignored":"for generic services"}`),
+			}, true)
+			if err != nil {
+				t.Fatalf("ready service rejected: %v", err)
+			}
+			if string(out.PolicyJSON) != "{}" {
+				t.Fatalf("generic policy = %s, want canonical empty policy", out.PolicyJSON)
+			}
+		})
+	}
+}
+
+func TestNormalizeClientAccessGroupInputRejectsPlannedService(t *testing.T) {
 	_, err := normalizeClientAccessGroupInput(domain.ClientAccessGroupInput{
-		ServiceCode: "openvpn",
-		GroupKey:    "openvpn_clients",
-		DisplayName: "OpenVPN clients",
+		ServiceCode: "socks_proxy",
+		GroupKey:    "socks_clients",
+		DisplayName: "SOCKS clients",
 		Status:      "active",
 	}, true)
-	if err == nil {
-		t.Fatal("openvpn client access group create must be rejected until materialization is implemented")
+	if err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("planned service error = %v, want not available", err)
 	}
-	if !strings.Contains(err.Error(), "not implemented") {
-		t.Fatalf("unexpected error: %v", err)
+}
+
+func TestNormalizeClientAccessGroupInputRejectsExternalEgressForNonVLESS(t *testing.T) {
+	_, err := normalizeClientAccessGroupInput(domain.ClientAccessGroupInput{
+		ServiceCode:             "wireguard",
+		GroupKey:                "wireguard_clients",
+		DisplayName:             "WireGuard clients",
+		Status:                  "active",
+		ExternalEgressProfileID: stringPtr("profile-1"),
+	}, true)
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "vless groups only") {
+		t.Fatalf("external egress error = %v, want VLESS-only validation", err)
 	}
 }
 

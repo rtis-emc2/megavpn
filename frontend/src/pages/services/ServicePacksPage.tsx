@@ -76,6 +76,15 @@ function resultInstances(result: InstanceCreateResult | null, key: 'created_inst
   return Array.isArray(value) ? value as ServiceInstance[] : [];
 }
 
+function packUsesTrafficCamouflage(pack: ServicePack): boolean {
+  return (pack.components || []).some((component) => {
+    const profile = String(component.spec?.service_profile || '').trim().toLowerCase();
+    if (['ws_camouflage_edge', 'nginx_ws_backend', 'grpc_edge', 'nginx_grpc_backend'].includes(profile)) return true;
+    const definition = safeJSON(component.spec);
+    return definition.includes('{{camouflage_path}}') || definition.includes('{{fallback_upstream_url}}');
+  });
+}
+
 export function ServicePacksPage() {
   const { t } = useTranslation();
   const packs = useServicePacks();
@@ -183,9 +192,8 @@ export function ServicePacksPage() {
           ]}
         />
       </QueryBoundary>
-      <Drawer title={mode === 'create' ? t('servicePacks.createTitle') : packLabel(selected)} open={mode !== 'detail' || Boolean(selected)} onClose={() => { setSelected(null); setMode('detail'); }}>
+      <Drawer size="wide" title={mode === 'create' ? t('servicePacks.createTitle') : packLabel(selected)} open={mode !== 'detail' || Boolean(selected)} onClose={() => { setSelected(null); setMode('detail'); }}>
         <div className="page-stack">
-          <ServicesTabs />
           {notice ? <div role={notice.includes(':') ? 'alert' : 'status'}>{notice}</div> : null}
           {mode === 'detail' && selected ? (
             <PackDetail pack={selected} busy={busy} onEdit={() => openDrawer('edit', selected)} onCreate={() => openDrawer('create-instance', selected)} onConfirm={setConfirm} />
@@ -282,6 +290,7 @@ function CreateFromPackForm({ pack, nodes, busy, result, onConfirm }: {
   const [fallbackUpstreamURL, setFallbackUpstreamURL] = useState('');
   const [fallbackHostHeader, setFallbackHostHeader] = useState('');
   const [fallbackSNI, setFallbackSNI] = useState('');
+  const usesTrafficCamouflage = packUsesTrafficCamouflage(pack);
 
   const input: PackInstanceForm = useMemo(() => ({
     nodeId,
@@ -296,7 +305,12 @@ function CreateFromPackForm({ pack, nodes, busy, result, onConfirm }: {
   const jobs = resultJobs(result);
   const created = resultInstances(result, 'created_instances');
   const existing = resultInstances(result, 'existing_instances');
-  const canCreate = Boolean(nodeId && (!pack.requires_endpoint_host || endpointHost) && !busy);
+  const canCreate = Boolean(
+    nodeId
+    && (!pack.requires_endpoint_host || endpointHost)
+    && (!usesTrafficCamouflage || fallbackUpstreamURL)
+    && !busy,
+  );
 
   return (
     <Card>
@@ -306,32 +320,42 @@ function CreateFromPackForm({ pack, nodes, busy, result, onConfirm }: {
             <Badge>{pack.key}</Badge>
             <Badge>{t('servicePacks.noSeparateValidation')}</Badge>
           </Toolbar>
-          <FormGrid>
-            <FormField label={t('instances.node')}>
-              <Select value={nodeId} onChange={(event) => setNodeId(event.target.value)}>
-                <option value="">{t('instances.selectNode')}</option>
-                {nodes.map((node) => <option key={node.id} value={node.id}>{node.name || node.id}</option>)}
-              </Select>
-            </FormField>
-            <FormField label={t('servicePacks.baseName')}>
-              <TextField value={baseName} onChange={(event) => setBaseName(event.target.value)} />
-            </FormField>
-            <FormField label={t('instances.endpointHost')}>
-              <TextField value={endpointHost} onChange={(event) => setEndpointHost(event.target.value)} />
-            </FormField>
-            <FormField label={t('servicePacks.camouflagePath')}>
-              <TextField value={camouflagePath} onChange={(event) => setCamouflagePath(event.target.value)} />
-            </FormField>
-            <FormField label={t('servicePacks.fallbackUpstream')}>
-              <TextField value={fallbackUpstreamURL} onChange={(event) => setFallbackUpstreamURL(event.target.value)} />
-            </FormField>
-            <FormField label={t('servicePacks.fallbackHostHeader')}>
-              <TextField value={fallbackHostHeader} onChange={(event) => setFallbackHostHeader(event.target.value)} />
-            </FormField>
-            <FormField label={t('servicePacks.fallbackSNI')}>
-              <TextField value={fallbackSNI} onChange={(event) => setFallbackSNI(event.target.value)} />
-            </FormField>
-          </FormGrid>
+          <section className="form-section">
+            <h3 className="form-section-title">{t('servicePacks.deploymentSection')}</h3>
+            <FormGrid>
+              <FormField label={t('instances.node')} required>
+                <Select required value={nodeId} onChange={(event) => setNodeId(event.target.value)}>
+                  <option value="">{t('instances.selectNode')}</option>
+                  {nodes.map((node) => <option key={node.id} value={node.id}>{node.name || node.id}</option>)}
+                </Select>
+              </FormField>
+              <FormField label={t('servicePacks.baseName')} hint={t('servicePacks.baseNameHint')}>
+                <TextField value={baseName} placeholder="edge-access" onChange={(event) => setBaseName(event.target.value)} />
+              </FormField>
+              <FormField label={t('instances.endpointHost')} required={Boolean(pack.requires_endpoint_host)} hint={t('servicePacks.endpointHostHint')}>
+                <TextField required={Boolean(pack.requires_endpoint_host)} value={endpointHost} placeholder="vpn.example.com" onChange={(event) => setEndpointHost(event.target.value)} />
+              </FormField>
+            </FormGrid>
+          </section>
+          {usesTrafficCamouflage ? (
+            <section className="form-section">
+              <h3 className="form-section-title">{t('servicePacks.camouflageSection')}</h3>
+              <FormGrid>
+                <FormField label={t('servicePacks.camouflagePath')} hint={t('servicePacks.camouflagePathHint')}>
+                  <TextField value={camouflagePath} placeholder="/access" onChange={(event) => setCamouflagePath(event.target.value)} />
+                </FormField>
+                <FormField label={t('servicePacks.fallbackUpstream')} required hint={t('servicePacks.fallbackUpstreamHint')}>
+                  <TextField required type="url" value={fallbackUpstreamURL} placeholder="https://www.example.com" onChange={(event) => setFallbackUpstreamURL(event.target.value)} />
+                </FormField>
+                <FormField label={t('servicePacks.fallbackHostHeader')} hint={t('servicePacks.fallbackHostHeaderHint')}>
+                  <TextField value={fallbackHostHeader} placeholder="www.example.com" onChange={(event) => setFallbackHostHeader(event.target.value)} />
+                </FormField>
+                <FormField label={t('servicePacks.fallbackSNI')} hint={t('servicePacks.fallbackSNIHint')}>
+                  <TextField value={fallbackSNI} placeholder="www.example.com" onChange={(event) => setFallbackSNI(event.target.value)} />
+                </FormField>
+              </FormGrid>
+            </section>
+          ) : null}
           <Checkbox label={t('servicePacks.autoInstallRuntime')} checked={autoInstallRuntime} onChange={(event) => setAutoInstallRuntime(event.target.checked)} />
           <Toolbar>
             <Button variant="primary" icon={<PackagePlus size={16} />} disabled={!canCreate} onClick={() => onConfirm({ type: 'create-instance', pack, input })}>{t('common.create')}</Button>

@@ -528,6 +528,7 @@ describe('NodesPage', () => {
       });
 
       if (method === 'GET' && url.pathname === '/api/v1/auth/me') return json(authPayload);
+      if (method === 'GET' && url.pathname === '/api/v1/version') return json({ service: 'megavpn-api', version: '8.0.0-pre.2', agent_target_version: '8.0.0-pre.2', agent_protocol_version: 'v1' });
       if (method === 'GET' && url.pathname === '/api/v1/nodes') return json(nodeList);
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-1') return json(currentNode);
       if (method === 'GET' && url.pathname === '/api/v1/nodes/node-created' && createdNode) return json(createdNode);
@@ -693,8 +694,8 @@ describe('NodesPage', () => {
           return json({ error: messages[actionErrors.enrollmentCreate] || 'enrollment token create failed' }, actionErrors.enrollmentCreate);
         }
         if (emptyEnrollmentIssueResponse) return json({ id: 'token-empty', node_id: 'node-1', token_hint: 'empty...token', status: 'active', expires_at: '2026-07-10T08:05:00Z', created_at: '2026-07-09T08:05:00Z' }, 201);
-        currentEnrollmentTokens = [{ id: 'token-new', node_id: 'node-1', token_hint: 'enroll...token', status: 'active', expires_at: '2026-08-10T08:05:00Z', created_at: '2026-07-09T08:05:00Z' }, ...currentEnrollmentTokens.map((token) => ({ ...token, status: token.status === 'active' ? 'revoked' : token.status }))];
-        return json({ id: 'token-new', node_id: 'node-1', token: 'enroll-secret-token', token_hint: 'enroll...token', status: 'active', expires_at: '2026-08-10T08:05:00Z', created_at: '2026-07-09T08:05:00Z' }, 201);
+        currentEnrollmentTokens = [{ id: 'token-new', node_id: 'node-1', token_hint: 'enroll...token', status: 'active', expires_at: '2099-08-10T08:05:00Z', created_at: '2026-07-09T08:05:00Z' }, ...currentEnrollmentTokens.map((token) => ({ ...token, status: token.status === 'active' ? 'revoked' : token.status }))];
+        return json({ id: 'token-new', node_id: 'node-1', token: 'enroll-secret-token', token_hint: 'enroll...token', status: 'active', expires_at: '2099-08-10T08:05:00Z', created_at: '2026-07-09T08:05:00Z' }, 201);
       }
       if (method === 'POST' && url.pathname === '/api/v1/nodes/node-1/enrollment-token/rotate') {
         if (actionErrors.enrollmentRotate) {
@@ -710,8 +711,8 @@ describe('NodesPage', () => {
           return json({ error: messages[actionErrors.enrollmentRotate] || 'enrollment token rotate failed' }, actionErrors.enrollmentRotate);
         }
         if (emptyEnrollmentIssueResponse) return json({ id: 'token-empty-rotate', node_id: 'node-1', token_hint: 'empty...rotate', status: 'active', expires_at: '2026-07-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' });
-        currentEnrollmentTokens = [{ id: 'token-rotated', node_id: 'node-1', token_hint: 'rotate...token', status: 'active', expires_at: '2026-08-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' }, ...currentEnrollmentTokens.map((token) => ({ ...token, status: token.status === 'active' ? 'revoked' : token.status }))];
-        return json({ id: 'token-rotated', node_id: 'node-1', token: 'enroll-rotated-token', token_hint: 'rotate...token', status: 'active', expires_at: '2026-08-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' });
+        currentEnrollmentTokens = [{ id: 'token-rotated', node_id: 'node-1', token_hint: 'rotate...token', status: 'active', expires_at: '2099-08-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' }, ...currentEnrollmentTokens.map((token) => ({ ...token, status: token.status === 'active' ? 'revoked' : token.status }))];
+        return json({ id: 'token-rotated', node_id: 'node-1', token: 'enroll-rotated-token', token_hint: 'rotate...token', status: 'active', expires_at: '2099-08-10T08:06:00Z', created_at: '2026-07-09T08:06:00Z' });
       }
       if (method === 'DELETE' && url.pathname.startsWith('/api/v1/nodes/node-1/enrollment-tokens/')) {
         const tokenId = url.pathname.split('/').pop() || '';
@@ -1116,7 +1117,10 @@ describe('NodesPage', () => {
 
     await userEvent.click(screen.getByRole('tab', { name: 'Runtime / Agent' }));
     expect(drawer.querySelector('.node-workspace-actions')).not.toBeNull();
-    expect(drawer.querySelectorAll('.node-workspace-status .status-badge')).toHaveLength(3);
+    expect(drawer.querySelectorAll('.node-workspace-status .status-badge')).toHaveLength(4);
+    expect(screen.getByText('Target agent version')).toBeInTheDocument();
+    expect(screen.getByText('Update required')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open agent update' })).toBeInTheDocument();
     expect((await screen.findAllByText('connected')).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/<script>alert\(1\)<\/script>/).length).toBeGreaterThan(0);
     expect(document.querySelector('script')).toBeNull();

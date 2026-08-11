@@ -2,12 +2,9 @@ package http
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	nethttp "net/http"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 )
 
@@ -32,29 +29,10 @@ func (s *Server) listAddressPools(w nethttp.ResponseWriter, r *nethttp.Request) 
 	}
 	inventory, err := store.AddressPoolInventory(r.Context())
 	if err != nil {
-		if isAddressPoolCatalogUnavailableHTTP(err) {
-			writeJSON(w, 200, domain.AddressPoolInventory{Spaces: []domain.AddressPoolSpace{}, Allocations: []domain.AddressPoolAllocation{}})
-			return
-		}
 		writeErr(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, 200, inventory)
-}
-
-func isAddressPoolCatalogUnavailableHTTP(err error) bool {
-	if err == nil {
-		return false
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "42P01", "42703":
-			return true
-		}
-	}
-	text := strings.ToLower(fmt.Sprint(err))
-	return strings.Contains(text, "address_pool_") && (strings.Contains(text, "does not exist") || strings.Contains(text, "undefined"))
 }
 
 func (s *Server) createAddressPoolSpace(w nethttp.ResponseWriter, r *nethttp.Request) {

@@ -106,6 +106,35 @@ func (s *Server) listExternalEgressProfiles(w nethttp.ResponseWriter, r *nethttp
 	writeJSON(w, nethttp.StatusOK, profiles)
 }
 
+func (s *Server) listExternalEgressProfilePage(w nethttp.ResponseWriter, r *nethttp.Request) {
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	protocol := strings.TrimSpace(r.URL.Query().Get("protocol"))
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	health := strings.TrimSpace(r.URL.Query().Get("health"))
+	if len(search) > 200 || len(protocol) > 64 || len(status) > 32 || len(health) > 32 {
+		writeErr(w, nethttp.StatusBadRequest, "external egress profile filter is too long")
+		return
+	}
+	if status != "" && status != "active" && status != "draft" && status != "disabled" {
+		writeErr(w, nethttp.StatusBadRequest, "unsupported external egress profile status filter")
+		return
+	}
+	if health != "" && health != "healthy" && health != "attention" && health != "pending" && health != "undeployed" {
+		writeErr(w, nethttp.StatusBadRequest, "unsupported external egress deployment health filter")
+		return
+	}
+	page, err := s.store.ListExternalEgressProfilePage(
+		r.Context(), search, protocol, status, health,
+		boundedQueryInt(r, "limit", 25, 1, 100),
+		boundedQueryInt(r, "offset", 0, 0, 10000000),
+	)
+	if err != nil {
+		writeErr(w, nethttp.StatusInternalServerError, "list external egress profile page failed")
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, page)
+}
+
 func (s *Server) getExternalEgressProfile(w nethttp.ResponseWriter, r *nethttp.Request) {
 	profile, err := s.store.GetExternalEgressProfile(r.Context(), strings.TrimSpace(r.PathValue("profile_id")))
 	if errors.Is(err, domain.ErrExternalEgressProfileNotFound) {

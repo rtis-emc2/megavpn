@@ -50,7 +50,7 @@ describe('Modal accessibility lifecycle', () => {
 
   it('applies the wide workspace variant to drawers', () => {
     render(
-      <Drawer title="Node workspace" open onClose={() => undefined} size="wide">
+      <Drawer title="Node workspace" open onClose={() => undefined}>
         <div>Node details</div>
       </Drawer>,
     );

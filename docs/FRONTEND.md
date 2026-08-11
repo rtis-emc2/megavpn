@@ -1,6 +1,6 @@
 # Control Plane Frontend
 
-**Release:** `8.0.0-pre.1`
+**Release:** `8.0.0-pre.2`
 
 The supported Control Plane UI is the React and TypeScript application in
 `frontend/`. There is no second maintained UI implementation.

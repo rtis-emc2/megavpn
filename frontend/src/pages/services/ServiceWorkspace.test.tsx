@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ServicePack } from '../../shared/api/types';
 import i18n from '../../shared/i18n';
 import { RuntimeArtifactsPage } from './RuntimeArtifactsPage';
 import { ServicePacksPage } from './ServicePacksPage';
@@ -14,7 +15,7 @@ type FetchCall = {
   body?: Record<string, unknown>;
 };
 
-const pack = {
+const pack: ServicePack = {
   key: 'xray_vless_reality',
   label: 'Xray VLESS / Reality',
   description: 'Create managed Xray VLESS instance',
@@ -29,6 +30,31 @@ const pack = {
   ],
   platform_notes: ['<script>not html</script>'],
   recommendations: ['Check DNS before apply'],
+};
+
+const camouflagePack: ServicePack = {
+  ...pack,
+  key: 'xray_nginx_http_edge',
+  label: 'Xray VLESS WebSocket Camouflage',
+  description: 'Create Xray VLESS WebSocket behind an Nginx fallback website',
+  components: [
+    {
+      label: 'Xray VLESS/WebSocket Backend',
+      service_code: 'xray-core',
+      preset_key: 'nginx_ws_backend',
+      endpoint_port: 7080,
+      requires_endpoint_host: true,
+      spec: { service_profile: 'nginx_ws_backend', path: '{{camouflage_path}}' },
+    },
+    {
+      label: 'Nginx WebSocket Camouflage Edge',
+      service_code: 'nginx',
+      preset_key: 'ws_camouflage_edge',
+      endpoint_port: 443,
+      requires_endpoint_host: true,
+      spec: { service_profile: 'ws_camouflage_edge', fallback_upstream_url: '{{fallback_upstream_url}}' },
+    },
+  ],
 };
 
 const runtimeArtifact = {
@@ -75,10 +101,12 @@ function renderWithQuery(element: ReactElement) {
 describe('Services workspace', () => {
   const calls: FetchCall[] = [];
   let createStatus = 201;
+  let returnedPacks: ServicePack[] = [pack];
 
   beforeEach(async () => {
     calls.length = 0;
     createStatus = 201;
+    returnedPacks = [pack];
     window.localStorage.clear();
     await i18n.changeLanguage('en');
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -87,7 +115,7 @@ describe('Services workspace', () => {
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
       calls.push({ method, path: `${url.pathname}${url.search}`, body });
 
-      if (method === 'GET' && url.pathname === '/api/v1/service-packs') return json([pack]);
+      if (method === 'GET' && url.pathname === '/api/v1/service-packs') return json(returnedPacks);
       if (method === 'GET' && url.pathname === '/api/v1/nodes') return json([{ id: 'node-1', name: 'Edge One', status: 'active' }]);
       if (method === 'GET' && url.pathname.startsWith('/api/v1/jobs/')) return json(job(url.pathname.split('/')[4]));
       if (method === 'GET' && url.pathname.endsWith('/logs')) return json([]);
@@ -134,9 +162,9 @@ describe('Services workspace', () => {
     renderWithQuery(<ServicePacksPage />);
     expect((await screen.findAllByText('Xray VLESS / Reality')).length).toBeGreaterThan(0);
     await userEvent.click(screen.getAllByRole('button', { name: 'Create from pack' })[0]);
-    await userEvent.selectOptions(await screen.findByLabelText('Node'), 'node-1');
-    await userEvent.clear(screen.getByLabelText('Endpoint host'));
-    await userEvent.type(screen.getByLabelText('Endpoint host'), 'vpn.example.test');
+    await userEvent.selectOptions(await screen.findByLabelText(/^Node/), 'node-1');
+    await userEvent.clear(screen.getByLabelText(/^Endpoint host/));
+    await userEvent.type(screen.getByLabelText(/^Endpoint host/), 'vpn.example.test');
     await userEvent.click(screen.getAllByRole('button', { name: 'Create' }).at(-1)!);
     expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/service-packs/xray_vless_reality/instances')).toBe(false);
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
@@ -144,6 +172,26 @@ describe('Services workspace', () => {
     await screen.findByText('job-apply');
     expect(screen.getByRole('link', { name: 'Service instances' })).toHaveAttribute('href', '/services/instances');
     expect(screen.getByRole('link', { name: 'Open Jobs' })).toHaveAttribute('href', '/operations/jobs');
+  });
+
+  it('uses a wide focused drawer and explains camouflage fallback fields', async () => {
+    returnedPacks = [camouflagePack];
+    renderWithQuery(<ServicePacksPage />);
+
+    expect((await screen.findAllByText('Xray VLESS WebSocket Camouflage')).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Create from pack' })[0]);
+
+    const dialog = screen.getByRole('dialog', { name: 'Xray VLESS WebSocket Camouflage' });
+    expect(dialog).toHaveClass('drawer-wide');
+    expect(within(dialog).queryByRole('link', { name: 'Instances' })).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/Full HTTP\(S\) URL opened for ordinary browser traffic/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Host header sent to the fallback website/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/TLS server name used for an HTTPS fallback/)).toBeInTheDocument();
+
+    const create = within(dialog).getByRole('button', { name: 'Create' });
+    expect(create).toBeDisabled();
+    await userEvent.type(within(dialog).getByLabelText(/^Fallback upstream URL/), 'https://www.example.test');
+    expect(create).toBeEnabled();
   });
 
   it('shows service pack create errors distinctly for 403, 422 and 409', async () => {

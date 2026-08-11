@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import type {
   ClientAccessGroup,
@@ -116,6 +117,19 @@ function formFromGroup(group?: ClientAccessGroup | null): GroupForm {
 }
 
 function formToInput(form: GroupForm): ClientAccessGroupInput {
+  if (form.serviceCode !== 'vless') {
+    return {
+      service_code: form.serviceCode,
+      group_key: form.groupKey.trim(),
+      display_name: form.displayName.trim(),
+      description: form.description.trim(),
+      status: form.status,
+      policy_json: {},
+      scope_mode: form.scopeMode,
+      auto_apply_new_instances: form.autoApplyNewInstances,
+      external_egress_profile_id: null,
+    };
+  }
   const usesExternalEgress = Boolean(form.externalEgressProfileID.trim());
   const policy: VLESSAccessGroupPolicy = {
     access_mode: usesExternalEgress ? 'instance_default' : form.routeMode,
@@ -147,28 +161,51 @@ function refsFromText(value: string): string[] {
     .filter(Boolean);
 }
 
-function policySummary(group: ClientAccessGroup) {
-  if (group.external_egress_profile_id) return `external provider · ${group.external_egress_profile_id}`;
+function serviceDisplayName(service: ClientAccessService, t: TFunction) {
+  return t(`clients.groups.services.${service.service_code}.name`, {
+    defaultValue: service.display_name || service.service_code,
+  });
+}
+
+function groupServiceDisplayName(group: ClientAccessGroup, services: ClientAccessService[], t: TFunction) {
+  const service = services.find((item) => item.service_code === group.service_code);
+  return service ? serviceDisplayName(service, t) : text(group.service_code);
+}
+
+function policySummary(group: ClientAccessGroup, t: TFunction) {
+  if (group.service_code !== 'vless') return t('clients.groups.standardAccess');
+  if (group.external_egress_profile_id) return t('clients.groups.externalProviderRoute');
   const policy = getPolicy(group);
-  const parts = [policy.access_mode || 'instance_default'];
-  if (policy.egress_node_id) parts.push(`egress:${policy.egress_node_id}`);
-  if (policy.target_instance_id) parts.push(`target:${policy.target_instance_id}`);
-  if (policy.ad_block) parts.push('ad-block');
+  const routeKey = policy.access_mode || 'instance_default';
+  const routeLabels: Record<string, string> = {
+    instance_default: t('clients.groups.route.instanceDefault'),
+    local_breakout: t('clients.groups.route.localBreakout'),
+    egress_node: t('clients.groups.route.egressNode'),
+    instance_only: t('clients.groups.route.instanceOnly'),
+    block: t('clients.groups.route.block'),
+  };
+  const parts = [routeLabels[routeKey] || routeKey];
+  if (policy.ad_block) parts.push(t('clients.groups.adBlockShort'));
   return parts.join(' · ');
 }
 
-function scopeSummary(group: ClientAccessGroup) {
-  return `${group.scope_mode || 'all_active_instances'} · ${group.affected_instances ?? 0}`;
+function scopeSummary(group: ClientAccessGroup, t: TFunction) {
+  const labels: Record<string, string> = {
+    all_active_instances: t('clients.groups.scopeAll'),
+    selected_instances: t('clients.groups.scopeSelected'),
+    all_except_selected: t('clients.groups.scopeExcept'),
+  };
+  return `${labels[group.scope_mode || 'all_active_instances']} · ${t('clients.groups.instanceCount', { count: group.affected_instances ?? 0 })}`;
 }
 
-function syncSummary(group: ClientAccessGroup) {
+function syncSummary(group: ClientAccessGroup, t: TFunction) {
   const pending = group.pending_sync_count || 0;
   const failed = group.failed_sync_count || 0;
   const applied = group.applied_sync_count || 0;
-  if (failed > 0) return `failed ${failed}`;
-  if (pending > 0) return `pending ${pending}`;
-  if (applied > 0) return `applied ${applied}`;
-  return 'not synced';
+  if (failed > 0) return { status: 'failed', label: t('clients.groups.syncFailed', { count: failed }) };
+  if (pending > 0) return { status: 'pending', label: t('clients.groups.syncPending', { count: pending }) };
+  if (applied > 0) return { status: 'applied', label: t('clients.groups.syncAppliedCount', { count: applied }) };
+  return { status: 'unknown', label: t('clients.groups.syncNotStarted') };
 }
 
 function serviceCapabilityLabel(service: ClientAccessService) {
@@ -176,8 +213,8 @@ function serviceCapabilityLabel(service: ClientAccessService) {
   return service.status || 'catalog_only';
 }
 
-function isVLESSServiceReady(service?: ClientAccessService) {
-  return Boolean(service?.service_code === 'vless' && service.supports_groups && service.supports_membership && service.supports_materialization);
+function isServiceReady(service?: ClientAccessService) {
+  return Boolean(service?.status === 'active' && service.supports_groups && service.supports_membership && service.supports_materialization);
 }
 
 function ResultSummary({ result }: { result?: ClientAccessGroupMembershipResult | null }) {
@@ -237,7 +274,7 @@ function ResultSummary({ result }: { result?: ClientAccessGroupMembershipResult 
 export function ClientGroupsPage() {
   const { t } = useTranslation();
   const services = useClientAccessServices();
-  const [serviceFilter, setServiceFilter] = useState('vless');
+  const [serviceFilter, setServiceFilter] = useState('all');
   const groups = useClientAccessGroups(serviceFilter === 'all' ? undefined : serviceFilter);
   const [formGroup, setFormGroup] = useState<ClientAccessGroup | null | undefined>(undefined);
   const [membersGroup, setMembersGroup] = useState<ClientAccessGroup | null>(null);
@@ -245,41 +282,41 @@ export function ClientGroupsPage() {
   const [syncGroup, setSyncGroup] = useState<ClientAccessGroup | null>(null);
   const [success, setSuccess] = useState('');
 
-  const vlessService = useMemo(() => (services.data || []).find((service) => service.service_code === 'vless'), [services.data]);
+  const readyServices = useMemo(() => (services.data || []).filter(isServiceReady), [services.data]);
+  const hasReadyService = readyServices.length > 0;
 
   return (
     <PageScaffold
       title={t('clients.groupsTitle')}
       subtitle={t('clients.groupsSubtitle')}
-      actions={<Button disabled={!isVLESSServiceReady(vlessService)} title={isVLESSServiceReady(vlessService) ? undefined : t('common.unsupportedAction')} onClick={() => setFormGroup(null)}>{t('clients.groups.createVless')}</Button>}
+      actions={<Button variant="primary" disabled={!hasReadyService} title={hasReadyService ? undefined : t('common.unsupportedAction')} onClick={() => setFormGroup(null)}>{t('clients.groups.createGroup')}</Button>}
     >
       {success ? <div className="notice"><strong>{success}</strong></div> : null}
       <QueryBoundary isLoading={services.isLoading} isError={services.isError} error={services.error} refetch={() => void services.refetch()}>
         <DataTable
           title={t('clients.groups.serviceCatalog')}
           rows={services.data || []}
+          responsive="wide"
           columns={[
-            { key: 'service', header: t('instances.service'), render: (service) => <strong>{service.display_name || service.service_code}</strong> },
-            { key: 'status', header: t('common.status'), render: (service) => <StatusBadge status={serviceCapabilityLabel(service)} /> },
-            { key: 'capabilities', header: t('common.scope'), render: (service) => (
-              <span className="muted">{[
-                service.supports_groups ? t('clients.groups.groupsSupported') : null,
-                service.supports_membership ? t('clients.groups.membersSupported') : null,
-                service.supports_materialization ? t('clients.groups.materializationSupported') : null,
-              ].filter(Boolean).join(' · ') || t('common.catalogOnly')}</span>
+            { key: 'service', header: t('instances.service'), render: (service) => <strong>{serviceDisplayName(service, t)}</strong> },
+            { key: 'status', header: t('clients.groups.availability'), render: (service) => (
+              <StatusBadge
+                status={serviceCapabilityLabel(service)}
+                label={isServiceReady(service) ? t('clients.groups.runtimeReady') : t('clients.groups.planned')}
+              />
             ) },
-            { key: 'description', header: t('common.description'), render: (service) => text(service.description) },
+            { key: 'description', header: t('common.description'), render: (service) => t(`clients.groups.services.${service.service_code}.description`, { defaultValue: service.description }) },
           ]}
         />
       </QueryBoundary>
 
       <div className="toolbar client-groups-filter">
-        <FormField label={t('clients.serviceFilter')}>
+        <FormField label={t('clients.groups.filterProtocol')}>
           <Select value={serviceFilter} onChange={(event) => setServiceFilter(event.currentTarget.value)}>
             <option value="all">{t('common.all')}</option>
-            {(services.data || []).map((service) => (
+            {readyServices.map((service) => (
               <option value={service.service_code} key={service.service_code}>
-                {service.display_name || service.service_code} · {service.status || 'unknown'}
+                {serviceDisplayName(service, t)}
               </option>
             ))}
           </Select>
@@ -290,21 +327,27 @@ export function ClientGroupsPage() {
         <DataTable
           title={t('clients.groupsTitle')}
           rows={groups.data || []}
+          responsive="wide"
           columns={[
-            { key: 'name', header: t('common.name'), render: (row) => <strong>{text(row.display_name || row.group_key || row.id)}</strong> },
-            { key: 'key', header: t('clients.groups.groupKey'), render: (row) => <code>{text(row.group_key)}</code> },
-            { key: 'service', header: t('instances.service'), render: (row) => <code>{text(row.service_code)}</code> },
+            { key: 'name', header: t('common.name'), render: (row) => (
+              <div><strong>{text(row.display_name || row.group_key || row.id)}</strong><br /><code>{text(row.group_key)}</code></div>
+            ) },
+            { key: 'service', header: t('instances.service'), render: (row) => groupServiceDisplayName(row, services.data || [], t) },
             { key: 'status', header: t('common.status'), render: (row) => <StatusBadge status={row.status} /> },
             { key: 'members', header: t('clients.members'), render: (row) => `${row.active_member_count ?? 0}/${row.member_count ?? 0}` },
-            { key: 'scope', header: t('common.scope'), render: (row) => text(scopeSummary(row)) },
-            { key: 'policy', header: t('clients.groups.policy'), render: (row) => text(policySummary(row)) },
-            { key: 'sync', header: t('common.sync'), render: (row) => <StatusBadge status={syncSummary(row)} /> },
+            { key: 'scope', header: t('common.scope'), render: (row) => (
+              <div>{scopeSummary(row, t)}<br /><span className="muted">{policySummary(row, t)}</span></div>
+            ) },
+            { key: 'sync', header: t('common.sync'), render: (row) => {
+              const summary = syncSummary(row, t);
+              return <StatusBadge status={summary.status} label={summary.label} />;
+            } },
             { key: 'actions', header: t('common.actions'), render: (row) => (
-              <div className="toolbar">
+              <div className="toolbar client-groups-actions">
                 <Button onClick={() => setMembersGroup(row)}>{t('clients.groups.membersAction')}</Button>
-                <Button onClick={() => setFormGroup(row)}>{t('clients.groups.policyAction')}</Button>
+                <Button onClick={() => setFormGroup(row)}>{t('clients.groups.settingsAction')}</Button>
                 <Button onClick={() => setScopeGroup(row)}>{t('clients.groups.scopeAction')}</Button>
-                <Button onClick={() => setSyncGroup(row)}>{t('clients.groups.syncAction')}</Button>
+                <Button variant="primary" onClick={() => setSyncGroup(row)}>{t('clients.groups.recreateAction')}</Button>
               </div>
             ) },
           ]}
@@ -318,7 +361,7 @@ export function ClientGroupsPage() {
         onSuccess={(message) => setSuccess(message)}
       />
       <MembersDrawer group={membersGroup} onClose={() => setMembersGroup(null)} onSuccess={(message) => setSuccess(message)} />
-      <ScopeDrawer group={scopeGroup} onClose={() => setScopeGroup(null)} onSuccess={(message) => setSuccess(message)} />
+      <ScopeDrawer group={scopeGroup} services={services.data || []} onClose={() => setScopeGroup(null)} onSuccess={(message) => setSuccess(message)} />
       <SyncDrawer group={syncGroup} onClose={() => setSyncGroup(null)} onSuccess={(message) => setSuccess(message)} />
     </PageScaffold>
   );
@@ -335,7 +378,7 @@ function GroupFormDrawer({ group, services, onClose, onSuccess }: {
   const isEdit = Boolean(group);
 
   return (
-    <Drawer open={open} onClose={onClose} title={isEdit ? t('clients.groups.editGroup') : t('clients.groups.createVless')}>
+    <Drawer open={open} onClose={onClose} title={isEdit ? t('clients.groups.editGroup') : t('clients.groups.createGroup')}>
       {open ? (
         <GroupFormDrawerContent
           key={group?.id || 'new'}
@@ -386,13 +429,9 @@ function GroupFormDrawerContent({ group, services, onClose, onSuccess }: {
   return (
     <div className="page-stack">
       <FormGrid>
-        <FormField label={t('instances.service')}>
+        <FormField label={t('clients.groups.groupProtocol')}>
           <Select value={form.serviceCode} onChange={(event) => set('serviceCode', event.currentTarget.value)} disabled={isEdit}>
-            {services.map((service) => (
-              <option key={service.service_code} value={service.service_code} disabled={!isVLESSServiceReady(service)}>
-                {service.display_name || service.service_code} · {serviceCapabilityLabel(service)}
-              </option>
-            ))}
+            {services.filter(isServiceReady).map((service) => <option key={service.service_code} value={service.service_code}>{serviceDisplayName(service, t)}</option>)}
           </Select>
         </FormField>
         <FormField label={t('clients.groups.groupKey')}>
@@ -407,24 +446,28 @@ function GroupFormDrawerContent({ group, services, onClose, onSuccess }: {
             <option value="disabled">{t('common.disabled')}</option>
           </Select>
         </FormField>
-        <FormField label={t('clients.groups.routeMode')}>
-          <Select disabled={Boolean(form.externalEgressProfileID)} value={form.routeMode} onChange={(event) => set('routeMode', event.currentTarget.value)}>
-            <option value="instance_default">{t('clients.groups.route.instanceDefault')}</option>
-            <option value="local_breakout">{t('clients.groups.route.localBreakout')}</option>
-            <option value="egress_node">{t('clients.groups.route.egressNode')}</option>
-            <option value="instance_only">{t('clients.groups.route.instanceOnly')}</option>
-            <option value="block">{t('clients.groups.route.block')}</option>
-          </Select>
-        </FormField>
-        <FormField label={t('clients.groups.outboundTag')}>
-          <TextField disabled={Boolean(form.externalEgressProfileID)} value={form.outboundTag} onChange={(event) => set('outboundTag', event.currentTarget.value)} />
-        </FormField>
-        {!form.externalEgressProfileID && form.routeMode === 'egress_node' ? (
+        {form.serviceCode === 'vless' ? (
+          <FormField label={t('clients.groups.routeMode')}>
+            <Select disabled={Boolean(form.externalEgressProfileID)} value={form.routeMode} onChange={(event) => set('routeMode', event.currentTarget.value)}>
+              <option value="instance_default">{t('clients.groups.route.instanceDefault')}</option>
+              <option value="local_breakout">{t('clients.groups.route.localBreakout')}</option>
+              <option value="egress_node">{t('clients.groups.route.egressNode')}</option>
+              <option value="instance_only">{t('clients.groups.route.instanceOnly')}</option>
+              <option value="block">{t('clients.groups.route.block')}</option>
+            </Select>
+          </FormField>
+        ) : null}
+        {form.serviceCode === 'vless' ? (
+          <FormField label={t('clients.groups.outboundTag')}>
+            <TextField disabled={Boolean(form.externalEgressProfileID)} value={form.outboundTag} onChange={(event) => set('outboundTag', event.currentTarget.value)} />
+          </FormField>
+        ) : null}
+        {form.serviceCode === 'vless' && !form.externalEgressProfileID && form.routeMode === 'egress_node' ? (
           <FormField label={t('clients.groups.egressNodeId')}>
             <TextField value={form.egressNodeID} onChange={(event) => set('egressNodeID', event.currentTarget.value)} required />
           </FormField>
         ) : null}
-        {!form.externalEgressProfileID && form.routeMode === 'instance_only' ? (
+        {form.serviceCode === 'vless' && !form.externalEgressProfileID && form.routeMode === 'instance_only' ? (
           <FormField label={t('clients.groups.targetInstanceId')}>
             <TextField value={form.targetInstanceID} onChange={(event) => set('targetInstanceID', event.currentTarget.value)} required />
           </FormField>
@@ -436,7 +479,7 @@ function GroupFormDrawerContent({ group, services, onClose, onSuccess }: {
             <option value="all_except_selected">{t('clients.groups.scopeExcept')}</option>
           </Select>
         </FormField>
-        {canReadExternalEgress ? (
+        {form.serviceCode === 'vless' && canReadExternalEgress ? (
           <FormField full label={t('clients.groups.externalEgress')}>
             <Select
               value={form.externalEgressProfileID}
@@ -451,16 +494,16 @@ function GroupFormDrawerContent({ group, services, onClose, onSuccess }: {
                 ))
                 .map((profile) => (
                   <option value={profile.id} key={profile.id}>
-                    {profile.display_name} · {profile.protocol} · {profile.deployments?.filter((item) => item.status === 'active').length || 0} {t('externalEgress.deployments')}
+                    {profile.display_name} · {profile.protocol} · {profile.active_deployment_count ?? profile.deployments?.filter((item) => item.status === 'active').length ?? 0} {t('externalEgress.deployments')}
                   </option>
                 ))}
             </Select>
           </FormField>
         ) : null}
-        {form.externalEgressProfileID ? <p className="muted">{t('clients.groups.externalEgressHint')}</p> : null}
+        {form.serviceCode === 'vless' && form.externalEgressProfileID ? <p className="muted">{t('clients.groups.externalEgressHint')}</p> : null}
         <FormField label={t('clients.groups.options')}>
           <div className="page-stack">
-            <Checkbox checked={form.adBlock} onChange={(event) => set('adBlock', event.currentTarget.checked)} label={t('clients.groups.adBlock')} />
+            {form.serviceCode === 'vless' ? <Checkbox checked={form.adBlock} onChange={(event) => set('adBlock', event.currentTarget.checked)} label={t('clients.groups.adBlock')} /> : null}
             <Checkbox checked={form.autoApplyNewInstances} onChange={(event) => set('autoApplyNewInstances', event.currentTarget.checked)} label={t('clients.groups.autoApplyNewInstances')} />
           </div>
         </FormField>
@@ -486,7 +529,7 @@ function MembersDrawer({ group, onClose, onSuccess }: {
 }) {
   const { t } = useTranslation();
   return (
-    <Drawer open={Boolean(group)} onClose={onClose} title={group ? `${t('clients.groups.membersAction')}: ${group.display_name || group.group_key}` : t('clients.groups.membersAction')}>
+    <Drawer size="wide" open={Boolean(group)} onClose={onClose} title={group ? `${t('clients.groups.membersAction')}: ${group.display_name || group.group_key}` : t('clients.groups.membersAction')}>
       {group ? <MembersDrawerContent key={group.id} group={group} onSuccess={onSuccess} /> : null}
     </Drawer>
   );
@@ -596,7 +639,7 @@ function MembersDrawerContent({ group, onSuccess }: {
             <option value="">{t('common.all')}</option>
             <option value="active">{t('common.enabled')}</option>
             <option value="disabled">{t('common.disabled')}</option>
-            <option value="suspended">suspended</option>
+            <option value="suspended">{t('clients.groups.suspended')}</option>
           </Select>
         </FormField>
         <FormField label={t('clients.groups.assignment')}>
@@ -663,6 +706,29 @@ function MembersDrawerContent({ group, onSuccess }: {
             { key: 'assignment', header: t('clients.groups.assignment'), render: (row) => text(row.group_key || t('common.none')) },
           ]}
         />
+        <div className="toolbar toolbar-split">
+          <span className="muted">
+            {t('clients.groups.pageRange', {
+              from: (available.data?.total || 0) === 0 ? 0 : filters.offset + 1,
+              to: Math.min(filters.offset + filters.pageSize, available.data?.total || 0),
+              total: available.data?.total || 0,
+            })}
+          </span>
+          <div className="toolbar">
+            <Button
+              disabled={filters.offset === 0 || available.isFetching}
+              onClick={() => updateFilters({ offset: Math.max(0, filters.offset - filters.pageSize) })}
+            >
+              {t('clients.groups.previousPage')}
+            </Button>
+            <Button
+              disabled={filters.offset + filters.pageSize >= (available.data?.total || 0) || available.isFetching}
+              onClick={() => updateFilters({ offset: filters.offset + filters.pageSize })}
+            >
+              {t('clients.groups.nextPage')}
+            </Button>
+          </div>
+        </div>
       </QueryBoundary>
       <div className="toolbar">
         <Button disabled={!canPreview || preview.isPending} onClick={() => void runPreview()}>{preview.isPending ? t('common.loading') : t('common.preview')}</Button>
@@ -700,15 +766,16 @@ function MembersDrawerContent({ group, onSuccess }: {
   );
 }
 
-function ScopeDrawer({ group, onClose, onSuccess }: {
+function ScopeDrawer({ group, services, onClose, onSuccess }: {
   group: ClientAccessGroup | null;
+  services: ClientAccessService[];
   onClose: () => void;
   onSuccess: (message: string) => void;
 }) {
   const { t } = useTranslation();
   return (
     <Drawer open={Boolean(group)} onClose={onClose} title={group ? `${t('clients.groups.scopeAction')}: ${group.display_name || group.group_key}` : t('clients.groups.scopeAction')}>
-      {group ? <ScopeDrawerContent key={group.id} group={group} onClose={onClose} onSuccess={onSuccess} /> : null}
+      {group ? <ScopeDrawerContent key={group.id} group={group} services={services} onClose={onClose} onSuccess={onSuccess} /> : null}
     </Drawer>
   );
 }
@@ -723,8 +790,9 @@ function scopeSelection(scope?: ClientAccessGroupScope): Set<string> {
   return new Set([...(scope?.include_instance_ids || []), ...(scope?.exclude_instance_ids || [])]);
 }
 
-function ScopeDrawerContent({ group, onClose, onSuccess }: {
+function ScopeDrawerContent({ group, services, onClose, onSuccess }: {
   group: ClientAccessGroup;
+  services: ClientAccessService[];
   onClose: () => void;
   onSuccess: (message: string) => void;
 }) {
@@ -781,7 +849,11 @@ function ScopeDrawerContent({ group, onClose, onSuccess }: {
       // ErrorState renders the backend error.
     }
   };
-  const candidates = (instances.data || []).filter((instance) => instance.service_code === 'xray-core' || instance.service_code === 'xray' || instance.service_code === 'vless');
+  const runtimeCodes = new Set(
+    (services.find((service) => service.service_code === group.service_code)?.runtime_service_codes || [])
+      .map((code) => code.toLowerCase()),
+  );
+  const candidates = (instances.data || []).filter((instance) => runtimeCodes.has((instance.service_code || '').toLowerCase()));
 
   return (
     <div className="page-stack">
@@ -848,7 +920,7 @@ function SyncDrawer({ group, onClose, onSuccess }: {
 }) {
   const { t } = useTranslation();
   return (
-    <Drawer open={Boolean(group)} onClose={onClose} title={group ? `${t('clients.groups.syncAction')}: ${group.display_name || group.group_key}` : t('clients.groups.syncAction')}>
+    <Drawer size="wide" open={Boolean(group)} onClose={onClose} title={group ? `${t('clients.groups.recreateAction')}: ${group.display_name || group.group_key}` : t('clients.groups.recreateAction')}>
       {group ? <SyncDrawerContent key={group.id} group={group} onSuccess={onSuccess} /> : null}
     </Drawer>
   );
@@ -880,7 +952,7 @@ function SyncDrawerContent({ group, onSuccess }: {
     try {
       const result = await apply.mutateAsync(group.id);
       setApplyResult(result);
-      onSuccess(t('clients.groups.syncApplied'));
+      onSuccess(t('clients.groups.recreateQueued'));
       void syncState.refetch();
       setPreviewStale(true);
     } catch {
@@ -892,7 +964,7 @@ function SyncDrawerContent({ group, onSuccess }: {
     <div className="page-stack">
       <div className="toolbar">
         <Button disabled={preview.isPending} onClick={() => void runPreview()}>{preview.isPending ? t('common.loading') : t('common.preview')}</Button>
-        <Button variant="primary" disabled={!preview.data || previewStale || apply.isPending} onClick={() => void runApply()}>{apply.isPending ? t('common.loading') : t('common.apply')}</Button>
+        <Button variant="primary" disabled={!preview.data || previewStale || apply.isPending} onClick={() => void runApply()}>{apply.isPending ? t('common.loading') : t('clients.groups.recreateAction')}</Button>
         {previewStale ? <Badge>{t('clients.groups.previewStale')}</Badge> : null}
       </div>
       {preview.isError ? <ErrorState body={preview.error.message} /> : null}
@@ -901,7 +973,7 @@ function SyncDrawerContent({ group, onSuccess }: {
         <Card>
           <CardBody>
             <div className="page-stack">
-              <Badge>{t('clients.groups.syncPreview')}</Badge>
+              <Badge>{t('clients.groups.recreatePreview')}</Badge>
               <p>{t('clients.groups.syncPreviewSummary', {
                 instances: preview.data.affected_instances,
                 members: preview.data.member_count,
@@ -918,7 +990,7 @@ function SyncDrawerContent({ group, onSuccess }: {
       <ResultSummary result={applyResult} />
       <QueryBoundary isLoading={syncState.isLoading} isError={syncState.isError} error={syncState.error} refetch={() => void syncState.refetch()}>
         <DataTable
-          title={t('clients.groups.syncState')}
+          title={t('clients.groups.recreateState')}
           rows={syncState.data || []}
           columns={[
             { key: 'instance', header: t('instances.instance'), render: (row) => <code>{row.instance_id}</code> },

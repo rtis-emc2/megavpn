@@ -2,16 +2,99 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/rtis-emc2/megavpn/internal/clientaccess"
 	"github.com/rtis-emc2/megavpn/internal/domain"
 	"github.com/rtis-emc2/megavpn/internal/platform/id"
 )
+
+func (s *Store) upsertInstanceClientAccessProjection(ctx context.Context, instanceID, clientID string, group domain.ClientAccessGroup, mode string) (string, bool, domain.ClientAccessGroupMember, error) {
+	if normalizeClientAccessGroupServiceCode(group.ServiceCode) == "vless" {
+		return s.upsertInstanceVLESSAccessProjection(ctx, instanceID, clientID, group.GroupKey, mode)
+	}
+	client, err := s.loadClientAccessGroupClient(ctx, clientID)
+	if err != nil {
+		return "", false, domain.ClientAccessGroupMember{}, err
+	}
+	if strings.EqualFold(client.Status, "deleted") {
+		return "", false, domain.ClientAccessGroupMember{}, fmt.Errorf("client is deleted")
+	}
+	existing, err := s.existingInstanceClientAccessProjection(ctx, instanceID, client.ID)
+	if err != nil {
+		return "", false, domain.ClientAccessGroupMember{}, err
+	}
+	if existing.ServiceAccessID != "" && existing.GroupID == group.ID && in(existing.AccessStatus, "pending", "active") {
+		return "", true, existing, nil
+	}
+	if existing.ServiceAccessID != "" && existing.GroupID != "" && existing.GroupID != group.ID && mode == "add_only" {
+		return "", true, existing, nil
+	}
+	metadata, err := s.clientProvisioningServiceMetadata(ctx, client.ID, instanceID, nil)
+	if err != nil {
+		return "", false, domain.ClientAccessGroupMember{}, err
+	}
+	changeKind := "created"
+	if existing.ServiceAccessID != "" {
+		changeKind = "updated"
+	}
+	var accessID string
+	err = s.db.QueryRow(ctx, `insert into service_accesses(id,client_account_id,instance_id,status,provision_mode,metadata_json,created_at,updated_at)
+		values($1,$2,$3,'pending','bulk',$4,now(),now())
+		on conflict(client_account_id, instance_id) do update set
+			status='pending',
+			provision_mode=case when service_accesses.provision_mode='' then 'bulk' else service_accesses.provision_mode end,
+			metadata_json=service_accesses.metadata_json || excluded.metadata_json,
+			updated_at=now()
+		returning id::text`, id.New(), client.ID, instanceID, mustJSON(metadata)).Scan(&accessID)
+	if err != nil {
+		return "", false, domain.ClientAccessGroupMember{}, err
+	}
+	if err := s.ensureBaselineClientAccessRoute(ctx, client.ID, accessID, instanceID); err != nil {
+		return "", false, domain.ClientAccessGroupMember{}, err
+	}
+	updated, err := s.existingInstanceClientAccessProjection(ctx, instanceID, client.ID)
+	if err != nil {
+		return "", false, domain.ClientAccessGroupMember{}, err
+	}
+	return changeKind, false, updated, nil
+}
+
+func (s *Store) existingInstanceClientAccessProjection(ctx context.Context, instanceID, clientID string) (domain.ClientAccessGroupMember, error) {
+	var item domain.ClientAccessGroupMember
+	err := s.db.QueryRow(ctx, `select
+			ca.id::text,
+			ca.username,
+			coalesce(ca.display_name,''),
+			coalesce(ca.email,''),
+			ca.status,
+			sa.id::text,
+			sa.status,
+			coalesce(sa.metadata_json->>'access_group_id',''),
+			coalesce(sa.metadata_json->>'access_group_key',''),
+			sa.updated_at
+		from service_accesses sa
+		join client_accounts ca on ca.id=sa.client_account_id
+		where sa.client_account_id=$1 and sa.instance_id=$2`, clientID, instanceID).Scan(
+		&item.ClientID,
+		&item.Username,
+		&item.DisplayName,
+		&item.Email,
+		&item.ClientStatus,
+		&item.ServiceAccessID,
+		&item.AccessStatus,
+		&item.GroupID,
+		&item.GroupKey,
+		&item.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ClientAccessGroupMember{}, nil
+	}
+	return item, err
+}
 
 // upsertInstanceVLESSAccessProjection materializes canonical group membership
 // into the per-instance service access consumed by the Xray runtime.
@@ -108,51 +191,55 @@ func (s *Store) existingInstanceVLESSAccessProjection(ctx context.Context, insta
 	return item, nil
 }
 
-func (s *Store) materializeVLESSAccessGroupsForInstance(ctx context.Context, instanceID string) (int, error) {
-	instance, policies, err := s.loadInstanceVLESSAccessPolicies(ctx, instanceID)
-	if err != nil {
-		return 0, err
+// materializeClientAccessGroupsForInstance replays global group membership when a
+// new account-capable runtime is created.
+func (s *Store) materializeClientAccessGroupsForInstance(ctx context.Context, instance domain.Instance) (int, error) {
+	serviceCode := ""
+	for _, service := range clientaccess.Catalog() {
+		for _, runtimeCode := range service.RuntimeServiceCodes {
+			if runtimeCode == instance.ServiceCode && clientaccess.MaterializationReady(service.ServiceCode) {
+				serviceCode = service.ServiceCode
+				break
+			}
+		}
+		if serviceCode != "" {
+			break
+		}
 	}
-	keys := make([]string, 0, len(policies))
-	for key := range policies {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	if len(keys) == 0 {
+	if serviceCode == "" {
 		return 0, nil
 	}
-	rows, err := s.db.Query(ctx, `select
-			m.client_account_id::text,
-			cag.group_key,
-			cag.id::text,
-			cag.display_name,
-			cag.policy_json,
-			cag.scope_mode,
-			cag.auto_apply_new_instances
-		from client_access_group_memberships m
-		join client_access_groups cag on cag.id=m.group_id
-		where m.status='active'
-		  and m.service_code='vless'
+	rows, err := s.db.Query(ctx, `select distinct cag.id::text
+		from client_access_groups cag
+		join client_access_group_memberships m on m.group_id=cag.id and m.status='active'
+		where cag.service_code=$1
 		  and cag.status='active'
 		  and cag.deleted_at is null
-		  and cag.group_key = any($1)`, keys)
+		  and cag.auto_apply_new_instances=true
+		order by cag.id::text`, serviceCode)
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
-
-	materialized := 0
+	groupIDs := []string{}
 	for rows.Next() {
-		var clientID, groupKey string
-		var group domain.ClientAccessGroup
-		var policyRaw []byte
-		if err := rows.Scan(&clientID, &groupKey, &group.ID, &group.DisplayName, &policyRaw, &group.ScopeMode, &group.AutoApplyNewInstances); err != nil {
+		var groupID string
+		if err := rows.Scan(&groupID); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		groupIDs = append(groupIDs, groupID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	materialized := 0
+	for _, groupID := range groupIDs {
+		group, err := s.getClientAccessGroup(ctx, groupID)
+		if err != nil {
 			return materialized, err
 		}
-		group.ServiceCode = "vless"
-		group.Status = "active"
-		group.GroupKey = groupKey
-		group.PolicyJSON = json.RawMessage(policyRaw)
 		allowed, err := s.clientAccessGroupAllowsInstance(ctx, group, instance.ID)
 		if err != nil {
 			return materialized, err
@@ -160,24 +247,26 @@ func (s *Store) materializeVLESSAccessGroupsForInstance(ctx context.Context, ins
 		if !allowed {
 			continue
 		}
-		desiredHash, hashErr := s.clientAccessGroupDesiredHash(ctx, group, []domain.Instance{instance})
-		if hashErr != nil {
-			desiredHash = ""
-		}
-		change, skipped, member, err := s.upsertInstanceVLESSAccessProjection(ctx, instance.ID, clientID, groupKey, "add_or_move")
+		clientIDs, err := s.activeClientAccessGroupMemberIDs(ctx, group.ID)
 		if err != nil {
 			return materialized, err
 		}
-		if member.ServiceAccessID != "" {
-			if err := s.markServiceAccessClientAccessGroup(ctx, member.ServiceAccessID, group, desiredHash); err != nil {
-				return materialized, fmt.Errorf("mark service access %s for client access group %s: %w", member.ServiceAccessID, group.GroupKey, err)
+		desiredHash, err := s.clientAccessGroupDesiredHash(ctx, group, []domain.Instance{instance})
+		if err != nil {
+			return materialized, err
+		}
+		created, updated, failures := s.materializeClientAccessGroup(ctx, group, clientIDs, []domain.Instance{instance}, desiredHash)
+		if len(failures) > 0 {
+			return materialized, fmt.Errorf("materialize client access group %s: %s", group.GroupKey, failures[0].Error)
+		}
+		materialized += created + updated
+		if created+updated > 0 {
+			if _, err := s.queueClientAccessGroupProvisionJob(ctx, group, []domain.Instance{instance}, desiredHash, "new runtime joined client access group scope"); err != nil {
+				return materialized, err
 			}
 		}
-		if !skipped && (change == "created" || change == "updated") {
-			materialized++
-		}
 	}
-	return materialized, rows.Err()
+	return materialized, nil
 }
 
 func (s *Store) resolveAccessGroupClientRefs(ctx context.Context, clientIDs, refs []string) ([]string, []domain.ClientAccessGroupMembershipFailure, error) {

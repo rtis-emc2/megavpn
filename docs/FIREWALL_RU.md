@@ -1,6 +1,6 @@
 # Каталог firewall-политик
 
-**Релиз:** `8.0.0-pre.1`
+**Релиз:** `8.0.0-pre.2`
 
 Firewall - это managed workspace для границ control-plane и node. Он специально
 сделан как каталог перед применением: оператор готовит address groups,

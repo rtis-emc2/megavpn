@@ -653,6 +653,17 @@ func Normalize(jobType string, payload map[string]any) (map[string]any, error) {
 		} else if ok {
 			normalized["enabled"] = v
 		}
+	case "client_access_group.provision":
+		groupID, err := requireString(payload, "group_id")
+		if err != nil {
+			return nil, err
+		}
+		normalized["group_id"] = groupID
+		if ids, ok, err := optionalStringSlice(payload, "instance_ids"); err != nil {
+			return nil, err
+		} else if ok {
+			normalized["instance_ids"] = ids
+		}
 	case "client.provision":
 		clientID, err := requireString(payload, "client_id")
 		if err != nil {

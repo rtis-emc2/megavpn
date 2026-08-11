@@ -47,6 +47,8 @@ export type RuntimePreflight = {
 export type VersionInfo = {
   service?: string;
   version?: string;
+  agent_target_version?: string;
+  agent_protocol_version?: string;
   public_base_url?: string;
 };
 
@@ -1479,9 +1481,29 @@ export type ExternalEgressProfile = APIRecord & {
   config_json?: APIRecord;
   secret_purposes?: string[];
   deployments?: ExternalEgressDeployment[];
+  deployment_count?: number;
+  active_deployment_count?: number;
+  pending_deployment_count?: number;
+  attention_deployment_count?: number;
   created_at?: string;
   updated_at?: string;
   deleted_at?: string | null;
+};
+
+export type ExternalEgressProfileQuery = {
+  search?: string;
+  protocol?: string;
+  status?: string;
+  health?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type ExternalEgressProfilePage = {
+  items: ExternalEgressProfile[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export type ExternalEgressProfileInput = {
@@ -1947,7 +1969,60 @@ export type PkiRootCreateInput = {
   valid_days?: number;
 };
 
+export type AddressPoolSpace = {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+  family: 'ipv4' | string;
+  base_cidr: string;
+  start_cidr: string;
+  allocation_prefix: number;
+  service_scope: 'remote_access' | 'generic' | 'imported' | string;
+  routing_enabled: boolean;
+  status: string;
+  display_order: number;
+  capacity: number;
+  used: number;
+  free: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AddressPoolAllocation = {
+  id: string;
+  pool_space_id: string;
+  pool_space_key: string;
+  pool_space_label: string;
+  cidr: string;
+  node_id?: string;
+  node_name: string;
+  instance_id?: string;
+  instance_name: string;
+  service_code: string;
+  purpose: string;
+  status: string;
+  route_export: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AddressPoolSpaceInput = {
+  key?: string;
+  label: string;
+  description: string;
+  family: 'ipv4';
+  base_cidr: string;
+  start_cidr: string;
+  allocation_prefix: number;
+  service_scope: 'remote_access' | 'generic' | 'imported';
+  routing_enabled: boolean;
+  status: 'active' | 'disabled';
+  display_order: number;
+};
+
 export type AddressPools = {
-  spaces: APIRecord[];
-  allocations: APIRecord[];
+  spaces: AddressPoolSpace[];
+  allocations: AddressPoolAllocation[];
 };

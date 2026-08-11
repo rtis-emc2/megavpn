@@ -15,6 +15,7 @@ import {
   cleanupExternalEgressDeployment,
   cleanupRoutePolicy,
   clearNodeStaleRotation,
+  createAddressPoolSpace,
   createClient,
   createClientRoute,
   applyNodeFirewall,
@@ -43,6 +44,7 @@ import {
   deleteFirewallAddressGroupEntry,
   deleteFirewallPolicy,
   deleteFirewallRule,
+  deleteAddressPoolSpace,
   deleteExternalEgressDeployment,
   deleteExternalEgressProfile,
   deleteClientAccess,
@@ -96,6 +98,7 @@ import {
   listClientAccessGroups,
   listEnrollmentTokens,
   listExternalEgressProfiles,
+  listExternalEgressProfilePage,
   listUsers,
   listInvites,
   listNodeAccessMethods,
@@ -157,6 +160,7 @@ import {
   sendClientArtifactEmail,
   issueCertificate,
   revokeCertificate,
+  setAddressPoolRouting,
   setNodeMaintenance,
   setDefaultCertificate,
   updateClientStatus,
@@ -175,6 +179,7 @@ import {
   updateFirewallPolicy,
   updateFirewallRule,
   updateFirewallSafetySettings,
+  updateAddressPoolSpace,
   updateBackhaulRouteState,
   updateClient,
   updateMailSettings,
@@ -188,6 +193,8 @@ import {
   type FirewallRuleInput,
 } from '../api/endpoints';
 import type {
+  AddressPoolSpace,
+  AddressPoolSpaceInput,
   AddressPools,
   Artifact,
   BackhaulActionResult,
@@ -256,6 +263,8 @@ import type {
   ExternalEgressImportPreviewRequest,
   ExternalEgressProfile,
   ExternalEgressProfileInput,
+  ExternalEgressProfilePage,
+  ExternalEgressProfileQuery,
   ExternalEgressProtocol,
   FirewallAddressGroup,
   FirewallApplyRequest,
@@ -2045,6 +2054,15 @@ export function useExternalEgressProfiles(options?: QueryOptions<ExternalEgressP
   });
 }
 
+export function useExternalEgressProfilePage(query: ExternalEgressProfileQuery, options?: QueryOptions<ExternalEgressProfilePage>) {
+  return useQuery({
+    queryKey: ['external-egress-profiles', 'page', query],
+    queryFn: () => listExternalEgressProfilePage(query),
+    staleTime: stale.normal,
+    ...options,
+  });
+}
+
 export function useExternalEgressProfile(profileId: string | undefined, options?: QueryOptions<ExternalEgressProfile>) {
   return useQuery({
     queryKey: ['external-egress-profile', profileId],
@@ -2326,4 +2344,40 @@ export function useShareLinks(options?: QueryOptions<ShareLink[]>) {
 
 export function useAddressPools(options?: QueryOptions<AddressPools>) {
   return useQuery({ queryKey: ['address-pools'], queryFn: endpoints.addressPools, staleTime: stale.normal, ...options });
+}
+
+function invalidateAddressPools(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ['address-pools'] });
+}
+
+export function useCreateAddressPoolSpace() {
+  const queryClient = useQueryClient();
+  return useMutation<AddressPoolSpace, Error, AddressPoolSpaceInput>({
+    mutationFn: createAddressPoolSpace,
+    onSuccess: () => invalidateAddressPools(queryClient),
+  });
+}
+
+export function useUpdateAddressPoolSpace() {
+  const queryClient = useQueryClient();
+  return useMutation<AddressPoolSpace, Error, { poolId: string; input: AddressPoolSpaceInput }>({
+    mutationFn: ({ poolId, input }) => updateAddressPoolSpace(poolId, input),
+    onSuccess: () => invalidateAddressPools(queryClient),
+  });
+}
+
+export function useDeleteAddressPoolSpace() {
+  const queryClient = useQueryClient();
+  return useMutation<AddressPoolSpace, Error, string>({
+    mutationFn: deleteAddressPoolSpace,
+    onSuccess: () => invalidateAddressPools(queryClient),
+  });
+}
+
+export function useSetAddressPoolRouting() {
+  const queryClient = useQueryClient();
+  return useMutation<AddressPoolSpace, Error, { poolId: string; routingEnabled: boolean }>({
+    mutationFn: ({ poolId, routingEnabled }) => setAddressPoolRouting(poolId, routingEnabled),
+    onSuccess: () => invalidateAddressPools(queryClient),
+  });
 }

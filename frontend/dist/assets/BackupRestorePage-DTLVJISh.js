@@ -1,1 +1,0 @@
-import{S as e,b as t,li as n,ri as r,y as i}from"./ui-CWPzM3Nl.js";import{t as a}from"./common-D18DlY0p.js";var o=n();function s(){let{t:n}=r();return(0,o.jsx)(a,{title:n(`nav.backupRestore`),subtitle:n(`common.unsupportedAction`),children:(0,o.jsx)(i,{children:(0,o.jsx)(t,{children:(0,o.jsx)(e,{disabled:!0,children:n(`common.apply`)})})})})}export{s as BackupRestorePage};

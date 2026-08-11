@@ -89,14 +89,17 @@ describe('ClientGroupsPage', () => {
             supports_groups: true,
             supports_membership: true,
             supports_materialization: true,
+            runtime_service_codes: ['xray-core'],
           },
           {
             service_code: 'wireguard',
             display_name: 'WireGuard',
-            status: 'coming_soon',
-            supports_groups: false,
-            supports_membership: false,
-            supports_materialization: false,
+            description: 'Managed WireGuard access',
+            status: 'active',
+            supports_groups: true,
+            supports_membership: true,
+            supports_materialization: true,
+            runtime_service_codes: ['wireguard'],
           },
         ]);
       }
@@ -310,7 +313,7 @@ describe('ClientGroupsPage', () => {
     renderPage();
 
     await screen.findAllByText('Core access');
-    await user.click(screen.getByRole('button', { name: 'Create VLESS group' }));
+    await user.click(screen.getByRole('button', { name: 'Create group' }));
     await user.type(screen.getByLabelText('Group key'), 'new-team');
     await user.type(screen.getByLabelText('Name'), 'New Team');
     await user.click(screen.getByRole('button', { name: 'Save' }));
@@ -327,12 +330,35 @@ describe('ClientGroupsPage', () => {
     expect(calls.some((call) => call.path.startsWith('/legacy'))).toBe(false);
   });
 
+  it('creates a WireGuard group without VLESS-only policy fields', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findAllByText('Core access');
+    await user.click(screen.getByRole('button', { name: 'Create group' }));
+    await user.selectOptions(screen.getByLabelText('Group protocol'), 'wireguard');
+    expect(screen.queryByLabelText('Route mode')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('External provider gateway')).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Group key'), 'wireguard-team');
+    await user.type(screen.getByLabelText('Name'), 'WireGuard Team');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/client-access-groups')).toBe(true));
+    const createCall = calls.find((call) => call.method === 'POST' && call.path === '/api/v1/client-access-groups');
+    expect(createCall?.body).toMatchObject({
+      service_code: 'wireguard',
+      group_key: 'wireguard-team',
+      display_name: 'WireGuard Team',
+      policy_json: {},
+    });
+  });
+
   it('updates VLESS group policy and status through the client access group API', async () => {
     const user = userEvent.setup();
     renderPage();
 
     await screen.findAllByText('Core access');
-    await user.click(screen.getAllByRole('button', { name: 'Policy' })[0]);
+    await user.click(screen.getAllByRole('button', { name: 'Settings' })[0]);
     await user.selectOptions(screen.getByLabelText('Status'), 'disabled');
     await user.selectOptions(screen.getByLabelText('Route mode'), 'block');
     await user.click(screen.getByRole('button', { name: 'Save' }));
@@ -355,7 +381,7 @@ describe('ClientGroupsPage', () => {
     renderPage();
 
     await screen.findAllByText('Core access');
-    await user.click(screen.getAllByRole('button', { name: 'Policy' })[0]);
+    await user.click(screen.getAllByRole('button', { name: 'Settings' })[0]);
     await screen.findByRole('option', { name: /Provider Dallas/ });
     await user.selectOptions(screen.getByLabelText('External provider gateway'), 'provider-1');
     expect(screen.getByLabelText('Route mode')).toBeDisabled();
@@ -478,14 +504,17 @@ describe('ClientGroupsPage', () => {
     renderPage();
 
     await screen.findAllByText('Core access');
-    await user.click(screen.getAllByRole('button', { name: 'Sync' })[0]);
-    await screen.findAllByText('Sync state');
+    await user.click(screen.getAllByRole('button', { name: 'Recreate' })[0]);
+    await screen.findAllByText('Access state by instance');
 
-    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    const applyButton = screen.getAllByRole('button', { name: 'Recreate' }).find((button) => button.hasAttribute('disabled'));
+    if (!applyButton) {
+      throw new Error('disabled recreate action was not rendered');
+    }
     expect(applyButton).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Preview' }));
 
-    await screen.findByText('Sync preview');
+    await screen.findByText('Recreation preview');
     expect(applyButton).toBeEnabled();
     await user.click(applyButton);
 

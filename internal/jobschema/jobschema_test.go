@@ -31,6 +31,29 @@ func TestNormalizeRejectsUnknownJobType(t *testing.T) {
 	}
 }
 
+func TestNormalizeClientAccessGroupProvision(t *testing.T) {
+	payload, err := Normalize("client_access_group.provision", map[string]any{
+		"group_id":     " group-1 ",
+		"instance_ids": []any{" instance-1 ", "instance-2"},
+	})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if payload["group_id"] != "group-1" {
+		t.Fatalf("group_id = %v, want group-1", payload["group_id"])
+	}
+	instanceIDs, ok := payload["instance_ids"].([]string)
+	if !ok || len(instanceIDs) != 2 || instanceIDs[0] != "instance-1" || instanceIDs[1] != "instance-2" {
+		t.Fatalf("instance_ids = %#v, want normalized instance IDs", payload["instance_ids"])
+	}
+}
+
+func TestNormalizeClientAccessGroupProvisionRequiresGroup(t *testing.T) {
+	if _, err := Normalize("client_access_group.provision", map[string]any{}); err == nil || !IsValidationError(err) {
+		t.Fatalf("missing group_id error = %v, want validation error", err)
+	}
+}
+
 func TestNormalizeNodeCapabilityInstallPreservesDependents(t *testing.T) {
 	payload, err := Normalize("node.capability.install", map[string]any{
 		"node_id":                " node-1 ",

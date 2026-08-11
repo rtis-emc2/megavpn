@@ -31,14 +31,14 @@ var externalEgressSecretTypes = map[string]string{
 }
 
 func (s *Store) ListExternalEgressProfiles(ctx context.Context) ([]domain.ExternalEgressProfile, error) {
-	rows, err := s.db.Query(ctx, externalEgressProfileSelect+` where p.status <> 'deleted' order by p.display_name asc, p.created_at asc`)
+	rows, err := s.db.Query(ctx, externalEgressProfileSummarySelect+` where p.status <> 'deleted' order by p.display_name asc, p.created_at asc`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []domain.ExternalEgressProfile{}
 	for rows.Next() {
-		profile, err := scanExternalEgressProfile(rows)
+		profile, err := scanExternalEgressProfileSummary(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -47,12 +47,48 @@ func (s *Store) ListExternalEgressProfiles(ctx context.Context) ([]domain.Extern
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for i := range out {
-		if err := s.populateExternalEgressProfile(ctx, &out[i]); err != nil {
-			return nil, err
-		}
-	}
 	return out, nil
+}
+
+func (s *Store) ListExternalEgressProfilePage(ctx context.Context, search, protocol, status, health string, limit, offset int) (domain.ExternalEgressProfilePage, error) {
+	search = strings.TrimSpace(search)
+	protocol = strings.TrimSpace(protocol)
+	status = strings.TrimSpace(status)
+	health = strings.TrimSpace(health)
+	page := domain.ExternalEgressProfilePage{Items: []domain.ExternalEgressProfile{}, Limit: limit, Offset: offset}
+	const filters = ` where p.status <> 'deleted'
+		and ($1='' or p.display_name ilike '%' || $1 || '%' or p.profile_key ilike '%' || $1 || '%'
+			or p.description ilike '%' || $1 || '%' or p.endpoint_host ilike '%' || $1 || '%')
+		and ($2='' or p.protocol=$2)
+		and ($3='' or p.status=$3)
+		and ($4='' or
+			($4='attention' and exists(select 1 from external_egress_deployments d where d.profile_id=p.id and d.status <> 'deleted' and (d.status in ('failed','degraded') or d.last_error <> ''))) or
+			($4='pending' and exists(select 1 from external_egress_deployments d where d.profile_id=p.id and d.status in ('pending','queued','applying'))) or
+			($4='undeployed' and not exists(select 1 from external_egress_deployments d where d.profile_id=p.id and d.status <> 'deleted')) or
+			($4='healthy'
+				and exists(select 1 from external_egress_deployments d where d.profile_id=p.id and d.status='active')
+				and not exists(select 1 from external_egress_deployments d where d.profile_id=p.id and d.status <> 'deleted' and (d.status <> 'active' or d.last_error <> '')))
+		)`
+	if err := s.db.QueryRow(ctx, `select count(*) from external_egress_profiles p`+filters, search, protocol, status, health).Scan(&page.Total); err != nil {
+		return page, err
+	}
+	rows, err := s.db.Query(ctx, externalEgressProfileSummarySelect+filters+`
+		order by p.display_name asc, p.created_at asc limit $5 offset $6`, search, protocol, status, health, limit, offset)
+	if err != nil {
+		return page, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		profile, err := scanExternalEgressProfileSummary(rows)
+		if err != nil {
+			return page, err
+		}
+		page.Items = append(page.Items, profile)
+	}
+	if err := rows.Err(); err != nil {
+		return page, err
+	}
+	return page, nil
 }
 
 func (s *Store) GetExternalEgressProfile(ctx context.Context, profileID string) (domain.ExternalEgressProfile, error) {
@@ -70,9 +106,23 @@ func (s *Store) GetExternalEgressProfile(ctx context.Context, profileID string) 
 }
 
 const externalEgressProfileSelect = `select
-	p.id::text,p.profile_key,p.display_name,p.description,p.protocol,p.transport,p.status,p.import_format,
-	p.endpoint_host,coalesce(p.endpoint_port,0),p.config_json,p.created_at,p.updated_at,p.deleted_at
-	from external_egress_profiles p`
+		p.id::text,p.profile_key,p.display_name,p.description,p.protocol,p.transport,p.status,p.import_format,
+		p.endpoint_host,coalesce(p.endpoint_port,0),p.config_json,p.created_at,p.updated_at,p.deleted_at
+		from external_egress_profiles p`
+
+const externalEgressProfileSummarySelect = `select
+		p.id::text,p.profile_key,p.display_name,p.description,p.protocol,p.transport,p.status,p.import_format,
+		p.endpoint_host,coalesce(p.endpoint_port,0),p.created_at,p.updated_at,p.deleted_at,
+		coalesce(ds.deployment_count,0),coalesce(ds.active_deployment_count,0),
+		coalesce(ds.pending_deployment_count,0),coalesce(ds.attention_deployment_count,0)
+		from external_egress_profiles p
+		left join lateral (
+			select (count(*) filter (where d.status <> 'deleted'))::integer as deployment_count,
+				(count(*) filter (where d.status = 'active'))::integer as active_deployment_count,
+				(count(*) filter (where d.status in ('pending','queued','applying')))::integer as pending_deployment_count,
+				(count(*) filter (where d.status <> 'deleted' and (d.status in ('failed','degraded') or d.last_error <> '')))::integer as attention_deployment_count
+			from external_egress_deployments d where d.profile_id=p.id
+		) ds on true`
 
 func scanExternalEgressProfile(row interface{ Scan(...any) error }) (domain.ExternalEgressProfile, error) {
 	var profile domain.ExternalEgressProfile
@@ -89,6 +139,24 @@ func scanExternalEgressProfile(row interface{ Scan(...any) error }) (domain.Exte
 		configRaw = []byte(`{}`)
 	}
 	profile.ConfigJSON = json.RawMessage(configRaw)
+	if def, ok := externalegress.Definition(profile.Protocol); ok {
+		profile.RuntimeSupport = def.RuntimeSupport
+	}
+	return profile, nil
+}
+
+func scanExternalEgressProfileSummary(row interface{ Scan(...any) error }) (domain.ExternalEgressProfile, error) {
+	var profile domain.ExternalEgressProfile
+	if err := row.Scan(
+		&profile.ID, &profile.ProfileKey, &profile.DisplayName, &profile.Description,
+		&profile.Protocol, &profile.Transport, &profile.Status, &profile.ImportFormat,
+		&profile.EndpointHost, &profile.EndpointPort,
+		&profile.CreatedAt, &profile.UpdatedAt, &profile.DeletedAt,
+		&profile.DeploymentCount, &profile.ActiveDeploymentCount,
+		&profile.PendingDeploymentCount, &profile.AttentionDeploymentCount,
+	); err != nil {
+		return profile, err
+	}
 	if def, ok := externalegress.Definition(profile.Protocol); ok {
 		profile.RuntimeSupport = def.RuntimeSupport
 	}
@@ -121,6 +189,18 @@ func (s *Store) populateExternalEgressProfile(ctx context.Context, profile *doma
 		return err
 	}
 	profile.Deployments = deployments
+	profile.DeploymentCount = len(deployments)
+	for _, deployment := range deployments {
+		if deployment.Status == "active" {
+			profile.ActiveDeploymentCount++
+		}
+		if deployment.Status == "pending" || deployment.Status == "queued" || deployment.Status == "applying" {
+			profile.PendingDeploymentCount++
+		}
+		if deployment.Status == "failed" || deployment.Status == "degraded" || strings.TrimSpace(deployment.LastError) != "" {
+			profile.AttentionDeploymentCount++
+		}
+	}
 	return nil
 }
 

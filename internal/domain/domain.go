@@ -277,23 +277,34 @@ type ClientAccessGroupInput struct {
 }
 
 type ExternalEgressProfile struct {
-	ID             string                     `json:"id"`
-	ProfileKey     string                     `json:"profile_key"`
-	DisplayName    string                     `json:"display_name"`
-	Description    string                     `json:"description"`
-	Protocol       string                     `json:"protocol"`
-	Transport      string                     `json:"transport"`
-	RuntimeSupport string                     `json:"runtime_support"`
-	Status         string                     `json:"status"`
-	ImportFormat   string                     `json:"import_format"`
-	EndpointHost   string                     `json:"endpoint_host"`
-	EndpointPort   int                        `json:"endpoint_port,omitempty"`
-	ConfigJSON     json.RawMessage            `json:"config_json,omitempty"`
-	SecretPurposes []string                   `json:"secret_purposes,omitempty"`
-	Deployments    []ExternalEgressDeployment `json:"deployments,omitempty"`
-	CreatedAt      time.Time                  `json:"created_at"`
-	UpdatedAt      time.Time                  `json:"updated_at"`
-	DeletedAt      *time.Time                 `json:"deleted_at,omitempty"`
+	ID                       string                     `json:"id"`
+	ProfileKey               string                     `json:"profile_key"`
+	DisplayName              string                     `json:"display_name"`
+	Description              string                     `json:"description"`
+	Protocol                 string                     `json:"protocol"`
+	Transport                string                     `json:"transport"`
+	RuntimeSupport           string                     `json:"runtime_support"`
+	Status                   string                     `json:"status"`
+	ImportFormat             string                     `json:"import_format"`
+	EndpointHost             string                     `json:"endpoint_host"`
+	EndpointPort             int                        `json:"endpoint_port,omitempty"`
+	ConfigJSON               json.RawMessage            `json:"config_json,omitempty"`
+	SecretPurposes           []string                   `json:"secret_purposes,omitempty"`
+	Deployments              []ExternalEgressDeployment `json:"deployments,omitempty"`
+	DeploymentCount          int                        `json:"deployment_count"`
+	ActiveDeploymentCount    int                        `json:"active_deployment_count"`
+	PendingDeploymentCount   int                        `json:"pending_deployment_count"`
+	AttentionDeploymentCount int                        `json:"attention_deployment_count"`
+	CreatedAt                time.Time                  `json:"created_at"`
+	UpdatedAt                time.Time                  `json:"updated_at"`
+	DeletedAt                *time.Time                 `json:"deleted_at,omitempty"`
+}
+
+type ExternalEgressProfilePage struct {
+	Items  []ExternalEgressProfile `json:"items"`
+	Total  int                     `json:"total"`
+	Limit  int                     `json:"limit"`
+	Offset int                     `json:"offset"`
 }
 
 type ExternalEgressProfileInput struct {
@@ -436,6 +447,11 @@ type ClientAccessGroupMembershipResult struct {
 	ApplyJobCount        int                                   `json:"apply_job_count"`
 	Warnings             []string                              `json:"warnings,omitempty"`
 	Clients              []ClientAccessGroupMember             `json:"clients,omitempty"`
+}
+
+type ClientAccessGroupProvisioningTarget struct {
+	ClientID    string   `json:"client_id"`
+	InstanceIDs []string `json:"instance_ids"`
 }
 
 type ClientAccessGroupScope struct {

@@ -1,6 +1,6 @@
 # External Provider Egress
 
-**Release:** `8.0.0-pre.1`
+**Release:** `8.0.0-pre.2`
 
 External egress profiles connect selected client access groups to a commercial
 or third-party VPN/proxy provider. They do not replace managed Backhaul and they
@@ -257,7 +257,7 @@ UDP/500/4500, upstream NAT, the provider's source-IP allowlist and the provider
 endpoint. Do not rotate the PSK merely because of a timeout: a PSK or proposal
 failure appears only after the peer answers.
 
-Release `8.0.0-pre.1` also corrects an older generated xl2tpd setting that could
+Release `8.0.0-pre.2` also corrects an older generated xl2tpd setting that could
 produce `rmax value must be at least 1`. Re-apply the deployment after updating
 the node agent so the managed config and rate-limited systemd unit are
 regenerated.

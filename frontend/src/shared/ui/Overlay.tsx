@@ -90,7 +90,7 @@ function useDialogLifecycle(
   }, [dialogRef, open]);
 }
 
-export function Drawer({ title, open, onClose, children, size = 'default' }: OverlayProps) {
+export function Drawer({ title, open, onClose, children, size = 'wide' }: OverlayProps) {
   const { t } = useTranslation();
   const titleID = useId();
   const ref = useRef<HTMLDivElement | null>(null);

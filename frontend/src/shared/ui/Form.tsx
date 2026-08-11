@@ -4,11 +4,20 @@ export function FormGrid({ children }: { children: ReactNode }) {
   return <div className="form-grid">{children}</div>;
 }
 
-export function FormField({ label, children, full = false }: { label: ReactNode; children: ReactNode; full?: boolean }) {
+export function FormField({ label, children, full = false, hint, required = false }: {
+  label: ReactNode;
+  children: ReactNode;
+  full?: boolean;
+  hint?: ReactNode;
+  required?: boolean;
+}) {
   return (
     <label className={`form-field ${full ? 'form-field-full' : ''}`.trim()}>
-      <span className="form-label">{label}</span>
+      <span className="form-label">
+        {label}{required ? <span className="form-required" aria-hidden="true"> *</span> : null}
+      </span>
       {children}
+      {hint ? <span className="form-hint">{hint}</span> : null}
     </label>
   );
 }

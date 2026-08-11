@@ -1,6 +1,6 @@
 # RTIS MegaVPN
 
-**Релиз:** `8.0.0-pre.1`
+**Релиз:** `8.0.0-pre.2`
 
 - **English README:** [README.md](README.md)
 - **Лицензия:** Apache License 2.0. См. [LICENSE](LICENSE).
@@ -58,10 +58,10 @@ RTIS MegaVPN предназначен для production-oriented эксплуа�
 
 ## Текущий статус релиза
 
-Текущий релиз: `8.0.0-pre.1`.
+Текущий релиз: `8.0.0-pre.2`.
 
 Подробные release notes и stabilization baseline ведутся в
-[docs/releases/8.0.0-pre.1.md](docs/releases/8.0.0-pre.1.md). Release readiness gates
+[docs/releases/8.0.0-pre.2.md](docs/releases/8.0.0-pre.2.md). Release readiness gates
 описаны в [docs/RELEASE_GATES.md](docs/RELEASE_GATES.md).
 
 ## Компоненты

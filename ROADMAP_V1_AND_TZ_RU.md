@@ -1,9 +1,9 @@
 # Дорожная карта и техническая спецификация RTIS MegaVPN
 
-**Релиз:** `8.0.0-pre.1`
+**Релиз:** `8.0.0-pre.2`
 
 Дата анализа: 2026-07-05
-Базовая версия кода: RTIS MegaVPN 8.0.0-pre.1
+Базовая версия кода: RTIS MegaVPN 8.0.0-pre.2
 Базовые документы: Decision Sheet v1, ERD Finalization v1, megavpn_full_spec_v1
 Канонический репозиторий: `github.com/rtis-emc2/megavpn`
 Английская версия: [`ROADMAP_V1_AND_TZ.md`](ROADMAP_V1_AND_TZ.md)
@@ -16,7 +16,7 @@ Decision Sheet v1 считается базовым продуктово-арх�
 
 ## 2. Executive Summary
 
-RTIS MegaVPN сейчас находится не в состоянии "прототипа", а в состоянии hardening baseline: есть PostgreSQL-backed API, RBAC, session auth, node enrollment, agent pull loop, job queue, locks, node inventory, service discovery, capability install, bootstrap через SSH/manual bundle, static operational UI, secrets storage, client provisioning, artifacts/share links, managed firewall, managed backhaul, VLESS route-policy preview и route-policy apply telemetry. L2TP over IPsec, VLESS и Shadowsocks доступны как external-provider egress только для явно выбранных глобальных client access groups. В релизе `8.0.0-pre.1` усилен lifecycle L2TP: stale managed PPP state освобождается до Apply, Cleanup сохраняет ownership evidence до успешного teardown, маршрутизация ожидает IPv4-адрес интерфейса, а healthy требует двух полных проверок IPsec/PPP/routing. Provider routes изолированы от main table node; невыбранные клиенты и обычные процессы node сохраняют прежний маршрут. Предыдущие hardening-релизы обеспечили идемпотентный service-pack rollout, сохранение client-level VLESS identity при замене ingress и явные wait states agent jobs в UI.
+RTIS MegaVPN сейчас находится не в состоянии "прототипа", а в состоянии hardening baseline: есть PostgreSQL-backed API, RBAC, session auth, node enrollment, agent pull loop, job queue, locks, node inventory, service discovery, capability install, bootstrap через SSH/manual bundle, static operational UI, secrets storage, client provisioning, artifacts/share links, managed firewall, managed backhaul, VLESS route-policy preview и route-policy apply telemetry. L2TP over IPsec, VLESS и Shadowsocks доступны как external-provider egress только для явно выбранных глобальных client access groups. В релизе `8.0.0-pre.2` усилен lifecycle L2TP: stale managed PPP state освобождается до Apply, Cleanup сохраняет ownership evidence до успешного teardown, маршрутизация ожидает IPv4-адрес интерфейса, а healthy требует двух полных проверок IPsec/PPP/routing. Provider routes изолированы от main table node; невыбранные клиенты и обычные процессы node сохраняют прежний маршрут. Предыдущие hardening-релизы обеспечили идемпотентный service-pack rollout, сохранение client-level VLESS identity при замене ingress и явные wait states agent jobs в UI.
 
 Главный архитектурный риск: текущая реализация быстрее растет как вертикальная монолитная codebase, чем как формализованная driver/revision/platform архитектура. Для v1.0 нужно стабилизировать контракты и границы:
 
