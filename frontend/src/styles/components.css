@@ -34,6 +34,16 @@
   flex: 2 1 280px;
 }
 
+.audit-filter-actions {
+  align-self: end;
+}
+
+.audit-filter-actions .toolbar {
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .toolbar-split {
   justify-content: space-between;
   align-items: center;

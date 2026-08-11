@@ -450,7 +450,7 @@ describe('ClientsPage', () => {
     expect(screen.getAllByText('Backend-held identity (redacted)').length).toBeGreaterThan(0);
     expect(screen.queryByText('uuid-secret-full')).not.toBeInTheDocument();
 
-    await userEvent.selectOptions(screen.getByLabelText('Group key'), 'group-1');
+    await userEvent.selectOptions(screen.getByLabelText('Client group'), 'group-1');
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/v1/client-access-groups/group-1/members:preview')).toBe(true));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled());

@@ -1691,6 +1691,46 @@
     "cancelUnavailable": "Only queued, pending, retrying or running jobs can be cancelled.",
     "cancelPending": "Cancelling"
   },
+  "auditLog": {
+    "title": "Audit trail",
+    "subtitle": "Operator and system actions: who changed what, when it happened and which object was affected.",
+    "searchPlaceholder": "Action, description, operator, object or ID",
+    "actor": "Actor",
+    "allActors": "All actors",
+    "resource": "Object",
+    "allResources": "All objects",
+    "shown": "Shown",
+    "eventCount": "{{count}} events",
+    "clearFilters": "Clear filters",
+    "time": "Time",
+    "event": "Action",
+    "action": "Action code",
+    "eventDetails": "Audit event",
+    "description": "Description",
+    "resourceID": "Object ID",
+    "actorID": "Actor ID",
+    "eventID": "Event ID",
+    "noSpecificResource": "Platform-wide",
+    "actorTypes": {
+      "platform_user": "Operator",
+      "system": "System",
+      "agent": "Node agent",
+      "importer": "Importer"
+    },
+    "resourceTypes": {
+      "platform": "Platform",
+      "platform_user": "Operator account",
+      "node": "Node",
+      "instance": "Service instance",
+      "client": "Client",
+      "service_pack": "Service pack",
+      "firewall": "Firewall",
+      "address_pool": "Address pool",
+      "traffic": "Traffic accounting",
+      "job": "Job",
+      "access_group": "Client access group"
+    }
+  },
   "settings": {
     "title": "Platform settings",
     "subtitle": "Control-plane endpoint and TLS configuration.",

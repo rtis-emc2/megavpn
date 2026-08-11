@@ -1,5 +1,19 @@
 export type APIRecord = Record<string, unknown>;
 
+export type AuditEvent = {
+  id: string;
+  actor_user_id?: string | null;
+  actor_username?: string;
+  actor_email?: string;
+  actor_display_name?: string;
+  actor_type: 'platform_user' | 'system' | 'agent' | 'importer' | string;
+  action: string;
+  resource_type: string;
+  resource_id?: string | null;
+  summary: string;
+  created_at: string;
+};
+
 export type AuthUser = {
   id?: string;
   username?: string;

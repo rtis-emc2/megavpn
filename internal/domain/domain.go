@@ -823,14 +823,17 @@ type JobLog struct {
 }
 
 type AuditEvent struct {
-	ID           string    `json:"id"`
-	ActorUserID  *string   `json:"actor_user_id,omitempty"`
-	ActorType    string    `json:"actor_type"`
-	Action       string    `json:"action"`
-	ResourceType string    `json:"resource_type"`
-	Summary      string    `json:"summary"`
-	ResourceID   *string   `json:"resource_id"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID               string    `json:"id"`
+	ActorUserID      *string   `json:"actor_user_id,omitempty"`
+	ActorUsername    string    `json:"actor_username,omitempty"`
+	ActorEmail       string    `json:"actor_email,omitempty"`
+	ActorDisplayName string    `json:"actor_display_name,omitempty"`
+	ActorType        string    `json:"actor_type"`
+	Action           string    `json:"action"`
+	ResourceType     string    `json:"resource_type"`
+	Summary          string    `json:"summary"`
+	ResourceID       *string   `json:"resource_id"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type Dashboard struct {

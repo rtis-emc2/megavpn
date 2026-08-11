@@ -211,7 +211,7 @@
     ]
   },
   "index.html": {
-    "file": "assets/index-Cldrs50N.js",
+    "file": "assets/index-CXYAxHbj.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -256,7 +256,7 @@
       "src/pages/platform/MailPage.tsx"
     ],
     "css": [
-      "assets/index-CV21quWU.css"
+      "assets/index-OZcyDwUA.css"
     ]
   },
   "src/pages/clients/ClientGroupsPage.tsx": {
@@ -485,11 +485,12 @@
     ]
   },
   "src/pages/operations/AuditPage.tsx": {
-    "file": "assets/AuditPage-Co0hbS63.js",
+    "file": "assets/AuditPage-DVPZheEN.js",
     "name": "AuditPage",
     "src": "src/pages/operations/AuditPage.tsx",
     "isDynamicEntry": true,
     "imports": [
+      "_rolldown-runtime-Bh1tDfsg.js",
       "_ui-D-yBO-3L.js",
       "_format-X2rrX1gW.js",
       "_common-DjLDMIqP.js"

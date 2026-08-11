@@ -1691,6 +1691,46 @@
     "cancelUnavailable": "Отменять можно только queued, pending, retrying или running jobs.",
     "cancelPending": "Отмена"
   },
+  "auditLog": {
+    "title": "Журнал действий",
+    "subtitle": "Действия операторов и системы: кто, когда, что изменил и какой объект был затронут.",
+    "searchPlaceholder": "Действие, описание, оператор, объект или ID",
+    "actor": "Инициатор",
+    "allActors": "Все инициаторы",
+    "resource": "Объект",
+    "allResources": "Все объекты",
+    "shown": "Показано",
+    "eventCount": "Событий: {{count}}",
+    "clearFilters": "Сбросить",
+    "time": "Время",
+    "event": "Действие",
+    "action": "Код действия",
+    "eventDetails": "Событие аудита",
+    "description": "Описание",
+    "resourceID": "ID объекта",
+    "actorID": "ID инициатора",
+    "eventID": "ID события",
+    "noSpecificResource": "Вся платформа",
+    "actorTypes": {
+      "platform_user": "Оператор",
+      "system": "Система",
+      "agent": "Агент узла",
+      "importer": "Импорт"
+    },
+    "resourceTypes": {
+      "platform": "Платформа",
+      "platform_user": "Учетная запись",
+      "node": "Узел",
+      "instance": "Инстанс сервиса",
+      "client": "Клиент",
+      "service_pack": "Пакет сервисов",
+      "firewall": "Межсетевой экран",
+      "address_pool": "Пул адресов",
+      "traffic": "Учет трафика",
+      "job": "Задание",
+      "access_group": "Группа клиентов"
+    }
+  },
   "settings": {
     "title": "Настройки платформы",
     "subtitle": "Адрес control plane и настройки TLS.",

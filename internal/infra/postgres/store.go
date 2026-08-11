@@ -3140,7 +3140,22 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]domain.AuditEvent, 
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.db.Query(ctx, `select id,actor_user_id,actor_type,action,resource_type,resource_id,summary,created_at from audit_events order by created_at desc limit $1`, limit)
+	rows, err := s.db.Query(ctx, `
+		select ae.id,
+		       ae.actor_user_id,
+		       coalesce(pu.username, ''),
+		       coalesce(pu.email, ''),
+		       coalesce(pu.display_name, ''),
+		       ae.actor_type,
+		       ae.action,
+		       ae.resource_type,
+		       ae.resource_id,
+		       ae.summary,
+		       ae.created_at
+		from audit_events ae
+		left join platform_users pu on pu.id = ae.actor_user_id
+		order by ae.created_at desc
+		limit $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -3148,7 +3163,19 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]domain.AuditEvent, 
 	var out []domain.AuditEvent
 	for rows.Next() {
 		var a domain.AuditEvent
-		if err := rows.Scan(&a.ID, &a.ActorUserID, &a.ActorType, &a.Action, &a.ResourceType, &a.ResourceID, &a.Summary, &a.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&a.ID,
+			&a.ActorUserID,
+			&a.ActorUsername,
+			&a.ActorEmail,
+			&a.ActorDisplayName,
+			&a.ActorType,
+			&a.Action,
+			&a.ResourceType,
+			&a.ResourceID,
+			&a.Summary,
+			&a.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
